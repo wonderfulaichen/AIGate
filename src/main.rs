@@ -98,10 +98,11 @@ fn ensure_default_configs(base: &std::path::Path) {
     let providers_path = base.join("providers.json");
     if !providers_path.exists() {
         let default = r#"{
+  "_端点说明": "endpoint 请替换为你的实际上游 API 地址。以下仅为示例配置。",
   "providers": [
     {
-      "name": "opencode-zen",
-      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "name": "zen",
+      "endpoint": "https://api.example.com/zen/v1/chat/completions",
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
       "models": {
@@ -112,8 +113,8 @@ fn ensure_default_configs(base: &std::path::Path) {
       }
     },
     {
-      "name": "opencode-go",
-      "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+      "name": "go",
+      "endpoint": "https://api.example.com/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
       "models": {
         "kimi-k2.7-code-GO": {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
@@ -132,8 +133,7 @@ fn ensure_default_configs(base: &std::path::Path) {
       }
     }
   ]
-}
-"#;
+}"#;
         let _ = std::fs::write(&providers_path, default);
     }
 
@@ -141,9 +141,9 @@ fn ensure_default_configs(base: &std::path::Path) {
     if !env_path.exists() {
         let default = "# AIGate 环境变量\n\
                         # 在下方填入你的 API Key, 或通过系统环境变量设置\n\n\
-                        # OpenCode Zen (免费模型, 无需修改)\n\
+                        # Zen 套餐 (免费模型, 无需修改)\n\
                         OPENCODE_ZEN_KEY=public\n\n\
-                        # OpenCode Go 套餐 (订阅后填入)\n\
+                        # Go 套餐 (订阅后填入)\n\
                         # OPENCODE_GO_KEY=sk-your-key-here\n\n\
                         # DeepSeek 官方 (填入你的 Key)\n\
                         # DEEPSEEK_API_KEY=sk-your-key-here\n";

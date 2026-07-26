@@ -2,7 +2,7 @@
 name = "AIGate"
 version = "0.1.0"
 edition = "2021"
-description = "Local OpenAI-compatible proxy that bridges Prism to OpenCode Zen + Go plan"
+description = "Local OpenAI-compatible reverse proxy with admin panel, multi-vendor routing, and desktop GUI"
 
 [dependencies]
 axum = "0.7"

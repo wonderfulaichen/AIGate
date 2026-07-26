@@ -12,11 +12,12 @@
     "providers[].models.<id>.reasoning_effort": "可选 - 思考强度: low / medium / high / max (仅对支持推理的模型生效)",
     "providers[].models.<id>.extra_body": "可选 - 额外注入到请求 body 的字段 (任意 JSON 键值对)"
   },
-  "_命名规范": "模型 ID 格式: <真实模型名>-<供应商缩写>. 例: deepseek-v4-flash-DS (DeepSeek官方) / deepseek-v4-flash-GO (opencode-go套餐) / big-pickle-ZEN (opencode-zen免费). upstream_model 填真实模型名.",
+  "_命名规范": "模型 ID 格式: <真实模型名>-<供应商缩写>. 例: deepseek-v4-flash-DS (DeepSeek官方) / deepseek-v4-flash-GO (Go套餐) / big-pickle-ZEN (Zen免费). upstream_model 填真实模型名.",
+  "_端点说明": "endpoint 请替换为你的实际上游 API 地址。以下仅为示例配置。",
   "providers": [
     {
-      "name": "opencode-zen",
-      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "name": "zen",
+      "endpoint": "https://api.example.com/zen/v1/chat/completions",
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
       "models": {
@@ -28,8 +29,8 @@
       }
     },
     {
-      "name": "opencode-go",
-      "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
+      "name": "go",
+      "endpoint": "https://api.example.com/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
       "models": {
         "glm-5.2-GO": {"upstream_model": "glm-5.2", "reasoning_effort": "high"},

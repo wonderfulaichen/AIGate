@@ -20,7 +20,7 @@ REM interactive config if .env is missing
 if not exist ".env" (
     echo.
     echo [config] .env not found.
-    set /p go_key="Enter your OpenCode Go key (press Enter for free models only): "
+    set /p go_key="Enter your Go plan subscription key (press Enter for free models only): "
     echo # AIGate environment variables > .env
     echo OPENCODE_ZEN_KEY=public >> .env
     echo OPENCODE_GO_KEY=!go_key! >> .env

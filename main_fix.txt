@@ -1,4 +1,4 @@
-﻿//! 入口 — 启动 axum server, 注册路由.
+//! 入口 — 启动 axum server, 注册路由.
 //!
 //! 修复: 自定义 DNS 解析器过滤 IPv6, 解决 reqwest 在 IPv6 不通的网络下连接失败的问题.
 
@@ -85,10 +85,10 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("opencode-bridge listening on http://{addr}");
+    info!("aigate listening on http://{addr}");
     info!("  Go plan key configured: {has_go}");
     info!("  endpoints:");
-    info!("    POST /v1/chat/completions  -> proxy to OpenCode Zen/Go");
+    info!("    POST /v1/chat/completions  -> proxy to Zen/Go");
     info!("    GET  /v1/models            -> list supported models");
     info!("    GET  /health               -> health check");
 

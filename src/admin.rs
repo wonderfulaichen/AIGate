@@ -388,15 +388,13 @@ pub async fn api_mock(
         .as_secs();
 
     let models = [
-        ("big-pickle-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("big-pickle-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("deepseek-v4-flash-free-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("deepseek-v4-flash-free-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("mimo-v2.5-free-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("north-mini-code-free-ZEN", "opencode-zen", "https://opencode.ai/zen/v1/chat/completions"),
-        ("deepseek-v4-pro-GO", "opencode-go", "https://opencode.ai/zen/go/v1/chat/completions"),
-        ("kimi-k2.7-code-GO", "opencode-go", "https://opencode.ai/zen/go/v1/chat/completions"),
-        ("glm-5.2-GO", "opencode-go", "https://opencode.ai/zen/go/v1/chat/completions"),
+        ("big-pickle-ZEN", "zen", "https://api.example.com/zen/v1/chat/completions"),
+        ("deepseek-v4-flash-free-ZEN", "zen", "https://api.example.com/zen/v1/chat/completions"),
+        ("mimo-v2.5-free-ZEN", "zen", "https://api.example.com/zen/v1/chat/completions"),
+        ("north-mini-code-free-ZEN", "zen", "https://api.example.com/zen/v1/chat/completions"),
+        ("deepseek-v4-pro-GO", "go", "https://api.example.com/go/v1/chat/completions"),
+        ("kimi-k2.7-code-GO", "go", "https://api.example.com/go/v1/chat/completions"),
+        ("glm-5.2-GO", "go", "https://api.example.com/go/v1/chat/completions"),
         ("deepseek-v4-flash-DS", "deepseek", "https://api.deepseek.com/v1/chat/completions"),
     ];
 

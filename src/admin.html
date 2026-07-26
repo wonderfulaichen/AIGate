@@ -518,7 +518,7 @@ input.search-input::placeholder{color:#6b7280}
           <p class="text-xs mt-1" style="color:#6b7280">开发者：wonderful艾晨</p>
         </div>
         <div class="space-y-2 text-sm" style="color:#6b7280">
-          <p>本地 OpenAI 兼容反向代理，桥接编程工具到 OpenCode Zen/Go 套餐。</p>
+          <p>本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。</p>
           <p>功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。</p>
         </div>
         <div class="pt-3 border-t" style="border-color:#2a2d37">
@@ -798,7 +798,7 @@ function dashboard() {
       const blob = new Blob([JSON.stringify(this.logs, null, 2)], {type:'application/json'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `opencode-logs-${new Date().toISOString().slice(0,10)}.json`;
+      a.href = url; a.download = `aigate-logs-${new Date().toISOString().slice(0,10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     },

@@ -1,15 +1,15 @@
-﻿# Fix: IPv6 连接失败导致 500 错误
+# Fix: IPv6 连接失败导致 500 错误
 
 ## 问题
 
 中转启动正常，但发送请求时返回 500/502：
 ```
-upstream error: error sending request for url (https://opencode.ai/zen/v1/chat/completions)
+upstream error: error sending request for url (https://example.com/v1/chat/completions)
 ```
 
 ## 根因
 
-opencode.ai 的 DNS 同时返回 IPv4 和 IPv6 地址。你的网络 IPv6 不通：
+上游 API 的 DNS 同时返回 IPv4 和 IPv6 地址。你的网络 IPv6 不通：
 
 - `curl.exe` 能成功（自动 fallback 到 IPv4）
 - Rust reqwest **优先尝试 IPv6**，失败后不会 fallback 到 IPv4，直接报错
@@ -71,7 +71,7 @@ let client = reqwest::Client::builder()
 完整修复版已写入 `main_fix.txt`，可直接覆盖 `src/main.rs`：
 
 ```cmd
-cd "D:\Office software\Development Project\opencode-bridge"
+cd <project_dir>
 copy src\main.rs src\main.rs.bak
 copy main_fix.txt src\main.rs
 cargo build --release
