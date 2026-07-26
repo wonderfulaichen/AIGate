@@ -48,6 +48,8 @@
 - **IPv4 强制解析** — 自定义 DNS 解析器过滤 IPv6 地址，避免 IPv6 不通导致连接失败
 - **SSE 流式透传** — 完整支持 Server-Sent Events 流式响应，逐块转发不缓冲
 - **Token 用量解析** — 从上游响应中解析 `usage` 字段，统计 prompt / completion token 数
+- **熔断保护** — 按供应商维度的熔断器；连续失败或错误率超阈值后断开（快速返回 503），超时后自动探测恢复；面板「重置熔断」可手动恢复
+- **管理面板鉴权** — 可选 Bearer 令牌保护管理 API（设置 `AIGATE_ADMIN_TOKEN` 后生效）
 
 ### 桌面应用
 
@@ -142,7 +144,7 @@ cargo build --release
 | `api_key_env` | string | 是 | 读取 API Key 的环境变量名，对应 `.env` 中的 key |
 | `api_key_default` | string | 否 | 环境变量未设置时的默认值（如 `public`） |
 | `headers` | object | 否 | 额外注入的 HTTP 请求头（键值对） |
-| `models` | object | 是 | 模型映射表，key 是客户端使用的模型 ID |
+| `models` | object | 是 | 模型映射表，key 是客户端使用的**模型中转ID**（可任取符合用途的名称；`upstream_model` 才是上游真实模型名） |
 
 每个模型的配置：
 
@@ -152,19 +154,21 @@ cargo build --release
 | `reasoning_effort` | string | 否 | 思考强度：`low` / `medium` / `high` / `max` |
 | `extra_body` | object | 否 | 额外注入的请求体字段（任意 JSON） |
 
-#### 模型 ID 命名规范
+#### 模型中转ID 命名规范
+
+客户端在请求 `model` 字段里填的是**模型中转ID**（对外暴露的别名），由你在 `models` 的 key 中自由定义；网关会把它替换为 `upstream_model` 再转发。推荐命名：
 
 ```
-<真实模型名>-<供应商缩写>
+<用途>-<供应商缩写>
 ```
 
 例如：
 
-| 模型 ID | 含义 |
+| 模型中转ID | 上游真实模型 |
 |---------|------|
-| `deepseek-v4-flash-DS` | DeepSeek 官方（DS） |
-| `deepseek-v4-pro-GO` | Go 套餐（GO） |
-| `big-pickle-ZEN` | Zen 免费套餐（ZEN） |
+| `ds-coder` | `deepseek-v4-flash`（DeepSeek 官方） |
+| `go-coder` | `kimi-k2.7-code`（Go 套餐） |
+| `zen-chat` | `mimo-v2.5-free`（Zen 免费套餐） |
 
 #### 示例
 
@@ -195,12 +199,25 @@ cargo build --release
 ```
 PORT=8787                    # 监听端口，默认 8787
 RUST_LOG=info                # 日志级别（info / debug / warn / error）
+CONNECT_TIMEOUT=10           # 连接超时（秒），仅限制建连阶段，默认 10
+REQUEST_TIMEOUT_SECS=660      # 整体请求超时（秒），含等待与读取流式响应，默认 660
+STREAM_IDLE_TIMEOUT_SECS=120  # 流式响应空闲超时（秒），上游超时不吐块则断开，默认 120
+AIGATE_ADMIN_TOKEN=          # 管理面板 API 鉴权令牌（留空则不鉴权）
+BREAKER_FAILURE_THRESHOLD=4  # 熔断：连续失败次数阈值，默认 4
+BREAKER_SUCCESS_THRESHOLD=2  # 熔断：HalfOpen 连续成功次数阈值，默认 2
+BREAKER_TIMEOUT_SECS=60      # 熔断：Open 状态维持秒数，默认 60
+BREAKER_ERROR_RATE=0.6       # 熔断：错误率阈值（需样本数 >= min_requests），默认 0.6
+BREAKER_MIN_REQUESTS=10      # 熔断：触发错误率判定所需最小样本数，默认 10
 OPENCODE_ZEN_KEY=public      # Zen 套餐 API Key（免费模型用 public）
 OPENCODE_GO_KEY=             # Go 套餐 API Key（留空则不配置）
 DEEPSEEK_API_KEY=            # DeepSeek 官方 API Key
 ```
 
 > 环境变量名对应 `providers.json` 中 `api_key_env` 字段值。如需新增供应商，在 `.env` 中添加对应变量即可。
+>
+> 熔断阈值（`BREAKER_*`）、`CONNECT_TIMEOUT`、`REQUEST_TIMEOUT_SECS`、`STREAM_IDLE_TIMEOUT_SECS`、`AIGATE_ADMIN_TOKEN` 仅在**启动时**读取，修改后需重启生效。
+
+> 请求日志持久化文件 `data/logs.jsonl` 超过 2MB 时自动滚动，仅保留最近 5000 条。
 
 ### 供应商路由规则
 
@@ -224,6 +241,26 @@ DEEPSEEK_API_KEY=            # DeepSeek 官方 API Key
 
 编辑 `providers.json` 后**无需重启**实例——系统检测到文件变化后会自动重新加载路由表。
 
+### 熔断保护（Circuit Breaker）
+
+为每个供应商维护独立的熔断器，避免把请求持续打向已挂的上游、也避免苦等 660s 超时：
+
+- **触发断开（Open）**：某供应商在滚动窗口内「连续失败达 `BREAKER_FAILURE_THRESHOLD` 次」**或**「样本数 ≥ `BREAKER_MIN_REQUESTS` 且错误率 ≥ `BREAKER_ERROR_RATE`」即断开。
+- **失败判定**：网络错误 + 上游 5xx 记失败；4xx（含 429 限流）视为供应商仍健康，记成功、不熔断。
+- **自动恢复**：Open 维持 `BREAKER_TIMEOUT_SECS` 秒后转入 HalfOpen，放行单个探测请求；探测成功连续达 `BREAKER_SUCCESS_THRESHOLD` 次则恢复（Closed），失败则重新断开。
+- **启动预检**：启动时复用 reqwest 客户端（与真实转发请求同网络路径，含 IPv4 解析与代理）对每个供应商的 `/models` 端点做 HTTP 连通性探测，连接层失败（DNS/连接被拒/超时）者直接预置为 Open，使其快速失败（503）而非干等。
+- **手动重置**：管理面板「健康检查」页对每个供应商提供「重置熔断」按钮，立即恢复 Closed。
+
+熔断状态可在管理面板「健康检查」页实时查看（`closed` / `open` / `half-open`，对应绿/红/黄）。
+
+### 管理面板 API 鉴权
+
+管理 API（`/admin/api/*`）默认不鉴权，便于本机直接使用。
+
+如需防止同机其它进程或局域网访问，设置环境变量 `AIGATE_ADMIN_TOKEN` 后，所有 `/admin/api/*` 请求必须携带 `Authorization: Bearer <令牌>`，否则返回 401。本地桌面窗口（WebView）会自动注入该令牌，面板功能不受影响；外部调用方需自行在请求头中带上令牌。
+
+> 令牌仅经环境变量注入，不写入代码或配置文件，符合密钥管理规范。
+
 ---
 
 ## 客户端配置
@@ -233,7 +270,7 @@ DEEPSEEK_API_KEY=            # DeepSeek 官方 API Key
 ```
 API 地址: http://127.0.0.1:8787/v1/chat/completions
 API Key:  任意值（实际使用 .env 中配置的 key）
-模型 ID:  见 providers.json 的 models 映射表 key（如 deepseek-v4-flash-DS）
+模型 ID:  见 providers.json 的 models 映射表 key（即「模型中转ID」，如 ds-coder）
 ```
 
 ### Model ID 列表
@@ -310,9 +347,11 @@ AIGate/
 │
 ├── src/
 │   ├── main.rs               # 入口：初始化桌面窗口 + 系统托盘 + HTTP 服务
-│   ├── config.rs             # 配置：从环境变量读取端口等参数
+│   ├── config.rs             # 配置：从环境变量读取端口、超时、鉴权令牌、熔断阈值
 │   ├── providers.rs          # 供应商：加载 providers.json，构建路由表
-│   ├── proxy.rs              # 代理核心：请求解析、路由、转发、SSE 透传
+│   ├── proxy.rs              # 代理核心：请求解析、路由、转发、SSE 透传、熔断调度
+│   ├── circuit_breaker.rs    # 熔断器：按供应商维度的状态机（Closed/Open/HalfOpen）
+│   ├── thinking.rs           # thinking 整流器：OpenAI 兼容的推理参数规范化
 │   ├── keys.rs               # Key 管理：环境变量 + 运行时面板编辑
 │   ├── admin.rs              # 管理后端：请求日志缓冲区 + 统计 API + 管理面板路由
 │   ├── admin.html            # 管理前端：单页应用（Tailwind + Alpine.js）
@@ -333,6 +372,8 @@ main.rs
   ├── proxy.rs         ← 请求转发（核心业务逻辑）
   │   ├── providers.rs
   │   ├── keys.rs
+  │   ├── circuit_breaker.rs  ← 熔断状态机
+  │   ├── thinking.rs         ← thinking 整流
   │   └── admin.rs
   ├── admin.rs         ← 管理面板 API
   │   ├── admin.html   ← 前端页面（编译后嵌入）

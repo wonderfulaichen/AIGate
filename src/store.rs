@@ -9,6 +9,11 @@ use tokio::io::AsyncWriteExt;
 
 use crate::admin::RequestLog;
 
+/// 日志文件超过此字节数后触发滚动.
+const ROTATE_BYTES: u64 = 2 * 1024 * 1024;
+/// 滚动时保留的最近日志条数.
+const MAX_LINES: usize = 5000;
+
 /// JSON Lines 日志存储.
 #[derive(Clone)]
 pub struct LogStore {
@@ -55,6 +60,34 @@ impl LogStore {
             .await
         {
             let _ = file.write_all(line.as_bytes()).await;
+        }
+        // 超过阈值则滚动, 仅保留最近 MAX_LINES 条, 避免文件无限增长.
+        if let Ok(meta) = tokio::fs::metadata(&self.file_path).await {
+            if meta.len() > ROTATE_BYTES {
+                self.rotate().await;
+            }
+        }
+    }
+
+    /// 滚动: 读取全部, 仅保留最近 MAX_LINES 条并重写文件.
+    async fn rotate(&self) {
+        let content = match tokio::fs::read_to_string(&self.file_path).await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+        let kept: Vec<&str> = if lines.len() > MAX_LINES {
+            lines[lines.len() - MAX_LINES..].to_vec()
+        } else {
+            lines
+        };
+        let mut out = String::with_capacity(kept.len() * 64);
+        for l in kept {
+            out.push_str(l);
+            out.push('\n');
+        }
+        if let Ok(mut file) = tokio::fs::File::create(&self.file_path).await {
+            let _ = file.write_all(out.as_bytes()).await;
         }
     }
 

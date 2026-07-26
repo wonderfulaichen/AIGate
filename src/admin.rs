@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::extract::State;
 use axum::response::Html;
 use axum::Json;
+use futures::future::join_all;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
@@ -166,9 +167,17 @@ pub async fn record_request_with_tokens(
 // ─── API 路由 ───
 
 /// GET /admin — 返回管理面板 HTML.
-pub async fn admin_page() -> Html<&'static str> {
-    Html(include_str!("admin.html"))
+///
+/// 将 API 鉴权令牌注入页面 (仅同源 WebView 可见), 使本地面板能带令牌调用受保护的
+/// /admin/api/* 接口; 未配置 AIGATE_ADMIN_TOKEN 时注入 `null`, 不鉴权.
+pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<String> {
+    let token_json = serde_json::to_string(&state.admin_token).unwrap_or_else(|_| "null".to_string());
+    let html = ADMIN_HTML.replace("/*__AIGATE_TOKEN__*/", &format!("window.AIGATE_TOKEN = {token_json};"));
+    Html(html)
 }
+
+/// 管理面板前端页面 (编译时嵌入).
+const ADMIN_HTML: &str = include_str!("admin.html");
 
 /// GET /admin/api/logs — 返回最近 100 条请求日志.
 pub async fn api_logs(
@@ -260,22 +269,41 @@ pub async fn api_providers_save(
         return Json(serde_json::json!({ "error": format!("写入文件失败: {e}") }));
     }
     // 热重载
-    let mut registry = state.registry.write().await;
-    match registry.reload("providers.json") {
-        Ok(()) => Json(serde_json::json!({ "message": "配置已保存并重载" })),
-        Err(e) => Json(serde_json::json!({ "error": e })),
+    {
+        let mut registry = state.registry.write().await;
+        if let Err(e) = registry.reload("providers.json") {
+            return Json(serde_json::json!({ "error": e }));
+        }
     }
+    sync_breakers_for(&state).await;
+    Json(serde_json::json!({ "message": "配置已保存并重载" }))
+}
+
+/// 配置热重载后, 按当前熔断阈值同步熔断表 (新增供应商补齐, 删除的清理).
+async fn sync_breakers_for(state: &super::proxy::AppState) {
+    let names: Vec<String> = state
+        .registry
+        .read()
+        .await
+        .providers()
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    super::proxy::sync_breakers(&state.breakers, &names, &state.breaker);
 }
 
 /// POST /admin/api/providers/reload — 从磁盘重读 providers.json.
 pub async fn api_providers_reload(
     State(state): State<super::proxy::AppState>,
 ) -> Json<serde_json::Value> {
-    let mut registry = state.registry.write().await;
-    match registry.reload("providers.json") {
-        Ok(()) => Json(serde_json::json!({ "message": "配置已重载" })),
-        Err(e) => Json(serde_json::json!({ "error": e })),
+    {
+        let mut registry = state.registry.write().await;
+        if let Err(e) = registry.reload("providers.json") {
+            return Json(serde_json::json!({ "error": e }));
+        }
     }
+    sync_breakers_for(&state).await;
+    Json(serde_json::json!({ "message": "配置已重载" }))
 }
 
 /// GET /admin/api/keys — 返回所有 API Key 的脱敏视图.
@@ -323,6 +351,8 @@ pub struct HealthEntry {
     endpoint: String,
     status: String,
     latency_ms: u64,
+    /// 熔断状态: closed / open / half-open.
+    circuit: String,
 }
 
 /// POST /admin/api/providers/test — 测试单个供应商连通性.
@@ -455,46 +485,85 @@ pub async fn api_mock(
     }))
 }
 
-/// GET /admin/api/health — 对各供应商端点做轻量探测.
+/// GET /admin/api/health — 复用熔断状态 + TCP 连通性预检 (不再打真实 /models, 省 token).
 pub async fn api_health(
     State(state): State<super::proxy::AppState>,
 ) -> Json<Vec<HealthEntry>> {
-    let client = &state.client;
-    let mut results = Vec::new();
-
     let providers = state.registry.read().await.providers();
-    for provider in &providers {
-        let base_url = provider
-            .endpoint
-            .replace("/chat/completions", "/models");
-        let start = Instant::now();
-        let status = match client
-            .get(&base_url)
-            .header("Authorization", "Bearer probe")
-            .timeout(Duration::from_secs(8))
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                let code = resp.status().as_u16();
-                if code == 401 || code == 403 {
-                    "ok (auth required)".to_string()
-                } else if code < 500 {
-                    "ok".to_string()
-                } else {
-                    format!("error {code}")
-                }
-            }
-            Err(e) => format!("unreachable: {e}"),
+    let precheck_timeout = Duration::from_secs(5);
+
+    // 并发: 读取熔断状态并做 HTTP 连通性预检 (复用 reqwest 客户端, 与真实请求同路径).
+    let client = &state.client;
+    let mut futs = Vec::new();
+    for p in &providers {
+        let ep = p.endpoint.clone();
+        let cb_state = {
+            let g = state.breakers.lock().unwrap();
+            g.get(&p.name)
+                .map(|cb| cb.peek_state().as_str().to_string())
+                .unwrap_or_else(|| "closed".to_string())
         };
-        results.push(HealthEntry {
-            provider: provider.name.clone(),
-            endpoint: provider.endpoint.clone(),
-            status,
-            latency_ms: start.elapsed().as_millis() as u64,
+        futs.push(async move {
+            let start = Instant::now();
+            let reachable = super::proxy::precheck_provider(client, &ep, precheck_timeout).await;
+            (p.name.clone(), cb_state, reachable, start.elapsed())
         });
     }
-    Json(results)
+
+    let results = join_all(futs).await;
+    let entries = results
+        .into_iter()
+        .map(|(name, cb, reachable, elapsed)| {
+            let endpoint = providers
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.endpoint.clone())
+                .unwrap_or_default();
+            let latency_ms = elapsed.as_millis() as u64;
+            let status = match cb.as_str() {
+                "open" => format!(
+                    "error: 熔断断开 ({})",
+                    if reachable { "TCP 可达" } else { "不可达" }
+                ),
+                "half-open" => "recovering".to_string(),
+                _ => {
+                    if reachable {
+                        "ok".to_string()
+                    } else {
+                        "unreachable".to_string()
+                    }
+                }
+            };
+            HealthEntry {
+                provider: name,
+                endpoint,
+                status,
+                latency_ms,
+                circuit: cb,
+            }
+        })
+        .collect();
+    Json(entries)
+}
+
+/// POST /admin/api/circuit/reset — 手动强制关闭某供应商的熔断 (运维用).
+#[derive(serde::Deserialize)]
+pub struct CircuitResetReq {
+    provider: String,
+}
+
+pub async fn api_circuit_reset(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<CircuitResetReq>,
+) -> Json<serde_json::Value> {
+    let mut g = state.breakers.lock().unwrap();
+    match g.get_mut(&payload.provider) {
+        Some(cb) => {
+            cb.force_close();
+            Json(serde_json::json!({ "message": format!("已重置 {} 的熔断", payload.provider) }))
+        }
+        None => Json(serde_json::json!({ "message": format!("{} 暂无熔断记录", payload.provider) })),
+    }
 }
 
 // ─── 使用统计 ───

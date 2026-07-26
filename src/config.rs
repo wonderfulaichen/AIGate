@@ -4,12 +4,25 @@
 //! API key 由 providers.json 中的 api_key_env 字段指定, 从对应环境变量读取.
 
 use std::env;
+use std::time::Duration;
+
+use crate::circuit_breaker::CircuitBreakerConfig;
 
 /// 中转程序运行配置.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// 监听端口.
     pub port: u16,
+    /// 连接超时 (秒) — 仅限制 TCP/TLS 建连阶段, 不限制整体请求时长.
+    pub connect_timeout_secs: u64,
+    /// 整体请求超时 (秒) — 含等待上游与读取流式响应的总时长.
+    pub request_timeout_secs: u64,
+    /// 流式响应空闲超时 (秒) — 上游超过此时长未吐出下一块则断开, 防假死.
+    pub stream_idle_timeout_secs: u64,
+    /// 管理面板 API 鉴权令牌 (env `AIGATE_ADMIN_TOKEN`). 为空则不鉴权.
+    pub admin_token: Option<String>,
+    /// 熔断阈值配置 (可经环境变量覆盖).
+    pub breaker: CircuitBreakerConfig,
 }
 
 impl Config {
@@ -17,15 +30,49 @@ impl Config {
     ///
     /// 优先级: 已有环境变量 > .env 文件 > 默认值.
     /// - `PORT`: 监听端口, 默认 8787.
+    /// - `CONNECT_TIMEOUT`: 连接超时秒数, 默认 10.
+    /// - `AIGATE_ADMIN_TOKEN`: 管理面板 API 鉴权令牌, 默认不鉴权.
+    /// - `BREAKER_*`: 熔断阈值, 默认沿用 cc-switch 实战值.
     pub fn from_env() -> Self {
         load_dotenv();
         Self {
-            port: env::var("PORT")
+            port: env_u16("PORT", 8787),
+            connect_timeout_secs: env_u64("CONNECT_TIMEOUT", 10),
+            request_timeout_secs: env_u64("REQUEST_TIMEOUT_SECS", 660),
+            stream_idle_timeout_secs: env_u64("STREAM_IDLE_TIMEOUT_SECS", 120),
+            admin_token: env::var("AIGATE_ADMIN_TOKEN")
                 .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8787),
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            breaker: CircuitBreakerConfig {
+                failure_threshold: env_u32("BREAKER_FAILURE_THRESHOLD", 4),
+                success_threshold: env_u32("BREAKER_SUCCESS_THRESHOLD", 2),
+                timeout: Duration::from_secs(env_u64("BREAKER_TIMEOUT_SECS", 60)),
+                error_rate_threshold: env_f64("BREAKER_ERROR_RATE", 0.6),
+                min_requests: env_u32("BREAKER_MIN_REQUESTS", 10),
+            },
         }
     }
+}
+
+/// 读取 u16 环境变量, 失败或缺失时回退默认值.
+fn env_u16(key: &str, default: u16) -> u16 {
+    env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 读取 u64 环境变量, 失败或缺失时回退默认值.
+fn env_u64(key: &str, default: u64) -> u64 {
+    env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 读取 u32 环境变量, 失败或缺失时回退默认值.
+fn env_u32(key: &str, default: u32) -> u32 {
+    env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 读取 f64 环境变量, 失败或缺失时回退默认值.
+fn env_f64(key: &str, default: f64) -> f64 {
+    env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
 
 /// 加载当前目录下的 .env 文件.

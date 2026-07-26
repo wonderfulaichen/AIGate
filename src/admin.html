@@ -488,7 +488,9 @@ input.search-input::placeholder{color:#6b7280}
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs font-mono" style="color:#6b7280" x-text="h.latency_ms+'ms'"></span>
+                <span class="text-xs px-2.5 py-1 rounded" :class="circuitClass(h.circuit)" x-text="h.circuit"></span>
                 <span class="text-xs px-2.5 py-1 rounded" :class="h.status.startsWith('ok')?'text-[#34d399] bg-[rgba(52,211,153,.15)]':'text-[#ef4444] bg-[rgba(239,68,68,.15)]'" x-text="h.status"></span>
+                <button @click="resetCircuit(h.provider)" class="text-xs px-2.5 py-1 rounded" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none">重置熔断</button>
               </div>
             </div>
           </template>
@@ -725,6 +727,12 @@ input.search-input::placeholder{color:#6b7280}
 </div>
 
 <script>
+/*__AIGATE_TOKEN__*/
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (window.AIGATE_TOKEN) h['Authorization'] = 'Bearer ' + window.AIGATE_TOKEN;
+  return h;
+}
 function dashboard() {
   return {
     // Sidebar navigation — matches 68HUB layout
@@ -787,11 +795,19 @@ function dashboard() {
       }, 3000);
     },
 
-    async fetchLogs()    { try { const r=await fetch('/admin/api/logs'); if(r.ok) this.logs=await r.json(); } catch(e){} },
-    async fetchRoutes()  { try { const r=await fetch('/admin/api/routes'); if(r.ok) this.routes=await r.json(); } catch(e){} },
-    async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health'); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
-    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity); if(r.ok) { this.stats=await r.json(); this.loading=false; } } catch(e){} },
-    async clearAllLogs() { try { const r=await fetch('/admin/api/logs',{method:'DELETE'}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){} },
+    async fetchLogs()    { try { const r=await fetch('/admin/api/logs', {headers:authHeaders()}); if(r.ok) this.logs=await r.json(); } catch(e){} },
+    async fetchRoutes()  { try { const r=await fetch('/admin/api/routes', {headers:authHeaders()}); if(r.ok) this.routes=await r.json(); } catch(e){} },
+    async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
+    circuitClass(c) {
+      if (c === 'open') return 'text-[#ef4444] bg-[rgba(239,68,68,.15)]';
+      if (c === 'half-open') return 'text-[#f59e0b] bg-[rgba(245,158,11,.15)]';
+      return 'text-[#34d399] bg-[rgba(52,211,153,.15)]';
+    },
+    async resetCircuit(provider) {
+      try { const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})}); if(r.ok){ await this.fetchHealth(); } } catch(e){}
+    },
+    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; } } catch(e){} },
+    async clearAllLogs() { try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){} },
     clearLogs() { this.logs=[]; },
 
     exportLogs() {
@@ -809,13 +825,13 @@ function dashboard() {
     },
 
     // Settings API
-    async fetchKeys() { try { const r=await fetch('/admin/api/keys'); if(r.ok) this.keysData=await r.json(); } catch(e){} },
+    async fetchKeys() { try { const r=await fetch('/admin/api/keys', {headers:authHeaders()}); if(r.ok) this.keysData=await r.json(); } catch(e){} },
     editKey(envVar) { this.editingKey=envVar; this.keyEditValue=''; this.keyMsg=''; },
     cancelEditKey() { this.editingKey=null; this.keyEditValue=''; this.keyMsg=''; },
     async saveKey(envVar) {
       this.keyMsg='';
       try {
-        const r=await fetch('/admin/api/keys',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({env_var:envVar,value:this.keyEditValue})});
+        const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({env_var:envVar,value:this.keyEditValue})});
         const d=await r.json();
         if(r.ok) {
           this.keyMsg=d.message||'已保存';
@@ -829,7 +845,7 @@ function dashboard() {
     },
     async loadProvidersForm() {
        try {
-         const r=await fetch('/admin/api/providers');
+         const r=await fetch('/admin/api/providers', {headers:authHeaders()});
          if(r.ok) {
            const d=await r.json();
            if(d.parsed&&d.parsed.providers) {
@@ -859,7 +875,7 @@ function dashboard() {
        prov._testing = true;
        prov._testResult = null;
        try {
-         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:prov.endpoint})});
+         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint})});
          if(r.ok) prov._testResult = await r.json();
          else prov._testResult = {success:false,status:'请求失败',latency_ms:0};
        } catch(e){ prov._testResult = {success:false,status:'网络错误',latency_ms:0}; }
@@ -887,7 +903,7 @@ function dashboard() {
            };
          });
          const json = JSON.stringify({providers:providers}, null, 2);
-         const r=await fetch('/admin/api/providers/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({json:json})});
+         const r=await fetch('/admin/api/providers/save',{method:'POST',headers:authHeaders(),body:JSON.stringify({json:json})});
          const d=await r.json();
          this.providersFormMsg=d.message||d.error||'保存失败';
          if(d.message) { this.fetchRoutes(); setTimeout(()=>this.providersFormMsg='',3000); }

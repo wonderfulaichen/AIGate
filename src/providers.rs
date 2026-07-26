@@ -48,7 +48,10 @@ struct ProvidersFile {
     providers: Vec<ProviderConfig>,
 }
 
-/// 运行时路由条目 — model id → (供应商配置, 模型配置).
+/// 运行时路由条目 — 模型中转ID → (供应商配置, 模型配置).
+///
+/// 注意: 客户端请求里的 `model` 字段是**模型中转ID**(对外暴露的别名, 可任取符合用途的名称),
+/// 由 providers.json 的键定义; `upstream_model` 才是上游真实模型 ID.
 #[derive(Debug, Clone)]
 pub struct RouteEntry {
     pub provider: ProviderConfig,
@@ -106,12 +109,12 @@ impl ProviderRegistry {
         })
     }
 
-    /// 按模型 id 查找路由条目 (返回克隆, 支持 RwLock 场景).
+    /// 按模型中转ID查找路由条目 (返回克隆, 支持 RwLock 场景).
     pub fn lookup(&self, model_id: &str) -> Option<RouteEntry> {
         self.routes.get(model_id).cloned()
     }
 
-    /// 获取所有已注册的 model id (用于 /v1/models).
+    /// 获取所有已注册的模型中转ID (用于 /v1/models).
     pub fn model_ids(&self) -> Vec<&str> {
         self.routes.keys().map(|s| s.as_str()).collect()
     }

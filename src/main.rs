@@ -3,17 +3,23 @@
 // Windows 上隐藏控制台窗口 (双击 exe 时无黑框, 从 cmd 运行时仍可见)
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use reqwest::dns::{Name, Resolve, Resolving};
 
 use axum::extract::State;
-use axum::{routing::post, Router};
+use axum::http::{Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::body::Body;
+use axum::{routing::{get, post}, Router};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 use winit::{
     dpi::LogicalSize,
@@ -26,7 +32,9 @@ use wry::WebViewBuilder;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 mod admin;
+mod circuit_breaker;
 mod config;
+mod thinking;
 mod keys;
 mod providers;
 mod proxy;
@@ -98,7 +106,7 @@ fn ensure_default_configs(base: &std::path::Path) {
     let providers_path = base.join("providers.json");
     if !providers_path.exists() {
         let default = r#"{
-  "_端点说明": "endpoint 请替换为你的实际上游 API 地址。以下仅为示例配置。",
+  "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。",
   "providers": [
     {
       "name": "zen",
@@ -106,10 +114,10 @@ fn ensure_default_configs(base: &std::path::Path) {
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
       "models": {
-        "big-pickle-ZEN": {"upstream_model": "big-pickle"},
-        "deepseek-v4-flash-free-ZEN": {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
-        "mimo-v2.5-free-ZEN": {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
-        "north-mini-code-free-ZEN": {"upstream_model": "north-mini-code-free"}
+        "zen-coder":  {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
+        "zen-chat":   {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
+        "zen-mini":   {"upstream_model": "north-mini-code-free"},
+        "zen-vision": {"upstream_model": "big-pickle"}
       }
     },
     {
@@ -117,10 +125,10 @@ fn ensure_default_configs(base: &std::path::Path) {
       "endpoint": "https://api.example.com/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
       "models": {
-        "kimi-k2.7-code-GO": {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
-        "deepseek-v4-pro-GO": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
-        "deepseek-v4-flash-GO": {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "glm-5.2-GO": {"upstream_model": "glm-5.2", "reasoning_effort": "high"}
+        "go-coder":  {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
+        "go-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
+        "go-flash":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
+        "go-glm":    {"upstream_model": "glm-5.2", "reasoning_effort": "high"}
       }
     },
     {
@@ -128,8 +136,8 @@ fn ensure_default_configs(base: &std::path::Path) {
       "endpoint": "https://api.deepseek.com/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY",
       "models": {
-        "deepseek-v4-flash-DS": {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "deepseek-v4-pro-DS": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}
+        "ds-coder":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
+        "ds-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}
       }
     }
   ]
@@ -152,6 +160,35 @@ fn ensure_default_configs(base: &std::path::Path) {
 
     let data_dir = base.join("data");
     let _ = std::fs::create_dir_all(&data_dir);
+}
+
+// ─── 管理面板 API 鉴权中间件 ───
+
+/// 管理 API 鉴权: 配置 AIGATE_ADMIN_TOKEN 后, 要求请求头携带
+/// `Authorization: Bearer <token>`, 否则返回 401; 未配置则直接放行.
+///
+/// 本地桌面窗口 (WebView) 由 admin_page 注入同一令牌, 面板功能不受影响.
+async fn require_admin_token(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    if let Some(token) = &state.admin_token {
+        let authorized = req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == format!("Bearer {token}"))
+            .unwrap_or(false);
+        if !authorized {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "admin api requires a valid bearer token",
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
 }
 
 // ─── 托盘图标生成 ───
@@ -313,7 +350,8 @@ fn main() {
 
     let client = match reqwest::Client::builder()
         .dns_resolver(Arc::new(Ipv4Resolver::new()))
-        .timeout(std::time::Duration::from_secs(660))
+        .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_secs))
+        .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
         .build()
     {
         Ok(c) => c,
@@ -323,29 +361,76 @@ fn main() {
         }
     };
 
+    // 熔断表预填充: 每个供应商一个熔断实例, 使用可配置阈值.
+    let breaker_cfg = config.breaker.clone();
+    let mut breaker_map: HashMap<String, circuit_breaker::CircuitBreaker> = HashMap::new();
+    for p in registry.providers() {
+        breaker_map.insert(p.name.clone(), circuit_breaker::CircuitBreaker::with_config(breaker_cfg.clone()));
+    }
+    let breakers = Arc::new(Mutex::new(breaker_map));
+
+    // 启动预检: 对网络不可达的供应商预置熔断 (Open), 使其快速失败而非干等超时.
+    let precheck_timeout = Duration::from_secs(config.connect_timeout_secs.min(5));
+    let precheck_snapshot = registry.providers();
+    // 克隆一份 client 供预检使用 (reqwest::Client 内部是 Arc, 克隆开销极低),
+    // 避免预检 future 借用 client 与其后 move 进 AppState 冲突.
+    let precheck_client = client.clone();
+    // 捕获引用 (Copy) 而非移动 client 本身, 避免每个 future 都试图 move precheck_client.
+    let precheck_client_ref = &precheck_client;
+    let mut prechecks = Vec::new();
+    for p in &precheck_snapshot {
+        let ep = p.endpoint.clone();
+        prechecks.push(async move {
+            (p.name.clone(), proxy::precheck_provider(precheck_client_ref, &ep, precheck_timeout).await)
+        });
+    }
+    rt.block_on(async {
+        for (name, reachable) in futures::future::join_all(prechecks).await {
+            if reachable {
+                info!("main: precheck ok for provider={name}");
+            } else {
+                warn!("main: precheck FAILED for provider={name}, preset circuit OPEN");
+                if let Some(cb) = breakers.lock().unwrap().get_mut(&name) {
+                    cb.force_open();
+                }
+            }
+        }
+    });
+
     let state = AppState {
         client,
         registry: Arc::new(RwLock::new(registry)),
-        log_store: store::LogStore::new("data"),
+        admin_token: config.admin_token.clone(),
+        breaker: config.breaker.clone(),
+        stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
         key_store: keys::KeyStore::new("data"),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
+        breakers,
     };
+
+    // 管理面板 API 路由: 配置了 AIGATE_ADMIN_TOKEN 时整体启用 Bearer 鉴权.
+    let mut admin_api = Router::new()
+        .route("/admin/api/logs", get(admin::api_logs).delete(admin::api_logs_delete))
+        .route("/admin/api/routes", get(admin::api_routes))
+        .route("/admin/api/providers", get(admin::api_providers_get))
+        .route("/admin/api/providers/save", post(admin::api_providers_save))
+        .route("/admin/api/providers/reload", post(admin::api_providers_reload))
+        .route("/admin/api/providers/test", post(admin::api_providers_test))
+        .route("/admin/api/keys", get(admin::api_keys_get).put(admin::api_keys_put))
+        .route("/admin/api/health", get(admin::api_health))
+        .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
+        .route("/admin/api/stats", get(admin::api_stats))
+        .route("/admin/api/mock", post(admin::api_mock));
+    if config.admin_token.is_some() {
+        admin_api = admin_api.layer(middleware::from_fn_with_state(state.clone(), require_admin_token));
+    }
 
     let app = Router::new()
         .route("/v1/chat/completions", post(proxy::chat_completions))
-        .route("/v1/models", axum::routing::get(handle_models))
-        .route("/health", axum::routing::get(|| async { "ok" }))
-        .route("/admin", axum::routing::get(admin::admin_page))
-        .route("/admin/api/logs", axum::routing::get(admin::api_logs).delete(admin::api_logs_delete))
-        .route("/admin/api/routes", axum::routing::get(admin::api_routes))
-        .route("/admin/api/providers", axum::routing::get(admin::api_providers_get))
-        .route("/admin/api/providers/save", axum::routing::post(admin::api_providers_save))
-        .route("/admin/api/providers/reload", axum::routing::post(admin::api_providers_reload))
-        .route("/admin/api/providers/test", axum::routing::post(admin::api_providers_test))
-        .route("/admin/api/keys", axum::routing::get(admin::api_keys_get).put(admin::api_keys_put))
-        .route("/admin/api/health", axum::routing::get(admin::api_health))
-        .route("/admin/api/stats", axum::routing::get(admin::api_stats))
-        .route("/admin/api/mock", axum::routing::post(admin::api_mock))
+        .route("/v1/models", get(handle_models))
+        .route("/health", get(|| async { "ok" }))
+        .route("/admin", get(admin::admin_page))
+        .merge(admin_api)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

@@ -2,9 +2,12 @@
 //!
 //! 路由表由 providers.json 定义, 支持多个供应商. 详见 providers.rs.
 
+use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -19,6 +22,7 @@ use tracing::{info, warn};
 use crate::admin::LogBuffer;
 use crate::keys::KeyStore;
 use crate::providers::ProviderRegistry;
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 
 /// 共享状态: HTTP client + 供应商路由表 + 请求日志缓冲区 + Key 存储.
 #[derive(Clone)]
@@ -28,10 +32,74 @@ pub struct AppState {
     pub registry: Arc<RwLock<ProviderRegistry>>,
     /// 内存请求日志缓冲区.
     pub log_buffer: LogBuffer,
-    /// 持久化日志存储.
-    pub log_store: crate::store::LogStore,
     /// API Key 存储.
     pub key_store: KeyStore,
+    /// 管理面板 API 鉴权令牌 (None 表示不鉴权).
+    pub admin_token: Option<String>,
+    /// 熔断阈值配置 (用于热重载时按配置补齐新供应商的熔断器).
+    pub breaker: CircuitBreakerConfig,
+    /// 流式响应空闲超时.
+    pub stream_idle_timeout: Duration,
+    /// 熔断器表: provider name -> 该供应商的熔断器 (std Mutex, 临界区极短).
+    pub breakers: BreakerMap,
+}
+
+/// 熔断器表类型别名.
+pub type BreakerMap = Arc<Mutex<HashMap<String, CircuitBreaker>>>;
+
+/// 查询某供应商是否允许发送请求 (会消费 HalfOpen 的探测名额).
+///
+/// 返回 false 表示熔断处于 Open, 或 HalfOpen 下探测名额已占用,
+/// 调用方应快速失败 (503) 而非打向上游.
+pub fn check_breaker(breakers: &BreakerMap, provider: &str) -> bool {
+    let mut g = breakers.lock().expect("breaker lock poisoned");
+    g.entry(provider.to_string())
+        .or_insert_with(CircuitBreaker::new)
+        .allow_request()
+}
+
+/// 上报一次上游请求结果. success=true 记成功, false 记失败.
+pub fn report_breaker(breakers: &BreakerMap, provider: &str, success: bool) {
+    let mut g = breakers.lock().expect("breaker lock poisoned");
+    let cb = g.entry(provider.to_string()).or_insert_with(CircuitBreaker::new);
+    if success {
+        cb.record_success();
+    } else {
+        cb.record_failure();
+    }
+}
+
+/// 供应商配置热重载后同步熔断表.
+///
+/// - 新增的供应商: 按 `cfg` 阈值创建熔断器 (避免退回默认阈值).
+/// - 已删除的供应商: 从表中移除.
+/// - 已存在的供应商: 保留其当前熔断状态 (不重置在跑的熔断).
+pub fn sync_breakers(breakers: &BreakerMap, provider_names: &[String], cfg: &CircuitBreakerConfig) {
+    let mut g = breakers.lock().expect("breaker lock poisoned");
+    g.retain(|name, _| provider_names.iter().any(|p| p == name));
+    for name in provider_names {
+        g.entry(name.clone())
+            .or_insert_with(|| CircuitBreaker::with_config(cfg.clone()));
+    }
+}
+
+/// 启动/健康检查用的连通性探测: 复用 reqwest 客户端发真实 HTTP 请求.
+///
+/// 复用客户端的 IPv4 解析器 + 系统代理 + connect_timeout, 与真实转发请求走**同一条**
+/// 网络路径, 因此对"只有走客户端路径才可达"的供应商 (如依赖代理出网、或 IPv6 被屏蔽)
+/// 也能正确判定, 不会出现裸 TCP 误判不可达的问题.
+///
+/// 对供应商的 `/models` 端点发 GET: 任何 HTTP 响应 (含 401/404/TLS 错误) 都说明已建连,
+/// 视为**可达**; 仅当连接层错误 (DNS 失败 / 连接被拒 / 超时) 才视为**不可达**.
+/// `/models` 仅返回模型列表元数据, 不消耗生成 token, 成本可忽略.
+pub async fn precheck_provider(client: &Client, endpoint: &str, timeout: Duration) -> bool {
+    let models_url = endpoint.replace("/chat/completions", "/models");
+    match client.get(&models_url).timeout(timeout).send().await {
+        // 任何 HTTP 响应 = TCP/TLS 已建连 = 可达.
+        Ok(_) => true,
+        // 区分连接层错误与其他错误: 只有连接/超时失败才判不可达.
+        Err(e) => !e.is_connect() && !e.is_timeout(),
+    }
 }
 
 /// 处理 POST /v1/chat/completions.
@@ -79,6 +147,21 @@ pub async fn chat_completions(
     let model_cfg = route.model.clone();
     let provider = route.provider.clone(); // 保存 provider 用于后续 headers 和 api_key
     drop(route); // 释放读锁
+
+    // 2.5 熔断检查: 供应商处于 Open / 探测名额占用时快速失败 (503),
+    //     避免把请求打向已挂的上游, 也避免苦等 660s 超时.
+    if !check_breaker(&state.breakers, &provider_name) {
+        warn!("proxy: circuit open for provider={provider_name}, fast-fail 503");
+        crate::admin::record_request(
+            &state.log_buffer, &model, &provider_name, &endpoint, 503, start, bytes.len(),
+            Some("circuit breaker open".to_string()),
+        ).await;
+        return Err(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
+        ));
+    }
+
     info!(
         "proxy: model={model}, provider={provider_name}, endpoint={endpoint}, body_len={}",
         bytes.len()
@@ -132,6 +215,7 @@ pub async fn chat_completions(
         .await
         .map_err(|e| {
             let chain = format_error_chain(&e);
+            report_breaker(&state.breakers, &provider_name, false);
             warn!("proxy: send() failed for {ep_clone}: {chain}");
             let e_clone = chain.clone();
             let model2 = model.clone();
@@ -156,6 +240,9 @@ pub async fn chat_completions(
             err = &err_body[..err_body.len().min(500)]
         );
         let err_msg = format!("upstream returned {upstream_status}: {err_body}");
+        // 5xx 视为供应商故障 → 记失败 (可能触发熔断); 4xx (含 429) 视为
+        // 客户端/配置问题, 供应商仍健康 → 记成功, 不熔断.
+        report_breaker(&state.breakers, &provider_name, upstream_status < 500);
         let err_clone = err_msg.clone();
         let model2 = model.clone();
         let p2 = provider_name.clone();
@@ -173,6 +260,8 @@ pub async fn chat_completions(
     }
 
     // 9. 流式透传 — 通过 TokenTracker 记录 token 用量
+    // 上游返回 2xx → 供应商健康, 记成功 (可能关闭熔断).
+    report_breaker(&state.breakers, &provider_name, true);
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
@@ -181,8 +270,87 @@ pub async fn chat_completions(
         endpoint,
         start,
         body_len_val,
+        state.stream_idle_timeout,
     );
     Ok(resp)
+}
+
+/// 上游字节流的空闲超时包装.
+///
+/// 每收到一块即重置计时器; 若超过 `idle` 仍无下一块 (上游假死), 流以
+/// `IdleError::Idle` 结束, 使代理及时释放连接, 而不是挂等整个请求超时.
+struct IdleTimeoutStream<S> {
+    inner: S,
+    idle: Duration,
+    sleep: Pin<Box<tokio::time::Sleep>>,
+}
+
+impl<S> IdleTimeoutStream<S> {
+    /// 构造空闲超时包装流.
+    pub fn new(inner: S, idle: Duration) -> Self {
+        Self {
+            inner,
+            idle,
+            sleep: Box::pin(tokio::time::sleep(idle)),
+        }
+    }
+}
+
+/// 空闲超时流的结束原因.
+#[derive(Debug)]
+enum IdleError<E> {
+    /// 上游自身返回错误.
+    Inner(E),
+    /// 超过空闲阈值未收到数据.
+    Idle,
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for IdleError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IdleError::Inner(e) => write!(f, "upstream error: {e}"),
+            IdleError::Idle => write!(f, "stream idle timeout (no data)"),
+        }
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for IdleError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            IdleError::Inner(e) => Some(e),
+            IdleError::Idle => None,
+        }
+    }
+}
+
+impl<S, E> Stream for IdleTimeoutStream<S>
+where
+    S: Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Debug + 'static,
+{
+    type Item = Result<Bytes, IdleError<E>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        match Pin::new(&mut this.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(b))) => {
+                // 收到数据, 重置空闲计时器
+                this.sleep
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + this.idle);
+                Poll::Ready(Some(Ok(b)))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(IdleError::Inner(e)))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                if this.sleep.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Some(Err(IdleError::Idle)))
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
 }
 
 /// 对上游 SSE 流进行透传, 同时解析 usage 事件记录 token 数.
@@ -194,10 +362,12 @@ fn stream_response_with_tokens(
     endpoint: String,
     start: std::time::Instant,
     req_body_len: usize,
+    idle: Duration,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
-    let inner_stream = upstream.bytes_stream();
+    // 用空闲超时包装上游字节流, 防止上游假死长期占用连接.
+    let inner_stream = IdleTimeoutStream::new(upstream.bytes_stream(), idle);
 
     let tracked = TokenStream {
         inner: inner_stream,
@@ -309,6 +479,7 @@ impl<S> TokenStream<S> {
 impl<S, E> Stream for TokenStream<S>
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Debug,
 {
     type Item = Result<Bytes, E>;
 
@@ -319,6 +490,12 @@ where
                 Poll::Ready(Some(Ok(chunk))) => {
                     this.parse_sse_chunk(&chunk);
                     return Poll::Ready(Some(Ok(chunk)));
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    // 上游错误或空闲超时: 结束流, 让客户端看到正常结束.
+                    warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
+                    this.done = true;
+                    return Poll::Ready(None);
                 }
                 Poll::Ready(None) => {
                     if !this.done {
@@ -337,7 +514,7 @@ where
                     }
                     return Poll::Ready(None);
                 }
-                other => return other,
+                Poll::Pending => return Poll::Pending,
             }
         }
     }
@@ -358,7 +535,14 @@ fn inject_model_params(
     bytes: bytes::Bytes,
     model_cfg: &crate::providers::ModelConfig,
 ) -> bytes::Bytes {
-    // 没有任何需要注入的参数 → 原样返回
+    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return bytes; // 解析失败, 原样返回
+    };
+
+    // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
+    crate::thinking::normalize_thinking(&mut v, model_cfg);
+
+    // 没有任何需要注入的参数 → 已含规范化结果, 序列化返回.
     let has_remap = model_cfg.upstream_model.is_some();
     let has_effort = model_cfg.reasoning_effort.is_some();
     let has_extra = model_cfg
@@ -367,11 +551,7 @@ fn inject_model_params(
         .map(|v| v.is_object())
         .unwrap_or(false);
     if !has_remap && !has_effort && !has_extra {
-        return bytes;
-    }
-
-    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return bytes; // 解析失败, 原样返回
+        return serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into();
     };
 
     // 替换 model 为上游真实模型名
