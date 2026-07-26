@@ -1,6 +1,6 @@
 # AIGate
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange)
 [![Release](https://img.shields.io/github/v/release/wonderfulaichen/AIGate)](https://github.com/wonderfulaichen/AIGate/releases)
 
@@ -371,6 +371,10 @@ main.rs
 
 ## 许可
 
-[MIT](LICENSE)
+[GNU General Public License v3.0](LICENSE)
 
-Copyright (c) 2026 wonderfulaichen
+Copyright (C) 2026 wonderfulaichen
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
