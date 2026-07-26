@@ -1,0 +1,31 @@
+[package]
+name = "AIGate"
+version = "0.1.0"
+edition = "2021"
+description = "Local OpenAI-compatible proxy that bridges Prism to OpenCode Zen + Go plan"
+
+[dependencies]
+axum = "0.7"
+bytes = "1"
+futures = "0.3"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+winit = "0.29"
+wry = "0.38"
+tray-icon = "0.13"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+
+[[bin]]
+name = "AIGate"
+path = "src/main.rs"
+
+[build-dependencies]
+embed-resource = "2"

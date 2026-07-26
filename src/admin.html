@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIGate · 控制台</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+:root{color-scheme:dark}
+html,body{margin:0;padding:0;height:100%;overflow:hidden}
+body{background:#171212;color:#cdd0d4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,sans-serif;font-size:13px}
+*{scrollbar-width:none;-ms-overflow-style:none}
+::-webkit-scrollbar{display:none}
+.content-area{height:100vh;overflow-y:auto;overflow-x:hidden}
+
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes loadingBar{0%{transform:translateX(-100%)}50%{transform:translateX(80%)}100%{transform:translateX(200%)}}
+.page-enter{animation:fadeIn .25s ease-out}
+.animate-loading-bar{animation:loadingBar 1.8s ease-in-out infinite}
+
+.card{border:1px solid #2a2d37;border-radius:12px;background:#1e2028;transition:border-color .15s}
+.card:hover{border-color:#374151}
+.card-body{padding:16px}
+
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px 12px;font-weight:500;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #2a2d37}
+td{padding:10px 12px;font-size:13px;border-bottom:1px solid rgba(42,45,55,.5)}
+tr:hover td{background:rgba(99,102,241,.03)}
+
+.badge{display:inline-flex;align-items:center;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:600}
+.badge-ghost{background:rgba(255,255,255,.04);color:#6b7280}
+.badge-primary{background:rgba(99,102,241,.15);color:#818cf8}
+.badge-error{background:rgba(239,68,68,.15);color:#f87171}
+.badge-success{background:rgba(52,211,153,.15);color:#34d399}
+.badge-warning{background:rgba(245,158,11,.15);color:#fbbf24}
+
+.select-input{background:#2a2d37;border:1px solid #374151;border-radius:6px;padding:4px 28px 4px 10px;font-size:12px;color:#cdd0d4;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+.select-input:focus{outline:none;border-color:#6366f1}
+
+.progress-track{background:#2a2d37;border-radius:999px;height:8px;overflow:hidden}
+.progress-fill{height:100%;border-radius:999px;transition:width .6s cubic-bezier(.22,1,.36,1)}
+.progress-fill.primary{background:#6366f1}
+.progress-fill.secondary{background:#06b6d4}
+.progress-fill.accent{background:#f59e0b}
+.progress-fill.error{background:#ef4444}
+.progress-fill.success{background:#34d399}
+
+.btn-primary{display:inline-flex;align-items:center;gap:4px;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;background:#6366f1;color:#fff;cursor:pointer;transition:background .15s;border:none}
+.btn-primary:hover{background:#4f46e5}
+.btn-ghost{display:inline-flex;align-items:center;gap:4px;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;color:#6b7280;cursor:pointer;transition:all .15s;border:none;background:transparent}
+.btn-ghost:hover{color:#cdd0d4;background:rgba(255,255,255,.04)}
+
+input.search-input{background:#2a2d37;border:1px solid #374151;border-radius:6px;padding:5px 10px;font-size:12px;color:#cdd0d4;width:180px;transition:border-color .15s}
+input.search-input:focus{outline:none;border-color:#6366f1}
+input.search-input::placeholder{color:#6b7280}
+</style>
+</head>
+<body>
+
+<div class="h-screen flex overflow-hidden" x-data="dashboard()" x-init="init()">
+
+  <!-- ═══ Sidebar (64px icon nav) ═══ -->
+  <nav class="w-16 bg-[#171212] border-r border-[#2a2d37] flex flex-col items-center py-3 gap-1 shrink-0">
+    <template x-for="item in navItems" :key="item.id">
+      <a href="#" @click.prevent="switchTab(item.id)"
+        class="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-100"
+        :class="activeTab===item.id ? 'bg-[#6366f1] text-white shadow-sm shadow-[#6366f1]/30' : 'text-[#6b7280] hover:text-[#cdd0d4] hover:bg-[#2a2d37]'"
+        :title="item.label"
+        x-html="item.icon">
+      </a>
+    </template>
+  </nav>
+
+  <!-- ═══ Main Content ═══ -->
+  <main class="flex-1 content-area p-6">
+
+    <!-- ==================== DASHBOARD ==================== -->
+    <div x-show="activeTab==='dashboard'" class="page-enter space-y-4">
+      <template x-if="loading && !stats">
+        <div class="flex items-center justify-center min-h-[calc(100vh-120px)]">
+          <div class="w-48 space-y-2"><div class="h-1 rounded-full overflow-hidden relative" style="background:#2a2d37"><div class="absolute inset-0 h-full rounded-full animate-loading-bar" style="background:linear-gradient(90deg,#6366f1,#06b6d4)"></div></div><p class="text-[11px] text-center" style="color:#6b7280">加载中...</p></div>
+        </div>
+      </template>
+      <template x-if="!loading && (!stats || stats.total_requests===0)">
+        <div class="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] gap-6">
+          <div class="text-center">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4" style="background:rgba(52,211,153,.12);color:#34d399">
+              <span class="w-2 h-2 rounded-full bg-[#34d399] inline-block"></span> 服务运行中
+            </div>
+            <h2 class="text-lg font-bold text-white">AIGate 代理服务</h2>
+            <p class="text-sm mt-1" style="color:#6b7280">等待第一次 API 请求...</p>
+          </div>
+          <div class="card w-full max-w-lg"><div class="card-body space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">连接信息</span>
+              <span class="text-xs" style="color:#6b7280">API 端点</span>
+            </div>
+            <div class="flex items-center gap-2 font-mono text-sm px-3 py-2 rounded" style="background:rgba(255,255,255,.04)">
+              <span style="color:#6b7280">POST</span>
+              <span style="color:#a5b4fc">http://127.0.0.1:8787/v1/chat/completions</span>
+            </div>
+            <div class="flex items-center gap-2 font-mono text-sm px-3 py-2 rounded" style="background:rgba(255,255,255,.04)">
+              <span style="color:#6b7280">GET</span>
+              <span style="color:#a5b4fc">http://127.0.0.1:8787/v1/models</span>
+            </div>
+            <div class="text-xs" style="color:#6b7280">
+              <p>在编程工具中将 API 地址设为 <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>，API Key 任意填写。</p>
+            </div>
+          </div></div>
+          <div class="flex gap-3">
+            <button @click="switchTab('routes')" class="btn-ghost text-xs">查看路由配置</button>
+            <button @click="switchTab('health')" class="btn-ghost text-xs">健康检查</button>
+          </div>
+        </div>
+      </template>
+      <template x-if="stats && stats.total_requests>0">
+        <div class="space-y-4">
+          <h1 class="text-lg font-bold">概览</h1>
+          <div class="grid grid-cols-5 gap-4">
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-2xl font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">成功率</div><div class="text-2xl font-bold mt-1" :class="sRate>=95?'text-[#34d399]':sRate>=80?'text-[#f59e0b]':'text-[#ef4444]'" x-text="sRate+'%'"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">平均延迟</div><div class="text-2xl font-bold mt-1 text-[#06b6d4]" x-text="fmtMs(stats.avg_latency_ms)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">提示 Tokens</div><div class="text-2xl font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">补全 Tokens</div><div class="text-2xl font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="card"><div class="card-body">
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型使用排名</div>
+              <div class="space-y-3">
+                <template x-for="(m,i) in stats.top_models" :key="m.model">
+                  <div>
+                    <div class="flex items-center justify-between text-xs mb-1">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-4 text-center font-bold shrink-0" :class="'text-['+(i===0?'#f59e0b':i===1?'#cdd0d4':i===2?'#d97706':'#6b7280')+']'" x-text="'#'+(i+1)"></span>
+                        <span class="truncate" style="color:#a5b4fc" x-text="m.model"></span>
+                      </div>
+                      <span class="shrink-0 ml-2" style="color:#6b7280" x-text="m.requests+' 次'"></span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill accent" :style="'width:'+(m.requests/maxModelReqs*100)+'%'"></div></div>
+                  </div>
+                </template>
+              </div>
+              <template x-if="stats.per_model.length>5">
+                <div class="mt-3 pt-3 border-t" style="border-color:#2a2d37">
+                  <button @click="showAllModels=!showAllModels" class="text-xs hover:underline" style="color:#818cf8"><span x-text="showAllModels?'收起':'展开全部'"></span> <span style="color:#6b7280" x-text="'('+(stats.per_model.length-5)+')'"></span></button>
+                  <div x-show="showAllModels" class="mt-2 space-y-1">
+                    <template x-for="m in stats.per_model.slice(5)" :key="m.model">
+                      <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
+                        <span class="truncate max-w-[55%]" style="color:#a5b4fc" x-text="m.model"></span>
+                        <div class="flex items-center gap-3" style="color:#6b7280">
+                          <span x-text="m.requests+' 次'"></span>
+                          <template x-if="m.errors>0"><span style="color:#f87171" x-text="m.errors+' 错'"></span></template>
+                          <span x-text="fmtMs(m.avg_latency_ms)"></span>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量分布</div>
+              <template x-if="stats.per_model.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div></template>
+              <template x-if="stats.per_model.length>0">
+                <div class="flex items-center justify-center gap-4">
+                  <!-- Donut chart -->
+                  <svg width="140" height="140" viewBox="0 0 140 140" x-html="donutSvg"></svg>
+                  <!-- Legend -->
+                  <div class="space-y-2 text-xs">
+                    <template x-for="(m,i) in stats.per_model.slice(0,6)" :key="m.model">
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="'background:'+donutColors[i%donutColors.length]"></span>
+                        <span class="truncate max-w-[100px]" style="color:#a5b4fc" x-text="m.model"></span>
+                        <span style="color:#6b7280" x-text="Math.round(m.requests/(stats.total_requests||1)*100)+'%'"></span>
+                      </div>
+                    </template>
+                    <template x-if="stats.per_model.length>6">
+                      <div style="color:#6b7280">+ 其他 <span x-text="stats.per_model.length-6"></span> 个</div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="flex items-center justify-between mb-3">
+                <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求趋势</div>
+                <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
+                  <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
+                  <button @click="trendGranularity='day';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
+                  <button @click="trendGranularity='month';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
+                </div>
+              </div>
+              <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无趋势数据</div></template>
+              <template x-if="stats.trends.length>0">
+                <div>
+                  <svg class="w-full h-24" :viewBox="'0 0 '+(stats.trends.length*60+40)+' 96'" preserveAspectRatio="xMidYMid meet">
+                    <defs><linearGradient id="da" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".15"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0"/></linearGradient></defs>
+                    <template x-if="tp.length>=2"><path :d="ta" fill="url(#da)"/></template>
+                    <polyline :points="tps" fill="none" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <template x-for="(pt,j) in tp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2" fill="#818cf8" stroke="#1e2028" stroke-width="1"/></template>
+                  </svg>
+                  <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
+                    <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <template x-for="t in stats.trends" :key="t.date">
+                      <div>
+                        <div class="flex items-center justify-between text-xs mb-1">
+                          <span class="font-medium w-12 shrink-0" style="color:#6b7280" x-text="t.date"></span>
+                          <span style="color:#6b7280" x-text="t.requests+' 次'"></span>
+                        </div>
+                        <div class="flex gap-1.5">
+                          <div class="flex-1 progress-track"><div class="progress-fill secondary" :style="'width:'+(t.requests/maxDailyReqs*100)+'%'"></div></div>
+                          <template x-if="t.errors>0"><div class="progress-track" style="max-width:50px;flex:1"><div class="progress-fill error" :style="'width:'+(t.errors/t.requests*100)+'%'"></div></div></template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div></div>
+          </div>
+          <div class="card"><div class="card-body">
+            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">供应商统计</div>
+            <div class="overflow-x-auto"><table><thead><tr><th>供应商</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td></tr></template></tbody></table></div>
+          </div></div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ==================== TOKEN STATS ==================== -->
+    <div x-show="activeTab==='tokens'" class="page-enter space-y-4">
+      <div class="flex items-center justify-between"><div><h1 class="text-lg font-bold">Token 统计</h1><p class="text-xs mt-1" style="color:#6b7280">近 100 条请求的模型用量分析</p></div></div>
+      <template x-if="!stats || stats.total_requests===0">
+        <div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div>
+      </template>
+      <template x-if="stats && stats.total_requests>0">
+        <div class="space-y-4">
+          <div class="grid grid-cols-4 gap-4">
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-lg font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">提示 Tokens</div><div class="text-lg font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">补全 Tokens</div><div class="text-lg font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总 Tokens</div><div class="text-lg font-bold mt-1 text-white" x-text="fmtT(stats.total_prompt_tokens+stats.total_completion_tokens)"></div></div></div>
+          </div>
+          <!-- Tab toggle + granularity -->
+          <div class="flex items-center gap-3">
+            <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
+              <button @click="tokenTab='ranking'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="tokenTab==='ranking'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">模型排名</button>
+              <button @click="tokenTab='daily'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="tokenTab==='daily'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'"><span x-text="trendGranularity==='hour'?'时趋势':trendGranularity==='month'?'月趋势':'日趋势'"></span></button>
+            </div>
+            <div x-show="tokenTab==='daily'" class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
+              <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
+              <button @click="trendGranularity='day';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
+              <button @click="trendGranularity='month';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
+            </div>
+          </div>
+          <!-- Ranking view -->
+          <div x-show="tokenTab==='ranking'">
+            <div class="card"><div class="card-body">
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量</div>
+              <!-- Bar chart -->
+              <div class="space-y-3 mb-4">
+                <template x-for="(m,i) in stats.per_model.slice(0,8)" :key="m.model">
+                  <div>
+                    <div class="flex items-center justify-between text-xs mb-1">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-5 text-center font-bold text-[10px] shrink-0" :class="'text-['+(i<3?['#f59e0b','#94a3b8','#d97706'][i]:'#6b7280')+']'" x-text="'#'+(i+1)"></span>
+                        <span class="truncate max-w-[200px]" style="color:#a5b4fc" x-text="m.model"></span>
+                      </div>
+                      <span style="color:#6b7280" x-text="m.requests+' 请求'"></span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill primary" :style="'width:'+(m.requests/maxModelReqs*100)+'%'"></div></div>
+                    <div class="flex gap-4 text-[10px] mt-0.5" style="color:#6b7280">
+                      <span x-text="'延迟: '+fmtMs(m.avg_latency_ms)"></span>
+                      <template x-if="m.errors>0"><span style="color:#f87171" x-text="'错误: '+m.errors"></span></template>
+                      <span x-text="'流量: '+fmtB(m.total_body_bytes)"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div></div>
+            <div class="card"><div class="card-body">
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型明细</div>
+              <div class="overflow-x-auto"><table><thead><tr><th>模型</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="7" class="text-center py-8" style="color:#6b7280">暂无数据</td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td></tr></template></tbody></table></div>
+            </div></div>
+          </div>
+          <!-- Daily view -->
+          <div x-show="tokenTab==='daily'">
+            <div class="card"><div class="card-body">
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">日趋势</div>
+              <template x-if="stats.trends.length<2"><div class="flex items-center justify-center h-32" style="color:#6b7280">趋势数据不足</div></template>
+              <template x-if="stats.trends.length>=2">
+                <div>
+                  <svg class="w-full h-36" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 140'" preserveAspectRatio="xMidYMid meet">
+                    <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity=".12"/><stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>
+                    <template x-if="tp.length>=2"><path :d="ta" fill="url(#tg)"/></template>
+                    <polyline :points="tps" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <template x-for="(pt,j) in tp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2.5" fill="#6366f1" stroke="#1e2028" stroke-width="1"/></template>
+                    <!-- Grid lines -->
+                    <template x-for="i in 3" :key="'g'+i"><line :x1="(tp[0]||{}).x||0" :x2="(tp[tp.length-1]||{}).x||0" :y1="20+i*30" :y2="20+i*30" stroke="#2a2d37" stroke-width="0.5"/></template>
+                  </svg>
+                  <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
+                    <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
+                  </div>
+                  <div class="mt-4 space-y-2">
+                    <template x-for="t in stats.trends" :key="t.date">
+                      <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
+                        <span class="font-medium" style="color:#6b7280" x-text="t.date"></span>
+                        <div class="flex items-center gap-4">
+                          <span x-text="t.requests+' 次请求'"></span>
+                          <template x-if="t.errors>0"><span style="color:#f87171" x-text="t.errors+' 错误'"></span></template>
+                          <template x-if="t.errors===0"><span style="color:#34d399">无错误</span></template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ==================== DAILY TRENDS ==================== -->
+    <div x-show="activeTab==='daily'" class="page-enter space-y-4">
+      <div class="flex items-center justify-between">
+        <div><h1 class="text-lg font-bold">请求趋势</h1><p class="text-xs mt-1" style="color:#6b7280">按时间粒度查看请求量与错误率</p></div>
+        <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
+          <button @click="trendGranularity='hour';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按小时</button>
+          <button @click="trendGranularity='day';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按天</button>
+          <button @click="trendGranularity='month';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按月</button>
+        </div>
+      </div>
+      <template x-if="!stats || stats.total_requests===0">
+        <div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div>
+      </template>
+      <template x-if="stats && stats.total_requests>0">
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-lg font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总错误</div><div class="text-lg font-bold mt-1" :class="stats.error_count>0?'text-[#ef4444]':'text-[#34d399]'" x-text="stats.error_count"></div></div></div>
+          </div>
+          <!-- Tab toggle -->
+          <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37;width:fit-content">
+            <button @click="dailyMode='requests'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="dailyMode==='requests'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">请求量</button>
+            <button @click="dailyMode='latency'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="dailyMode==='latency'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">延迟</button>
+          </div>
+          <div class="card"><div class="card-body">
+            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="dailyMode==='requests'?'每日请求量':'每日平均延迟'"></div>
+            <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280">暂无趋势数据</div></template>
+            <template x-if="stats.trends.length>0">
+              <div>
+                <!-- Dual datasets: requests or latency -->
+                <svg class="w-full h-40" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 160'" preserveAspectRatio="xMidYMid meet">
+                  <defs>
+                    <linearGradient id="dreq" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity=".12"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/></linearGradient>
+                    <linearGradient id="dlat" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b" stop-opacity=".12"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/></linearGradient>
+                  </defs>
+                  <!-- Grid -->
+                  <template x-for="i in 3" :key="'g'+i"><line :x1="(dailyTp[0]||{}).x||0" :x2="(dailyTp[dailyTp.length-1]||{}).x||0" :y1="20+i*35" :y2="20+i*35" stroke="#2a2d37" stroke-width="0.5"/></template>
+                  <template x-if="dailyTp.length>=2">
+                    <path :d="dailyArea" :fill="dailyMode==='requests'?'url(#dreq)':'url(#dlat)'"/>
+                  </template>
+                  <polyline :points="dailyTps" fill="none" :stroke="dailyMode==='requests'?'#06b6d4':'#f59e0b'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <template x-for="(pt,j) in dailyTp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="3" :fill="dailyMode==='requests'?'#06b6d4':'#f59e0b'" stroke="#1e2028" stroke-width="1.5"/></template>
+                </svg>
+                <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
+                  <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
+                </div>
+                <div class="mt-4 space-y-2">
+                  <template x-for="t in stats.trends" :key="t.date">
+                    <div class="flex items-center justify-between text-xs px-3 py-2 rounded" style="background:rgba(255,255,255,.02)">
+                      <span class="font-medium" style="color:#6b7280" x-text="t.date"></span>
+                      <div class="flex items-center gap-4">
+                        <span x-text="t.requests+' 次请求'"></span>
+                        <template x-if="dailyMode==='latency'"><span style="color:#f59e0b" x-text="'延迟: '+fmtMs(t.avg_latency||0)"></span></template>
+                        <template x-if="t.errors>0"><span style="color:#f87171" x-text="t.errors+' 错误'"></span></template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div></div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ==================== LOGS / RECORDS ==================== -->
+    <div x-show="activeTab==='records'" class="page-enter">
+      <div class="card"><div class="card-body">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求记录 <span style="font-weight:400" x-text="'('+logs.length+' 条)'"></span></div>
+          <div class="flex items-center gap-2">
+            <button @click="exportLogs()" class="btn-ghost text-xs">导出 JSON</button>
+            <button @click="clearLogs()" class="btn-ghost text-xs">清除</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 mb-3">
+          <input type="text" x-model="logSearch" placeholder="搜索模型/供应商/错误..." class="search-input flex-1" />
+          <select x-model="logProviderFilter" class="select-input text-xs" style="max-width:140px">
+            <option value="">全部供应商</option>
+            <template x-for="p in logProviders" :key="p">
+              <option :value="p" x-text="p"></option>
+            </template>
+          </select>
+          <select x-model="logStatusFilter" class="select-input text-xs" style="max-width:100px">
+            <option value="">全部状态</option>
+            <option value="success">成功</option>
+            <option value="error">错误</option>
+          </select>
+        </div>
+        <template x-if="filteredLogs.length===0">
+          <div class="text-center py-8 text-sm" style="color:#6b7280" x-text="logSearch?'无匹配结果':'暂无请求记录'"></div>
+        </template>
+        <template x-if="filteredLogs.length>0">
+          <div>
+            <div class="space-y-0.5 max-h-[500px] overflow-y-auto">
+              <template x-for="(log,i) in paginatedLogs" :key="i">
+                <div>
+                  <div class="flex items-center gap-3 text-xs px-3 py-2 rounded-lg cursor-pointer transition" style="border-left:2px solid" :style="log.status>=400?'border-color:#ef4444;background:rgba(239,68,68,.03)':'border-color:#34d399;background:rgba(52,211,153,.02)'" @click="expandedLog=(expandedLog===i?-1:i)" :class="expandedLog===i?'rounded-b-none':''">
+                    <span class="w-16 shrink-0 font-mono" style="color:#6b7280" x-text="fmtTs(log.timestamp)"></span>
+                    <span class="font-mono truncate max-w-[22%] shrink-0" :class="log.status>=400?'text-[#f87171]':'text-[#818cf8]'" x-text="log.model"></span>
+                    <span class="truncate max-w-[10%] shrink-0" style="color:#6b7280" x-text="log.provider"></span>
+                    <span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
+                    <span class="w-14 text-right font-mono shrink-0" style="color:#6b7280" x-text="log.latency_ms+'ms'"></span>
+                    <span class="w-16 text-right shrink-0" style="color:#6b7280" x-text="fmtB(log.body_len)"></span>
+                    <template x-if="log.error"><span class="text-[#f87171] truncate min-w-0 text-[11px]" x-text="log.error.substring(0,45)"></span></template>
+                  </div>
+                  <div x-show="expandedLog===i" class="text-xs px-4 py-3 rounded-b-lg space-y-1" style="background:rgba(255,255,255,.02);border:1px solid rgba(42,45,55,.5);border-top:0">
+                    <div class="flex flex-wrap gap-x-6 gap-y-1" style="color:#6b7280">
+                      <span>时间: <span style="color:#cdd0d4" x-text="new Date(log.timestamp*1000).toLocaleString('zh-CN')"></span></span>
+                      <span>模型: <span style="color:#818cf8" x-text="log.model"></span></span>
+                      <span>供应商: <span style="color:#cdd0d4" x-text="log.provider"></span></span>
+                      <span>端点: <span class="font-mono text-[10px]" style="color:#cdd0d4" x-text="log.endpoint"></span></span>
+                      <span>状态码: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
+                      <span>延迟: <span style="color:#cdd0d4" x-text="log.latency_ms+'ms'"></span></span>
+                      <span>请求体: <span style="color:#cdd0d4" x-text="fmtB(log.body_len)"></span></span>
+                      <template x-if="log.error"><span class="w-full mt-1">错误详情: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="flex items-center justify-between mt-4 pt-3 border-t" style="border-color:#2a2d37">
+              <span class="text-xs" style="color:#6b7280" x-text="'共 '+filteredLogs.length+' 条'"></span>
+              <div class="flex items-center gap-2 text-xs">
+                <button @click="logPage=Math.max(0,logPage-1)" :disabled="logPage===0" class="px-2.5 py-1 rounded transition" :class="logPage===0?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'">上一页</button>
+                <span style="color:#6b7280" x-text="(logPage+1)+'/'+Math.max(1,totalLogPages)"></span>
+                <button @click="logPage=Math.min(totalLogPages-1,logPage+1)" :disabled="logPage>=totalLogPages-1" class="px-2.5 py-1 rounded transition" :class="logPage>=totalLogPages-1?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'">下一页</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div></div>
+    </div>
+
+    <!-- ==================== ROUTES ==================== -->
+    <div x-show="activeTab==='routes'" class="page-enter">
+      <div class="card"><div class="card-body">
+        <div class="text-xs font-bold uppercase tracking-wider mb-4" style="color:#6b7280">路由配置 <span style="font-weight:400" x-show="routes.model_count!==undefined" x-text="'('+routes.model_count+' 模型, '+routes.providers.length+' 供应商)'"></span></div>
+        <template x-if="routes.model_count===undefined"><div class="text-center py-8 text-sm" style="color:#6b7280">加载中...</div></template>
+        <template x-if="routes.model_count!==undefined">
+          <div class="overflow-x-auto"><table><thead><tr><th>模型 ID</th><th>供应商</th><th>端点</th><th>上游模型</th><th>思考强度</th></tr></thead><tbody><template x-for="r in routes.routes" :key="r.model_id"><tr><td class="font-mono" style="color:#818cf8" x-text="r.model_id"></td><td x-text="r.provider"></td><td class="text-xs font-mono truncate max-w-[180px]" style="color:#6b7280" x-text="r.endpoint.replace(/^https?:\/\//,'')"></td><td><template x-if="r.upstream_model"><span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background:rgba(255,255,255,.04);color:#6b7280" x-text="r.upstream_model"></span></template><template x-if="!r.upstream_model"><span style="color:#6b7280">-</span></template></td><td><template x-if="r.reasoning_effort"><span class="badge badge-primary" x-text="r.reasoning_effort"></span></template><template x-if="!r.reasoning_effort"><span style="color:#6b7280">-</span></template></td></tr></template></tbody></table></div>
+        </template>
+      </div></div>
+    </div>
+
+    <!-- ==================== HEALTH ==================== -->
+    <div x-show="activeTab==='health'" class="page-enter">
+      <div class="card"><div class="card-body">
+        <div class="flex items-center justify-between mb-4">
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">健康检查</div>
+          <button @click="fetchHealth()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'">探测</button>
+        </div>
+        <template x-if="healthLoading">
+          <div class="space-y-3"><template x-for="i in 3" :key="i"><div class="h-12 rounded-lg animate-pulse" style="background:#2a2d37"></div></template></div>
+        </template>
+        <template x-if="!healthLoading && health.length===0"><div class="text-center py-8 text-sm" style="color:#6b7280">点击"探测"检查供应商连通性</div></template>
+        <div class="space-y-2" x-show="!healthLoading && health.length>0">
+          <template x-for="h in health" :key="h.provider">
+            <div class="flex items-center justify-between px-4 py-3 rounded-lg" style="border:1px solid rgba(42,45,55,.5)">
+              <div class="flex items-center gap-3">
+                <span class="w-2 h-2 rounded-full" :class="h.status.startsWith('ok')?'bg-[#34d399]':'bg-[#ef4444]'"></span>
+                <div><span class="text-sm font-medium" x-text="h.provider"></span><span class="text-xs ml-2 font-mono" style="color:#6b7280" x-text="h.endpoint.replace(/^https?:\/\//,'').split('/')[0]"></span></div>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-xs font-mono" style="color:#6b7280" x-text="h.latency_ms+'ms'"></span>
+                <span class="text-xs px-2.5 py-1 rounded" :class="h.status.startsWith('ok')?'text-[#34d399] bg-[rgba(52,211,153,.15)]':'text-[#ef4444] bg-[rgba(239,68,68,.15)]'" x-text="h.status"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ==================== ABOUT ==================== -->
+    <div x-show="activeTab==='about'" class="page-enter">
+      <div class="card"><div class="card-body space-y-4">
+        <div class="text-center py-4">
+          <svg width="56" height="56" viewBox="0 0 56 56" class="mx-auto">
+            <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs>
+            <rect width="56" height="56" rx="14" fill="url(#logoGrad)"/>
+            <circle cx="28" cy="28" r="7" fill="none" stroke="white" stroke-width="2"/>
+            <circle cx="14" cy="16" r="3" fill="white"/>
+            <circle cx="42" cy="16" r="3" fill="white"/>
+            <circle cx="14" cy="40" r="3" fill="white"/>
+            <circle cx="42" cy="40" r="3" fill="white"/>
+            <line x1="14" y1="16" x2="28" y2="28" stroke="white" stroke-width="1.5" opacity=".6"/>
+            <line x1="42" y1="16" x2="28" y2="28" stroke="white" stroke-width="1.5" opacity=".6"/>
+            <line x1="14" y1="40" x2="28" y2="28" stroke="white" stroke-width="1.5" opacity=".6"/>
+            <line x1="42" y1="40" x2="28" y2="28" stroke="white" stroke-width="1.5" opacity=".6"/>
+          </svg>
+          <h1 class="text-lg font-bold mt-3">AIGate</h1>
+          <p class="text-xs" style="color:#6b7280">v0.2 · Rust + Axum</p>
+          <p class="text-xs mt-1" style="color:#6b7280">开发者：wonderful艾晨</p>
+        </div>
+        <div class="space-y-2 text-sm" style="color:#6b7280">
+          <p>本地 OpenAI 兼容反向代理，桥接编程工具到 OpenCode Zen/Go 套餐。</p>
+          <p>功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。</p>
+        </div>
+        <div class="pt-3 border-t" style="border-color:#2a2d37">
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">API 端点</div>
+          <div class="space-y-1">
+            <a href="/v1/models" class="block text-xs font-mono hover:underline" style="color:#818cf8">GET /v1/models</a>
+            <a href="/v1/chat/completions" class="block text-xs font-mono hover:underline" style="color:#818cf8">POST /v1/chat/completions</a>
+            <a href="/health" class="block text-xs font-mono hover:underline" style="color:#818cf8">GET /health</a>
+            <a href="/admin/api/stats" class="block text-xs font-mono hover:underline" style="color:#818cf8">GET /admin/api/stats</a>
+          </div>
+        </div>
+        <div class="pt-3 border-t" style="border-color:#2a2d37">
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">技术栈</div>
+          <div class="flex flex-wrap gap-2">
+            <span class="badge badge-primary">Rust</span>
+            <span class="badge badge-primary">Axum</span>
+            <span class="badge badge-primary">Reqwest</span>
+            <span class="badge badge-ghost">Tailwind CSS</span>
+            <span class="badge badge-ghost">Alpine.js</span>
+          </div>
+        </div>
+        <div class="pt-3 border-t" style="border-color:#2a2d37">
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">使用帮助</div>
+          <div class="text-xs space-y-2" style="color:#6b7280">
+            <p><span class="text-[#cdd0d4]">编程工具配置：</span>将 API 地址设为 <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>，API Key 任意填写。</p>
+            <p><span class="text-[#cdd0d4]">问题反馈：</span>检查日志面板查看错误详情，或使用健康检查探测供应商连通性。</p>
+          </div>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- ==================== SETTINGS ==================== -->
+    <div x-show="activeTab==='settings'" class="page-enter">
+      <div class="space-y-4">
+        <div class="flex items-center justify-between"><div><h1 class="text-lg font-bold">设置</h1><p class="text-xs mt-1" style="color:#6b7280">代理服务与供应商配置</p></div></div>
+
+        <!-- Proxy Info -->
+        <div class="card"><div class="card-body">
+          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">代理服务</div>
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span style="color:#6b7280">监听地址</span>
+              <p class="font-mono text-xs mt-0.5" style="color:#cdd0d4">127.0.0.1:8787</p>
+            </div>
+            <div>
+              <span style="color:#6b7280">状态</span>
+              <p class="mt-0.5"><span class="badge badge-success">运行中</span></p>
+            </div>
+          </div>
+        </div></div>
+
+        <!-- API Keys -->
+        <div class="card"><div class="card-body">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">API Key 管理</div>
+            <button @click="fetchKeys()" class="btn-ghost text-xs">刷新</button>
+          </div>
+          <template x-if="!keysData.keys">
+            <div class="text-center py-4 text-sm" style="color:#6b7280">加载中...</div>
+          </template>
+          <template x-if="keysData.keys">
+            <div class="space-y-2">
+              <template x-for="k in keysData.keys" :key="k.env_var">
+                <div>
+                  <div class="flex items-center justify-between px-3 py-2 rounded" style="background:rgba(255,255,255,.02)">
+                    <div class="flex items-center gap-3 min-w-0">
+                      <span class="text-xs font-mono shrink-0" style="color:#a5b4fc" x-text="k.env_var"></span>
+                      <template x-if="k.configured">
+                        <span class="text-xs font-mono" style="color:#6b7280">****<span style="color:#34d399" x-text="k.suffix"></span></span>
+                      </template>
+                      <template x-if="!k.configured">
+                        <span class="badge badge-warning">未配置</span>
+                      </template>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                      <template x-if="editingKey !== k.env_var">
+                        <button @click="editKey(k.env_var)" class="btn-ghost text-xs">编辑</button>
+                      </template>
+                      <template x-if="editingKey === k.env_var">
+                        <button @click="cancelEditKey()" class="btn-ghost text-xs">取消</button>
+                      </template>
+                    </div>
+                  </div>
+                  <!-- Edit form -->
+                  <div x-show="editingKey === k.env_var" class="px-3 pb-2 pt-2">
+                    <div class="flex gap-2">
+                      <input type="password" x-model="keyEditValue" placeholder="输入新 API Key" class="search-input flex-1" @keyup.enter="saveKey(k.env_var)" />
+                      <button @click="saveKey(k.env_var)" class="btn-primary text-xs">保存</button>
+                      <button @click="keyEditValue=''; saveKey(k.env_var)" class="btn-ghost text-xs" style="color:#f87171">清除</button>
+                    </div>
+                    <p class="text-[10px] mt-1" style="color:#6b7280">保存后立即生效，无需重启服务。</p>
+                    <p x-show="keyMsg" class="text-[10px] mt-1" style="color:#34d399" x-text="keyMsg"></p>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div></div>
+
+        <!-- Provider Management Form -->
+        <div class="card"><div class="card-body">
+          <div class="flex items-center justify-between mb-3">
+              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">供应商配置</div>
+              <div class="flex gap-2">
+                <button @click="showAddProvider=true" class="btn-ghost text-xs">+ 新增</button>
+                <button @click="loadProvidersForm()" class="btn-ghost text-xs">刷新</button>
+                <button @click="saveProvidersForm()" class="btn-primary text-xs">保存配置</button>
+              </div>
+            </div>
+          <template x-if="!providersFormData">
+            <div class="text-center py-6 text-sm" style="color:#6b7280">加载中...</div>
+          </template>
+          <template x-if="providersFormData">
+            <div class="space-y-3">
+              <template x-for="(prov, pi) in providersFormData" :key="prov.name">
+                <div class="rounded-lg overflow-hidden" style="border:1px solid #2a2d37">
+                  <!-- Provider header -->
+                   <div class="flex items-center justify-between px-4 py-2.5 cursor-pointer select-none" style="background:rgba(255,255,255,.02)" @click="prov._expanded = !prov._expanded">
+                     <div class="flex items-center gap-3 min-w-0">
+                       <svg class="w-4 h-4 shrink-0 transition-transform duration-150" :class="prov._expanded ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                       <span class="font-medium text-sm" x-text="prov.name"></span>
+                       <span class="text-xs font-mono truncate max-w-[160px]" style="color:#6b7280" x-text="prov.endpoint"></span>
+                     </div>
+                     <div class="flex items-center gap-2 shrink-0" @click.stop>
+                       <!-- Test button -->
+                       <template x-if="!prov._testing && !prov._testResult">
+                         <button @click="testProvider(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#6b7280;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1';$el.style.color='#818cf8'" @mouseleave="$el.style.borderColor='#2a2d37';$el.style.color='#6b7280'">测试</button>
+                       </template>
+                       <template x-if="prov._testing">
+                         <span class="text-xs" style="color:#6b7280">测试中...</span>
+                       </template>
+                       <template x-if="!prov._testing && prov._testResult">
+                         <div class="flex items-center gap-2">
+                           <span class="text-xs" :class="prov._testResult.success ? 'text-[#34d399]' : 'text-[#f87171]'" x-text="prov._testResult.success ? prov._testResult.latency_ms+'ms ✓' : '✗ '+prov._testResult.status"></span>
+                           <button @click="prov._testResult=null" class="text-xs" style="color:#6b7280">×</button>
+                         </div>
+                       </template>
+                       <span class="text-xs" style="color:#6b7280" x-text="prov.models.length+' 模型'"></span>
+                     </div>
+                   </div>
+                  <!-- Models table -->
+                  <div x-show="prov._expanded" class="border-t" style="border-color:#2a2d37">
+                    <div class="p-3">
+                      <table class="mb-2">
+                        <thead><tr><th style="width:28%">模型 ID</th><th style="width:28%">上游模型</th><th style="width:22%">思考强度</th><th style="width:22%"></th></tr></thead>
+                        <tbody>
+                          <template x-for="(m, mi) in prov.models" :key="mi">
+                            <tr>
+                              <td><input type="text" x-model="m.model_id" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
+                              <td><input type="text" x-model="m.upstream_model" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" placeholder="留空=原样" /></td>
+                              <td>
+                                <select x-model="m.reasoning_effort" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:#cdd0d4">
+                                  <option value="">- 无 -</option>
+                                  <option value="low">low</option>
+                                  <option value="medium">medium</option>
+                                  <option value="high">high</option>
+                                  <option value="max">max</option>
+                                </select>
+                              </td>
+                              <td class="text-right">
+                                <button @click="deleteModel(pi, mi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171">删除</button>
+                              </td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                      <button @click="addModel(pi)" class="btn-ghost text-xs">+ 添加模型</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div x-show="providersFormMsg" class="mt-2 text-xs" :class="providersFormMsg.startsWith('已') || providersFormMsg.startsWith('保存') ? 'text-[#34d399]' : 'text-[#f87171]'" x-text="providersFormMsg"></div>
+        </div></div>
+
+        <!-- Add Provider Modal -->
+        <div x-show="showAddProvider" class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,.5)">
+          <div class="rounded-xl p-5 w-96" style="background:#1e2028;border:1px solid #2a2d37" @click.stop>
+            <div class="text-sm font-bold mb-4">新增供应商</div>
+            <div class="space-y-3 text-xs">
+              <div><label style="color:#6b7280" class="block mb-1">供应商名称</label><input type="text" x-model="addProvName" placeholder="如 my-provider" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1">端点 URL</label><input type="text" x-model="addProvEndpoint" placeholder="https://api.example.com/v1/chat/completions" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1">API Key 环境变量名</label><input type="text" x-model="addProvKeyEnv" placeholder="如 MY_API_KEY" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1">默认 API Key（可选）</label><input type="text" x-model="addProvKeyDefault" placeholder="留空则使用环境变量" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+              <button @click="showAddProvider=false" class="btn-ghost text-xs">取消</button>
+              <button @click="confirmAddProvider()" class="btn-primary text-xs" :disabled="!addProvName || !addProvEndpoint">添加</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Data Management -->
+        <div class="card"><div class="card-body">
+          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">数据管理</div>
+          <div>
+            <button @click="clearAllLogs()" class="btn-ghost" style="color:#f87171">清空所有记录</button>
+          </div>
+        </div></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+function dashboard() {
+  return {
+    // Sidebar navigation — matches 68HUB layout
+    navItems: [
+      { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', label:'概览' },
+      { id:'tokens', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="13" width="4" height="7" rx="1"/><rect x="10" y="9" width="4" height="11" rx="1"/><rect x="16" y="5" width="4" height="15" rx="1"/></svg>', label:'Token 统计' },
+      { id:'daily', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>', label:'趋势' },
+      { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', label:'记录' },
+      { id:'routes', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>', label:'路由' },
+      { id:'health', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01" stroke-width="2"/></svg>', label:'健康' },
+      { id:'about', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>', label:'关于' },
+      { id:'settings', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', label:'设置' },
+    ],
+    activeTab: 'dashboard',
+    loading: true,
+
+    // Data
+    logs: [], routes: {}, health: [], stats: null,
+    healthLoading: false, showAllModels: false,
+
+    // Settings
+    keysData: {}, editingKey: null, keyEditValue: '', keyMsg: '',
+    providersFormData: null, providersFormMsg: '',
+    showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvKeyEnv: '', addProvKeyDefault: '',
+
+    // Token stats tab
+    tokenTab: 'ranking',
+    // Daily trends mode
+    dailyMode: 'requests',
+    trendGranularity: 'day',
+
+    // Logs
+    logSearch: '', logProviderFilter: '', logStatusFilter: '', logPage: 0, expandedLog: -1, pageSize: 25,
+
+    // Donut chart
+    donutColors: ['#6366f1','#06b6d4','#f59e0b','#34d399','#f472b6','#a78bfa','#fb923c','#2dd4bf'],
+
+    // Polling
+    pollTimer: null,
+
+    async init() {
+      await this.switchTab('dashboard');
+      this.startPoll();
+    },
+
+    switchTab(tabId) {
+      this.activeTab = tabId;
+      this.logPage = 0; this.expandedLog = -1;
+      if (tabId==='dashboard'||tabId==='tokens'||tabId==='daily') this.fetchStats();
+      if (tabId==='records') this.fetchLogs();
+      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); }
+      if (tabId==='health' && this.health.length===0) this.fetchHealth();
+    },
+
+    startPoll() {
+      clearInterval(this.pollTimer);
+      this.pollTimer = setInterval(() => {
+        this.fetchLogs();
+        if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
+      }, 3000);
+    },
+
+    async fetchLogs()    { try { const r=await fetch('/admin/api/logs'); if(r.ok) this.logs=await r.json(); } catch(e){} },
+    async fetchRoutes()  { try { const r=await fetch('/admin/api/routes'); if(r.ok) this.routes=await r.json(); } catch(e){} },
+    async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health'); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
+    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity); if(r.ok) { this.stats=await r.json(); this.loading=false; } } catch(e){} },
+    async clearAllLogs() { try { const r=await fetch('/admin/api/logs',{method:'DELETE'}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){} },
+    clearLogs() { this.logs=[]; },
+
+    exportLogs() {
+      const blob = new Blob([JSON.stringify(this.logs, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `opencode-logs-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    get logProviders() {
+      const names = new Set();
+      for (const l of this.logs) if (l.provider) names.add(l.provider);
+      return [...names].sort();
+    },
+
+    // Settings API
+    async fetchKeys() { try { const r=await fetch('/admin/api/keys'); if(r.ok) this.keysData=await r.json(); } catch(e){} },
+    editKey(envVar) { this.editingKey=envVar; this.keyEditValue=''; this.keyMsg=''; },
+    cancelEditKey() { this.editingKey=null; this.keyEditValue=''; this.keyMsg=''; },
+    async saveKey(envVar) {
+      this.keyMsg='';
+      try {
+        const r=await fetch('/admin/api/keys',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({env_var:envVar,value:this.keyEditValue})});
+        const d=await r.json();
+        if(r.ok) {
+          this.keyMsg=d.message||'已保存';
+          this.editingKey=null; this.keyEditValue='';
+          this.fetchKeys();
+          setTimeout(()=>this.keyMsg='',3000);
+        } else {
+          this.keyMsg=d.error||'保存失败';
+        }
+      } catch(e){ this.keyMsg='网络错误'; }
+    },
+    async loadProvidersForm() {
+       try {
+         const r=await fetch('/admin/api/providers');
+         if(r.ok) {
+           const d=await r.json();
+           if(d.parsed&&d.parsed.providers) {
+             this.providersFormData = d.parsed.providers.map(p => ({
+               ...p,
+               _expanded: false,
+               _testing: false,
+               _testResult: null,
+               models: Object.entries(p.models||{}).map(([id, cfg]) => ({
+                 model_id: id,
+                 upstream_model: cfg.upstream_model||'',
+                 reasoning_effort: cfg.reasoning_effort||'',
+               }))
+             }));
+           }
+         }
+       } catch(e){}
+     },
+     addModel(pi) {
+      this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:''});
+    },
+    deleteModel(pi, mi) {
+       this.providersFormData[pi].models.splice(mi,1);
+     },
+     async testProvider(pi) {
+       const prov = this.providersFormData[pi];
+       prov._testing = true;
+       prov._testResult = null;
+       try {
+         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:prov.endpoint})});
+         if(r.ok) prov._testResult = await r.json();
+         else prov._testResult = {success:false,status:'请求失败',latency_ms:0};
+       } catch(e){ prov._testResult = {success:false,status:'网络错误',latency_ms:0}; }
+       prov._testing = false;
+     },
+     async saveProvidersForm() {
+       this.providersFormMsg='';
+       try {
+         const providers = this.providersFormData.map(p => {
+           const models = {};
+           for (const m of p.models) {
+             if (!m.model_id) continue;
+             const cfg = {};
+             if (m.upstream_model) cfg.upstream_model = m.upstream_model;
+             if (m.reasoning_effort) cfg.reasoning_effort = m.reasoning_effort;
+             models[m.model_id] = Object.keys(cfg).length ? cfg : {};
+           }
+           return {
+             name: p.name,
+             endpoint: p.endpoint,
+             api_key_env: p.api_key_env,
+             api_key_default: p.api_key_default||undefined,
+             headers: p.headers||undefined,
+             models: models,
+           };
+         });
+         const json = JSON.stringify({providers:providers}, null, 2);
+         const r=await fetch('/admin/api/providers/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({json:json})});
+         const d=await r.json();
+         this.providersFormMsg=d.message||d.error||'保存失败';
+         if(d.message) { this.fetchRoutes(); setTimeout(()=>this.providersFormMsg='',3000); }
+       } catch(e){ this.providersFormMsg='网络错误'; }
+     },
+     confirmAddProvider() {
+       if (!this.addProvName || !this.addProvEndpoint) return;
+       this.providersFormData.push({
+         name: this.addProvName,
+         endpoint: this.addProvEndpoint,
+         api_key_env: this.addProvKeyEnv || this.addProvName.toUpperCase().replace(/-/g,'_')+'_KEY',
+         api_key_default: this.addProvKeyDefault || null,
+         headers: null,
+         _expanded: true,
+         _testing: false,
+         _testResult: null,
+         models: [],
+       });
+       this.showAddProvider = false;
+       this.addProvName = ''; this.addProvEndpoint = ''; this.addProvKeyEnv = ''; this.addProvKeyDefault = '';
+       this.providersFormMsg = '已添加供应商，点击"保存配置"生效';
+       setTimeout(()=>this.providersFormMsg='',3000);
+     },
+
+    // Computed
+    get sRate() {
+      if(!this.stats||this.stats.total_requests===0) return 100;
+      return Math.round(this.stats.success_count/this.stats.total_requests*100);
+    },
+    get maxModelReqs() { if(!this.stats||!this.stats.top_models.length) return 1; return this.stats.top_models[0].requests; },
+    get maxDailyReqs() { if(!this.stats||!this.stats.trends.length) return 1; return Math.max(...this.stats.trends.map(t=>t.requests),1); },
+    get donutSvg() {
+      if(!this.stats||this.stats.per_model.length===0) return '';
+      const total=this.stats.total_requests||1;
+      const r=55, w=20, cx=70, cy=70;
+      const C=2*Math.PI*r;
+      let offset=0;
+      let segs='';
+      const models=this.stats.per_model.slice(0,8);
+      models.forEach((m,i)=>{
+        const pct=m.requests/total;
+        const len=pct*C;
+        const color=this.donutColors[i%this.donutColors.length];
+        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
+        offset+=len;
+      });
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2a2d37" stroke-width="${w}"/>${segs}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="#cdd0d4" font-size="16" font-weight="700">${total}</text><text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#6b7280" font-size="10">请求</text>`;
+    },
+
+    get filteredLogs() {
+      let r = this.logs;
+      if (this.logProviderFilter) r = r.filter(l=>l.provider===this.logProviderFilter);
+      if (this.logStatusFilter==='success') r = r.filter(l=>l.status<400);
+      if (this.logStatusFilter==='error') r = r.filter(l=>l.status>=400);
+      if(this.logSearch) {
+        const q=this.logSearch.toLowerCase();
+        r = r.filter(l=>l.model.toLowerCase().includes(q)||l.provider.toLowerCase().includes(q)||(l.error&&l.error.toLowerCase().includes(q))||String(l.status).includes(q));
+      }
+      return r;
+    },
+    get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
+    get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
+
+    // Sparkline points (used by dashboard chart)
+    get tp() {
+      if(!this.stats||this.stats.trends.length<2) return [];
+      const t=this.stats.trends,n=t.length;
+      const mv=Math.max(...t.map(x=>x.requests),1);
+      const w=n*60+40,h=80,pX=30,pY=8;
+      return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(d.requests/mv)*(h-2*pY)}));
+    },
+    get tps() { return this.tp.map(p=>p.x+','+p.y).join(' '); },
+    get ta() {
+      const p=this.tp; if(p.length<2) return '';
+      return `M${p[0].x},72L${p[0].x},${p[0].y} ${p.slice(1).map(x=>`L${x.x},${x.y}`).join(' ')}L${p[p.length-1].x},72Z`;
+    },
+
+    // Daily trends chart points (dual mode)
+    get dailyTp() {
+      if(!this.stats||this.stats.trends.length<2) return [];
+      const t=this.stats.trends,n=t.length;
+      const isLat=this.dailyMode==='latency';
+      const vals = isLat
+        ? t.map(d=>d.avg_latency||0)
+        : t.map(d=>d.requests);
+      const mv=Math.max(...vals,1);
+      const w=n*70+50,h=120,pX=35,pY=12;
+      return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(vals[i]/mv)*(h-2*pY)}));
+    },
+    get dailyTps() { return this.dailyTp.map(p=>p.x+','+p.y).join(' '); },
+    get dailyArea() {
+      const p=this.dailyTp; if(p.length<2) return '';
+      return `M${p[0].x},108L${p[0].x},${p[0].y} ${p.slice(1).map(x=>`L${x.x},${x.y}`).join(' ')}L${p[p.length-1].x},108Z`;
+    },
+
+    // Formatters
+    fmtTs(ts) { const d=new Date(ts*1000); return d.toLocaleTimeString('zh-CN',{hour12:false}); },
+    fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
+    fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
+    fmtB(b) {
+      if(b===0) return '0B'; if(b<1024) return b+'B'; if(b<1048576) return (b/1024).toFixed(1)+'KB';
+      return (b/1048576).toFixed(1)+'MB';
+    },
+  };
+}
+</script>
+</body>
+</html>

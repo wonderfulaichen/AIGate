@@ -1,0 +1,104 @@
+﻿//! 入口 — 启动 axum server, 注册路由.
+//!
+//! 修复: 自定义 DNS 解析器过滤 IPv6, 解决 reqwest 在 IPv6 不通的网络下连接失败的问题.
+
+use std::future::Future;
+use std::net::{SocketAddr, SocketAddrV4};
+use std::pin::Pin;
+use std::sync::Arc;
+
+use axum::{routing::post, Router};
+use reqwest::dns::{Resolve, Resolving, Name};
+use reqwest::Client;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tracing::info;
+
+mod config;
+mod models;
+mod proxy;
+
+use config::Config;
+use proxy::AppState;
+
+// ── IPv4-only DNS resolver ──────────────────────────────────────────────
+
+/// 包装系统默认 DNS 解析器, 过滤掉所有 IPv6 地址.
+///
+/// 问题: reqwest 在 Windows 上优先尝试 IPv6, 若 IPv6 不通则直接失败,
+/// 不会 fallback 到 IPv4. 此解析器强制只返回 IPv4 地址.
+struct Ipv4Resolver {
+    inner: reqwest::dns::GaiResolver,
+}
+
+impl Ipv4Resolver {
+    fn new() -> Self {
+        Self {
+            inner: reqwest::dns::GaiResolver::new(),
+        }
+    }
+}
+
+impl Resolve for Ipv4Resolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let fut = self.inner.resolve(name);
+        Box::pin(async move {
+            let addrs = fut.await?;
+            // 只保留 IPv4 (SocketAddrV4)
+            let ipv4: Vec<SocketAddr> = addrs
+                .filter(|a| matches!(a, SocketAddr::V4(_)))
+                .collect();
+            Ok(Box::new(ipv4.into_iter()) as Box<dyn Iterator<Item = SocketAddr> + Send>)
+        })
+    }
+}
+
+// ── Main ────────────────────────────────────────────────────────────────
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    let config = Config::from_env();
+    let port = config.port;
+    let has_go = config.has_go_key();
+
+    let client = Client::builder()
+        .dns_resolver(Arc::new(Ipv4Resolver::new()))
+        .timeout(std::time::Duration::from_secs(660))
+        .build()
+        .expect("failed to build HTTP client");
+
+    let state = AppState { client, config };
+
+    let app = Router::new()
+        .route("/v1/chat/completions", post(proxy::chat_completions))
+        .route("/v1/models", axum::routing::get(handle_models))
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    info!("opencode-bridge listening on http://{addr}");
+    info!("  Go plan key configured: {has_go}");
+    info!("  endpoints:");
+    info!("    POST /v1/chat/completions  -> proxy to OpenCode Zen/Go");
+    info!("    GET  /v1/models            -> list supported models");
+    info!("    GET  /health               -> health check");
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("failed to bind");
+    axum::serve(listener, app).await.expect("server error");
+}
+
+/// GET /v1/models — 返回支持的模型列表 (OpenAI 格式).
+async fn handle_models() -> String {
+    models::models_json()
+}
