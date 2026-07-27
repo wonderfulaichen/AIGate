@@ -32,6 +32,7 @@ use wry::WebViewBuilder;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 mod admin;
+mod cache;
 mod circuit_breaker;
 mod config;
 mod thinking;
@@ -352,6 +353,9 @@ fn main() {
         .dns_resolver(Arc::new(Ipv4Resolver::new()))
         .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_secs))
         .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
+        // HTTP/2 多路复用: 由 TLS ALPN 自动协商, 上游不支持时回退 HTTP/1.1, 零风险.
+        // 配合默认开启的 keep-alive + 连接池, 减少连发请求时的建连/TLS 握手开销.
+        .http2_adaptive_window(true)
         .build()
     {
         Ok(c) => c,
@@ -402,7 +406,13 @@ fn main() {
         registry: Arc::new(RwLock::new(registry)),
         admin_token: config.admin_token.clone(),
         breaker: config.breaker.clone(),
+        cache: Arc::new(crate::cache::ResponseCache::new(
+            config.cache_enabled,
+            Duration::from_secs(config.cache_ttl_secs),
+            config.cache_max_entries,
+        )),
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
+        retry_max: config.retry_max,
         key_store: keys::KeyStore::new("data"),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
         breakers,
@@ -419,6 +429,7 @@ fn main() {
         .route("/admin/api/keys", get(admin::api_keys_get).put(admin::api_keys_put))
         .route("/admin/api/health", get(admin::api_health))
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
+        .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock));
     if config.admin_token.is_some() {

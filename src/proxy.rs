@@ -23,6 +23,7 @@ use crate::admin::LogBuffer;
 use crate::keys::KeyStore;
 use crate::providers::ProviderRegistry;
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use crate::cache::ResponseCache;
 
 /// 共享状态: HTTP client + 供应商路由表 + 请求日志缓冲区 + Key 存储.
 #[derive(Clone)]
@@ -38,8 +39,12 @@ pub struct AppState {
     pub admin_token: Option<String>,
     /// 熔断阈值配置 (用于热重载时按配置补齐新供应商的熔断器).
     pub breaker: CircuitBreakerConfig,
+    /// 响应缓存 (实验功能, 默认关闭, 面板可开启).
+    pub cache: std::sync::Arc<ResponseCache>,
     /// 流式响应空闲超时.
     pub stream_idle_timeout: Duration,
+    /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式前 5xx 重试).
+    pub retry_max: u32,
     /// 熔断器表: provider name -> 该供应商的熔断器 (std Mutex, 临界区极短).
     pub breakers: BreakerMap,
 }
@@ -182,6 +187,26 @@ pub async fn chat_completions(
     let bytes = inject_model_params(bytes, &model_cfg);
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
+    // 5.5 响应缓存查询: 缓存开启且为非流式请求时, 命中直接返回 (省 token + 延迟).
+    let cache_key: Option<String> = if state.cache.is_enabled() {
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|v| ResponseCache::make_key(&v))
+    } else {
+        None
+    };
+    if let Some(key) = &cache_key {
+        if let Some(cached) = state.cache.get(key) {
+            let (pt, ct) = extract_usage(&cached);
+            crate::admin::record_request_with_tokens(
+                &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
+            ).await;
+            return Ok(axum::Json(
+                serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
+            ).into_response());
+        }
+    }
+
     // 6. 构造转发请求 — 过滤客户端 headers, 只保留标准 headers,
     //    避免非标准 headers (如 x-ide-type) 导致 upstream 拒绝服务.
     let mut req_headers = filter_headers(&headers);
@@ -202,36 +227,84 @@ pub async fn chat_completions(
         }
     }
 
-    // 7. 发送请求, 获取流式响应
-    let ep_clone = endpoint.clone(); // 用于闭包
-    let upstream = state
-        .client
-        .request(Method::POST, &endpoint)
-        .headers(req_headers)
-        .header("content-type", "application/json")
-        .header("accept", "text/event-stream")
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|e| {
-            let chain = format_error_chain(&e);
-            report_breaker(&state.breakers, &provider_name, false);
-            warn!("proxy: send() failed for {ep_clone}: {chain}");
-            let e_clone = chain.clone();
-            let model2 = model.clone();
-            let p2 = provider_name.clone();
-            let ep2 = ep_clone.clone();
-            let lb = state.log_buffer.clone();
-            let s = start;
-            tokio::spawn(async move {
-                crate::admin::record_request(
-                    &lb, &model2, &p2, &ep2, 502, s, body_len_val, Some(e_clone),
-                ).await;
-            });
-            error_response(StatusCode::BAD_GATEWAY, &format!("upstream error: {chain}"))
-        })?;
+    // 8. 发送请求 (带瞬态重试) — 仅对连接/超时错误与流式开始前返回的 5xx 重试,
+    //    不含 429 (视为终态). 熔断上报统一在"最终 attempt"结果上执行一次,
+    //    避免重试放大失败计数误开熔断.
+    let ep_clone = endpoint.clone();
+    let total_attempts = state.retry_max.saturating_add(1);
+    let mut upstream: Option<reqwest::Response> = None;
+    let mut send_err: Option<String> = None;
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        // 每次重试前重新确认熔断状态, 若已 Open 则快速失败 (503).
+        if !check_breaker(&state.breakers, &provider_name) {
+            warn!("proxy: circuit open for provider={provider_name}, fast-fail 503");
+            crate::admin::record_request(
+                &state.log_buffer, &model, &provider_name, &endpoint, 503, start,
+                body_len_val, Some("circuit breaker open".to_string()),
+            ).await;
+            return Err(error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
+            ));
+        }
+        match state
+            .client
+            .request(Method::POST, &endpoint)
+            .headers(req_headers.clone())
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .body(bytes.clone())
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if status >= 500 {
+                    // 5xx 可重试 (服务端瞬态故障); 不重试 4xx (含 429).
+                    if attempt < total_attempts {
+                        warn!("proxy: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
+                        continue;
+                    }
+                    upstream = Some(resp);
+                    break;
+                }
+                // 2xx 成功或 4xx 终态, 不重试.
+                upstream = Some(resp);
+                break;
+            }
+            Err(e) => {
+                let chain = format_error_chain(&e);
+                // 仅连接层 / 超时错误可重试; 其余 (如请求构造错误) 直接失败.
+                let retryable = e.is_connect() || e.is_timeout();
+                if retryable && attempt < total_attempts {
+                    warn!("proxy: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
+                    continue;
+                }
+                send_err = Some(chain);
+                break;
+            }
+        }
+    }
 
-    // 8. 检查 upstream 响应
+    // 连接层失败 (重试耗尽) → 502.
+    if let Some(chain) = send_err {
+        report_breaker(&state.breakers, &provider_name, false);
+        warn!("proxy: send() failed for {ep_clone}: {chain}");
+        let model2 = model.clone();
+        let p2 = provider_name.clone();
+        let lb = state.log_buffer.clone();
+        let s = start;
+        let chain_clone = chain.clone();
+        tokio::spawn(async move {
+            crate::admin::record_request(&lb, &model2, &p2, &ep_clone, 502, s, body_len_val, Some(chain_clone)).await;
+        });
+        return Err(error_response(StatusCode::BAD_GATEWAY, &format!("upstream error: {chain}")));
+    }
+
+    // 9. 检查 upstream 响应
+    let upstream = upstream.expect("upstream response must be present after send loop");
     let upstream_status = upstream.status().as_u16();
     if upstream_status >= 400 {
         let err_body = upstream.text().await.unwrap_or_default();
@@ -249,9 +322,7 @@ pub async fn chat_completions(
         let ep2 = endpoint.clone();
         let lb = state.log_buffer.clone();
         tokio::spawn(async move {
-            crate::admin::record_request(
-                &lb, &model2, &p2, &ep2, upstream_status, start, body_len_val, Some(err_clone),
-            ).await;
+            crate::admin::record_request(&lb, &model2, &p2, &ep2, upstream_status, start, body_len_val, Some(err_clone)).await;
         });
         return Err(error_response(
             StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -259,9 +330,31 @@ pub async fn chat_completions(
         ));
     }
 
-    // 9. 流式透传 — 通过 TokenTracker 记录 token 用量
+    // 10. 流式透传 — 通过 TokenTracker 记录 token 用量
     // 上游返回 2xx → 供应商健康, 记成功 (可能关闭熔断).
     report_breaker(&state.breakers, &provider_name, true);
+    // 非流式且缓存开启 → 读全量响应体存入缓存后直接返回 (响应 JSON 自带 usage, 精确记 token).
+    // 注意: text() 按值消费 upstream, 故此分支必须 return, 不可再进入下方流式透传.
+    if let Some(key) = &cache_key {
+        match upstream.text().await {
+            Ok(body_text) => {
+                state.cache.put(key, &body_text);
+                let (pt, ct) = extract_usage(&body_text);
+                crate::admin::record_request_with_tokens(
+                    &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
+                ).await;
+                return Ok(axum::Json(
+                    serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
+                ).into_response());
+            }
+            Err(e) => {
+                return Err(error_response(
+                    StatusCode::BAD_GATEWAY,
+                    &format!("failed to read upstream response body: {e}"),
+                ));
+            }
+        }
+    }
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
@@ -524,6 +617,23 @@ where
 fn parse_model(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     v.get("model")?.as_str().map(|s| s.to_string())
+}
+
+/// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
+fn extract_usage(text: &str) -> (u32, u32) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return (0, 0);
+    };
+    let mut pt = 0u32;
+    let mut ct = 0u32;
+    if let Some(u) = v.get("usage") {
+        pt = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+        ct = u
+            .get("completion_tokens")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u32;
+    }
+    (pt, ct)
 }
 
 /// 注入模型级参数到请求 body.

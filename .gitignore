@@ -5,3 +5,10 @@
 .env
 data/
 参考源码/
+
+# 本地产物（构建/测试日志）
+build.log
+test.log
+
+# 工作记忆目录（CodeBuddy 本地记忆，非源码）
+.codebuddy/

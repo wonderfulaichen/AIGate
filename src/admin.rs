@@ -566,6 +566,30 @@ pub async fn api_circuit_reset(
     }
 }
 
+// ─── 响应缓存 (实验功能) ───
+
+/// 切换缓存开关的请求体.
+#[derive(serde::Deserialize)]
+pub struct CacheToggleReq {
+    pub enabled: bool,
+}
+
+/// GET /admin/api/cache — 返回缓存当前状态与统计 (命中/未命中/条目数).
+pub async fn api_cache_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<crate::cache::CacheStats> {
+    Json(state.cache.stats())
+}
+
+/// POST /admin/api/cache — 运行时切换缓存开关 (面板"实验功能"开关).
+pub async fn api_cache_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<CacheToggleReq>,
+) -> Json<crate::cache::CacheStats> {
+    state.cache.set_enabled(payload.enabled);
+    Json(state.cache.stats())
+}
+
 // ─── 使用统计 ───
 
 /// 单个模型的聚合统计.

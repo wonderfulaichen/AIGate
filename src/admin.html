@@ -470,6 +470,50 @@ input.search-input::placeholder{color:#6b7280}
 
     <!-- ==================== HEALTH ==================== -->
     <div x-show="activeTab==='health'" class="page-enter">
+
+      <!-- ==================== CACHE (实验功能) ==================== -->
+      <div class="card mb-4"><div class="card-body">
+        <div class="flex items-center justify-between mb-4">
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">响应缓存 <span class="ml-2 px-1.5 py-0.5 rounded text-[10px]" style="background:rgba(245,158,11,.15);color:#f59e0b">实验功能</span></div>
+          <button @click="fetchCache()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'">刷新</button>
+        </div>
+        <template x-if="cache===null"><div class="text-center py-6 text-sm" style="color:#6b7280">加载中...</div></template>
+        <template x-if="cache!==null">
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">启用缓存</div>
+                <div class="text-xs mt-0.5" style="color:#6b7280">相同请求体命中缓存时直接返回，省 token（仅非流式请求）</div>
+              </div>
+              <button @click="setCacheEnabled(!cache.enabled)" class="relative w-12 h-6 rounded-full transition-colors" :style="cache.enabled ? 'background:#6366f1' : 'background:#2a2d37'" style="cursor:pointer;border:none">
+                <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :style="cache.enabled ? 'left:26px' : 'left:3px'"></span>
+              </button>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
+                <div class="text-xs" style="color:#6b7280">缓存条目</div>
+                <div class="text-lg font-bold mt-1" x-text="cache.entries + ' / ' + cache.max_entries"></div>
+              </div>
+              <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
+                <div class="text-xs" style="color:#6b7280">命中</div>
+                <div class="text-lg font-bold mt-1" style="color:#34d399" x-text="cache.hits"></div>
+              </div>
+              <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
+                <div class="text-xs" style="color:#6b7280">未命中</div>
+                <div class="text-lg font-bold mt-1" style="color:#f59e0b" x-text="cache.misses"></div>
+              </div>
+              <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
+                <div class="text-xs" style="color:#6b7280">TTL</div>
+                <div class="text-lg font-bold mt-1" x-text="cache.ttl_secs + 's'"></div>
+              </div>
+            </div>
+            <template x-if="cache.hits + cache.misses > 0">
+              <div class="text-xs" style="color:#6b7280">命中率: <span style="color:#cdd0d4" x-text="(((cache.hits/(cache.hits+cache.misses))*100).toFixed(1)) + '%'"></span></div>
+            </template>
+          </div>
+        </template>
+      </div></div>
+
       <div class="card"><div class="card-body">
         <div class="flex items-center justify-between mb-4">
           <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">健康检查</div>
@@ -750,7 +794,7 @@ function dashboard() {
     loading: true,
 
     // Data
-    logs: [], routes: {}, health: [], stats: null,
+    logs: [], routes: {}, health: [], stats: null, cache: null,
     healthLoading: false, showAllModels: false,
 
     // Settings
@@ -784,7 +828,7 @@ function dashboard() {
       if (tabId==='dashboard'||tabId==='tokens'||tabId==='daily') this.fetchStats();
       if (tabId==='records') this.fetchLogs();
       if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); }
-      if (tabId==='health' && this.health.length===0) this.fetchHealth();
+      if (tabId==='health') { if (this.health.length===0) this.fetchHealth(); this.fetchCache(); }
     },
 
     startPoll() {
@@ -805,6 +849,12 @@ function dashboard() {
     },
     async resetCircuit(provider) {
       try { const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})}); if(r.ok){ await this.fetchHealth(); } } catch(e){}
+    },
+    async fetchCache() {
+      try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
+    },
+    async setCacheEnabled(val) {
+      try { const r=await fetch('/admin/api/cache',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})}); if(r.ok) this.cache=await r.json(); } catch(e){}
     },
     async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; } } catch(e){} },
     async clearAllLogs() { try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){} },

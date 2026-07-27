@@ -19,10 +19,18 @@ pub struct Config {
     pub request_timeout_secs: u64,
     /// 流式响应空闲超时 (秒) — 上游超过此时长未吐出下一块则断开, 防假死.
     pub stream_idle_timeout_secs: u64,
+    /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式开始前返回的 5xx 重试, 不含 429). 默认 1.
+    pub retry_max: u32,
     /// 管理面板 API 鉴权令牌 (env `AIGATE_ADMIN_TOKEN`). 为空则不鉴权.
     pub admin_token: Option<String>,
     /// 熔断阈值配置 (可经环境变量覆盖).
     pub breaker: CircuitBreakerConfig,
+    /// 响应缓存是否开启 (实验功能, 默认关闭, 可在面板开启).
+    pub cache_enabled: bool,
+    /// 缓存条目 TTL (秒).
+    pub cache_ttl_secs: u64,
+    /// 缓存最大条目数.
+    pub cache_max_entries: usize,
 }
 
 impl Config {
@@ -33,6 +41,10 @@ impl Config {
     /// - `CONNECT_TIMEOUT`: 连接超时秒数, 默认 10.
     /// - `AIGATE_ADMIN_TOKEN`: 管理面板 API 鉴权令牌, 默认不鉴权.
     /// - `BREAKER_*`: 熔断阈值, 默认沿用 cc-switch 实战值.
+    /// - `RETRY_MAX`: 瞬态失败最大重试次数, 默认 1.
+    /// - `CACHE_ENABLED`: 响应缓存开关 (实验功能), 默认 0 (关).
+    /// - `CACHE_TTL_SECS`: 缓存条目 TTL 秒数, 默认 300.
+    /// - `CACHE_MAX_ENTRIES`: 缓存最大条目数, 默认 1024.
     pub fn from_env() -> Self {
         load_dotenv();
         Self {
@@ -40,6 +52,7 @@ impl Config {
             connect_timeout_secs: env_u64("CONNECT_TIMEOUT", 10),
             request_timeout_secs: env_u64("REQUEST_TIMEOUT_SECS", 660),
             stream_idle_timeout_secs: env_u64("STREAM_IDLE_TIMEOUT_SECS", 120),
+            retry_max: env_u32("RETRY_MAX", 1),
             admin_token: env::var("AIGATE_ADMIN_TOKEN")
                 .ok()
                 .map(|s| s.trim().to_string())
@@ -51,6 +64,9 @@ impl Config {
                 error_rate_threshold: env_f64("BREAKER_ERROR_RATE", 0.6),
                 min_requests: env_u32("BREAKER_MIN_REQUESTS", 10),
             },
+            cache_enabled: env_bool("CACHE_ENABLED", false),
+            cache_ttl_secs: env_u64("CACHE_TTL_SECS", 300),
+            cache_max_entries: env_u64("CACHE_MAX_ENTRIES", 1024) as usize,
         }
     }
 }
@@ -73,6 +89,17 @@ fn env_u32(key: &str, default: u32) -> u32 {
 /// 读取 f64 环境变量, 失败或缺失时回退默认值.
 fn env_f64(key: &str, default: f64) -> f64 {
     env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 读取 bool 环境变量, 失败或缺失时回退默认值.
+///
+/// 真值: `1` / `true` / `yes` (大小写不敏感); 假值: `0` / `false` / `no`; 其余回退默认.
+fn env_bool(key: &str, default: bool) -> bool {
+    match env::var(key).ok().as_deref() {
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => true,
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => false,
+        _ => default,
+    }
 }
 
 /// 加载当前目录下的 .env 文件.
