@@ -413,6 +413,7 @@ fn main() {
         )),
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
         retry_max: config.retry_max,
+        retry_backoff: Duration::from_millis(config.retry_backoff_ms),
         key_store: keys::KeyStore::new("data"),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
         breakers,
@@ -430,6 +431,7 @@ fn main() {
         .route("/admin/api/health", get(admin::api_health))
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
+        .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock));
     if config.admin_token.is_some() {

@@ -64,6 +64,14 @@ impl ResponseCache {
         self.enabled.load(Ordering::SeqCst)
     }
 
+    /// 清空所有缓存条目 (保留开关/TTL 等配置, 命中/未命中计数清零).
+    pub fn clear(&self) {
+        let mut map = self.map.lock().expect("cache lock poisoned");
+        map.clear();
+        self.hits.store(0, Ordering::SeqCst);
+        self.misses.store(0, Ordering::SeqCst);
+    }
+
     /// 由已注入参数的请求体计算缓存键; 流式请求返回 None (不缓存).
     pub fn make_key(body: &Value) -> Option<String> {
         // 仅缓存非流式请求.

@@ -35,6 +35,9 @@ pub struct RequestLog {
     /// 补全 token 数 (从上游响应 usage 中提取).
     #[serde(default)]
     pub completion_tokens: u32,
+    /// 是否命中本地响应缓存 (命中则未真实请求上游, 省 token + 延迟).
+    #[serde(default)]
+    pub cached: bool,
 }
 
 /// 内存环形缓冲区 — 存储最近 N 条请求日志, 可选持久化到文件.
@@ -134,11 +137,14 @@ pub async fn record_request(
         error,
         prompt_tokens: 0,
         completion_tokens: 0,
+        cached: false,
     };
     log_buffer.push(log).await;
 }
 
 /// 带 token 统计的日志记录 (成功响应用).
+///
+/// `cached` 标记该响应是否来自本地缓存命中 (命中时未真实请求上游).
 pub async fn record_request_with_tokens(
     log_buffer: &LogBuffer,
     model: &str,
@@ -148,6 +154,7 @@ pub async fn record_request_with_tokens(
     prompt_tokens: u32,
     completion_tokens: u32,
     response_body_len: usize,
+    cached: bool,
 ) {
     let log = RequestLog {
         timestamp: now_ts(),
@@ -160,6 +167,7 @@ pub async fn record_request_with_tokens(
         error: None,
         prompt_tokens,
         completion_tokens,
+        cached,
     };
     log_buffer.push(log).await;
 }
@@ -444,6 +452,7 @@ pub async fn api_mock(
             error: None,
             prompt_tokens: rng.gen_range(50, 500) as u32,
             completion_tokens: rng.gen_range(100, 2000) as u32,
+            cached: false,
         });
     }
 
@@ -467,6 +476,7 @@ pub async fn api_mock(
             error: Some(err_msgs[i % err_msgs.len()].to_string()),
             prompt_tokens: 0,
             completion_tokens: 0,
+            cached: false,
         });
     }
 
@@ -587,6 +597,14 @@ pub async fn api_cache_set(
     Json(payload): Json<CacheToggleReq>,
 ) -> Json<crate::cache::CacheStats> {
     state.cache.set_enabled(payload.enabled);
+    Json(state.cache.stats())
+}
+
+/// POST /admin/api/cache/clear — 手动清空全部缓存条目 (实验功能调试用).
+pub async fn api_cache_clear(
+    State(state): State<super::proxy::AppState>,
+) -> Json<crate::cache::CacheStats> {
+    state.cache.clear();
     Json(state.cache.stats())
 }
 

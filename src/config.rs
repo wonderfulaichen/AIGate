@@ -21,6 +21,8 @@ pub struct Config {
     pub stream_idle_timeout_secs: u64,
     /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式开始前返回的 5xx 重试, 不含 429). 默认 1.
     pub retry_max: u32,
+    /// 重试退避基数 (毫秒): 每次重试前等待 base*attempt + 抖动, 避免瞬时抖动放大对上游压力. 默认 200.
+    pub retry_backoff_ms: u64,
     /// 管理面板 API 鉴权令牌 (env `AIGATE_ADMIN_TOKEN`). 为空则不鉴权.
     pub admin_token: Option<String>,
     /// 熔断阈值配置 (可经环境变量覆盖).
@@ -42,6 +44,7 @@ impl Config {
     /// - `AIGATE_ADMIN_TOKEN`: 管理面板 API 鉴权令牌, 默认不鉴权.
     /// - `BREAKER_*`: 熔断阈值, 默认沿用 cc-switch 实战值.
     /// - `RETRY_MAX`: 瞬态失败最大重试次数, 默认 1.
+    /// - `RETRY_BACKOFF_MS`: 重试退避基数毫秒, 默认 200.
     /// - `CACHE_ENABLED`: 响应缓存开关 (实验功能), 默认 0 (关).
     /// - `CACHE_TTL_SECS`: 缓存条目 TTL 秒数, 默认 300.
     /// - `CACHE_MAX_ENTRIES`: 缓存最大条目数, 默认 1024.
@@ -53,6 +56,7 @@ impl Config {
             request_timeout_secs: env_u64("REQUEST_TIMEOUT_SECS", 660),
             stream_idle_timeout_secs: env_u64("STREAM_IDLE_TIMEOUT_SECS", 120),
             retry_max: env_u32("RETRY_MAX", 1),
+            retry_backoff_ms: env_u64("RETRY_BACKOFF_MS", 200),
             admin_token: env::var("AIGATE_ADMIN_TOKEN")
                 .ok()
                 .map(|s| s.trim().to_string())
