@@ -26,17 +26,28 @@ fn normalize_effort(v: &str) -> String {
     }
 }
 
-/// 规范化请求体中的思考参数. 原地修改 `body`.
+/// 规范化请求体中的思考参数. 原地修改 `body`, 返回客户端是否**显式关闭**了思考.
 ///
+/// 返回值语义 (供 `inject_model_params` 决定是否用配置档兜底):
+/// - `true`  = 客户端发了 `thinking: false`, 明确不要思考 → 代理不得注入 reasoning_effort.
+/// - `false` = 其余情况 (未提 / 开启 / 指定档位) → 由调用方按既有规则处理.
+///
+/// 字段处理:
 /// - `thinking: true`  → 置 `reasoning_effort` (优先用模型配置值, 否则 "high") 并移除 `thinking`.
-/// - `thinking: false` → 仅移除 `thinking` (是否注入 reasoning_effort 由 `inject_model_params` 按模型配置决定).
+/// - `thinking: false` → 移除 `thinking`, 返回 `true` (客户端档位优先, 不注入配置档).
 /// - `thinking` 为对象 → 取其中 `effort` 映射到 `reasoning_effort`, 否则用模型配置 / 默认 "high".
 /// - `reasoning_effort` → 别名归一化为 low/medium/high/max.
-pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfig) {
+///
+/// 设计原则: 配置档 (`providers.json` 的 reasoning_effort) 仅作"客户端无指示时的默认",
+/// 客户端发的档位 (含 thinking 布尔 / 对象 / reasoning_effort) 一律优先. 代理只做
+/// `thinking → reasoning_effort` 的协议翻译, 不强制拉满.
+pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfig) -> bool {
     let obj = match body.as_object_mut() {
         Some(o) => o,
-        None => return,
+        None => return false,
     };
+
+    let mut explicitly_disabled = false;
 
     // 1. 处理客户端发来的 thinking 字段
     if let Some(thinking) = obj.remove("thinking") {
@@ -50,7 +61,8 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
                     .or_insert_with(|| Value::String(effort));
             }
             Value::Bool(false) => {
-                // 不注入, 交由 inject_model_params 按模型配置处理
+                // 客户端显式关闭思考: 标记, 交由 inject_model_params 跳过配置档注入
+                explicitly_disabled = true;
             }
             Value::Object(map) => {
                 let effort = map
@@ -81,6 +93,8 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
     if let Some(n) = need_fix {
         obj.insert("reasoning_effort".to_string(), Value::String(n));
     }
+
+    explicitly_disabled
 }
 
 #[cfg(test)]
@@ -123,9 +137,26 @@ mod tests {
     #[test]
     fn thinking_false_is_removed() {
         let mut body = json!({ "model": "x", "thinking": false });
-        normalize_thinking(&mut body, &no_effort_model());
+        let disabled = normalize_thinking(&mut body, &no_effort_model());
         assert!(body.get("thinking").is_none());
         assert!(body.get("reasoning_effort").is_none());
+        // 标记客户端显式关闭思考, 供代理跳过配置档注入
+        assert!(disabled);
+    }
+
+    #[test]
+    fn thinking_true_not_marked_disabled() {
+        let mut body = json!({ "model": "x", "thinking": true });
+        let disabled = normalize_thinking(&mut body, &no_effort_model());
+        assert!(!disabled);
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn no_thinking_field_not_disabled() {
+        let mut body = json!({ "model": "x" });
+        let disabled = normalize_thinking(&mut body, &no_effort_model());
+        assert!(!disabled);
     }
 
     #[test]

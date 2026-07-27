@@ -45,6 +45,8 @@ pub struct AppState {
     pub stream_idle_timeout: Duration,
     /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式前 5xx 重试).
     pub retry_max: u32,
+    /// 重试退避基数 (毫秒): 每次重试前等待 base*attempt + 抖动.
+    pub retry_backoff: Duration,
     /// 熔断器表: provider name -> 该供应商的熔断器 (std Mutex, 临界区极短).
     pub breakers: BreakerMap,
 }
@@ -200,6 +202,7 @@ pub async fn chat_completions(
             let (pt, ct) = extract_usage(&cached);
             crate::admin::record_request_with_tokens(
                 &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
+                true,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -265,6 +268,7 @@ pub async fn chat_completions(
                     // 5xx 可重试 (服务端瞬态故障); 不重试 4xx (含 429).
                     if attempt < total_attempts {
                         warn!("proxy: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
+                        retry_backoff(attempt, state.retry_backoff).await;
                         continue;
                     }
                     upstream = Some(resp);
@@ -280,6 +284,7 @@ pub async fn chat_completions(
                 let retryable = e.is_connect() || e.is_timeout();
                 if retryable && attempt < total_attempts {
                     warn!("proxy: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
+                    retry_backoff(attempt, state.retry_backoff).await;
                     continue;
                 }
                 send_err = Some(chain);
@@ -342,6 +347,7 @@ pub async fn chat_completions(
                 let (pt, ct) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
                     &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
+                    false,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -600,7 +606,7 @@ where
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
-                                    ld.start, pt, ct, ld.response_body_len,
+                                    ld.start, pt, ct, ld.response_body_len, false,
                                 ).await;
                             });
                         }
@@ -617,6 +623,19 @@ where
 fn parse_model(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     v.get("model")?.as_str().map(|s| s.to_string())
+}
+
+/// 重试退避: 等待 `base * attempt` 毫秒 + 伪随机抖动 (0 ~ base/2).
+///
+/// 线性增长避免重试风暴, 抖动打散多客户端在同一瞬态故障时的齐发重试.
+async fn retry_backoff(attempt: u32, base: Duration) {
+    if base.is_zero() {
+        return;
+    }
+    let base_ms = base.as_millis() as u64;
+    let jitter = ((attempt.wrapping_mul(0x9E37_79B1) % 100) as u64) * base_ms / 200; // 0 ~ base/2
+    let wait = base_ms.saturating_mul(attempt as u64) + jitter;
+    tokio::time::sleep(Duration::from_millis(wait)).await;
 }
 
 /// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
@@ -639,7 +658,8 @@ fn extract_usage(text: &str) -> (u32, u32) {
 /// 注入模型级参数到请求 body.
 ///
 /// - upstream_model: 替换 body 中的 model 字段为上游真实模型名.
-/// - reasoning_effort: 如果 body 没有该字段且模型配置了, 则注入.
+/// - reasoning_effort: 配置档仅作"客户端无指示时的默认". 客户端显式关闭思考
+///   (`thinking:false`) 或已自带档位时不注入/不覆盖, 客户端档位优先.
 /// - extra_body: 逐字段注入, 不覆盖已有字段.
 fn inject_model_params(
     bytes: bytes::Bytes,
@@ -650,7 +670,8 @@ fn inject_model_params(
     };
 
     // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
-    crate::thinking::normalize_thinking(&mut v, model_cfg);
+    // 返回客户端是否显式关闭思考 (thinking:false), 用于跳过配置档兜底注入.
+    let explicitly_disabled = crate::thinking::normalize_thinking(&mut v, model_cfg);
 
     // 没有任何需要注入的参数 → 已含规范化结果, 序列化返回.
     let has_remap = model_cfg.upstream_model.is_some();
@@ -680,9 +701,10 @@ fn inject_model_params(
         }
     }
 
-    // 注入 reasoning_effort (不覆盖客户端已有值)
+    // 注入 reasoning_effort: 配置档仅作"客户端无指示时的默认", 客户端档位优先.
+    // 客户端显式关闭思考 (thinking:false) 时不注入, 尊重其关思考意图.
     if let Some(effort) = &model_cfg.reasoning_effort {
-        if v.get("reasoning_effort").is_none() {
+        if !explicitly_disabled && v.get("reasoning_effort").is_none() {
             v["reasoning_effort"] = serde_json::Value::String(effort.clone());
             info!("proxy: injected reasoning_effort={effort}");
         }
@@ -740,4 +762,71 @@ fn format_error_chain(e: &dyn std::error::Error) -> String {
         current = cause.source();
     }
     msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::ModelConfig;
+
+    fn cfg_with_effort(effort: &str) -> ModelConfig {
+        ModelConfig {
+            upstream_model: None,
+            reasoning_effort: Some(effort.to_string()),
+            extra_body: None,
+        }
+    }
+
+    fn cfg_no_effort() -> ModelConfig {
+        ModelConfig {
+            upstream_model: None,
+            reasoning_effort: None,
+            extra_body: None,
+        }
+    }
+
+    fn parse(out: bytes::Bytes) -> serde_json::Value {
+        serde_json::from_slice(&out).unwrap()
+    }
+
+    /// 方向 B: 客户端显式 thinking:false → 即使配置档有 max, 也不注入 reasoning_effort.
+    #[test]
+    fn thinking_false_suppresses_config_effort() {
+        let cfg = cfg_with_effort("max");
+        let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
+        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let v = parse(out);
+        assert!(v.get("thinking").is_none());
+        assert!(v.get("reasoning_effort").is_none());
+    }
+
+    /// 客户端未提思考 → 注入配置档默认 (max).
+    #[test]
+    fn no_thinking_injects_config_default() {
+        let cfg = cfg_with_effort("max");
+        let body = serde_json::json!({ "model": "x" }).to_string();
+        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let v = parse(out);
+        assert_eq!(v["reasoning_effort"], "max");
+    }
+
+    /// 客户端自带 reasoning_effort → 优先, 不被配置档覆盖.
+    #[test]
+    fn client_effort_wins_over_config() {
+        let cfg = cfg_with_effort("max");
+        let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
+        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let v = parse(out);
+        assert_eq!(v["reasoning_effort"], "low");
+    }
+
+    /// 配置档无 effort 且客户端无指示 → 透传, 不注入 (上游用自己的默认 high).
+    #[test]
+    fn no_config_no_client_stays_clean() {
+        let cfg = cfg_no_effort();
+        let body = serde_json::json!({ "model": "x" }).to_string();
+        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let v = parse(out);
+        assert!(v.get("reasoning_effort").is_none());
+    }
 }
