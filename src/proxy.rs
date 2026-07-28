@@ -317,7 +317,8 @@ pub async fn chat_completions(
             "proxy: upstream {upstream_status} for {endpoint}: {err}",
             err = &err_body[..err_body.len().min(500)]
         );
-        let err_msg = format!("upstream returned {upstream_status}: {err_body}");
+        // 解析错误信息，添加中文说明
+        let err_msg = format_upstream_error(upstream_status, &err_body);
         // 5xx 视为供应商故障 → 记失败 (可能触发熔断); 4xx (含 429) 视为
         // 客户端/配置问题, 供应商仍健康 → 记成功, 不熔断.
         report_breaker(&state.breakers, &provider_name, upstream_status < 500);
@@ -764,6 +765,50 @@ fn format_error_chain(e: &dyn std::error::Error) -> String {
     msg
 }
 
+/// 格式化上游错误信息: 解析 JSON 错误响应，添加中文说明.
+///
+/// 输入: upstream_status (如 400), err_body (原始 JSON 响应).
+/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider (Console)..."
+fn format_upstream_error(status: u16, err_body: &str) -> String {
+    // 尝试解析 JSON 错误响应
+    if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(err_body) {
+        if let Some(error) = err_json.get("error") {
+            let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            let err_type = error.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let code = error.get("code").and_then(|c| c.as_str()).unwrap_or("");
+
+            // 根据错误类型添加中文说明
+            let explanation = match err_type {
+                "invalid_request_error" => "请求参数错误（可能是模型不支持、参数缺失或格式错误）",
+                "authentication_error" => "认证失败（API Key 无效或已过期）",
+                "rate_limit_error" => "请求频率超限（请稍后重试）",
+                "server_error" => "服务器内部错误（供应商服务异常）",
+                "context_length_exceeded" => "上下文长度超限（请求内容过长）",
+                "insufficient_quota" => "配额不足（账户余额耗尽）",
+                "permission_denied" => "权限不足（无权访问该模型或功能）",
+                _ => "",
+            };
+
+            // 构造格式化错误信息
+            if !explanation.is_empty() {
+                format!("{status} {explanation} [{err_type}]: {msg}")
+            } else if !code.is_empty() {
+                format!("{status} [{code}]: {msg}")
+            } else if !err_type.is_empty() {
+                format!("{status} [{err_type}]: {msg}")
+            } else {
+                format!("{status}: {msg}")
+            }
+        } else {
+            // JSON 但没有 error 字段，直接返回原始信息
+            format!("{status}: {err_body}")
+        }
+    } else {
+        // 非 JSON 格式，直接返回原始信息
+        format!("{status}: {err_body}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,5 +873,42 @@ mod tests {
         let out = inject_model_params(bytes::Bytes::from(body), &cfg);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
+    }
+
+    /// 测试 format_upstream_error 函数.
+    #[test]
+    fn test_format_upstream_error() {
+        // 测试 1: invalid_request_error - 应包含中文说明
+        let err_body = r#"{"error":{"message":"Error from provider (Console): Upstream request failed","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#;
+        let result = format_upstream_error(400, err_body);
+        assert!(result.contains("400"));
+        assert!(result.contains("请求参数错误"));
+        assert!(result.contains("invalid_request_error"));
+        assert!(result.contains("Error from provider"));
+
+        // 测试 2: authentication_error - 应包含认证失败说明
+        let err_body = r#"{"error":{"message":"Invalid API key","type":"authentication_error"}}"#;
+        let result = format_upstream_error(401, err_body);
+        assert!(result.contains("401"));
+        assert!(result.contains("认证失败"));
+        assert!(result.contains("Invalid API key"));
+
+        // 测试 3: rate_limit_error - 应包含频率限制说明
+        let err_body = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#;
+        let result = format_upstream_error(429, err_body);
+        assert!(result.contains("429"));
+        assert!(result.contains("请求频率超限"));
+        assert!(result.contains("Rate limit exceeded"));
+
+        // 测试 4: 非 JSON 格式 - 应直接返回原始信息
+        let err_body = "plain text error";
+        let result = format_upstream_error(500, err_body);
+        assert_eq!(result, "500: plain text error");
+
+        // 测试 5: JSON 但没有 error 字段 - 应返回原始信息
+        let err_body = r#"{"message":"some error"}"#;
+        let result = format_upstream_error(400, err_body);
+        assert!(result.contains("400"));
+        assert!(result.contains(err_body));
     }
 }

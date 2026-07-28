@@ -10,5 +10,9 @@ data/
 build.log
 test.log
 
+# 发布打包产物（dist 目录 + zip 分发包，不入库）
+dist/
+*.zip
+
 # 工作记忆目录（CodeBuddy 本地记忆，非源码）
 .codebuddy/
