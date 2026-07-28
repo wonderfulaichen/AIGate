@@ -2,7 +2,7 @@
 name = "AIGate"
 version = "0.1.0"
 edition = "2021"
-description = "Local OpenAI-compatible reverse proxy with admin panel, multi-vendor routing, and desktop GUI"
+description = "Local OpenAI-compatible reverse proxy: admin panel, multi-vendor routing, circuit breaker, friendly error messages, and desktop GUI"
 
 [dependencies]
 axum = "0.7"
