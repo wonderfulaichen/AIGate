@@ -117,12 +117,13 @@ input.search-input::placeholder{color:#6b7280}
       <template x-if="stats && stats.total_requests>0">
         <div class="space-y-4">
           <h1 class="text-lg font-bold">概览</h1>
-          <div class="grid grid-cols-5 gap-4">
+          <div class="grid grid-cols-6 gap-4">
             <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-2xl font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
             <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">成功率</div><div class="text-2xl font-bold mt-1" :class="sRate>=95?'text-[#34d399]':sRate>=80?'text-[#f59e0b]':'text-[#ef4444]'" x-text="sRate+'%'"></div></div></div>
             <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">平均延迟</div><div class="text-2xl font-bold mt-1 text-[#06b6d4]" x-text="fmtMs(stats.avg_latency_ms)"></div></div></div>
             <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">提示 Tokens</div><div class="text-2xl font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
             <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">补全 Tokens</div><div class="text-2xl font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">缓存命中</div><div class="text-2xl font-bold mt-1 text-[#22d3ee]" x-text="(stats.cache_hit_rate*100).toFixed(1)+'%'"></div><div class="text-[11px] mt-1" style="color:#6b7280" x-text="'命中 '+fmtT(stats.total_cache_hit_tokens)+' tok'"></div><template x-if="stats.total_cache_hit_tokens===0 && stats.total_cache_miss_tokens===0"><div class="text-[10px] mt-1" style="color:#6b7280">供应商未返回缓存命中</div></template></div></div>
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div class="card"><div class="card-body">
@@ -182,211 +183,67 @@ input.search-input::placeholder{color:#6b7280}
                 </div>
               </template>
             </div></div>
-            <div class="card"><div class="card-body">
-              <div class="flex items-center justify-between mb-3">
-                <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求趋势</div>
-                <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
-                  <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
-                  <button @click="trendGranularity='day';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
-                  <button @click="trendGranularity='month';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
+          </div>
+          <!-- 模型用量明细（合并自 Token 统计页，避免重复） -->
+          <div class="card"><div class="card-body">
+            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量明细</div>
+            <div class="overflow-x-auto"><table><thead><tr><th>模型</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th><th class="text-right">缓存命中</th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="8" class="text-center py-8" style="color:#6b7280">暂无数据</td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td><td class="text-right" :title="'命中 '+fmtT(m.total_cache_hit_tokens)+' / 未命中 '+fmtT(m.total_cache_miss_tokens)" x-text="(m.total_cache_hit_tokens+m.total_cache_miss_tokens>0)?((m.total_cache_hit_tokens/(m.total_cache_hit_tokens+m.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
+          </div></div>
+          <div class="card"><div class="card-body">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求 / Token 趋势</div>
+                <div class="flex items-center gap-2">
+                  <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
+                    <button @click="dailyMode='requests'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='requests'?'bg-[#6366f1] text-white':'text-[#6b7280]'">请求数</button>
+                    <button @click="dailyMode='latency'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='latency'?'bg-[#6366f1] text-white':'text-[#6b7280]'">延迟</button>
+                    <button @click="dailyMode='tokens'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='tokens'?'bg-[#6366f1] text-white':'text-[#6b7280]'">Tokens</button>
+                  </div>
+                  <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
+                    <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
+                    <button @click="trendGranularity='day';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
+                    <button @click="trendGranularity='month';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
+                  </div>
                 </div>
               </div>
               <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无趋势数据</div></template>
               <template x-if="stats.trends.length>0">
                 <div>
-                  <svg class="w-full h-24" :viewBox="'0 0 '+(stats.trends.length*60+40)+' 96'" preserveAspectRatio="xMidYMid meet">
-                    <defs><linearGradient id="da" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".15"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0"/></linearGradient></defs>
-                    <template x-if="tp.length>=2"><path :d="ta" fill="url(#da)"/></template>
-                    <polyline :points="tps" fill="none" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <template x-for="(pt,j) in tp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2" fill="#818cf8" stroke="#1e2028" stroke-width="1"/></template>
+                  <svg class="w-full" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 120'">
+                    <defs>
+                      <linearGradient id="da" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".15"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0"/></linearGradient>
+                      <linearGradient id="dlat" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b" stop-opacity=".15"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/></linearGradient>
+                      <linearGradient id="dtok" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#a78bfa" stop-opacity=".15"/><stop offset="100%" stop-color="#a78bfa" stop-opacity="0"/></linearGradient>
+                    </defs>
+                    <template x-for="i in 3" :key="'g'+i"><line :x1="(dailyTp[0]||{}).x||0" :x2="(dailyTp[dailyTp.length-1]||{}).x||0" :y1="20+i*30" :y2="20+i*30" stroke="#2a2d37" stroke-width="0.5"/></template>
+                    <template x-if="dailyTp.length>=2"><path :d="dailyArea" :fill="dailyMode==='tokens'?'url(#dtok)':dailyMode==='latency'?'url(#dlat)':'url(#da)'"/></template>
+                    <polyline :points="dailyTps" fill="none" :stroke="dailyMode==='tokens'?'#a78bfa':dailyMode==='latency'?'#f59e0b':'#818cf8'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <template x-for="(pt,j) in dailyTp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2.5" :fill="dailyMode==='tokens'?'#a78bfa':dailyMode==='latency'?'#f59e0b':'#818cf8'" stroke="#1e2028" stroke-width="1"/></template>
                   </svg>
-                  <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
-                    <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
+                  <div class="flex justify-between mt-1 text-[10px] overflow-hidden" style="color:#6b7280">
+                    <template x-for="(t,j) in stats.trends" :key="t.date"><span x-show="(j % Math.max(1, Math.ceil(stats.trends.length/8))===0) || j===stats.trends.length-1" x-text="t.date" class="whitespace-nowrap"></span></template>
                   </div>
-                  <div class="mt-3 space-y-2">
+                  <div class="flex gap-2 mt-3 overflow-x-auto pb-1">
                     <template x-for="t in stats.trends" :key="t.date">
-                      <div>
-                        <div class="flex items-center justify-between text-xs mb-1">
-                          <span class="font-medium w-12 shrink-0" style="color:#6b7280" x-text="t.date"></span>
-                          <span style="color:#6b7280" x-text="t.requests+' 次'"></span>
-                        </div>
-                        <div class="flex gap-1.5">
-                          <div class="flex-1 progress-track"><div class="progress-fill secondary" :style="'width:'+(t.requests/maxDailyReqs*100)+'%'"></div></div>
-                          <template x-if="t.errors>0"><div class="progress-track" style="max-width:50px;flex:1"><div class="progress-fill error" :style="'width:'+(t.errors/t.requests*100)+'%'"></div></div></template>
-                        </div>
+                      <div class="shrink-0 text-center rounded px-2 py-1.5" style="background:rgba(255,255,255,.03);min-width:66px">
+                        <div class="text-[10px]" style="color:#6b7280" x-text="t.date"></div>
+                        <div class="text-xs font-semibold mt-0.5" style="color:#cdd0d4" x-text="dailyMode==='tokens' ? fmtT((t.total_prompt_tokens||0)+(t.total_completion_tokens||0))+' tok' : dailyMode==='latency' ? fmtMs(t.avg_latency||0) : t.requests+' 次'"></div>
                       </div>
                     </template>
                   </div>
                 </div>
               </template>
             </div></div>
-          </div>
           <div class="card"><div class="card-body">
             <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">供应商统计</div>
-            <div class="overflow-x-auto"><table><thead><tr><th>供应商</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td></tr></template></tbody></table></div>
+            <div class="overflow-x-auto"><table><thead><tr><th>供应商</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th><th class="text-right">缓存命中</th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="'命中 '+fmtT(p.total_cache_hit_tokens)+' / 未命中 '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_cache_hit_tokens+p.total_cache_miss_tokens>0)?((p.total_cache_hit_tokens/(p.total_cache_hit_tokens+p.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
           </div></div>
         </div>
       </template>
     </div>
 
-    <!-- ==================== TOKEN STATS ==================== -->
-    <div x-show="activeTab==='tokens'" class="page-enter space-y-4">
-      <div class="flex items-center justify-between"><div><h1 class="text-lg font-bold">Token 统计</h1><p class="text-xs mt-1" style="color:#6b7280">近 100 条请求的模型用量分析</p></div></div>
-      <template x-if="!stats || stats.total_requests===0">
-        <div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div>
-      </template>
-      <template x-if="stats && stats.total_requests>0">
-        <div class="space-y-4">
-          <div class="grid grid-cols-4 gap-4">
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-lg font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">提示 Tokens</div><div class="text-lg font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">补全 Tokens</div><div class="text-lg font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总 Tokens</div><div class="text-lg font-bold mt-1 text-white" x-text="fmtT(stats.total_prompt_tokens+stats.total_completion_tokens)"></div></div></div>
-          </div>
-          <!-- Tab toggle + granularity -->
-          <div class="flex items-center gap-3">
-            <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
-              <button @click="tokenTab='ranking'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="tokenTab==='ranking'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">模型排名</button>
-              <button @click="tokenTab='daily'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="tokenTab==='daily'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'"><span x-text="trendGranularity==='hour'?'时趋势':trendGranularity==='month'?'月趋势':'日趋势'"></span></button>
-            </div>
-            <div x-show="tokenTab==='daily'" class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
-              <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
-              <button @click="trendGranularity='day';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
-              <button @click="trendGranularity='month';fetchStats()" class="px-2 py-1 text-[10px] font-medium rounded-md transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
-            </div>
-          </div>
-          <!-- Ranking view -->
-          <div x-show="tokenTab==='ranking'">
-            <div class="card"><div class="card-body">
-              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量</div>
-              <!-- Bar chart -->
-              <div class="space-y-3 mb-4">
-                <template x-for="(m,i) in stats.per_model.slice(0,8)" :key="m.model">
-                  <div>
-                    <div class="flex items-center justify-between text-xs mb-1">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <span class="w-5 text-center font-bold text-[10px] shrink-0" :class="'text-['+(i<3?['#f59e0b','#94a3b8','#d97706'][i]:'#6b7280')+']'" x-text="'#'+(i+1)"></span>
-                        <span class="truncate max-w-[200px]" style="color:#a5b4fc" x-text="m.model"></span>
-                      </div>
-                      <span style="color:#6b7280" x-text="m.requests+' 请求'"></span>
-                    </div>
-                    <div class="progress-track"><div class="progress-fill primary" :style="'width:'+(m.requests/maxModelReqs*100)+'%'"></div></div>
-                    <div class="flex gap-4 text-[10px] mt-0.5" style="color:#6b7280">
-                      <span x-text="'延迟: '+fmtMs(m.avg_latency_ms)"></span>
-                      <template x-if="m.errors>0"><span style="color:#f87171" x-text="'错误: '+m.errors"></span></template>
-                      <span x-text="'流量: '+fmtB(m.total_body_bytes)"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div></div>
-            <div class="card"><div class="card-body">
-              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型明细</div>
-              <div class="overflow-x-auto"><table><thead><tr><th>模型</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="7" class="text-center py-8" style="color:#6b7280">暂无数据</td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td></tr></template></tbody></table></div>
-            </div></div>
-          </div>
-          <!-- Daily view -->
-          <div x-show="tokenTab==='daily'">
-            <div class="card"><div class="card-body">
-              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">日趋势</div>
-              <template x-if="stats.trends.length<2"><div class="flex items-center justify-center h-32" style="color:#6b7280">趋势数据不足</div></template>
-              <template x-if="stats.trends.length>=2">
-                <div>
-                  <svg class="w-full h-36" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 140'" preserveAspectRatio="xMidYMid meet">
-                    <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity=".12"/><stop offset="100%" stop-color="#6366f1" stop-opacity="0"/></linearGradient></defs>
-                    <template x-if="tp.length>=2"><path :d="ta" fill="url(#tg)"/></template>
-                    <polyline :points="tps" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <template x-for="(pt,j) in tp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2.5" fill="#6366f1" stroke="#1e2028" stroke-width="1"/></template>
-                    <!-- Grid lines -->
-                    <template x-for="i in 3" :key="'g'+i"><line :x1="(tp[0]||{}).x||0" :x2="(tp[tp.length-1]||{}).x||0" :y1="20+i*30" :y2="20+i*30" stroke="#2a2d37" stroke-width="0.5"/></template>
-                  </svg>
-                  <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
-                    <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
-                  </div>
-                  <div class="mt-4 space-y-2">
-                    <template x-for="t in stats.trends" :key="t.date">
-                      <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
-                        <span class="font-medium" style="color:#6b7280" x-text="t.date"></span>
-                        <div class="flex items-center gap-4">
-                          <span x-text="t.requests+' 次请求'"></span>
-                          <template x-if="t.errors>0"><span style="color:#f87171" x-text="t.errors+' 错误'"></span></template>
-                          <template x-if="t.errors===0"><span style="color:#34d399">无错误</span></template>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div></div>
-          </div>
-        </div>
-      </template>
-    </div>
 
-    <!-- ==================== DAILY TRENDS ==================== -->
-    <div x-show="activeTab==='daily'" class="page-enter space-y-4">
-      <div class="flex items-center justify-between">
-        <div><h1 class="text-lg font-bold">请求趋势</h1><p class="text-xs mt-1" style="color:#6b7280">按时间粒度查看请求量与错误率</p></div>
-        <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37">
-          <button @click="trendGranularity='hour';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按小时</button>
-          <button @click="trendGranularity='day';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按天</button>
-          <button @click="trendGranularity='month';fetchStats()" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">按月</button>
-        </div>
-      </div>
-      <template x-if="!stats || stats.total_requests===0">
-        <div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div>
-      </template>
-      <template x-if="stats && stats.total_requests>0">
-        <div class="space-y-4">
-          <div class="grid grid-cols-2 gap-4">
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-lg font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总错误</div><div class="text-lg font-bold mt-1" :class="stats.error_count>0?'text-[#ef4444]':'text-[#34d399]'" x-text="stats.error_count"></div></div></div>
-          </div>
-          <!-- Tab toggle -->
-          <div class="flex gap-1 p-1 rounded-lg" style="background:#2a2d37;width:fit-content">
-            <button @click="dailyMode='requests'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="dailyMode==='requests'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">请求量</button>
-            <button @click="dailyMode='latency'" class="px-3 py-1.5 text-xs font-medium rounded-md transition" :class="dailyMode==='latency'?'bg-[#6366f1] text-white':'text-[#6b7280] hover:text-[#cdd0d4]'">延迟</button>
-          </div>
-          <div class="card"><div class="card-body">
-            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="dailyMode==='requests'?'每日请求量':'每日平均延迟'"></div>
-            <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280">暂无趋势数据</div></template>
-            <template x-if="stats.trends.length>0">
-              <div>
-                <!-- Dual datasets: requests or latency -->
-                <svg class="w-full h-40" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 160'" preserveAspectRatio="xMidYMid meet">
-                  <defs>
-                    <linearGradient id="dreq" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#06b6d4" stop-opacity=".12"/><stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/></linearGradient>
-                    <linearGradient id="dlat" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b" stop-opacity=".12"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/></linearGradient>
-                  </defs>
-                  <!-- Grid -->
-                  <template x-for="i in 3" :key="'g'+i"><line :x1="(dailyTp[0]||{}).x||0" :x2="(dailyTp[dailyTp.length-1]||{}).x||0" :y1="20+i*35" :y2="20+i*35" stroke="#2a2d37" stroke-width="0.5"/></template>
-                  <template x-if="dailyTp.length>=2">
-                    <path :d="dailyArea" :fill="dailyMode==='requests'?'url(#dreq)':'url(#dlat)'"/>
-                  </template>
-                  <polyline :points="dailyTps" fill="none" :stroke="dailyMode==='requests'?'#06b6d4':'#f59e0b'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <template x-for="(pt,j) in dailyTp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="3" :fill="dailyMode==='requests'?'#06b6d4':'#f59e0b'" stroke="#1e2028" stroke-width="1.5"/></template>
-                </svg>
-                <div class="flex justify-between mt-1 text-[10px]" style="color:#6b7280">
-                  <template x-for="t in stats.trends" :key="t.date"><span x-text="t.date"></span></template>
-                </div>
-                <div class="mt-4 space-y-2">
-                  <template x-for="t in stats.trends" :key="t.date">
-                    <div class="flex items-center justify-between text-xs px-3 py-2 rounded" style="background:rgba(255,255,255,.02)">
-                      <span class="font-medium" style="color:#6b7280" x-text="t.date"></span>
-                      <div class="flex items-center gap-4">
-                        <span x-text="t.requests+' 次请求'"></span>
-                        <template x-if="dailyMode==='latency'"><span style="color:#f59e0b" x-text="'延迟: '+fmtMs(t.avg_latency||0)"></span></template>
-                        <template x-if="t.errors>0"><span style="color:#f87171" x-text="t.errors+' 错误'"></span></template>
-                      </div>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </div></div>
-        </div>
-      </template>
-    </div>
+
+
 
     <!-- ==================== LOGS / RECORDS ==================== -->
     <div x-show="activeTab==='records'" class="page-enter">
@@ -426,6 +283,7 @@ input.search-input::placeholder{color:#6b7280}
                     <span class="truncate max-w-[10%] shrink-0" style="color:#6b7280" x-text="log.provider"></span>
                     <span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
                     <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 badge-primary" title="命中本地缓存, 未请求上游">缓存</span></template>
+                    <template x-if="log.prompt_cache_hit_tokens>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" title="上游 KV Cache 命中 token 数" x-text="'缓存 '+fmtT(log.prompt_cache_hit_tokens)"></span></template>
                     <span class="w-14 text-right font-mono shrink-0" style="color:#6b7280" x-text="log.latency_ms+'ms'"></span>
                     <span class="w-16 text-right shrink-0" style="color:#6b7280" x-text="fmtB(log.body_len)"></span>
                     <template x-if="log.error"><span class="text-[#f87171] truncate min-w-0 text-[11px]" x-text="log.error.substring(0,45)"></span></template>
@@ -439,6 +297,7 @@ input.search-input::placeholder{color:#6b7280}
                       <span>状态码: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
                       <span>延迟: <span style="color:#cdd0d4" x-text="log.latency_ms+'ms'"></span></span>
                       <span>请求体: <span style="color:#cdd0d4" x-text="fmtB(log.body_len)"></span></span>
+                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1">KV 缓存: <span style="color:#22d3ee" x-text="'命中 '+fmtT(log.prompt_cache_hit_tokens)"></span><span style="color:#6b7280"> / </span><span style="color:#cdd0d4" x-text="'未命中 '+fmtT(log.prompt_cache_miss_tokens)"></span></span></template>
                       <template x-if="log.error"><span class="w-full mt-1">错误详情: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
                     </div>
                   </div>
@@ -706,6 +565,13 @@ input.search-input::placeholder{color:#6b7280}
                            <button @click="prov._testResult=null" class="text-xs" style="color:#6b7280">×</button>
                          </div>
                        </template>
+                       <!-- Fetch models button -->
+                       <template x-if="!prov._fetching">
+                         <button @click="fetchProviderModels(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#818cf8;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1'" @mouseleave="$el.style.borderColor='#2a2d37'">拉取模型</button>
+                       </template>
+                       <template x-if="prov._fetching">
+                         <span class="text-xs" style="color:#6b7280">拉取中...</span>
+                       </template>
                        <span class="text-xs" style="color:#6b7280" x-text="prov.models.length+' 模型'"></span>
                      </div>
                    </div>
@@ -786,8 +652,6 @@ function dashboard() {
     // Sidebar navigation — matches 68HUB layout
     navItems: [
       { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', label:'概览' },
-      { id:'tokens', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="13" width="4" height="7" rx="1"/><rect x="10" y="9" width="4" height="11" rx="1"/><rect x="16" y="5" width="4" height="15" rx="1"/></svg>', label:'Token 统计' },
-      { id:'daily', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>', label:'趋势' },
       { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', label:'记录' },
       { id:'routes', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>', label:'路由' },
       { id:'health', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01" stroke-width="2"/></svg>', label:'健康' },
@@ -806,9 +670,7 @@ function dashboard() {
     providersFormData: null, providersFormMsg: '',
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvKeyEnv: '', addProvKeyDefault: '',
 
-    // Token stats tab
-    tokenTab: 'ranking',
-    // Daily trends mode
+    // Dashboard trend chart mode: 'requests' | 'latency' | 'tokens'
     dailyMode: 'requests',
     trendGranularity: 'day',
 
@@ -829,7 +691,7 @@ function dashboard() {
     switchTab(tabId) {
       this.activeTab = tabId;
       this.logPage = 0; this.expandedLog = -1;
-      if (tabId==='dashboard'||tabId==='tokens'||tabId==='daily') this.fetchStats();
+      if (tabId==='dashboard') this.fetchStats();
       if (tabId==='records') this.fetchLogs();
       if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); }
       if (tabId==='health') { if (this.health.length===0) this.fetchHealth(); this.fetchCache(); }
@@ -938,7 +800,23 @@ function dashboard() {
        } catch(e){ prov._testResult = {success:false,status:'网络错误',latency_ms:0}; }
        prov._testing = false;
      },
-     async saveProvidersForm() {
+     async fetchProviderModels(pi) {
+      const prov = this.providersFormData[pi];
+      prov._fetching = true;
+      try {
+        const r = await fetch('/admin/api/providers/'+encodeURIComponent(prov.name)+'/fetch-models', {method:'POST', headers:authHeaders()});
+        const d = await r.json();
+        if (r.ok && d.success) {
+          this.providersFormMsg = d.message;
+          await this.loadProvidersForm();
+        } else {
+          this.providersFormMsg = d.error || '拉取失败';
+        }
+      } catch(e) { this.providersFormMsg = '网络错误'; }
+      prov._fetching = false;
+      if (this.providersFormMsg) setTimeout(() => { this.providersFormMsg = ''; }, 4000);
+    },
+    async saveProvidersForm() {
        this.providersFormMsg='';
        try {
          const providers = this.providersFormData.map(p => {
@@ -1024,28 +902,15 @@ function dashboard() {
     get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
-    // Sparkline points (used by dashboard chart)
-    get tp() {
-      if(!this.stats||this.stats.trends.length<2) return [];
-      const t=this.stats.trends,n=t.length;
-      const mv=Math.max(...t.map(x=>x.requests),1);
-      const w=n*60+40,h=80,pX=30,pY=8;
-      return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(d.requests/mv)*(h-2*pY)}));
-    },
-    get tps() { return this.tp.map(p=>p.x+','+p.y).join(' '); },
-    get ta() {
-      const p=this.tp; if(p.length<2) return '';
-      return `M${p[0].x},72L${p[0].x},${p[0].y} ${p.slice(1).map(x=>`L${x.x},${x.y}`).join(' ')}L${p[p.length-1].x},72Z`;
-    },
-
-    // Daily trends chart points (dual mode)
+    // Trend chart points (requests / latency / tokens) — 概览页统一趋势图
+    // Daily trends chart points (requests / latency / tokens)
     get dailyTp() {
       if(!this.stats||this.stats.trends.length<2) return [];
       const t=this.stats.trends,n=t.length;
-      const isLat=this.dailyMode==='latency';
-      const vals = isLat
-        ? t.map(d=>d.avg_latency||0)
-        : t.map(d=>d.requests);
+      let vals;
+      if(this.dailyMode==='latency') vals=t.map(d=>d.avg_latency||0);
+      else if(this.dailyMode==='tokens') vals=t.map(d=>(d.total_prompt_tokens||0)+(d.total_completion_tokens||0));
+      else vals=t.map(d=>d.requests);
       const mv=Math.max(...vals,1);
       const w=n*70+50,h=120,pX=35,pY=12;
       return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(vals[i]/mv)*(h-2*pY)}));

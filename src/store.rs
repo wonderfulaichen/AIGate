@@ -11,8 +11,8 @@ use crate::admin::RequestLog;
 
 /// 日志文件超过此字节数后触发滚动.
 const ROTATE_BYTES: u64 = 2 * 1024 * 1024;
-/// 滚动时保留的最近日志条数.
-const MAX_LINES: usize = 5000;
+/// 滚动时保留的最近日志条数 (全量内存缓冲与文件上限).
+pub const MAX_LINES: usize = 5000;
 
 /// JSON Lines 日志存储.
 #[derive(Clone)]
@@ -100,6 +100,20 @@ impl LogStore {
             .collect();
         if let Ok(mut file) = tokio::fs::File::create(&self.file_path).await {
             let _ = file.write_all(content.as_bytes()).await;
+        }
+    }
+
+    /// 同步原子重写文件 (退出/清空前调用, 避免进程退出时异步尾写丢失;
+    /// 先写临时文件再 rename, 防止覆盖过程中断导致原文件被截断).
+    pub fn rewrite_blocking(&self, logs: &[RequestLog]) {
+        let content: String = logs
+            .iter()
+            .filter_map(|l| serde_json::to_string(l).ok())
+            .map(|s| s + "\n")
+            .collect();
+        let tmp = self.file_path.with_extension("jsonl.tmp");
+        if std::fs::write(&tmp, content.as_bytes()).is_ok() {
+            let _ = std::fs::rename(&tmp, &self.file_path);
         }
     }
 }

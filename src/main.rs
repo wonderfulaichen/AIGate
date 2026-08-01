@@ -106,40 +106,31 @@ fn exe_dir() -> std::path::PathBuf {
 fn ensure_default_configs(base: &std::path::Path) {
     let providers_path = base.join("providers.json");
     if !providers_path.exists() {
+        // 默认配置预设常用供应商 (真实公开 endpoint, 不写任何密钥):
+        // - endpoint 均为真实可达地址, 不再用 api.example.com 占位符 (避免误触熔断);
+        // - api_key 仅通过 api_key_env 指向环境变量, 由用户自行填写, 绝不硬编码密钥;
+        // - models 留空, 由面板「拉取模型」从上游 /v1/models 自动获取, 避免模型 ID 过时。
         let default = r#"{
-  "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。",
+  "_说明": "providers 为供应商列表, 已预设常用供应商(真实 endpoint, key 走环境变量)。字段: name 名称; endpoint 上游 /v1/chat/completions 地址(必须真实可达); api_key_env 读取 Key 的环境变量名; models 模型表(留空, 在面板点「拉取模型」自动获取)。models 的键是客户端使用的【模型中转ID】(可自取), upstream_model 才是上游真实模型 ID。",
   "providers": [
     {
       "name": "zen",
-      "endpoint": "https://api.example.com/zen/v1/chat/completions",
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
-      "models": {
-        "zen-coder":  {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
-        "zen-chat":   {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
-        "zen-mini":   {"upstream_model": "north-mini-code-free"},
-        "zen-vision": {"upstream_model": "big-pickle"}
-      }
+      "models": {}
     },
     {
       "name": "go",
-      "endpoint": "https://api.example.com/go/v1/chat/completions",
+      "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
-      "models": {
-        "go-coder":  {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
-        "go-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
-        "go-flash":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "go-glm":    {"upstream_model": "glm-5.2", "reasoning_effort": "high"}
-      }
+      "models": {}
     },
     {
       "name": "deepseek",
       "endpoint": "https://api.deepseek.com/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "models": {
-        "ds-coder":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "ds-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}
-      }
+      "models": {}
     }
   ]
 }"#;
@@ -149,13 +140,9 @@ fn ensure_default_configs(base: &std::path::Path) {
     let env_path = base.join(".env");
     if !env_path.exists() {
         let default = "# AIGate 环境变量\n\
-                        # 在下方填入你的 API Key, 或通过系统环境变量设置\n\n\
-                        # Zen 套餐 (免费模型, 无需修改)\n\
-                        OPENCODE_ZEN_KEY=public\n\n\
-                        # Go 套餐 (订阅后填入)\n\
-                        # OPENCODE_GO_KEY=sk-your-key-here\n\n\
-                        # DeepSeek 官方 (填入你的 Key)\n\
-                        # DEEPSEEK_API_KEY=sk-your-key-here\n";
+# 为 providers.json 中各供应商的 api_key_env 填入对应 Key (也可通过系统环境变量设置)\n\n\
+# 示例: 为名为 deepseek 的供应商配置 Key\n\
+# DEEPSEEK_API_KEY=sk-your-key-here\n";
         let _ = std::fs::write(&env_path, default);
     }
 
@@ -427,6 +414,7 @@ fn main() {
         .route("/admin/api/providers/save", post(admin::api_providers_save))
         .route("/admin/api/providers/reload", post(admin::api_providers_reload))
         .route("/admin/api/providers/test", post(admin::api_providers_test))
+        .route("/admin/api/providers/:name/fetch-models", post(admin::api_providers_fetch_models))
         .route("/admin/api/keys", get(admin::api_keys_get).put(admin::api_keys_put))
         .route("/admin/api/health", get(admin::api_health))
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
@@ -446,7 +434,10 @@ fn main() {
         .merge(admin_api)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
+
+    // 退出时用于同步刷新日志到磁盘的 state 克隆 (事件循环闭包捕获).
+    let state_for_shutdown = state;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     info!("AIGate listening on http://{addr}");
@@ -517,7 +508,8 @@ fn main() {
                 toggle_console(!hidden);
                 handles.console_item.set_checked(!hidden);
             } else if id == handles.quit_item.id().0 {
-                // 退出程序
+                // 退出程序: 先同步刷新日志到磁盘, 避免异步尾写丢失.
+                state_for_shutdown.log_buffer.flush_blocking();
                 elwt.exit();
             }
         }
@@ -546,6 +538,8 @@ fn main() {
                 _ => {}
             },
             Event::LoopExiting => {
+                // 兜底: 事件循环退出前再同步刷新一次日志 (覆盖非菜单退出路径).
+                state_for_shutdown.log_buffer.flush_blocking();
                 toggle_console(true); // 退出前显示控制台, 让用户看到最后日志
             }
             _ => {}

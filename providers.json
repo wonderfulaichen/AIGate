@@ -1,19 +1,5 @@
 {
-  "_说明": "AIGate 供应商配置文件。所有模型 ID 统一用供应商缩写后缀 (-ZEN/-GO/-DS) 避免重名冲突。客户端配置的模型 ID 必须与下方 key 完全一致。",
-  "_字段说明": {
-    "providers": "供应商列表, 每个元素代表一个上游端点",
-    "providers[].name": "供应商名称 (仅用于日志显示)",
-    "providers[].endpoint": "OpenAI 兼容的 chat/completions 端点 URL",
-    "providers[].api_key_env": "从哪个环境变量读取 API key, 对应 .env 中的变量名",
-    "providers[].api_key_default": "可选 - 未配置环境变量时的默认值 (如 Zen 的 'public')",
-    "providers[].headers": "可选 - 额外注入的 HTTP 请求头 (键值对)",
-    "providers[].models": "该供应商支持的模型, key 是客户端使用的模型 ID (带供应商后缀), value 是模型配置",
-    "providers[].models.<id>.upstream_model": "上游真实模型名. 转发时替换 body 中的 model 字段. 客户端用带后缀的 ID (如 deepseek-v4-flash-DS), 上游要求真实名 (如 deepseek-v4-flash)",
-    "providers[].models.<id>.reasoning_effort": "可选 - 思考强度: low / medium / high / max (仅对支持推理的模型生效)",
-    "providers[].models.<id>.extra_body": "可选 - 额外注入到请求 body 的字段 (任意 JSON 键值对)"
-  },
-  "_命名规范": "模型 ID 格式: <真实模型名>-<供应商缩写>. 例: deepseek-v4-flash-DS (DeepSeek官方) / deepseek-v4-flash-GO (Go套餐) / big-pickle-ZEN (Zen免费). upstream_model 填真实模型名.",
-  "_端点说明": "endpoint 请替换为你的实际上游 API 地址。以下仅为示例配置。",
+  "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。",
   "providers": [
     {
       "name": "zen",
@@ -21,11 +7,10 @@
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
       "models": {
-        "big-pickle-ZEN": {"upstream_model": "big-pickle"},
-        "deepseek-v4-flash-free-ZEN": {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
-        "mimo-v2.5-free-ZEN": {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
-        "north-mini-code-free-ZEN": {"upstream_model": "north-mini-code-free"},
-        "nemotron-3-ultra-free-ZEN": {"upstream_model": "nemotron-3-ultra-free"}
+        "zen-coder":  {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
+        "zen-chat":   {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
+        "zen-mini":   {"upstream_model": "north-mini-code-free"},
+        "zen-vision": {"upstream_model": "big-pickle"}
       }
     },
     {
@@ -33,15 +18,10 @@
       "endpoint": "https://api.example.com/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
       "models": {
-        "glm-5.2-GO": {"upstream_model": "glm-5.2", "reasoning_effort": "high"},
-        "glm-5.1-GO": {"upstream_model": "glm-5.1"},
-        "kimi-k2.7-code-GO": {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
-        "kimi-k2.6-GO": {"upstream_model": "kimi-k2.6"},
-        "deepseek-v4-pro-GO": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
-        "deepseek-v4-flash-GO": {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "mimo-v2.5-GO": {"upstream_model": "mimo-v2.5"},
-        "mimo-v2.5-pro-GO": {"upstream_model": "mimo-v2.5-pro"},
-        "minimax-m3-GO": {"upstream_model": "minimax-m3", "reasoning_effort": "high"}
+        "go-coder":  {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
+        "go-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
+        "go-flash":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
+        "go-glm":    {"upstream_model": "glm-5.2", "reasoning_effort": "high"}
       }
     },
     {
@@ -49,8 +29,8 @@
       "endpoint": "https://api.deepseek.com/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY",
       "models": {
-        "deepseek-v4-flash-DS": {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "deepseek-v4-pro-DS": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}
+        "ds-coder":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
+        "ds-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}
       }
     }
   ]

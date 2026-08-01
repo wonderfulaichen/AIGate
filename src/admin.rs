@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::response::Html;
 use axum::Json;
 use futures::future::join_all;
@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::store::LogStore;
 
+/// 面板「最近请求」实时展示保留的条数 (仅前端展示, 不影响全量统计/持久化).
 const LOG_CAPACITY: usize = 100;
 
 /// 单条请求日志.
@@ -38,9 +39,17 @@ pub struct RequestLog {
     /// 是否命中本地响应缓存 (命中则未真实请求上游, 省 token + 延迟).
     #[serde(default)]
     pub cached: bool,
+    /// 上游 KV Cache 命中 token 数 (usage.prompt_cache_hit_tokens, DeepSeek 等).
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u32,
+    /// 上游 KV Cache 未命中 token 数 (usage.prompt_cache_miss_tokens).
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: u32,
 }
 
-/// 内存环形缓冲区 — 存储最近 N 条请求日志, 可选持久化到文件.
+/// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
+/// 文件 `logs.jsonl` 为全量权威数据源 (受 `store::MAX_LINES` 上限约束).
+/// 统计/聚合一律基于 [`LogBuffer::drain_all`] 从文件加载的全量数据, 避免跨天/跨月数据被内存容量截断.
 #[derive(Clone)]
 pub struct LogBuffer {
     inner: Arc<Mutex<VecDeque<RequestLog>>>,
@@ -50,19 +59,19 @@ pub struct LogBuffer {
 impl LogBuffer {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAPACITY))),
+            inner: Arc::new(Mutex::new(VecDeque::with_capacity(crate::store::MAX_LINES))),
             store: None,
         }
     }
 
-    /// 附加持久化存储 (启动时调用).
+    /// 附加持久化存储 (启动时调用), 并从文件加载全量日志到内存.
     pub fn with_store(mut self, store: LogStore) -> Self {
-        // 启动时从文件加载已有日志
-        let logs = store.load(LOG_CAPACITY);
+        // 启动加载全量日志 (统计基于全量, 不受展示容量限制).
+        let logs = store.load(usize::MAX);
         if !logs.is_empty() {
             if let Ok(mut buf) = self.inner.try_lock() {
                 for log in logs {
-                    if buf.len() >= LOG_CAPACITY {
+                    if buf.len() >= crate::store::MAX_LINES {
                         buf.pop_front();
                     }
                     buf.push_back(log);
@@ -75,11 +84,11 @@ impl LogBuffer {
 
     pub async fn push(&self, log: RequestLog) {
         let mut buf = self.inner.lock().await;
-        if buf.len() >= LOG_CAPACITY {
+        if buf.len() >= crate::store::MAX_LINES {
             buf.pop_front();
         }
         buf.push_back(log.clone());
-        // 异步持久化
+        // 异步持久化 (文件为全量权威源, 不受内存容量限制).
         if let Some(store) = &self.store {
             let store = store.clone();
             tokio::spawn(async move {
@@ -88,9 +97,44 @@ impl LogBuffer {
         }
     }
 
-    pub async fn drain(&self) -> Vec<RequestLog> {
+    /// 返回全量日志 (用于统计/聚合), 基于内存中加载的全量数据, 不消费.
+    pub async fn drain_all(&self) -> Vec<RequestLog> {
         let buf = self.inner.lock().await;
-        buf.iter().rev().cloned().collect()
+        buf.iter().cloned().collect()
+    }
+
+    /// 将当前内存全量日志同步重写到文件 (退出/清空前调用, 确保尾写不丢).
+    pub async fn flush(&self) {
+        if let Some(store) = &self.store {
+            let store = store.clone();
+            let logs = self.drain_all().await;
+            store.rewrite(&logs).await;
+        }
+    }
+
+    /// 同步刷新全量日志到磁盘 (事件循环/退出等非 async 上下文使用, 阻塞当前线程).
+    pub fn flush_blocking(&self) {
+        if let Some(store) = &self.store {
+            // 同步取出全量 (Mutex 在同步上下文锁定).
+            let logs = {
+                match self.inner.try_lock() {
+                    Ok(buf) => buf.iter().cloned().collect::<Vec<_>>(),
+                    Err(_) => return,
+                }
+            };
+            store.rewrite_blocking(&logs);
+        }
+    }
+
+    /// 取最近 N 条 (用于前端展示, 不消费).
+    pub async fn recent(&self, n: usize) -> Vec<RequestLog> {
+        let buf = self.inner.lock().await;
+        buf.iter().rev().take(n).cloned().collect()
+    }
+
+    /// 当前内存中日志条数.
+    pub async fn len(&self) -> usize {
+        self.inner.lock().await.len()
     }
 
     /// 清空缓冲区并重写持久化文件.
@@ -99,9 +143,8 @@ impl LogBuffer {
         buf.clear();
         if let Some(store) = &self.store {
             let store = store.clone();
-            let logs = Vec::new();
             tokio::spawn(async move {
-                store.rewrite(&logs).await;
+                store.rewrite(&[]).await;
             });
         }
     }
@@ -138,6 +181,8 @@ pub async fn record_request(
         prompt_tokens: 0,
         completion_tokens: 0,
         cached: false,
+        prompt_cache_hit_tokens: 0,
+        prompt_cache_miss_tokens: 0,
     };
     log_buffer.push(log).await;
 }
@@ -155,6 +200,8 @@ pub async fn record_request_with_tokens(
     completion_tokens: u32,
     response_body_len: usize,
     cached: bool,
+    cache_hit_tokens: u32,
+    cache_miss_tokens: u32,
 ) {
     let log = RequestLog {
         timestamp: now_ts(),
@@ -168,6 +215,8 @@ pub async fn record_request_with_tokens(
         prompt_tokens,
         completion_tokens,
         cached,
+        prompt_cache_hit_tokens: cache_hit_tokens,
+        prompt_cache_miss_tokens: cache_miss_tokens,
     };
     log_buffer.push(log).await;
 }
@@ -187,21 +236,20 @@ pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<Str
 /// 管理面板前端页面 (编译时嵌入).
 const ADMIN_HTML: &str = include_str!("admin.html");
 
-/// GET /admin/api/logs — 返回最近 100 条请求日志.
+/// GET /admin/api/logs — 返回最近 100 条请求日志 (展示用, 内存限长).
 pub async fn api_logs(
     State(state): State<super::proxy::AppState>,
 ) -> Json<Vec<RequestLog>> {
-    Json(state.log_buffer.drain().await)
+    Json(state.log_buffer.recent(LOG_CAPACITY).await)
 }
 
 /// DELETE /admin/api/logs — 清空日志缓冲区.
 pub async fn api_logs_delete(
     State(state): State<super::proxy::AppState>,
 ) -> Json<serde_json::Value> {
-    let count = {
-        let buf = state.log_buffer.inner.lock().await;
-        buf.len()
-    };
+    let count = state.log_buffer.len().await;
+    // 清空内存展示缓冲与持久化文件. 删除前先同步落盘已有数据, 避免异步尾写丢失.
+    state.log_buffer.flush().await;
     state.log_buffer.clear().await;
     Json(serde_json::json!({ "message": format!("已清空 {count} 条记录") }))
 }
@@ -403,6 +451,77 @@ pub async fn api_providers_test(
     }))
 }
 
+/// POST /admin/api/providers/:name/fetch-models
+/// 从上游 `/v1/models` 拉取模型列表, 合并进 provider 并持久化到 providers.json.
+///
+/// 拉取到的模型 `reasoning_effort` 留空, 由客户端 (opencode / CodeBuddy 等) 自行调节思考档位.
+/// 已存在的模型 ID 不会被覆盖 (保留用户自定义的 upstream_model / reasoning_effort).
+pub async fn api_providers_fetch_models(
+    State(state): State<super::proxy::AppState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    // 1) 取 provider 配置 + 真实 key (只读锁, 取完即释放, 不跨 await 持有)
+    let (provider, key) = {
+        let registry = state.registry.read().await;
+        let provider = match registry.providers().into_iter().find(|p| p.name == name) {
+            Some(p) => p,
+            None => return Json(serde_json::json!({ "error": format!("未找到供应商: {name}") })),
+        };
+        let key = match registry.api_key(&provider, &state.key_store).await {
+            Ok(k) => k,
+            Err(e) => return Json(serde_json::json!({ "error": e })),
+        };
+        (provider, key)
+    };
+
+    // 2) 向上游拉取模型 (用真实 key 鉴权)
+    let ids = match crate::providers::fetch_models_from_upstream(&state.client, &provider, &key).await
+    {
+        Ok(ids) => ids,
+        Err(e) => return Json(serde_json::json!({ "error": e })),
+    };
+
+    // 3) 合并进内存注册表 (新增未存在的, 跳过已有)
+    let (added, skipped) = {
+        let mut registry = state.registry.write().await;
+        registry.add_models(&name, &ids)
+    };
+
+    // 4) 持久化到 providers.json (含新增模型)
+    {
+        let registry = state.registry.read().await;
+        let json_str = match registry.to_json() {
+            Ok(s) => s,
+            Err(e) => return Json(serde_json::json!({ "error": e })),
+        };
+        drop(registry);
+        if let Err(e) = std::fs::write("providers.json", &json_str) {
+            return Json(serde_json::json!({ "error": format!("写入文件失败: {e}") }));
+        }
+    }
+
+    // 5) 热重载 (重建路由表, 使 /v1/models 立即包含新模型) + 同步熔断表
+    {
+        let mut registry = state.registry.write().await;
+        if let Err(e) = registry.reload("providers.json") {
+            return Json(serde_json::json!({ "error": e }));
+        }
+    }
+    sync_breakers_for(&state).await;
+
+    Json(serde_json::json!({
+        "success": true,
+        "provider": name,
+        "fetched": ids.len(),
+        "added": added,
+        "skipped": skipped,
+        "message": format!(
+            "已从上游拉取 {} 个模型, 新增 {} 个, 跳过 {} 个已存在",
+            ids.len(), added, skipped
+        ),
+    }))
+}
+
 /// 模拟测试数据 — 生成假请求日志用于前端调试, 不消耗上游 token.
 pub async fn api_mock(
     State(state): State<super::proxy::AppState>,
@@ -453,6 +572,8 @@ pub async fn api_mock(
             prompt_tokens: rng.gen_range(50, 500) as u32,
             completion_tokens: rng.gen_range(100, 2000) as u32,
             cached: false,
+            prompt_cache_hit_tokens: rng.gen_range(0, 400) as u32,
+            prompt_cache_miss_tokens: rng.gen_range(0, 100) as u32,
         });
     }
 
@@ -477,6 +598,8 @@ pub async fn api_mock(
             prompt_tokens: 0,
             completion_tokens: 0,
             cached: false,
+            prompt_cache_hit_tokens: 0,
+            prompt_cache_miss_tokens: 0,
         });
     }
 
@@ -620,6 +743,9 @@ pub struct ModelStats {
     pub total_body_bytes: usize,
     pub total_prompt_tokens: u32,
     pub total_completion_tokens: u32,
+    /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
+    pub total_cache_hit_tokens: u64,
+    pub total_cache_miss_tokens: u64,
 }
 
 /// 单个供应商的聚合统计.
@@ -632,6 +758,9 @@ pub struct ProviderStats {
     pub total_body_bytes: usize,
     pub total_prompt_tokens: u32,
     pub total_completion_tokens: u32,
+    /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
+    pub total_cache_hit_tokens: u64,
+    pub total_cache_miss_tokens: u64,
 }
 
 /// 日趋势 (通用: 按小时/天/月聚合均使用此结构).
@@ -641,6 +770,12 @@ pub struct DailyTrend {
     pub requests: usize,
     pub errors: usize,
     pub avg_latency: f64,
+    /// 提示 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
+    pub total_prompt_tokens: u64,
+    /// 补全 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
+    pub total_completion_tokens: u64,
+    pub total_cache_hit_tokens: u64,
+    pub total_cache_miss_tokens: u64,
 }
 
 /// 使用统计聚合结果.
@@ -657,6 +792,11 @@ pub struct UsageStats {
     pub per_provider: Vec<ProviderStats>,
     pub trends: Vec<DailyTrend>,
     pub top_models: Vec<ModelStats>,
+    /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
+    pub total_cache_hit_tokens: u64,
+    pub total_cache_miss_tokens: u64,
+    /// 命中率 = 命中 token / (命中 + 未命中) token.
+    pub cache_hit_rate: f64,
 }
 
 /// GET /admin/api/stats?granularity={hour|day|month} — 返回使用统计.
@@ -664,17 +804,24 @@ pub async fn api_stats(
     State(state): State<super::proxy::AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<UsageStats> {
-    let logs = state.log_buffer.drain().await;
+    let logs = state.log_buffer.drain_all().await;
     let granularity = params.get("granularity").map(|s| s.as_str()).unwrap_or("day");
     let mut stats = compute_stats(&logs);
     stats.trends = compute_trends(&logs, granularity);
     Json(stats)
 }
 
-/// 将 Unix 时间戳转成 MM/DD 日期字符串 (避免 chrono 依赖).
+/// 本地时区偏移 (秒). 默认按东八区 (UTC+8) 切分日/月界, 使趋势符合用户日历.
+/// 若需跟随系统时区可改为读取本地 UTC 偏移, 但固定东八区对国内用户更可预期.
+const TZ_OFFSET_SECS: i64 = 8 * 3600;
+
+/// 将 Unix 时间戳转成 MM/DD 日期字符串 (按东八区切日界, 避免 chrono 依赖).
 fn ts_to_date(ts: u64) -> String {
     const SECS_PER_DAY: u64 = 86400;
-    let days = ts / SECS_PER_DAY;
+    // 先按本地时区偏移归到本地当天 0 点, 再取天数.
+    let local = (ts as i64) + TZ_OFFSET_SECS;
+    let local = if local < 0 { 0 } else { local as u64 };
+    let days = local / SECS_PER_DAY;
 
     let mut y = 1970i64;
     let mut d = days as i64;
@@ -734,7 +881,9 @@ fn ts_to_month(ts: u64) -> String {
 
 fn ts_to_hour(ts: u64) -> String {
     let date = ts_to_date(ts);
-    let hour = (ts % 86400) / 3600;
+    // 小时也按本地时区归位.
+    let local = (ts as i64) + TZ_OFFSET_SECS;
+    let hour = (((local as u64) % 86400) / 3600) as u32;
     format!("{date} {hour:02}:00")
 }
 
@@ -751,6 +900,13 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
     };
     let total_prompt_tokens: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
     let total_completion_tokens: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+    let total_cache_hit_tokens: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+    let total_cache_miss_tokens: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+    let cache_hit_rate = if total_cache_hit_tokens + total_cache_miss_tokens > 0 {
+        total_cache_hit_tokens as f64 / (total_cache_hit_tokens + total_cache_miss_tokens) as f64
+    } else {
+        0.0
+    };
 
     // 按模型分组
     let mut model_map: HashMap<&str, Vec<&RequestLog>> = HashMap::new();
@@ -766,6 +922,8 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let avg = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
             let pt: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+            let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+            let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             ModelStats {
                 model: model.to_string(),
                 requests: reqs,
@@ -774,6 +932,8 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_body_bytes: bytes,
                 total_prompt_tokens: pt,
                 total_completion_tokens: ct,
+                total_cache_hit_tokens: hit,
+                total_cache_miss_tokens: miss,
             }
         })
         .collect();
@@ -793,6 +953,8 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let avg = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
             let pt: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+            let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+            let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -801,6 +963,8 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_body_bytes: bytes,
                 total_prompt_tokens: pt,
                 total_completion_tokens: ct,
+                total_cache_hit_tokens: hit,
+                total_cache_miss_tokens: miss,
             }
         })
         .collect();
@@ -824,6 +988,9 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
         per_provider,
         trends,
         top_models,
+        total_cache_hit_tokens,
+        total_cache_miss_tokens,
+        cache_hit_rate,
     }
 }
 
@@ -846,14 +1013,117 @@ fn compute_trends(logs: &[RequestLog], granularity: &str) -> Vec<DailyTrend> {
             let reqs = logs.len();
             let errs = logs.iter().filter(|l| l.status >= 400).count();
             let avg_lat = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
+            let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+            let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+            let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
+            let ct: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
             DailyTrend {
                 date,
                 requests: reqs,
                 errors: errs,
                 avg_latency: avg_lat,
+                total_prompt_tokens: pt,
+                total_completion_tokens: ct,
+                total_cache_hit_tokens: hit,
+                total_cache_miss_tokens: miss,
             }
         })
         .collect();
     trends.sort_by(|a, b| a.date.cmp(&b.date));
     trends
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一条带 KV Cache 统计的请求日志.
+    fn mk(model: &str, provider: &str, hit: u32, miss: u32) -> RequestLog {
+        RequestLog {
+            timestamp: 0,
+            model: model.to_string(),
+            provider: provider.to_string(),
+            endpoint: "/v1/chat/completions".to_string(),
+            status: 200,
+            latency_ms: 10,
+            body_len: 100,
+            error: None,
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            cached: false,
+            prompt_cache_hit_tokens: hit,
+            prompt_cache_miss_tokens: miss,
+        }
+    }
+
+    /// 聚合: 全局缓存命中/未命中 token 与命中率正确; 模型与供应商分组正确累加.
+    #[test]
+    fn test_cache_hit_rate_aggregation() {
+        let logs = vec![
+            mk("deepseek", "ds", 80, 20),
+            mk("deepseek", "ds", 60, 40),
+            mk("gpt", "oa", 0, 100),
+        ];
+        let s = compute_stats(&logs);
+        // 全局: 命中 80+60+0=140, 未命中 20+40+100=160
+        assert_eq!(s.total_cache_hit_tokens, 140);
+        assert_eq!(s.total_cache_miss_tokens, 160);
+        assert!((s.cache_hit_rate - 140.0 / 300.0).abs() < 1e-9);
+        // 模型分组: deepseek 命中 140, 未命中 60
+        let ds = s.per_model.iter().find(|m| m.model == "deepseek").unwrap();
+        assert_eq!(ds.total_cache_hit_tokens, 140);
+        assert_eq!(ds.total_cache_miss_tokens, 60);
+        // 供应商分组: ds 命中 140, 未命中 60
+        let p = s.per_provider.iter().find(|p| p.provider == "ds").unwrap();
+        assert_eq!(p.total_cache_hit_tokens, 140);
+        assert_eq!(p.total_cache_miss_tokens, 60);
+    }
+
+    /// 聚合: 无 cache 数据时命中率为 0 (不除零).
+    #[test]
+    fn test_cache_hit_rate_zero() {
+        let logs = vec![mk("m", "p", 0, 0)];
+        let s = compute_stats(&logs);
+        assert_eq!(s.total_cache_hit_tokens, 0);
+        assert_eq!(s.total_cache_miss_tokens, 0);
+        assert_eq!(s.cache_hit_rate, 0.0);
+    }
+
+    /// 趋势: 日界按东八区切分 (UTC 23:30 属「当天」, UTC 01:00 属「次日」).
+    #[test]
+    fn test_trend_local_timezone_day_boundary() {
+        // 2026-08-01T23:30:00Z → 东八区 08-02 07:30, 属 08/02
+        let t_same_day = 1_785_627_000;
+        // 2026-08-02T01:00:00Z → 东八区 08-02 09:00, 仍属 08/02
+        let t_next = 1_785_632_400;
+        let logs = vec![mk_ts("m", "p", t_same_day), mk_ts("m", "p", t_next)];
+        let trends = compute_trends(&logs, "day");
+        // 两条都属于东八区 08/02, 应合并为一个桶.
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].requests, 2);
+        assert_eq!(trends[0].date, "08/02");
+    }
+
+    /// 趋势: 跨多日/多月日志能正确聚合成多个桶 (验证统计基于全量而非内存截断).
+    #[test]
+    fn test_trend_full_data_multi_bucket() {
+        // 2026-07-15T00:00:00Z 起, 间隔 5 天, 全部落在 07 月.
+        let base = 1_784_073_600;
+        let logs: Vec<RequestLog> = (0..3)
+            .map(|i| mk_ts("m", "p", base + i * 5 * 86400))
+            .collect();
+        let trends = compute_trends(&logs, "day");
+        assert_eq!(trends.len(), 3, "跨多日应生成多个趋势桶");
+        // 按月聚合: 全部落在同一个月 (07 月), 仅 1 个桶.
+        let month = compute_trends(&logs, "month");
+        assert_eq!(month.len(), 1);
+        assert_eq!(month[0].date, "2026/07");
+    }
+
+    /// 构造带指定时间戳的日志 (复用 mk 的其余默认值).
+    fn mk_ts(model: &str, provider: &str, ts: u64) -> RequestLog {
+        let mut log = mk(model, provider, 0, 0);
+        log.timestamp = ts;
+        log
+    }
 }

@@ -185,8 +185,9 @@ pub async fn chat_completions(
         }
     };
 
-    // 5. 注入模型级参数 (reasoning_effort / extra_body)
-    let bytes = inject_model_params(bytes, &model_cfg);
+    // 5. 注入模型级参数 (reasoning_effort / extra_body): 固定按 providers.json 配置档注入,
+    //    不做自适应探测/降级 —— 思考强度完全由配置档决定 (客户端显式关闭/自带档位时尊重客户端).
+    let (bytes, _injected) = inject_model_params(bytes, &model_cfg);
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
     // 5.5 响应缓存查询: 缓存开启且为非流式请求时, 命中直接返回 (省 token + 延迟).
@@ -199,10 +200,10 @@ pub async fn chat_completions(
     };
     if let Some(key) = &cache_key {
         if let Some(cached) = state.cache.get(key) {
-            let (pt, ct) = extract_usage(&cached);
+            let (pt, ct, hit, miss) = extract_usage(&cached);
             crate::admin::record_request_with_tokens(
                 &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
-                true,
+                true, hit, miss,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -311,6 +312,7 @@ pub async fn chat_completions(
     // 9. 检查 upstream 响应
     let upstream = upstream.expect("upstream response must be present after send loop");
     let upstream_status = upstream.status().as_u16();
+
     if upstream_status >= 400 {
         let err_body = upstream.text().await.unwrap_or_default();
         warn!(
@@ -345,10 +347,10 @@ pub async fn chat_completions(
         match upstream.text().await {
             Ok(body_text) => {
                 state.cache.put(key, &body_text);
-                let (pt, ct) = extract_usage(&body_text);
+                let (pt, ct, hit, miss) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
                     &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
-                    false,
+                    false, hit, miss,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -474,6 +476,8 @@ fn stream_response_with_tokens(
         done: false,
         tokens_pt: 0,
         tokens_ct: 0,
+        tokens_cache_hit: 0,
+        tokens_cache_miss: 0,
         response_bytes: 0,
         log_buffer: Some(TokenLogData {
             log_buffer,
@@ -518,6 +522,10 @@ struct TokenStream<S> {
     done: bool,
     tokens_pt: u32,
     tokens_ct: u32,
+    /// 上游 KV Cache 命中 token 数 (usage.prompt_cache_hit_tokens).
+    tokens_cache_hit: u32,
+    /// 上游 KV Cache 未命中 token 数 (usage.prompt_cache_miss_tokens).
+    tokens_cache_miss: u32,
     /// 累计 SSE 响应 body 总字节数 (用于无 usage 时的估算).
     response_bytes: usize,
     log_buffer: Option<TokenLogData>,
@@ -541,6 +549,13 @@ impl<S> TokenStream<S> {
                 if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                     self.tokens_ct = ct as u32;
                 }
+                // 上游 KV Cache 命中/未命中统计 (DeepSeek 等)
+                if let Some(hit) = usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
+                    self.tokens_cache_hit = hit as u32;
+                }
+                if let Some(miss) = usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()) {
+                    self.tokens_cache_miss = miss as u32;
+                }
             }
             // 部分供应商把 usage 放在 choices[0] 的内层
             if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
@@ -552,6 +567,12 @@ impl<S> TokenStream<S> {
                         if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                             self.tokens_ct = ct as u32;
                         }
+                        if let Some(hit) = inner_usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
+                            self.tokens_cache_hit = hit as u32;
+                        }
+                        if let Some(miss) = inner_usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()) {
+                            self.tokens_cache_miss = miss as u32;
+                        }
                     }
                 }
             }
@@ -559,7 +580,8 @@ impl<S> TokenStream<S> {
     }
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
-    fn final_tokens(&self, req_body_len: usize) -> (u32, u32) {
+    /// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
+    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32) {
         let pt = if self.tokens_pt > 0 {
             self.tokens_pt
         } else {
@@ -572,7 +594,8 @@ impl<S> TokenStream<S> {
             // 估算: 响应 body 字节 / 4 ≈ completion token 数
             std::cmp::max(1, (self.response_bytes / 4) as u32)
         };
-        (pt, ct)
+        // 缓存命中/未命中: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
+        (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss)
     }
 }
 
@@ -601,13 +624,14 @@ where
                     if !this.done {
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
-                        let (pt, ct) = this.final_tokens(req_body_len);
+                        let (pt, ct, hit, miss) = this.final_tokens(req_body_len);
                         if let Some(mut ld) = this.log_buffer.take() {
                             ld.response_body_len = this.response_bytes;
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
                                     ld.start, pt, ct, ld.response_body_len, false,
+                                    hit, miss,
                                 ).await;
                             });
                         }
@@ -640,20 +664,34 @@ async fn retry_backoff(attempt: u32, base: Duration) {
 }
 
 /// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
-fn extract_usage(text: &str) -> (u32, u32) {
+///
+/// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
+/// 后两者来自上游 `usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+/// (DeepSeek 等上游的 KV Cache / 上下文硬盘缓存命中统计), 未提供时为 0.
+fn extract_usage(text: &str) -> (u32, u32, u32, u32) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0);
+        return (0, 0, 0, 0);
     };
     let mut pt = 0u32;
     let mut ct = 0u32;
+    let mut hit = 0u32;
+    let mut miss = 0u32;
     if let Some(u) = v.get("usage") {
         pt = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         ct = u
             .get("completion_tokens")
             .and_then(|x| x.as_u64())
             .unwrap_or(0) as u32;
+        hit = u
+            .get("prompt_cache_hit_tokens")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u32;
+        miss = u
+            .get("prompt_cache_miss_tokens")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u32;
     }
-    (pt, ct)
+    (pt, ct, hit, miss)
 }
 
 /// 注入模型级参数到请求 body.
@@ -665,10 +703,11 @@ fn extract_usage(text: &str) -> (u32, u32) {
 fn inject_model_params(
     bytes: bytes::Bytes,
     model_cfg: &crate::providers::ModelConfig,
-) -> bytes::Bytes {
+) -> (bytes::Bytes, bool) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return bytes; // 解析失败, 原样返回
+        return (bytes, false); // 解析失败, 原样返回
     };
+    let had_effort = v.get("reasoning_effort").is_some();
 
     // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
     // 返回客户端是否显式关闭思考 (thinking:false), 用于跳过配置档兜底注入.
@@ -683,7 +722,7 @@ fn inject_model_params(
         .map(|v| v.is_object())
         .unwrap_or(false);
     if !has_remap && !has_effort && !has_extra {
-        return serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into();
+        return (serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(), false);
     };
 
     // 替换 model 为上游真实模型名
@@ -721,7 +760,8 @@ fn inject_model_params(
         }
     }
 
-    serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into()
+    let injected = v.get("reasoning_effort").is_some() && !had_effort;
+    (serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(), injected)
 }
 
 /// 过滤客户端 headers: 白名单模式, 只转发安全的标准 headers.
@@ -765,11 +805,41 @@ fn format_error_chain(e: &dyn std::error::Error) -> String {
     msg
 }
 
+/// 根据 HTTP 状态码返回中文说明 (覆盖纯文本响应体场景, 如上游 408 超时).
+///
+/// type 映射 (见 `format_upstream_error`) 更具体, 优先于此处; 此处作为兜底,
+/// 让任何状态码 (即使上游返回纯文本而非 JSON) 都能给出可读的中文提示.
+fn status_explanation(status: u16) -> &'static str {
+    match status {
+        400 => "请求参数错误（模型不支持、参数缺失或格式错误）",
+        401 => "认证失败（API Key 无效或已过期）",
+        402 => "账户需付费（余额不足或需订阅）",
+        403 => "权限不足（无权访问该模型或功能）",
+        404 => "资源不存在（端点或模型名错误）",
+        408 => "请求超时（上游处理超时，可能是模型思考时间长或供应商繁忙）",
+        409 => "请求冲突（并发或状态不一致）",
+        413 => "请求体过大（上下文或文件超出上限）",
+        429 => "请求频率超限（请稍后重试）",
+        500 => "服务器内部错误（供应商服务异常）",
+        502 => "网关错误（上游网关不可用）",
+        503 => "服务不可用（供应商过载或维护中）",
+        504 => "网关超时（上游处理超时未响应）",
+        _ => "",
+    }
+}
+
 /// 格式化上游错误信息: 解析 JSON 错误响应，添加中文说明.
 ///
-/// 输入: upstream_status (如 400), err_body (原始 JSON 响应).
-/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider (Console)..."
+/// 优先级: error.type 中文 > HTTP 状态码中文 > 原始信息.
+/// 这样即使上游返回纯文本 (如 `request timeout (HTTP Status: 408)`) 也能给中文说明.
+///
+/// 输入: upstream_status (如 400/408), err_body (原始响应体).
+/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
+///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
 fn format_upstream_error(status: u16, err_body: &str) -> String {
+    // 兜底: 状态码中文说明 (即使纯文本响应体也生效)
+    let status_expl = status_explanation(status);
+
     // 尝试解析 JSON 错误响应
     if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(err_body) {
         if let Some(error) = err_json.get("error") {
@@ -777,8 +847,8 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
             let err_type = error.get("type").and_then(|t| t.as_str()).unwrap_or("");
             let code = error.get("code").and_then(|c| c.as_str()).unwrap_or("");
 
-            // 根据错误类型添加中文说明
-            let explanation = match err_type {
+            // 根据错误类型添加中文说明 (比状态码更具体, 优先)
+            let type_expl = match err_type {
                 "invalid_request_error" => "请求参数错误（可能是模型不支持、参数缺失或格式错误）",
                 "authentication_error" => "认证失败（API Key 无效或已过期）",
                 "rate_limit_error" => "请求频率超限（请稍后重试）",
@@ -789,22 +859,30 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
                 _ => "",
             };
 
-            // 构造格式化错误信息
-            if !explanation.is_empty() {
-                format!("{status} {explanation} [{err_type}]: {msg}")
+            // 构造格式化错误信息: type 中文优先, 其次 code, 其次状态码中文
+            if !type_expl.is_empty() {
+                format!("{status} {type_expl} [{err_type}]: {msg}")
             } else if !code.is_empty() {
                 format!("{status} [{code}]: {msg}")
             } else if !err_type.is_empty() {
                 format!("{status} [{err_type}]: {msg}")
+            } else if !status_expl.is_empty() {
+                format!("{status} {status_expl}: {msg}")
             } else {
                 format!("{status}: {msg}")
             }
+        } else if !status_expl.is_empty() {
+            // JSON 但没有 error 字段, 用状态码中文兜底
+            format!("{status} {status_expl}: {err_body}")
         } else {
             // JSON 但没有 error 字段，直接返回原始信息
             format!("{status}: {err_body}")
         }
+    } else if !status_expl.is_empty() {
+        // 非 JSON 格式, 但有状态码中文 → 给出中文说明 + 原文
+        format!("{status} {status_expl}: {err_body}")
     } else {
-        // 非 JSON 格式，直接返回原始信息
+        // 非 JSON 格式且无状态码说明, 直接返回原始信息
         format!("{status}: {err_body}")
     }
 }
@@ -839,7 +917,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -850,7 +928,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -860,7 +938,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -870,7 +948,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let out = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -900,15 +978,82 @@ mod tests {
         assert!(result.contains("请求频率超限"));
         assert!(result.contains("Rate limit exceeded"));
 
-        // 测试 4: 非 JSON 格式 - 应直接返回原始信息
+        // 测试 4: 非 JSON 格式 + 状态码有说明 - 应基于状态码给中文说明
         let err_body = "plain text error";
         let result = format_upstream_error(500, err_body);
-        assert_eq!(result, "500: plain text error");
+        assert_eq!(result, "500 服务器内部错误（供应商服务异常）: plain text error");
 
         // 测试 5: JSON 但没有 error 字段 - 应返回原始信息
         let err_body = r#"{"message":"some error"}"#;
         let result = format_upstream_error(400, err_body);
         assert!(result.contains("400"));
         assert!(result.contains(err_body));
+
+        // 测试 6: 408 纯文本响应体 (上游网关超时) - 应基于状态码给中文说明
+        let err_body = "request timeout (HTTP Status: 408)";
+        let result = format_upstream_error(408, err_body);
+        assert!(result.contains("408"));
+        assert!(result.contains("请求超时"));
+        assert!(result.contains(err_body));
+
+        // 测试 7: 503 纯文本 - 应基于状态码给中文说明
+        let err_body = "Service Temporarily Unavailable";
+        let result = format_upstream_error(503, err_body);
+        assert!(result.contains("503"));
+        assert!(result.contains("服务不可用"));
+        assert!(result.contains(err_body));
+
+        // 测试 8: type 映射优先于 status 映射 (400 + invalid_request_error 仍用 type 中文)
+        let err_body = r#"{"error":{"message":"bad","type":"invalid_request_error"}}"#;
+        let result = format_upstream_error(400, err_body);
+        assert!(result.contains("请求参数错误"));
+        assert!(!result.contains("请求参数错误（模型不支持、参数缺失或格式错误）: 请求参数错误")); // 不重复
+    }
+
+    /// 非流式: extract_usage 提取上游 KV Cache 命中/未命中 token.
+    #[test]
+    fn test_extract_usage_cache_fields() {
+        // 含 cache 字段 → 完整提取 4 元组
+        let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":5}}"#;
+        assert_eq!(extract_usage(body), (10, 20, 100, 5));
+
+        // 无 cache 字段 → 命中/未命中记 0
+        let body = r#"{"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
+        assert_eq!(extract_usage(body), (7, 3, 0, 0));
+
+        // 非 JSON → 全部为 0
+        assert_eq!(extract_usage("not json"), (0, 0, 0, 0));
+    }
+
+    /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
+    #[test]
+    fn test_parse_sse_chunk_cache_fields() {
+        use futures::stream;
+        let mut ts = TokenStream {
+            inner: stream::empty::<Result<Bytes, std::io::Error>>(),
+            done: false,
+            tokens_pt: 0,
+            tokens_ct: 0,
+            tokens_cache_hit: 0,
+            tokens_cache_miss: 0,
+            response_bytes: 0,
+            log_buffer: None,
+        };
+        // SSE 外层 usage
+        ts.parse_sse_chunk(
+            b"data: {\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"prompt_cache_hit_tokens\":50,\"prompt_cache_miss_tokens\":3}}\n\n",
+        );
+        assert_eq!(ts.tokens_pt, 1);
+        assert_eq!(ts.tokens_ct, 2);
+        assert_eq!(ts.tokens_cache_hit, 50);
+        assert_eq!(ts.tokens_cache_miss, 3);
+
+        // choices[0].usage 内层 (部分供应商把 usage 放在此处)
+        ts.parse_sse_chunk(
+            b"data: {\"choices\":[{\"usage\":{\"prompt_cache_hit_tokens\":7,\"prompt_cache_miss_tokens\":1}}]}\n\n",
+        );
+        assert_eq!(ts.tokens_cache_hit, 7);
+        assert_eq!(ts.tokens_cache_miss, 1);
     }
 }
+
