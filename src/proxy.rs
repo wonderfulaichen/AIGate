@@ -24,6 +24,8 @@ use crate::keys::KeyStore;
 use crate::providers::ProviderRegistry;
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::cache::ResponseCache;
+use crate::loop_guard::LoopDetector;
+use crate::config::LoopGuardConfig;
 
 /// 共享状态: HTTP client + 供应商路由表 + 请求日志缓冲区 + Key 存储.
 #[derive(Clone)]
@@ -49,6 +51,8 @@ pub struct AppState {
     pub retry_backoff: Duration,
     /// 熔断器表: provider name -> 该供应商的熔断器 (std Mutex, 临界区极短).
     pub breakers: BreakerMap,
+    /// 模型死循环检测配置 (用于构造流式检测器, 默认开启).
+    pub loop_guard: LoopGuardConfig,
 }
 
 /// 熔断器表类型别名.
@@ -372,6 +376,7 @@ pub async fn chat_completions(
         endpoint,
         start,
         body_len_val,
+        state.loop_guard.clone(),
         state.stream_idle_timeout,
     );
     Ok(resp)
@@ -464,6 +469,7 @@ fn stream_response_with_tokens(
     endpoint: String,
     start: std::time::Instant,
     req_body_len: usize,
+    loop_cfg: LoopGuardConfig,
     idle: Duration,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
@@ -479,6 +485,12 @@ fn stream_response_with_tokens(
         tokens_cache_hit: 0,
         tokens_cache_miss: 0,
         response_bytes: 0,
+        loop_guard: if loop_cfg.enabled {
+            Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
+        } else {
+            None
+        },
+        loop_aborted: false,
         log_buffer: Some(TokenLogData {
             log_buffer,
             model,
@@ -522,12 +534,16 @@ struct TokenStream<S> {
     done: bool,
     tokens_pt: u32,
     tokens_ct: u32,
-    /// 上游 KV Cache 命中 token 数 (usage.prompt_cache_hit_tokens).
+    /// 上游 KV Cache 命中 token 数 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema).
     tokens_cache_hit: u32,
-    /// 上游 KV Cache 未命中 token 数 (usage.prompt_cache_miss_tokens).
+    /// 上游 KV Cache 未命中 token 数 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema).
     tokens_cache_miss: u32,
     /// 累计 SSE 响应 body 总字节数 (用于无 usage 时的估算).
     response_bytes: usize,
+    /// 模型死循环检测器 (None 表示功能关闭, 不检测).
+    loop_guard: Option<LoopDetector>,
+    /// 已因死循环截断并发送 [DONE] 的标志, 防止重复触发.
+    loop_aborted: bool,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -549,15 +565,12 @@ impl<S> TokenStream<S> {
                 if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                     self.tokens_ct = ct as u32;
                 }
-                // 上游 KV Cache 命中/未命中统计 (DeepSeek 等)
-                if let Some(hit) = usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
-                    self.tokens_cache_hit = hit as u32;
-                }
-                if let Some(miss) = usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()) {
-                    self.tokens_cache_miss = miss as u32;
-                }
+                // 上游 KV Cache 命中/未命中 (兼容 DeepSeek 扁平 schema 与 OpenAI 嵌套 schema)
+                let (hit, miss) = usage_cache(usage);
+                if hit > 0 { self.tokens_cache_hit = hit; }
+                if miss > 0 { self.tokens_cache_miss = miss; }
             }
-            // 部分供应商把 usage 放在 choices[0] 的内层
+            // 部分供应商把 usage 放在 choices[0] 的内层; 同时取 delta 文本喂死循环检测器.
             if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
                 if let Some(choice) = choices.first() {
                     if let Some(inner_usage) = choice.get("usage") {
@@ -567,11 +580,19 @@ impl<S> TokenStream<S> {
                         if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                             self.tokens_ct = ct as u32;
                         }
-                        if let Some(hit) = inner_usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
-                            self.tokens_cache_hit = hit as u32;
-                        }
-                        if let Some(miss) = inner_usage.get("prompt_cache_miss_tokens").and_then(|v| v.as_u64()) {
-                            self.tokens_cache_miss = miss as u32;
+                        // 上游 KV Cache 命中/未命中 (兼容两种 schema)
+                        let (hit, miss) = usage_cache(inner_usage);
+                        if hit > 0 { self.tokens_cache_hit = hit; }
+                        if miss > 0 { self.tokens_cache_miss = miss; }
+                    }
+                    // 取增量文本喂给死循环检测器 (content / reasoning_content / reasoning).
+                    if let Some(delta) = choice.get("delta") {
+                        for key in ["content", "reasoning_content", "reasoning"] {
+                            if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
+                                if let Some(detector) = self.loop_guard.as_mut() {
+                                    detector.feed(s);
+                                }
+                            }
                         }
                     }
                 }
@@ -612,6 +633,21 @@ where
             match Pin::new(&mut this.inner).poll_next(cx) {
                 Poll::Ready(Some(Ok(chunk))) => {
                     this.parse_sse_chunk(&chunk);
+                    // 下游模型陷入死循环 → 立即截断流, 干净地发 [DONE] 结束.
+                    // 不向客户端正文塞说明 (说明仅写运行日志, 满足"不污染正文").
+                    if this.loop_guard.as_ref().map(|g| g.triggered()).unwrap_or(false) {
+                        if !this.loop_aborted {
+                            this.loop_aborted = true;
+                            warn!(
+                                "proxy: model loop detected, truncating stream (model={}, provider={}); loop note logged only",
+                                this.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+                                this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+                            );
+                            return Poll::Ready(Some(Ok(Bytes::from_static(b"data: [DONE]\n\n"))));
+                        }
+                        // 已发过 [DONE], 终止流 (收尾日志由下方 None 分支写入).
+                        return Poll::Ready(None);
+                    }
                     return Poll::Ready(Some(Ok(chunk)));
                 }
                 Poll::Ready(Some(Err(e))) => {
@@ -663,11 +699,58 @@ async fn retry_backoff(attempt: u32, base: Duration) {
     tokio::time::sleep(Duration::from_millis(wait)).await;
 }
 
+/// 从 usage 对象提取上游 KV Cache 命中/未命中 token 数.
+///
+/// 兼容两种 OpenAI 兼容供应商的 schema:
+///   1) DeepSeek / 多数国产供应商 (扁平): `usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`;
+///   2) OpenAI 原生 (嵌套): `usage.prompt_tokens_details.cached_tokens`
+///      —— 未命中无法直接取得, 以 `prompt_tokens - cached_tokens` 推导 (prompt 中非缓存部分).
+///   3) Anthropic 原生 (OpenCode GO / Claude 后端): `usage.cache_read_input_tokens` (命中)
+///      + `usage.input_tokens` (非缓存输入, 含首次写入, 作为未命中).
+/// 均未提供时返回 (0, 0).
+fn usage_cache(usage: &serde_json::Value) -> (u32, u32) {
+    // 1) 扁平 schema (DeepSeek 等)
+    if let Some(hit) = usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
+        let hit = hit as u32;
+        let miss = usage
+            .get("prompt_cache_miss_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        return (hit, miss);
+    }
+    // 2) OpenAI 原生嵌套 schema
+    if let Some(cached) = usage
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+    {
+        let cached = cached as u32;
+        let pt = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let miss = pt.saturating_sub(cached);
+        return (cached, miss);
+    }
+    // 3) Anthropic 原生 schema (OpenCode GO / Claude 后端):
+    //    cache_read_input_tokens = 命中 (从缓存读取); input_tokens 已是"非缓存输入" (含首次写入), 直接作未命中.
+    //    注意: Anthropic 的 input_tokens 不含 cache_read, 总量 = input_tokens + cache_read_input_tokens, 不可相减.
+    if let Some(read) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+        let read = read as u32;
+        let miss = if let Some(inp) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+            inp as u32
+        } else {
+            // 部分转换层把总量放在 prompt_tokens, 此时未命中 = 总量 - 缓存命中
+            (usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
+                .saturating_sub(read)
+        };
+        return (read, miss);
+    }
+    (0, 0)
+}
+
 /// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
 ///
 /// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
-/// 后两者来自上游 `usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
-/// (DeepSeek 等上游的 KV Cache / 上下文硬盘缓存命中统计), 未提供时为 0.
+/// 后两者来自上游 `usage` 的 KV Cache 命中统计 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema),
+/// 未提供时为 0.
 fn extract_usage(text: &str) -> (u32, u32, u32, u32) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
         return (0, 0, 0, 0);
@@ -682,14 +765,9 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32) {
             .get("completion_tokens")
             .and_then(|x| x.as_u64())
             .unwrap_or(0) as u32;
-        hit = u
-            .get("prompt_cache_hit_tokens")
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0) as u32;
-        miss = u
-            .get("prompt_cache_miss_tokens")
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0) as u32;
+        let (h, m) = usage_cache(u);
+        hit = h;
+        miss = m;
     }
     (pt, ct, hit, miss)
 }
@@ -1037,6 +1115,8 @@ mod tests {
             tokens_cache_hit: 0,
             tokens_cache_miss: 0,
             response_bytes: 0,
+            loop_guard: None,
+            loop_aborted: false,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -1054,6 +1134,20 @@ mod tests {
         );
         assert_eq!(ts.tokens_cache_hit, 7);
         assert_eq!(ts.tokens_cache_miss, 1);
+
+        // OpenAI 原生嵌套 schema: prompt_tokens_details.cached_tokens (未命中 = prompt - cached)
+        ts.parse_sse_chunk(
+            b"data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":80}}}\n\n",
+        );
+        assert_eq!(ts.tokens_cache_hit, 80);
+        assert_eq!(ts.tokens_cache_miss, 20);
+
+        // Anthropic 原生 schema: cache_read_input_tokens / input_tokens (OpenCode GO / Claude 后端)
+        ts.parse_sse_chunk(
+            b"data: {\"usage\":{\"input_tokens\":50,\"output_tokens\":3,\"cache_read_input_tokens\":200,\"cache_creation_input_tokens\":30}}\n\n",
+        );
+        assert_eq!(ts.tokens_cache_hit, 200);
+        assert_eq!(ts.tokens_cache_miss, 50);
     }
 }
 

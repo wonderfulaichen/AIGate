@@ -31,17 +31,27 @@ impl KeyStore {
         }
     }
 
-    /// 查询密钥: 环境变量 → keys.json.
+    /// 查询密钥: keys.json (用户面板编辑值) 优先 → 环境变量 (默认值).
+    ///
+    /// 优先级设计: 用户在管理面板编辑的值写入 keys.json, 优先于系统环境变量生效;
+    /// 清空 key 时 `set()` 会 remove 掉 keys.json 条目, 自动回退到环境变量默认值.
     pub async fn get(&self, env_var: &str) -> Option<String> {
-        // 1. 环境变量优先
+        // 1. keys.json (用户面板编辑优先)
+        {
+            let keys = self.keys.read().await;
+            if let Some(val) = keys.get(env_var) {
+                if !val.is_empty() {
+                    return Some(val.clone());
+                }
+            }
+        }
+        // 2. 环境变量 (默认值)
         if let Ok(val) = std::env::var(env_var) {
             if !val.is_empty() {
                 return Some(val);
             }
         }
-        // 2. keys.json
-        let keys = self.keys.read().await;
-        keys.get(env_var).cloned().filter(|s| !s.is_empty())
+        None
     }
 
     /// 设置密钥 (更新内存 + 持久化).
@@ -63,11 +73,9 @@ impl KeyStore {
         env_vars
             .iter()
             .map(|var| {
-                // 先检查环境变量, 再检查 keys.json
-                let value = std::env::var(var)
-                    .ok()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| keys.get(var).cloned().filter(|s| !s.is_empty()));
+                // keys.json (用户编辑值) 优先 → 环境变量 (默认值), 与 get() 保持一致
+                let value = keys.get(var).cloned().filter(|s| !s.is_empty())
+                    .or_else(|| std::env::var(var).ok().filter(|s| !s.is_empty()));
                 let suffix = value
                     .as_ref()
                     .and_then(|v| {

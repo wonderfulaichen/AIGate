@@ -33,6 +33,8 @@ pub struct Config {
     pub cache_ttl_secs: u64,
     /// 缓存最大条目数.
     pub cache_max_entries: usize,
+    /// 模型死循环检测配置 (可经环境变量覆盖, 默认开启).
+    pub loop_guard: LoopGuardConfig,
 }
 
 impl Config {
@@ -71,12 +73,36 @@ impl Config {
             cache_enabled: env_bool("CACHE_ENABLED", false),
             cache_ttl_secs: env_u64("CACHE_TTL_SECS", 300),
             cache_max_entries: env_u64("CACHE_MAX_ENTRIES", 1024) as usize,
+            loop_guard: LoopGuardConfig {
+                enabled: env_bool("LOOP_GUARD_ENABLED", true),
+                window: env_usize("LOOP_GUARD_WINDOW", 384),
+                min_repeat: env_usize("LOOP_GUARD_MIN_REPEAT", 6),
+                max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 4096),
+            },
         }
     }
 }
 
+/// 模型死循环检测配置.
+#[derive(Debug, Clone)]
+pub struct LoopGuardConfig {
+    /// 是否启用循环检测 (默认开启).
+    pub enabled: bool,
+    /// 检测窗口字符数 (仅在最近 N 个字符内检测重复).
+    pub window: usize,
+    /// 连续重复最小次数 (达到即判为死循环).
+    pub min_repeat: usize,
+    /// 环形缓冲上限字符数.
+    pub max_buffer: usize,
+}
+
 /// 读取 u16 环境变量, 失败或缺失时回退默认值.
 fn env_u16(key: &str, default: u16) -> u16 {
+    env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+/// 读取 usize 环境变量, 失败或缺失时回退默认值.
+fn env_usize(key: &str, default: usize) -> usize {
     env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
 

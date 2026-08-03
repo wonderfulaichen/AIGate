@@ -39,6 +39,7 @@ mod thinking;
 mod keys;
 mod providers;
 mod proxy;
+mod loop_guard;
 mod store;
 
 use config::Config;
@@ -403,6 +404,7 @@ fn main() {
         retry_backoff: Duration::from_millis(config.retry_backoff_ms),
         key_store: keys::KeyStore::new("data"),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
+        loop_guard: config.loop_guard.clone(),
         breakers,
     };
 
