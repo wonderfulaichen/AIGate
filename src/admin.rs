@@ -30,10 +30,10 @@ pub struct RequestLog {
     pub latency_ms: u64,
     pub body_len: usize,
     pub error: Option<String>,
-    /// 提示 token 数 (从上游响应 usage 中提取).
+    /// 输入 token 数 (从上游响应 usage 中提取).
     #[serde(default)]
     pub prompt_tokens: u32,
-    /// 补全 token 数 (从上游响应 usage 中提取).
+    /// 输出 token 数 (从上游响应 usage 中提取).
     #[serde(default)]
     pub completion_tokens: u32,
     /// 是否命中本地响应缓存 (命中则未真实请求上游, 省 token + 延迟).
@@ -202,6 +202,7 @@ pub async fn record_request_with_tokens(
     cached: bool,
     cache_hit_tokens: u32,
     cache_miss_tokens: u32,
+    error: Option<String>,
 ) {
     let log = RequestLog {
         timestamp: now_ts(),
@@ -211,7 +212,7 @@ pub async fn record_request_with_tokens(
         status: 200,
         latency_ms: start.elapsed().as_millis() as u64,
         body_len: response_body_len,
-        error: None,
+        error,
         prompt_tokens,
         completion_tokens,
         cached,
@@ -229,7 +230,16 @@ pub async fn record_request_with_tokens(
 /// /admin/api/* 接口; 未配置 AIGATE_ADMIN_TOKEN 时注入 `null`, 不鉴权.
 pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<String> {
     let token_json = serde_json::to_string(&state.admin_token).unwrap_or_else(|_| "null".to_string());
-    let html = ADMIN_HTML.replace("/*__AIGATE_TOKEN__*/", &format!("window.AIGATE_TOKEN = {token_json};"));
+    let html = ADMIN_HTML
+        .replace("/*__AIGATE_TOKEN__*/", &format!("window.AIGATE_TOKEN = {token_json};"))
+        .replace(
+            "/*__AIGATE_LANG__*/",
+            &format!("window.AIGATE_LANG = \"{}\";", crate::i18n::lang_code()),
+        )
+        .replace(
+            "/*__AIGATE_VERSION__*/",
+            &format!("window.AIGATE_VERSION = {};", crate::version::to_json()),
+        );
     Html(html)
 }
 
@@ -251,7 +261,7 @@ pub async fn api_logs_delete(
     // 清空内存展示缓冲与持久化文件. 删除前先同步落盘已有数据, 避免异步尾写丢失.
     state.log_buffer.flush().await;
     state.log_buffer.clear().await;
-    Json(serde_json::json!({ "message": format!("已清空 {count} 条记录") }))
+    Json(serde_json::json!({ "message": crate::i18n::msg_logs_cleared(count) }))
 }
 
 /// 路由配置的脱敏视图.
@@ -318,11 +328,11 @@ pub async fn api_providers_save(
 ) -> Json<serde_json::Value> {
     let json_str = match payload.get("json").and_then(|v| v.as_str()) {
         Some(s) => s,
-        None => return Json(serde_json::json!({ "error": "缺少 json 字段" })),
+        None => return Json(serde_json::json!({ "error": crate::i18n::msg_missing_json_field() })),
     };
     // 写入文件
     if let Err(e) = std::fs::write("providers.json", json_str) {
-        return Json(serde_json::json!({ "error": format!("写入文件失败: {e}") }));
+        return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
     }
     // 热重载
     {
@@ -332,7 +342,7 @@ pub async fn api_providers_save(
         }
     }
     sync_breakers_for(&state).await;
-    Json(serde_json::json!({ "message": "配置已保存并重载" }))
+    Json(serde_json::json!({ "message": crate::i18n::msg_config_saved() }))
 }
 
 /// 配置热重载后, 按当前熔断阈值同步熔断表 (新增供应商补齐, 删除的清理).
@@ -359,7 +369,7 @@ pub async fn api_providers_reload(
         }
     }
     sync_breakers_for(&state).await;
-    Json(serde_json::json!({ "message": "配置已重载" }))
+    Json(serde_json::json!({ "message": crate::i18n::msg_config_reloaded() }))
 }
 
 /// GET /admin/api/keys — 返回所有 API Key 的脱敏视图.
@@ -391,9 +401,9 @@ pub async fn api_keys_put(
     match state.key_store.set(&payload.env_var, &payload.value).await {
         Ok(()) => {
             if payload.value.is_empty() {
-                Json(serde_json::json!({ "message": format!("已清除 {}", payload.env_var) }))
+                Json(serde_json::json!({ "message": crate::i18n::msg_key_cleared(&payload.env_var) }))
             } else {
-                Json(serde_json::json!({ "message": format!("已更新 {}", payload.env_var) }))
+                Json(serde_json::json!({ "message": crate::i18n::msg_key_updated(&payload.env_var) }))
             }
         }
         Err(e) => Json(serde_json::json!({ "error": e })),
@@ -405,10 +415,15 @@ pub async fn api_keys_put(
 pub struct HealthEntry {
     provider: String,
     endpoint: String,
-    status: String,
+    /// 健康等级: ok / error (供面板 CSS 配色).
+    status_level: String,
+    /// 健康状态中文文案 (供面板展示).
+    status_text: String,
     latency_ms: u64,
-    /// 熔断状态: closed / open / half-open.
+    /// 熔断状态原始值: closed / open / half-open (供面板 CSS 配色).
     circuit: String,
+    /// 熔断状态中文文案 (供面板展示).
+    circuit_text: String,
 }
 
 /// POST /admin/api/providers/test — 测试单个供应商连通性.
@@ -465,7 +480,7 @@ pub async fn api_providers_fetch_models(
         let registry = state.registry.read().await;
         let provider = match registry.providers().into_iter().find(|p| p.name == name) {
             Some(p) => p,
-            None => return Json(serde_json::json!({ "error": format!("未找到供应商: {name}") })),
+            None => return Json(serde_json::json!({ "error": crate::i18n::msg_provider_not_found(&name) })),
         };
         let key = match registry.api_key(&provider, &state.key_store).await {
             Ok(k) => k,
@@ -496,7 +511,7 @@ pub async fn api_providers_fetch_models(
         };
         drop(registry);
         if let Err(e) = std::fs::write("providers.json", &json_str) {
-            return Json(serde_json::json!({ "error": format!("写入文件失败: {e}") }));
+            return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
         }
     }
 
@@ -515,10 +530,7 @@ pub async fn api_providers_fetch_models(
         "fetched": ids.len(),
         "added": added,
         "skipped": skipped,
-        "message": format!(
-            "已从上游拉取 {} 个模型, 新增 {} 个, 跳过 {} 个已存在",
-            ids.len(), added, skipped
-        ),
+        "message": crate::i18n::msg_models_fetched(ids.len(), added, skipped),
     }))
 }
 
@@ -610,7 +622,7 @@ pub async fn api_mock(
 
     let count = logs.len();
     Json(serde_json::json!({
-        "message": format!("已生成 {count} 条模拟请求日志"),
+        "message": crate::i18n::msg_mock_generated(count),
         "success_count": 80,
         "error_count": 20,
         "model_count": 4,
@@ -653,25 +665,13 @@ pub async fn api_health(
                 .map(|p| p.endpoint.clone())
                 .unwrap_or_default();
             let latency_ms = elapsed.as_millis() as u64;
-            let status = match cb.as_str() {
-                "open" => format!(
-                    "error: 熔断断开 ({})",
-                    if reachable { "TCP 可达" } else { "不可达" }
-                ),
-                "half-open" => "recovering".to_string(),
-                _ => {
-                    if reachable {
-                        "ok".to_string()
-                    } else {
-                        "unreachable".to_string()
-                    }
-                }
-            };
             HealthEntry {
                 provider: name,
                 endpoint,
-                status,
+                status_level: crate::i18n::health_level(&cb, reachable).to_string(),
+                status_text: crate::i18n::health_status_text(&cb, reachable),
                 latency_ms,
+                circuit_text: crate::i18n::circuit_state_cn(&cb).to_string(),
                 circuit: cb,
             }
         })
@@ -693,10 +693,36 @@ pub async fn api_circuit_reset(
     match g.get_mut(&payload.provider) {
         Some(cb) => {
             cb.force_close();
-            Json(serde_json::json!({ "message": format!("已重置 {} 的熔断", payload.provider) }))
+            Json(serde_json::json!({ "message": crate::i18n::msg_circuit_reset(&payload.provider) }))
         }
-        None => Json(serde_json::json!({ "message": format!("{} 暂无熔断记录", payload.provider) })),
+        None => Json(serde_json::json!({ "message": crate::i18n::msg_circuit_none(&payload.provider) })),
     }
+}
+
+/// GET /admin/api/lang — 返回当前界面语言 (供前端初始化下拉).
+pub async fn api_lang() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "lang": crate::i18n::lang_code() }))
+}
+
+/// POST /admin/api/lang — 切换并持久化界面语言 (写入 lang.json + 更新运行态).
+#[derive(serde::Deserialize)]
+pub struct LangReq {
+    lang: String,
+}
+
+pub async fn api_lang_set(Json(payload): Json<LangReq>) -> Json<serde_json::Value> {
+    match crate::i18n::parse_lang(&payload.lang) {
+        Some(lang) => match crate::lang::save_lang(lang) {
+            Ok(()) => Json(serde_json::json!({ "success": true, "lang": crate::i18n::lang_code() })),
+            Err(e) => Json(serde_json::json!({ "error": crate::i18n::msg_lang_save_failed(&e) })),
+        },
+        None => Json(serde_json::json!({ "error": crate::i18n::msg_lang_unsupported(&payload.lang) })),
+    }
+}
+
+/// GET /admin/api/version — 返回结构化版本信息 (供前端关于页/页脚展示).
+pub async fn api_version() -> Json<serde_json::Value> {
+    Json(crate::version::to_json())
 }
 
 // ─── 响应缓存 (实验功能) ───
@@ -770,9 +796,9 @@ pub struct DailyTrend {
     pub requests: usize,
     pub errors: usize,
     pub avg_latency: f64,
-    /// 提示 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
+    /// 输入 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
     pub total_prompt_tokens: u64,
-    /// 补全 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
+    /// 输出 token 总量 (按桶累加, 用于趋势图 Tokens 视角).
     pub total_completion_tokens: u64,
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,

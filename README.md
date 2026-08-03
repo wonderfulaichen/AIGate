@@ -76,7 +76,7 @@
 
 ![AIGate 管理面板 - 概览](assets/screenshots/overview-dashboard.png)
 
-AIGate 管理面板「概览」页：实时展示总请求量、成功率、平均延迟、提示 / 补全 Tokens、**缓存命中率**，以及模型使用排名与用量分布。
+AIGate 管理面板「概览」页：实时展示总请求量、成功率、平均延迟、输入 / 输出 Tokens、**缓存命中率**，以及模型使用排名与用量分布。
 
 ![AIGate 管理面板 - 趋势与供应商](assets/screenshots/trends-providers.png)
 

@@ -9,6 +9,9 @@ data/
 # 本地产物（构建/测试日志）
 build.log
 test.log
+full_test.log
+# build.rs 生成的 Windows 资源脚本（每次构建重新生成，不入库）
+resources.rc
 
 # 发布打包产物（dist 目录 + zip 分发包，不入库）
 dist/

@@ -1,13 +1,75 @@
-//! 构建脚本 — 生成 .ico 图标文件并嵌入 exe.
+//! 构建脚本 — 生成 .ico 图标 + 版本资源, 并嵌入 exe.
 //!
-//! 使用 embed-resource 编译 icon.rc, 无需外部工具.
+//! 用 embed-resource 编译 `resources.rc` (含图标引用 + VS_VERSION_INFO 文件属性版本),
+//! 无需外部工具. 另外注入 `AIGATE_BUILD_TIME` / `AIGATE_GIT_COMMIT` 供 `src/version.rs`
+//! 在编译期读取 (离线时为空串).
+
+use chrono::Utc;
+use std::process::Command;
 
 fn main() {
     // 生成 icon.ico
     generate_ico("icon.ico");
 
-    // 嵌入资源
-    embed_resource::compile("icon.rc", embed_resource::NONE);
+    // 注入构建元数据 (供 src/version.rs 的 env! 读取)
+    let build_time = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    println!("cargo:rustc-env=AIGATE_BUILD_TIME={build_time}");
+    println!("cargo:rustc-env=AIGATE_GIT_COMMIT={}", git_commit());
+
+    // 生成并编译版本资源 (含图标 + 文件属性版本号).
+    // 版本号来自 Cargo.toml 单一真相源; 不含 build_time/commit, 避免每次重链.
+    write_version_rc("resources.rc", env!("CARGO_PKG_VERSION"));
+    embed_resource::compile("resources.rc", embed_resource::NONE);
+}
+
+/// 取当前 git 短 commit hash; 离线 / 无 git 时返回空串.
+fn git_commit() -> String {
+    Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// 写出 `resources.rc`: 引用已生成的 icon.ico, 并声明文件属性版本信息.
+fn write_version_rc(path: &str, version: &str) {
+    let parts: Vec<u16> = version
+        .split('.')
+        .map(|p| p.parse::<u16>().unwrap_or(0))
+        .collect();
+    let v0 = parts.first().copied().unwrap_or(0);
+    let v1 = parts.get(1).copied().unwrap_or(0);
+    let v2 = parts.get(2).copied().unwrap_or(0);
+
+    let rc = format!(
+        "1 ICON \"icon.ico\"\n\n\
+         1 VERSIONINFO\n\
+         FILEVERSION {v0},{v1},{v2},0\n\
+         PRODUCTVERSION {v0},{v1},{v2},0\n\
+         FILEOS 0x40004\n\
+         FILETYPE 0x1\n\
+         BEGIN\n\
+             BLOCK \"StringFileInfo\"\n\
+             BEGIN\n\
+                 BLOCK \"040904B0\"\n\
+                 BEGIN\n\
+                     VALUE \"FileDescription\", \"AIGate Local AI Gateway\"\n\
+                     VALUE \"FileVersion\", \"{version}\"\n\
+                     VALUE \"ProductVersion\", \"{version}\"\n\
+                     VALUE \"ProductName\", \"AIGate\"\n\
+                     VALUE \"LegalCopyright\", \"GPL-3.0\"\n\
+                 END\n\
+             END\n\
+             BLOCK \"VarFileInfo\"\n\
+             BEGIN\n\
+                 VALUE \"Translation\", 0x409, 1200\n\
+             END\n\
+         END\n"
+    );
+    let _ = std::fs::write(path, rc);
 }
 
 /// 生成一个 32×32 的 ICO 图标 (BGRA 无压缩格式).

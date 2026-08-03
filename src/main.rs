@@ -33,6 +33,8 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 mod admin;
 mod cache;
+mod i18n;
+mod lang;
 mod circuit_breaker;
 mod config;
 mod thinking;
@@ -41,10 +43,52 @@ mod providers;
 mod proxy;
 mod loop_guard;
 mod store;
+mod version;
 
 use config::Config;
 use proxy::AppState;
 use admin::LogBuffer;
+
+/// 诊断日志双写器: 同时写 stdout (开发/命令行可见) 与 exe 同目录的 aigate.log.
+/// 窗口隐藏版 (windows_subsystem="windows") 无控制台, stdout 被丢弃, 必须落盘才能取诊断日志.
+struct TeeWriter {
+    stdout: std::io::Stdout,
+    file: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
+}
+
+impl std::io::Write for TeeWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = self.stdout.write_all(buf);
+        if let Some(f) = &self.file {
+            let mut g = f.lock().unwrap();
+            g.write_all(buf)?;
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let _ = self.stdout.flush();
+        if let Some(f) = &self.file {
+            f.lock().unwrap().flush()?;
+        }
+        Ok(())
+    }
+}
+
+/// tracing-subscriber 的 MakeWriter 实现: 每次写入新建一个 TeeWriter (持有 stdout + 共享文件句柄).
+#[derive(Clone)]
+struct TeeMakeWriter {
+    file: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for TeeMakeWriter {
+    type Writer = TeeWriter;
+    fn make_writer(&'a self) -> TeeWriter {
+        TeeWriter {
+            stdout: std::io::stdout(),
+            file: self.file.clone(),
+        }
+    }
+}
 
 // ─── DNS ───
 
@@ -90,7 +134,7 @@ fn set_panic_hook() {
             .map(|l| format!("\n  位置: {}:{}", l.file(), l.line()))
             .unwrap_or_default();
         eprintln!("AIGate panic: {msg}{location}");
-        show_error(&format!("意外错误，程序即将退出:\n\n{msg}{location}"));
+        show_error(&format!("{}:\n\n{msg}{location}", crate::i18n::startup_error("panic")));
         std::process::exit(1);
     }));
 }
@@ -250,9 +294,9 @@ fn setup_tray() -> TrayHandles {
 
     let menu = Menu::new();
 
-    let show_item = MenuItem::new("打开主窗口", true, None);
-    let console_item = CheckMenuItem::new("隐藏控制台", true, true, None);
-    let quit_item = MenuItem::new("退出", true, None);
+    let show_item = MenuItem::new(crate::i18n::tray_menu("show"), true, None);
+    let console_item = CheckMenuItem::new(crate::i18n::tray_menu("console"), true, true, None);
+    let quit_item = MenuItem::new(crate::i18n::tray_menu("quit"), true, None);
 
     menu.append(&show_item).ok();
     menu.append(&PredefinedMenuItem::separator()).ok();
@@ -263,7 +307,7 @@ fn setup_tray() -> TrayHandles {
     let tray = tray_icon::TrayIconBuilder::new()
         .with_icon(icon)
         .with_menu(Box::new(menu))
-        .with_tooltip("AIGate")
+        .with_tooltip(&format!("AIGate {}", crate::version::VERSION))
         .build()
         .expect("创建系统托盘失败");
 
@@ -312,6 +356,7 @@ fn main() {
     let base = exe_dir();
     ensure_default_configs(&base);
     std::env::set_current_dir(&base).unwrap_or(());
+    crate::i18n::init_lang();
 
     // ── 后台 tokio runtime ──
     let rt = tokio::runtime::Runtime::new().expect("创建运行时失败");
@@ -319,7 +364,29 @@ fn main() {
     // 在 runtime 上下文中初始化 tracing
     let _guard = rt.enter();
 
+    // 日志同时写 stdout 与 exe 同目录的 aigate.log.
+    // 窗口隐藏版 (windows_subsystem="windows") 无控制台, stdout 被丢弃, 必须落盘才能取诊断日志.
+    let log_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("aigate.log")))
+        .unwrap_or_else(|| std::path::PathBuf::from("aigate.log"));
+    // 简单滚动: 超过 5MB 移为 aigate.log.old, 避免无限增大.
+    if let Ok(meta) = std::fs::metadata(&log_path) {
+        if meta.len() > 5 * 1024 * 1024 {
+            let _ = std::fs::rename(&log_path, log_path.with_extension("old"));
+        }
+    }
+    let file_writer: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> =
+        match std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            Ok(f) => Some(std::sync::Arc::new(std::sync::Mutex::new(f))),
+            Err(e) => {
+                eprintln!("aigate: 无法打开日志文件 {:?}: {e}, 仅输出到 stdout", log_path);
+                None
+            }
+        };
+    let tee = TeeMakeWriter { file: file_writer };
     tracing_subscriber::fmt()
+        .with_writer(tee)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info".into()),
@@ -332,7 +399,7 @@ fn main() {
     let registry = match providers::ProviderRegistry::load("providers.json") {
         Ok(r) => r,
         Err(e) => {
-            show_error(&format!("加载配置失败: {e}"));
+            show_error(&format!("{}: {e}", crate::i18n::startup_error("config")));
             std::process::exit(1);
         }
     };
@@ -348,7 +415,7 @@ fn main() {
     {
         Ok(c) => c,
         Err(e) => {
-            show_error(&format!("创建 HTTP 客户端失败: {e}"));
+            show_error(&format!("{}: {e}", crate::i18n::startup_error("client")));
             std::process::exit(1);
         }
     };
@@ -423,7 +490,9 @@ fn main() {
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/stats", get(admin::api_stats))
-        .route("/admin/api/mock", post(admin::api_mock));
+        .route("/admin/api/mock", post(admin::api_mock))
+        .route("/admin/api/lang", get(admin::api_lang).post(admin::api_lang_set))
+        .route("/admin/api/version", get(admin::api_version));
     if config.admin_token.is_some() {
         admin_api = admin_api.layer(middleware::from_fn_with_state(state.clone(), require_admin_token));
     }
@@ -442,19 +511,19 @@ fn main() {
     let state_for_shutdown = state;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("AIGate listening on http://{addr}");
+    info!("{} — listening on http://{}", crate::version::build_info(), addr);
 
     // ── 绑定端口并启动 Axum ──
     let listener = rt.block_on(async {
         tokio::net::TcpListener::bind(addr).await
     }).unwrap_or_else(|e| {
-        show_error(&format!("端口 {port} 绑定失败: {e}\n\n请检查端口是否被占用或更换 PORT 环境变量。"));
+        show_error(&format!("{}: {e}\n\n{}", crate::i18n::startup_error("bind"), crate::i18n::startup_bind_hint()));
         std::process::exit(1);
     });
 
     rt.spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
-            show_error(&format!("服务器运行错误: {e}"));
+            show_error(&format!("{}: {e}", crate::i18n::startup_error("serve")));
             std::process::exit(1);
         }
     });

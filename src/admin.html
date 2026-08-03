@@ -11,7 +11,7 @@
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:#171212;color:#cdd0d4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,sans-serif;font-size:13px}
 *{scrollbar-width:none;-ms-overflow-style:none}
-::-webkit-scrollbar{display:none}
+*::-webkit-scrollbar{display:none}
 .content-area{height:100vh;overflow-y:auto;overflow-x:hidden}
 
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
@@ -66,10 +66,11 @@ input.search-input::placeholder{color:#6b7280}
       <a href="#" @click.prevent="switchTab(item.id)"
         class="flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-100"
         :class="activeTab===item.id ? 'bg-[#6366f1] text-white shadow-sm shadow-[#6366f1]/30' : 'text-[#6b7280] hover:text-[#cdd0d4] hover:bg-[#2a2d37]'"
-        :title="item.label"
+        :title="t(item.labelKey)"
         x-html="item.icon">
       </a>
-    </template>
+      </template>
+      <div class="mt-auto px-1 pb-2 text-[10px] font-mono select-none" style="color:#4b5563" x-text="'v'+version.version"></div>
   </nav>
 
   <!-- ═══ Main Content ═══ -->
@@ -79,22 +80,22 @@ input.search-input::placeholder{color:#6b7280}
     <div x-show="activeTab==='dashboard'" class="page-enter space-y-4">
       <template x-if="loading && !stats">
         <div class="flex items-center justify-center min-h-[calc(100vh-120px)]">
-          <div class="w-48 space-y-2"><div class="h-1 rounded-full overflow-hidden relative" style="background:#2a2d37"><div class="absolute inset-0 h-full rounded-full animate-loading-bar" style="background:linear-gradient(90deg,#6366f1,#06b6d4)"></div></div><p class="text-[11px] text-center" style="color:#6b7280">加载中...</p></div>
+          <div class="w-48 space-y-2"><div class="h-1 rounded-full overflow-hidden relative" style="background:#2a2d37"><div class="absolute inset-0 h-full rounded-full animate-loading-bar" style="background:linear-gradient(90deg,#6366f1,#06b6d4)"></div></div><p class="text-[11px] text-center" style="color:#6b7280" x-text="t('loading')"></p></div>
         </div>
       </template>
       <template x-if="!loading && (!stats || stats.total_requests===0)">
         <div class="flex flex-col items-center justify-center min-h-[calc(100vh-120px)] gap-6">
           <div class="text-center">
             <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4" style="background:rgba(52,211,153,.12);color:#34d399">
-              <span class="w-2 h-2 rounded-full bg-[#34d399] inline-block"></span> 服务运行中
+              <span class="w-2 h-2 rounded-full bg-[#34d399] inline-block"></span> <span x-text="t('service_running')"></span>
             </div>
-            <h2 class="text-lg font-bold text-white">AIGate 代理服务</h2>
-            <p class="text-sm mt-1" style="color:#6b7280">等待第一次 API 请求...</p>
+            <h2 class="text-lg font-bold text-white" x-text="t('app_service_title')"></h2>
+            <p class="text-sm mt-1" style="color:#6b7280" x-text="t('waiting_first_request')"></p>
           </div>
           <div class="card w-full max-w-lg"><div class="card-body space-y-3">
             <div class="flex items-center justify-between">
-              <span class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">连接信息</span>
-              <span class="text-xs" style="color:#6b7280">API 端点</span>
+              <span class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('conn_info')"></span>
+              <span class="text-xs" style="color:#6b7280" x-text="t('api_endpoint')"></span>
             </div>
             <div class="flex items-center gap-2 font-mono text-sm px-3 py-2 rounded" style="background:rgba(255,255,255,.04)">
               <span style="color:#6b7280">POST</span>
@@ -105,29 +106,29 @@ input.search-input::placeholder{color:#6b7280}
               <span style="color:#a5b4fc">http://127.0.0.1:8787/v1/models</span>
             </div>
             <div class="text-xs" style="color:#6b7280">
-              <p>在编程工具中将 API 地址设为 <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>，API Key 任意填写。</p>
+              <p x-html="t('setup_hint')"></p>
             </div>
           </div></div>
           <div class="flex gap-3">
-            <button @click="switchTab('routes')" class="btn-ghost text-xs">查看路由配置</button>
-            <button @click="switchTab('health')" class="btn-ghost text-xs">健康检查</button>
+            <button @click="switchTab('routes')" class="btn-ghost text-xs" x-text="t('view_routes')"></button>
+            <button @click="switchTab('health')" class="btn-ghost text-xs" x-text="t('health_check')"></button>
           </div>
         </div>
       </template>
       <template x-if="stats && stats.total_requests>0">
         <div class="space-y-4">
-          <h1 class="text-lg font-bold">概览</h1>
+          <h1 class="text-lg font-bold" x-text="t('overview')"></h1>
           <div class="grid grid-cols-6 gap-4">
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">总请求</div><div class="text-2xl font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">成功率</div><div class="text-2xl font-bold mt-1" :class="sRate>=95?'text-[#34d399]':sRate>=80?'text-[#f59e0b]':'text-[#ef4444]'" x-text="sRate+'%'"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">平均延迟</div><div class="text-2xl font-bold mt-1 text-[#06b6d4]" x-text="fmtMs(stats.avg_latency_ms)"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">提示 Tokens</div><div class="text-2xl font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">补全 Tokens</div><div class="text-2xl font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
-            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280">缓存命中</div><div class="text-2xl font-bold mt-1 text-[#22d3ee]" x-text="(stats.cache_hit_rate*100).toFixed(1)+'%'"></div><div class="text-[11px] mt-1" style="color:#6b7280" x-text="'命中 '+fmtT(stats.total_cache_hit_tokens)+' tok'"></div><template x-if="stats.total_cache_hit_tokens===0 && stats.total_cache_miss_tokens===0"><div class="text-[10px] mt-1" style="color:#6b7280">供应商未返回缓存命中</div></template></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.total_requests')"></div><div class="text-2xl font-bold mt-1 text-white" x-text="stats.total_requests"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.success_rate')"></div><div class="text-2xl font-bold mt-1" :class="sRate>=95?'text-[#34d399]':sRate>=80?'text-[#f59e0b]':'text-[#ef4444]'" x-text="sRate+'%'"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.avg_latency')"></div><div class="text-2xl font-bold mt-1 text-[#06b6d4]" x-text="fmtMs(stats.avg_latency_ms)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.input_tokens')"></div><div class="text-2xl font-bold mt-1 text-[#34d399]" x-text="fmtT(stats.total_prompt_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.output_tokens')"></div><div class="text-2xl font-bold mt-1 text-[#a78bfa]" x-text="fmtT(stats.total_completion_tokens)"></div></div></div>
+            <div class="card"><div class="card-body"><div class="text-[11px] font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('stat.cache_hit')"></div><div class="text-2xl font-bold mt-1 text-[#22d3ee]" x-text="(stats.cache_hit_rate*100).toFixed(1)+'%'"></div><div class="text-[11px] mt-1" style="color:#6b7280" x-text="t('hit_count', fmtT(stats.total_cache_hit_tokens))"></div><template x-if="stats.total_cache_hit_tokens===0 && stats.total_cache_miss_tokens===0"><div class="text-[10px] mt-1" style="color:#6b7280" x-text="t('no_cache_returned')"></div></template></div></div>
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div class="card"><div class="card-body">
-              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型使用排名</div>
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('model_usage_rank')"></div>
               <div class="space-y-3">
                 <template x-for="(m,i) in stats.top_models" :key="m.model">
                   <div>
@@ -136,7 +137,7 @@ input.search-input::placeholder{color:#6b7280}
                         <span class="w-4 text-center font-bold shrink-0" :class="'text-['+(i===0?'#f59e0b':i===1?'#cdd0d4':i===2?'#d97706':'#6b7280')+']'" x-text="'#'+(i+1)"></span>
                         <span class="truncate" style="color:#a5b4fc" x-text="m.model"></span>
                       </div>
-                      <span class="shrink-0 ml-2" style="color:#6b7280" x-text="m.requests+' 次'"></span>
+                      <span class="shrink-0 ml-2" style="color:#6b7280" x-text="m.requests+' '+t('unit_times')"></span>
                     </div>
                     <div class="progress-track"><div class="progress-fill accent" :style="'width:'+(m.requests/maxModelReqs*100)+'%'"></div></div>
                   </div>
@@ -144,14 +145,14 @@ input.search-input::placeholder{color:#6b7280}
               </div>
               <template x-if="stats.per_model.length>5">
                 <div class="mt-3 pt-3 border-t" style="border-color:#2a2d37">
-                  <button @click="showAllModels=!showAllModels" class="text-xs hover:underline" style="color:#818cf8"><span x-text="showAllModels?'收起':'展开全部'"></span> <span style="color:#6b7280" x-text="'('+(stats.per_model.length-5)+')'"></span></button>
+                  <button @click="showAllModels=!showAllModels" class="text-xs hover:underline" style="color:#818cf8"><span x-text="showAllModels?t('collapse'):t('expand_all')"></span> <span style="color:#6b7280" x-text="'('+(stats.per_model.length-5)+')'"></span></button>
                   <div x-show="showAllModels" class="mt-2 space-y-1">
                     <template x-for="m in stats.per_model.slice(5)" :key="m.model">
                       <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
                         <span class="truncate max-w-[55%]" style="color:#a5b4fc" x-text="m.model"></span>
                         <div class="flex items-center gap-3" style="color:#6b7280">
-                          <span x-text="m.requests+' 次'"></span>
-                          <template x-if="m.errors>0"><span style="color:#f87171" x-text="m.errors+' 错'"></span></template>
+                          <span x-text="m.requests+' '+t('unit_times')"></span>
+                          <template x-if="m.errors>0"><span style="color:#f87171" x-text="m.errors+' '+t('unit_errors')"></span></template>
                           <span x-text="fmtMs(m.avg_latency_ms)"></span>
                         </div>
                       </div>
@@ -161,8 +162,8 @@ input.search-input::placeholder{color:#6b7280}
               </template>
             </div></div>
             <div class="card"><div class="card-body">
-              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量分布</div>
-              <template x-if="stats.per_model.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无数据</div></template>
+              <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('model_usage_dist')"></div>
+              <template x-if="stats.per_model.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px" x-text="t('no_data')"></div></template>
               <template x-if="stats.per_model.length>0">
                 <div class="flex items-center justify-center gap-4">
                   <!-- Donut chart -->
@@ -177,7 +178,7 @@ input.search-input::placeholder{color:#6b7280}
                       </div>
                     </template>
                     <template x-if="stats.per_model.length>6">
-                      <div style="color:#6b7280">+ 其他 <span x-text="stats.per_model.length-6"></span> 个</div>
+                      <div style="color:#6b7280" x-text="t('other_n', stats.per_model.length-6)"></div>
                     </template>
                   </div>
                 </div>
@@ -186,26 +187,26 @@ input.search-input::placeholder{color:#6b7280}
           </div>
           <!-- 模型用量明细（合并自 Token 统计页，避免重复） -->
           <div class="card"><div class="card-body">
-            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">模型用量明细</div>
-            <div class="overflow-x-auto"><table><thead><tr><th>模型</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th><th class="text-right">缓存命中</th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="8" class="text-center py-8" style="color:#6b7280">暂无数据</td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td><td class="text-right" :title="'命中 '+fmtT(m.total_cache_hit_tokens)+' / 未命中 '+fmtT(m.total_cache_miss_tokens)" x-text="(m.total_cache_hit_tokens+m.total_cache_miss_tokens>0)?((m.total_cache_hit_tokens/(m.total_cache_hit_tokens+m.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
+            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('model_usage_detail')"></div>
+            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="8" class="text-center py-8" style="color:#6b7280" x-text="t('no_data')"></td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(m.total_cache_hit_tokens)+' / '+fmtT(m.total_cache_miss_tokens)" x-text="(m.total_cache_hit_tokens+m.total_cache_miss_tokens>0)?((m.total_cache_hit_tokens/(m.total_cache_hit_tokens+m.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
           </div></div>
           <div class="card"><div class="card-body">
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求 / Token 趋势</div>
+              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('req_token_trend')"></div>
                 <div class="flex items-center gap-2">
                   <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
-                    <button @click="dailyMode='requests'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='requests'?'bg-[#6366f1] text-white':'text-[#6b7280]'">请求数</button>
-                    <button @click="dailyMode='latency'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='latency'?'bg-[#6366f1] text-white':'text-[#6b7280]'">延迟</button>
-                    <button @click="dailyMode='tokens'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='tokens'?'bg-[#6366f1] text-white':'text-[#6b7280]'">Tokens</button>
+                    <button @click="dailyMode='requests'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='requests'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.requests')"></button>
+                    <button @click="dailyMode='latency'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='latency'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.latency')"></button>
+                    <button @click="dailyMode='tokens'" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="dailyMode==='tokens'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.tokens')"></button>
                   </div>
                   <div class="flex gap-1 p-0.5 rounded" style="background:#2a2d37">
-                    <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'">时</button>
-                    <button @click="trendGranularity='day';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'">日</button>
-                    <button @click="trendGranularity='month';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'">月</button>
+                    <button @click="trendGranularity='hour';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='hour'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.hour')"></button>
+                    <button @click="trendGranularity='day';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='day'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.day')"></button>
+                    <button @click="trendGranularity='month';fetchStats()" class="px-2 py-0.5 text-[10px] font-medium rounded transition" :class="trendGranularity==='month'?'bg-[#6366f1] text-white':'text-[#6b7280]'" x-text="t('btn.month')"></button>
                   </div>
                 </div>
               </div>
-              <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px">暂无趋势数据</div></template>
+              <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px" x-text="t('no_trend')"></div></template>
               <template x-if="stats.trends.length>0">
                 <div>
                   <svg class="w-full" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 120'">
@@ -226,7 +227,7 @@ input.search-input::placeholder{color:#6b7280}
                     <template x-for="t in stats.trends" :key="t.date">
                       <div class="shrink-0 text-center rounded px-2 py-1.5" style="background:rgba(255,255,255,.03);min-width:66px">
                         <div class="text-[10px]" style="color:#6b7280" x-text="t.date"></div>
-                        <div class="text-xs font-semibold mt-0.5" style="color:#cdd0d4" x-text="dailyMode==='tokens' ? fmtT((t.total_prompt_tokens||0)+(t.total_completion_tokens||0))+' tok' : dailyMode==='latency' ? fmtMs(t.avg_latency||0) : t.requests+' 次'"></div>
+                        <div class="text-xs font-semibold mt-0.5" style="color:#cdd0d4" x-text="dailyMode==='tokens' ? fmtT((t.total_prompt_tokens||0)+(t.total_completion_tokens||0))+' '+t('unit_tokens') : dailyMode==='latency' ? fmtMs(t.avg_latency||0) : t.requests+' '+t('unit_times')"></div>
                       </div>
                     </template>
                   </div>
@@ -234,8 +235,8 @@ input.search-input::placeholder{color:#6b7280}
               </template>
             </div></div>
           <div class="card"><div class="card-body">
-            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">供应商统计</div>
-            <div class="overflow-x-auto"><table><thead><tr><th>供应商</th><th class="text-right">请求</th><th class="text-right">成功</th><th class="text-right">错误</th><th class="text-right">平均延迟</th><th class="text-right">提示 Tokens</th><th class="text-right">补全 Tokens</th><th class="text-right">缓存命中</th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="'命中 '+fmtT(p.total_cache_hit_tokens)+' / 未命中 '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_cache_hit_tokens+p.total_cache_miss_tokens>0)?((p.total_cache_hit_tokens/(p.total_cache_hit_tokens+p.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
+            <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('provider_stats')"></div>
+            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.provider')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(p.total_cache_hit_tokens)+' / '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_cache_hit_tokens+p.total_cache_miss_tokens>0)?((p.total_cache_hit_tokens/(p.total_cache_hit_tokens+p.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
           </div></div>
         </div>
       </template>
@@ -249,28 +250,28 @@ input.search-input::placeholder{color:#6b7280}
     <div x-show="activeTab==='records'" class="page-enter">
       <div class="card"><div class="card-body">
         <div class="flex items-center justify-between mb-3">
-          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">请求记录 <span style="font-weight:400" x-text="'('+logs.length+' 条)'"></span></div>
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280"><span x-text="t('records_title')"></span> <span style="font-weight:400" x-text="t('records_count', logs.length)"></span></div>
           <div class="flex items-center gap-2">
-            <button @click="exportLogs()" class="btn-ghost text-xs">导出 JSON</button>
-            <button @click="clearLogs()" class="btn-ghost text-xs">清除</button>
+            <button @click="exportLogs()" class="btn-ghost text-xs" x-text="t('export_json')"></button>
+            <button @click="clearLogs()" class="btn-ghost text-xs" x-text="t('clear')"></button>
           </div>
         </div>
         <div class="flex items-center gap-2 mb-3">
-          <input type="text" x-model="logSearch" placeholder="搜索模型/供应商/错误..." class="search-input flex-1" />
+          <input type="text" x-model="logSearch" :placeholder="t('search_placeholder')" class="search-input flex-1" />
           <select x-model="logProviderFilter" class="select-input text-xs" style="max-width:140px">
-            <option value="">全部供应商</option>
+            <option value="" x-text="t('opt.all_providers')"></option>
             <template x-for="p in logProviders" :key="p">
               <option :value="p" x-text="p"></option>
             </template>
           </select>
           <select x-model="logStatusFilter" class="select-input text-xs" style="max-width:100px">
-            <option value="">全部状态</option>
-            <option value="success">成功</option>
-            <option value="error">错误</option>
+            <option value="" x-text="t('opt.all_status')"></option>
+            <option value="success" x-text="t('opt.success')"></option>
+            <option value="error" x-text="t('opt.error')"></option>
           </select>
         </div>
         <template x-if="filteredLogs.length===0">
-          <div class="text-center py-8 text-sm" style="color:#6b7280" x-text="logSearch?'无匹配结果':'暂无请求记录'"></div>
+          <div class="text-center py-8 text-sm" style="color:#6b7280" x-text="logSearch?t('no_match'):t('no_logs')"></div>
         </template>
         <template x-if="filteredLogs.length>0">
           <div>
@@ -282,34 +283,34 @@ input.search-input::placeholder{color:#6b7280}
                     <span class="font-mono truncate max-w-[22%] shrink-0" :class="log.status>=400?'text-[#f87171]':'text-[#818cf8]'" x-text="log.model"></span>
                     <span class="truncate max-w-[10%] shrink-0" style="color:#6b7280" x-text="log.provider"></span>
                     <span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
-                    <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 badge-primary" title="命中本地缓存, 未请求上游">缓存</span></template>
-                    <template x-if="log.prompt_cache_hit_tokens>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" title="上游 KV Cache 命中 token 数" x-text="'缓存 '+fmtT(log.prompt_cache_hit_tokens)"></span></template>
+                    <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 badge-primary" :title="t('badge.cached_title')" x-text="t('badge.cached')"></span></template>
+                    <template x-if="log.prompt_cache_hit_tokens>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" :title="t('badge.kvcache_title')" x-text="t('hit_count', fmtT(log.prompt_cache_hit_tokens))"></span></template>
                     <span class="w-14 text-right font-mono shrink-0" style="color:#6b7280" x-text="log.latency_ms+'ms'"></span>
                     <span class="w-16 text-right shrink-0" style="color:#6b7280" x-text="fmtB(log.body_len)"></span>
                     <template x-if="log.error"><span class="text-[#f87171] truncate min-w-0 text-[11px]" x-text="log.error.substring(0,45)"></span></template>
                   </div>
                   <div x-show="expandedLog===i" class="text-xs px-4 py-3 rounded-b-lg space-y-1" style="background:rgba(255,255,255,.02);border:1px solid rgba(42,45,55,.5);border-top:0">
                     <div class="flex flex-wrap gap-x-6 gap-y-1" style="color:#6b7280">
-                      <span>时间: <span style="color:#cdd0d4" x-text="new Date(log.timestamp*1000).toLocaleString('zh-CN')"></span></span>
-                      <span>模型: <span style="color:#818cf8" x-text="log.model"></span></span>
-                      <span>供应商: <span style="color:#cdd0d4" x-text="log.provider"></span></span>
-                      <span>端点: <span class="font-mono text-[10px]" style="color:#cdd0d4" x-text="log.endpoint"></span></span>
-                      <span>状态码: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
-                      <span>延迟: <span style="color:#cdd0d4" x-text="log.latency_ms+'ms'"></span></span>
-                      <span>请求体: <span style="color:#cdd0d4" x-text="fmtB(log.body_len)"></span></span>
-                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1">KV 缓存: <span style="color:#22d3ee" x-text="'命中 '+fmtT(log.prompt_cache_hit_tokens)"></span><span style="color:#6b7280"> / </span><span style="color:#cdd0d4" x-text="'未命中 '+fmtT(log.prompt_cache_miss_tokens)"></span></span></template>
-                      <template x-if="log.error"><span class="w-full mt-1">错误详情: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
+                      <span><span x-text="t('detail.time')"></span>: <span style="color:#cdd0d4" x-text="fmtDateTime(log.timestamp)"></span></span>
+                      <span><span x-text="t('detail.model')"></span>: <span style="color:#818cf8" x-text="log.model"></span></span>
+                      <span><span x-text="t('detail.provider')"></span>: <span style="color:#cdd0d4" x-text="log.provider"></span></span>
+                      <span><span x-text="t('detail.endpoint')"></span>: <span class="font-mono text-[10px]" style="color:#cdd0d4" x-text="log.endpoint"></span></span>
+                      <span><span x-text="t('detail.status')"></span>: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
+                      <span><span x-text="t('detail.latency')"></span>: <span style="color:#cdd0d4" x-text="log.latency_ms+'ms'"></span></span>
+                      <span><span x-text="t('detail.body')"></span>: <span style="color:#cdd0d4" x-text="fmtB(log.body_len)"></span></span>
+                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.kv_cache')"></span>: <span style="color:#22d3ee" x-text="t('kv_hit', fmtT(log.prompt_cache_hit_tokens))"></span><span style="color:#6b7280"> / </span><span style="color:#cdd0d4" x-text="t('kv_miss', fmtT(log.prompt_cache_miss_tokens))"></span></span></template>
+                      <template x-if="log.error"><span class="w-full mt-1"><span x-text="t('detail.error')"></span>: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
                     </div>
                   </div>
                 </div>
               </template>
             </div>
             <div class="flex items-center justify-between mt-4 pt-3 border-t" style="border-color:#2a2d37">
-              <span class="text-xs" style="color:#6b7280" x-text="'共 '+filteredLogs.length+' 条'"></span>
+              <span class="text-xs" style="color:#6b7280" x-text="t('total_count', filteredLogs.length)"></span>
               <div class="flex items-center gap-2 text-xs">
-                <button @click="logPage=Math.max(0,logPage-1)" :disabled="logPage===0" class="px-2.5 py-1 rounded transition" :class="logPage===0?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'">上一页</button>
+                <button @click="logPage=Math.max(0,logPage-1)" :disabled="logPage===0" class="px-2.5 py-1 rounded transition" :class="logPage===0?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'" x-text="t('prev_page')"></button>
                 <span style="color:#6b7280" x-text="(logPage+1)+'/'+Math.max(1,totalLogPages)"></span>
-                <button @click="logPage=Math.min(totalLogPages-1,logPage+1)" :disabled="logPage>=totalLogPages-1" class="px-2.5 py-1 rounded transition" :class="logPage>=totalLogPages-1?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'">下一页</button>
+                <button @click="logPage=Math.min(totalLogPages-1,logPage+1)" :disabled="logPage>=totalLogPages-1" class="px-2.5 py-1 rounded transition" :class="logPage>=totalLogPages-1?'text-[#374151] cursor-not-allowed':'text-[#6b7280] hover:text-white hover:bg-[#2a2d37]'" x-text="t('next_page')"></button>
               </div>
             </div>
           </div>
@@ -320,10 +321,10 @@ input.search-input::placeholder{color:#6b7280}
     <!-- ==================== ROUTES ==================== -->
     <div x-show="activeTab==='routes'" class="page-enter">
       <div class="card"><div class="card-body">
-        <div class="text-xs font-bold uppercase tracking-wider mb-4" style="color:#6b7280">路由配置 <span style="font-weight:400" x-show="routes.model_count!==undefined" x-text="'('+routes.model_count+' 模型, '+routes.providers.length+' 供应商)'"></span></div>
-        <template x-if="routes.model_count===undefined"><div class="text-center py-8 text-sm" style="color:#6b7280">加载中...</div></template>
+        <div class="text-xs font-bold uppercase tracking-wider mb-4" style="color:#6b7280"><span x-text="t('routes_config')"></span> <span style="font-weight:400" x-show="routes.model_count!==undefined" x-text="t('routes_count', routes.model_count, routes.providers.length)"></span></div>
+        <template x-if="routes.model_count===undefined"><div class="text-center py-8 text-sm" style="color:#6b7280" x-text="t('loading')"></div></template>
         <template x-if="routes.model_count!==undefined">
-          <div class="overflow-x-auto"><table><thead><tr><th>模型 ID</th><th>供应商</th><th>端点</th><th>上游模型</th><th>思考强度</th></tr></thead><tbody><template x-for="r in routes.routes" :key="r.model_id"><tr><td class="font-mono" style="color:#818cf8" x-text="r.model_id"></td><td x-text="r.provider"></td><td class="text-xs font-mono truncate max-w-[180px]" style="color:#6b7280" x-text="r.endpoint.replace(/^https?:\/\//,'')"></td><td><template x-if="r.upstream_model"><span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background:rgba(255,255,255,.04);color:#6b7280" x-text="r.upstream_model"></span></template><template x-if="!r.upstream_model"><span style="color:#6b7280">-</span></template></td><td><template x-if="r.reasoning_effort"><span class="badge badge-primary" x-text="r.reasoning_effort"></span></template><template x-if="!r.reasoning_effort"><span style="color:#6b7280">-</span></template></td></tr></template></tbody></table></div>
+          <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model_id')"></th><th x-text="t('tbl.provider')"></th><th x-text="t('tbl.endpoint')"></th><th x-text="t('tbl.upstream_model')"></th><th x-text="t('tbl.reasoning')"></th></tr></thead><tbody><template x-for="r in routes.routes" :key="r.model_id"><tr><td class="font-mono" style="color:#818cf8" x-text="r.model_id"></td><td x-text="r.provider"></td><td class="text-xs font-mono truncate max-w-[180px]" style="color:#6b7280" x-text="r.endpoint.replace(/^https?:\/\//,'')"></td><td><template x-if="r.upstream_model"><span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background:rgba(255,255,255,.04);color:#6b7280" x-text="r.upstream_model"></span></template><template x-if="!r.upstream_model"><span style="color:#6b7280">-</span></template></td><td><template x-if="r.reasoning_effort"><span class="badge badge-primary" x-text="r.reasoning_effort"></span></template><template x-if="!r.reasoning_effort"><span style="color:#6b7280">-</span></template></td></tr></template></tbody></table></div>
         </template>
       </div></div>
     </div>
@@ -334,19 +335,19 @@ input.search-input::placeholder{color:#6b7280}
       <!-- ==================== CACHE (实验功能) ==================== -->
       <div class="card mb-4"><div class="card-body">
         <div class="flex items-center justify-between mb-4">
-          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">响应缓存 <span class="ml-2 px-1.5 py-0.5 rounded text-[10px]" style="background:rgba(245,158,11,.15);color:#f59e0b">实验功能</span></div>
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280"><span x-text="t('cache_title')"></span> <span class="ml-2 px-1.5 py-0.5 rounded text-[10px]" style="background:rgba(245,158,11,.15);color:#f59e0b" x-text="t('experimental_badge')"></span></div>
           <div class="flex items-center gap-2">
-            <button @click="clearCache()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(239,68,68,.15);color:#f87171;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(239,68,68,.25)'" @mouseleave="$el.style.background='rgba(239,68,68,.15)'">清空</button>
-            <button @click="fetchCache()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'">刷新</button>
+            <button @click="clearCache()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(239,68,68,.15);color:#f87171;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(239,68,68,.25)'" @mouseleave="$el.style.background='rgba(239,68,68,.15)'" x-text="t('clear')"></button>
+            <button @click="fetchCache()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'" x-text="t('refresh')"></button>
           </div>
         </div>
-        <template x-if="cache===null"><div class="text-center py-6 text-sm" style="color:#6b7280">加载中...</div></template>
+        <template x-if="cache===null"><div class="text-center py-6 text-sm" style="color:#6b7280" x-text="t('loading')"></div></template>
         <template x-if="cache!==null">
           <div class="space-y-4">
             <div class="flex items-center justify-between">
               <div>
-                <div class="text-sm font-medium">启用缓存</div>
-                <div class="text-xs mt-0.5" style="color:#6b7280">相同请求体命中缓存时直接返回，省 token（仅非流式请求）</div>
+                <div class="text-sm font-medium" x-text="t('cache_enable_label')"></div>
+                <div class="text-xs mt-0.5" style="color:#6b7280" x-text="t('cache_enable_desc')"></div>
               </div>
               <button @click="setCacheEnabled(!cache.enabled)" class="relative w-12 h-6 rounded-full transition-colors" :style="cache.enabled ? 'background:#6366f1' : 'background:#2a2d37'" style="cursor:pointer;border:none">
                 <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :style="cache.enabled ? 'left:26px' : 'left:3px'"></span>
@@ -354,24 +355,24 @@ input.search-input::placeholder{color:#6b7280}
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                <div class="text-xs" style="color:#6b7280">缓存条目</div>
+                <div class="text-xs" style="color:#6b7280" x-text="t('cache.entries')"></div>
                 <div class="text-lg font-bold mt-1" x-text="cache.entries + ' / ' + cache.max_entries"></div>
               </div>
               <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                <div class="text-xs" style="color:#6b7280">命中</div>
+                <div class="text-xs" style="color:#6b7280" x-text="t('cache.hits')"></div>
                 <div class="text-lg font-bold mt-1" style="color:#34d399" x-text="cache.hits"></div>
               </div>
               <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                <div class="text-xs" style="color:#6b7280">未命中</div>
+                <div class="text-xs" style="color:#6b7280" x-text="t('cache.misses')"></div>
                 <div class="text-lg font-bold mt-1" style="color:#f59e0b" x-text="cache.misses"></div>
               </div>
               <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                <div class="text-xs" style="color:#6b7280">TTL</div>
+                <div class="text-xs" style="color:#6b7280" x-text="t('cache.ttl')"></div>
                 <div class="text-lg font-bold mt-1" x-text="cache.ttl_secs + 's'"></div>
               </div>
             </div>
             <template x-if="cache.hits + cache.misses > 0">
-              <div class="text-xs" style="color:#6b7280">命中率: <span style="color:#cdd0d4" x-text="(((cache.hits/(cache.hits+cache.misses))*100).toFixed(1)) + '%'"></span></div>
+              <div class="text-xs" style="color:#6b7280"><span x-text="t('cache.hit_rate_label')"></span> <span style="color:#cdd0d4" x-text="(((cache.hits/(cache.hits+cache.misses))*100).toFixed(1)) + '%'"></span></div>
             </template>
           </div>
         </template>
@@ -379,25 +380,25 @@ input.search-input::placeholder{color:#6b7280}
 
       <div class="card"><div class="card-body">
         <div class="flex items-center justify-between mb-4">
-          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">健康检查</div>
-          <button @click="fetchHealth()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'">探测</button>
+          <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('health_check_title')"></div>
+          <button @click="fetchHealth()" class="flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" @mouseenter="$el.style.background='rgba(99,102,241,.25)'" @mouseleave="$el.style.background='rgba(99,102,241,.15)'" x-text="t('probe')"></button>
         </div>
         <template x-if="healthLoading">
           <div class="space-y-3"><template x-for="i in 3" :key="i"><div class="h-12 rounded-lg animate-pulse" style="background:#2a2d37"></div></template></div>
         </template>
-        <template x-if="!healthLoading && health.length===0"><div class="text-center py-8 text-sm" style="color:#6b7280">点击"探测"检查供应商连通性</div></template>
+        <template x-if="!healthLoading && health.length===0"><div class="text-center py-8 text-sm" style="color:#6b7280" x-text="t('click_probe_hint')"></div></template>
         <div class="space-y-2" x-show="!healthLoading && health.length>0">
           <template x-for="h in health" :key="h.provider">
             <div class="flex items-center justify-between px-4 py-3 rounded-lg" style="border:1px solid rgba(42,45,55,.5)">
               <div class="flex items-center gap-3">
-                <span class="w-2 h-2 rounded-full" :class="h.status.startsWith('ok')?'bg-[#34d399]':'bg-[#ef4444]'"></span>
+                <span class="w-2 h-2 rounded-full" :class="h.status_level==='ok'?'bg-[#34d399]':'bg-[#ef4444]'"></span>
                 <div><span class="text-sm font-medium" x-text="h.provider"></span><span class="text-xs ml-2 font-mono" style="color:#6b7280" x-text="h.endpoint.replace(/^https?:\/\//,'').split('/')[0]"></span></div>
               </div>
               <div class="flex items-center gap-3">
                 <span class="text-xs font-mono" style="color:#6b7280" x-text="h.latency_ms+'ms'"></span>
-                <span class="text-xs px-2.5 py-1 rounded" :class="circuitClass(h.circuit)" x-text="h.circuit"></span>
-                <span class="text-xs px-2.5 py-1 rounded" :class="h.status.startsWith('ok')?'text-[#34d399] bg-[rgba(52,211,153,.15)]':'text-[#ef4444] bg-[rgba(239,68,68,.15)]'" x-text="h.status"></span>
-                <button @click="resetCircuit(h.provider)" class="text-xs px-2.5 py-1 rounded" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none">重置熔断</button>
+                <span class="text-xs px-2.5 py-1 rounded" :class="circuitClass(h.circuit)" x-text="h.circuit_text"></span>
+                <span class="text-xs px-2.5 py-1 rounded" :class="h.status_level==='ok'?'text-[#34d399] bg-[rgba(52,211,153,.15)]':'text-[#ef4444] bg-[rgba(239,68,68,.15)]'" x-text="h.status_text"></span>
+                <button @click="resetCircuit(h.provider)" class="text-xs px-2.5 py-1 rounded" style="background:rgba(99,102,241,.15);color:#818cf8;cursor:pointer;border:none" x-text="t('reset_circuit')"></button>
               </div>
             </div>
           </template>
@@ -423,15 +424,15 @@ input.search-input::placeholder{color:#6b7280}
             <line x1="42" y1="40" x2="28" y2="28" stroke="white" stroke-width="1.5" opacity=".6"/>
           </svg>
           <h1 class="text-lg font-bold mt-3">AIGate</h1>
-          <p class="text-xs" style="color:#6b7280">v0.2 · Rust + Axum</p>
-          <p class="text-xs mt-1" style="color:#6b7280">开发者：wonderful艾晨</p>
+          <p class="text-xs" style="color:#6b7280" x-text="(version.version?('v'+version.version):'v?') + (version.git_commit?(' · '+version.git_commit):'') + (version.build_time?(' · '+version.build_time):'')"></p>
+          <p class="text-xs mt-1" style="color:#6b7280" x-text="t('developer')"></p>
         </div>
         <div class="space-y-2 text-sm" style="color:#6b7280">
-          <p>本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。</p>
-          <p>功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。</p>
+          <p x-text="t('about_desc1')"></p>
+          <p x-text="t('about_desc2')"></p>
         </div>
         <div class="pt-3 border-t" style="border-color:#2a2d37">
-          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">API 端点</div>
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280" x-text="t('api_endpoints_title')"></div>
           <div class="space-y-1">
             <a href="/v1/models" class="block text-xs font-mono hover:underline" style="color:#818cf8">GET /v1/models</a>
             <a href="/v1/chat/completions" class="block text-xs font-mono hover:underline" style="color:#818cf8">POST /v1/chat/completions</a>
@@ -440,7 +441,7 @@ input.search-input::placeholder{color:#6b7280}
           </div>
         </div>
         <div class="pt-3 border-t" style="border-color:#2a2d37">
-          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">技术栈</div>
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280" x-text="t('tech_stack')"></div>
           <div class="flex flex-wrap gap-2">
             <span class="badge badge-primary">Rust</span>
             <span class="badge badge-primary">Axum</span>
@@ -450,10 +451,10 @@ input.search-input::placeholder{color:#6b7280}
           </div>
         </div>
         <div class="pt-3 border-t" style="border-color:#2a2d37">
-          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280">使用帮助</div>
+          <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280" x-text="t('help_title')"></div>
           <div class="text-xs space-y-2" style="color:#6b7280">
-            <p><span class="text-[#cdd0d4]">编程工具配置：</span>将 API 地址设为 <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>，API Key 任意填写。</p>
-            <p><span class="text-[#cdd0d4]">问题反馈：</span>检查日志面板查看错误详情，或使用健康检查探测供应商连通性。</p>
+            <p><span class="text-[#cdd0d4]" x-text="t('help.config')"></span> <span x-html="t('help.config_desc')"></span></p>
+            <p><span class="text-[#cdd0d4]" x-text="t('help.feedback')"></span> <span x-text="t('help.feedback_desc')"></span></p>
           </div>
         </div>
       </div></div>
@@ -462,19 +463,30 @@ input.search-input::placeholder{color:#6b7280}
     <!-- ==================== SETTINGS ==================== -->
     <div x-show="activeTab==='settings'" class="page-enter">
       <div class="space-y-4">
-        <div class="flex items-center justify-between"><div><h1 class="text-lg font-bold">设置</h1><p class="text-xs mt-1" style="color:#6b7280">代理服务与供应商配置</p></div></div>
+        <div class="flex items-center justify-between"><div><h1 class="text-lg font-bold" x-text="t('settings_title')"></h1><p class="text-xs mt-1" style="color:#6b7280" x-text="t('settings_subtitle')"></p></div></div>
+
+        <!-- Interface Language -->
+        <div class="card"><div class="card-body">
+          <div class="flex items-center justify-between">
+            <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('ui_language')"></div>
+            <select x-model="$store.i18n.lang" @change="setLang($event.target.value)" class="select-input text-xs" style="max-width:160px">
+              <option value="zh-CN" x-text="t('lang_zh')"></option>
+              <option value="en-US" x-text="t('lang_en')"></option>
+            </select>
+          </div>
+        </div></div>
 
         <!-- Proxy Info -->
         <div class="card"><div class="card-body">
-          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">代理服务</div>
+          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('proxy_service')"></div>
           <div class="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <span style="color:#6b7280">监听地址</span>
+              <span style="color:#6b7280" x-text="t('listen_addr')"></span>
               <p class="font-mono text-xs mt-0.5" style="color:#cdd0d4">127.0.0.1:8787</p>
             </div>
             <div>
-              <span style="color:#6b7280">状态</span>
-              <p class="mt-0.5"><span class="badge badge-success">运行中</span></p>
+              <span style="color:#6b7280" x-text="t('status')"></span>
+              <p class="mt-0.5"><span class="badge badge-success" x-text="t('running')"></span></p>
             </div>
           </div>
         </div></div>
@@ -482,11 +494,11 @@ input.search-input::placeholder{color:#6b7280}
         <!-- API Keys -->
         <div class="card"><div class="card-body">
           <div class="flex items-center justify-between mb-3">
-            <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">API Key 管理</div>
-            <button @click="fetchKeys()" class="btn-ghost text-xs">刷新</button>
+            <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('apikey_mgmt')"></div>
+            <button @click="fetchKeys()" class="btn-ghost text-xs" x-text="t('refresh')"></button>
           </div>
           <template x-if="!keysData.keys">
-            <div class="text-center py-4 text-sm" style="color:#6b7280">加载中...</div>
+            <div class="text-center py-4 text-sm" style="color:#6b7280" x-text="t('loading')"></div>
           </template>
           <template x-if="keysData.keys">
             <div class="space-y-2">
@@ -499,26 +511,26 @@ input.search-input::placeholder{color:#6b7280}
                         <span class="text-xs font-mono" style="color:#6b7280">****<span style="color:#34d399" x-text="k.suffix"></span></span>
                       </template>
                       <template x-if="!k.configured">
-                        <span class="badge badge-warning">未配置</span>
+                        <span class="badge badge-warning" x-text="t('not_configured')"></span>
                       </template>
                     </div>
                     <div class="flex gap-2 shrink-0">
                       <template x-if="editingKey !== k.env_var">
-                        <button @click="editKey(k.env_var)" class="btn-ghost text-xs">编辑</button>
+                        <button @click="editKey(k.env_var)" class="btn-ghost text-xs" x-text="t('edit')"></button>
                       </template>
                       <template x-if="editingKey === k.env_var">
-                        <button @click="cancelEditKey()" class="btn-ghost text-xs">取消</button>
+                        <button @click="cancelEditKey()" class="btn-ghost text-xs" x-text="t('cancel')"></button>
                       </template>
                     </div>
                   </div>
                   <!-- Edit form -->
                   <div x-show="editingKey === k.env_var" class="px-3 pb-2 pt-2">
                     <div class="flex gap-2">
-                      <input type="password" x-model="keyEditValue" placeholder="输入新 API Key" class="search-input flex-1" @keyup.enter="saveKey(k.env_var)" />
-                      <button @click="saveKey(k.env_var)" class="btn-primary text-xs">保存</button>
-                      <button @click="keyEditValue=''; saveKey(k.env_var)" class="btn-ghost text-xs" style="color:#f87171">清除</button>
+                      <input type="password" x-model="keyEditValue" :placeholder="t('key_placeholder')" class="search-input flex-1" @keyup.enter="saveKey(k.env_var)" />
+                      <button @click="saveKey(k.env_var)" class="btn-primary text-xs" x-text="t('save')"></button>
+                      <button @click="keyEditValue=''; saveKey(k.env_var)" class="btn-ghost text-xs" style="color:#f87171" x-text="t('clear')"></button>
                     </div>
-                    <p class="text-[10px] mt-1" style="color:#6b7280">保存后立即生效，无需重启服务。</p>
+                    <p class="text-[10px] mt-1" style="color:#6b7280" x-text="t('key_save_hint')"></p>
                     <p x-show="keyMsg" class="text-[10px] mt-1" style="color:#34d399" x-text="keyMsg"></p>
                   </div>
                 </div>
@@ -530,15 +542,15 @@ input.search-input::placeholder{color:#6b7280}
         <!-- Provider Management Form -->
         <div class="card"><div class="card-body">
           <div class="flex items-center justify-between mb-3">
-              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280">供应商配置</div>
+              <div class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('provider_config')"></div>
               <div class="flex gap-2">
-                <button @click="showAddProvider=true" class="btn-ghost text-xs">+ 新增</button>
-                <button @click="loadProvidersForm()" class="btn-ghost text-xs">刷新</button>
-                <button @click="saveProvidersForm()" class="btn-primary text-xs">保存配置</button>
+                <button @click="showAddProvider=true" class="btn-ghost text-xs" x-text="t('add')"></button>
+                <button @click="loadProvidersForm()" class="btn-ghost text-xs" x-text="t('refresh')"></button>
+                <button @click="saveProvidersForm()" class="btn-primary text-xs" x-text="t('save_config')"></button>
               </div>
             </div>
           <template x-if="!providersFormData">
-            <div class="text-center py-6 text-sm" style="color:#6b7280">加载中...</div>
+            <div class="text-center py-6 text-sm" style="color:#6b7280" x-text="t('loading')"></div>
           </template>
           <template x-if="providersFormData">
             <div class="space-y-3">
@@ -554,10 +566,10 @@ input.search-input::placeholder{color:#6b7280}
                      <div class="flex items-center gap-2 shrink-0" @click.stop>
                        <!-- Test button -->
                        <template x-if="!prov._testing && !prov._testResult">
-                         <button @click="testProvider(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#6b7280;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1';$el.style.color='#818cf8'" @mouseleave="$el.style.borderColor='#2a2d37';$el.style.color='#6b7280'">测试</button>
+                         <button @click="testProvider(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#6b7280;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1';$el.style.color='#818cf8'" @mouseleave="$el.style.borderColor='#2a2d37';$el.style.color='#6b7280'" x-text="t('probe')"></button>
                        </template>
                        <template x-if="prov._testing">
-                         <span class="text-xs" style="color:#6b7280">测试中...</span>
+                         <span class="text-xs" style="color:#6b7280" x-text="t('loading')"></span>
                        </template>
                        <template x-if="!prov._testing && prov._testResult">
                          <div class="flex items-center gap-2">
@@ -567,72 +579,72 @@ input.search-input::placeholder{color:#6b7280}
                        </template>
                        <!-- Fetch models button -->
                        <template x-if="!prov._fetching">
-                         <button @click="fetchProviderModels(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#818cf8;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1'" @mouseleave="$el.style.borderColor='#2a2d37'">拉取模型</button>
+                         <button @click="fetchProviderModels(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#818cf8;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#6366f1'" @mouseleave="$el.style.borderColor='#2a2d37'" x-text="t('fetch_models')"></button>
                        </template>
                        <template x-if="prov._fetching">
-                         <span class="text-xs" style="color:#6b7280">拉取中...</span>
+                         <span class="text-xs" style="color:#6b7280" x-text="t('fetching')"></span>
                        </template>
-                       <span class="text-xs" style="color:#6b7280" x-text="prov.models.length+' 模型'"></span>
+                       <span class="text-xs" style="color:#6b7280" x-text="prov.models.length+' '+t('unit_models')"></span>
                      </div>
                    </div>
                   <!-- Models table -->
                   <div x-show="prov._expanded" class="border-t" style="border-color:#2a2d37">
                     <div class="p-3">
                       <table class="mb-2">
-                        <thead><tr><th style="width:28%">模型 ID</th><th style="width:28%">上游模型</th><th style="width:22%">思考强度</th><th style="width:22%"></th></tr></thead>
+                        <thead><tr><th style="width:28%" x-text="t('tbl.model_id')"></th><th style="width:28%" x-text="t('tbl.upstream_model')"></th><th style="width:22%" x-text="t('tbl.reasoning')"></th><th style="width:22%"></th></tr></thead>
                         <tbody>
                           <template x-for="(m, mi) in prov.models" :key="mi">
                             <tr>
                               <td><input type="text" x-model="m.model_id" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
-                              <td><input type="text" x-model="m.upstream_model" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" placeholder="留空=原样" /></td>
+                              <td><input type="text" x-model="m.upstream_model" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" :placeholder="t('upstream_placeholder')" /></td>
                               <td>
                                 <select x-model="m.reasoning_effort" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:#cdd0d4">
-                                  <option value="">- 无 -</option>
-                                  <option value="low">low</option>
-                                  <option value="medium">medium</option>
-                                  <option value="high">high</option>
-                                  <option value="max">max</option>
+                                  <option value="" x-text="t('eff.none')"></option>
+                                  <option value="low" x-text="t('eff.low')"></option>
+                                  <option value="medium" x-text="t('eff.medium')"></option>
+                                  <option value="high" x-text="t('eff.high')"></option>
+                                  <option value="max" x-text="t('eff.max')"></option>
                                 </select>
                               </td>
                               <td class="text-right">
-                                <button @click="deleteModel(pi, mi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171">删除</button>
+                                <button @click="deleteModel(pi, mi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="t('delete')"></button>
                               </td>
                             </tr>
                           </template>
                         </tbody>
                       </table>
-                      <button @click="addModel(pi)" class="btn-ghost text-xs">+ 添加模型</button>
+                      <button @click="addModel(pi)" class="btn-ghost text-xs" x-text="t('add_model')"></button>
                     </div>
                   </div>
                 </div>
               </template>
             </div>
           </template>
-          <div x-show="providersFormMsg" class="mt-2 text-xs" :class="providersFormMsg.startsWith('已') || providersFormMsg.startsWith('保存') ? 'text-[#34d399]' : 'text-[#f87171]'" x-text="providersFormMsg"></div>
+          <div x-show="providersFormMsg" class="mt-2 text-xs" :class="providersFormOk ? 'text-[#34d399]' : 'text-[#f87171]'" x-text="providersFormMsg"></div>
         </div></div>
 
         <!-- Add Provider Modal -->
         <div x-show="showAddProvider" class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,.5)">
           <div class="rounded-xl p-5 w-96" style="background:#1e2028;border:1px solid #2a2d37" @click.stop>
-            <div class="text-sm font-bold mb-4">新增供应商</div>
+            <div class="text-sm font-bold mb-4" x-text="t('add_provider_title')"></div>
             <div class="space-y-3 text-xs">
-              <div><label style="color:#6b7280" class="block mb-1">供应商名称</label><input type="text" x-model="addProvName" placeholder="如 my-provider" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
-              <div><label style="color:#6b7280" class="block mb-1">端点 URL</label><input type="text" x-model="addProvEndpoint" placeholder="https://api.example.com/v1/chat/completions" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
-              <div><label style="color:#6b7280" class="block mb-1">API Key 环境变量名</label><input type="text" x-model="addProvKeyEnv" placeholder="如 MY_API_KEY" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
-              <div><label style="color:#6b7280" class="block mb-1">默认 API Key（可选）</label><input type="text" x-model="addProvKeyDefault" placeholder="留空则使用环境变量" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1" x-text="t('addprov.name')"></label><input type="text" x-model="addProvName" :placeholder="t('addprov.ph_name')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1" x-text="t('addprov.endpoint')"></label><input type="text" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1" x-text="t('addprov.keyenv')"></label><input type="text" x-model="addProvKeyEnv" :placeholder="t('addprov.ph_keyenv')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:#6b7280" class="block mb-1" x-text="t('addprov.keydefault')"></label><input type="text" x-model="addProvKeyDefault" :placeholder="t('addprov.ph_keydefault')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
             </div>
             <div class="flex justify-end gap-2 mt-4">
-              <button @click="showAddProvider=false" class="btn-ghost text-xs">取消</button>
-              <button @click="confirmAddProvider()" class="btn-primary text-xs" :disabled="!addProvName || !addProvEndpoint">添加</button>
+              <button @click="showAddProvider=false" class="btn-ghost text-xs" x-text="t('cancel')"></button>
+              <button @click="confirmAddProvider()" class="btn-primary text-xs" :disabled="!addProvName || !addProvEndpoint" x-text="t('add')"></button>
             </div>
           </div>
         </div>
 
         <!-- Data Management -->
         <div class="card"><div class="card-body">
-          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280">数据管理</div>
+          <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('data_mgmt')"></div>
           <div>
-            <button @click="clearAllLogs()" class="btn-ghost" style="color:#f87171">清空所有记录</button>
+            <button @click="clearAllLogs()" class="btn-ghost" style="color:#f87171" x-text="t('clear_all_records')"></button>
           </div>
         </div></div>
       </div>
@@ -642,6 +654,146 @@ input.search-input::placeholder{color:#6b7280}
 
 <script>
 /*__AIGATE_TOKEN__*/
+/*__AIGATE_LANG__*/
+/*__AIGATE_VERSION__*/
+const I18N = {
+  'zh-CN': {
+    'app_title': 'AIGate · 控制台',
+    'nav.dashboard': '概览', 'nav.records': '记录', 'nav.routes': '路由', 'nav.health': '健康', 'nav.about': '关于', 'nav.settings': '设置',
+    'loading': '加载中...',
+    'service_running': '服务运行中',
+    'app_service_title': 'AIGate 代理服务',
+    'waiting_first_request': '等待第一次 API 请求...',
+    'conn_info': '连接信息', 'api_endpoint': 'API 端点',
+    'setup_hint': '在编程工具中将 API 地址设为 <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>，API Key 任意填写。',
+    'view_routes': '查看路由配置', 'health_check': '健康检查',
+    'overview': '概览',
+    'stat.total_requests': '总请求', 'stat.success_rate': '成功率', 'stat.avg_latency': '平均延迟', 'stat.input_tokens': '输入 Tokens', 'stat.output_tokens': '输出 Tokens', 'stat.cache_hit': '缓存命中',
+    'no_cache_returned': '供应商未返回缓存命中',
+    'hit_count': '命中 {0} tok',
+    'model_usage_rank': '模型使用排名',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型',
+    'expand_all': '展开全部', 'collapse': '收起',
+    'other_n': '其他 {0} 个',
+    'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
+    'model_usage_detail': '模型用量明细',
+    'tbl.model': '模型', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中',
+    'req_token_trend': '请求 / Token 趋势',
+    'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
+    'no_trend': '暂无趋势数据',
+    'provider_stats': '供应商统计',
+    'records_title': '请求记录', 'records_count': '{0} 条',
+    'export_json': '导出 JSON', 'clear': '清除',
+    'search_placeholder': '搜索模型/供应商/错误...',
+    'opt.all_providers': '全部供应商', 'opt.all_status': '全部状态', 'opt.success': '成功', 'opt.error': '错误',
+    'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
+    'badge.cached': '缓存', 'badge.cached_title': '命中本地缓存, 未请求上游', 'badge.kvcache_title': '上游 KV Cache 命中 token 数',
+    'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.status': '状态码', 'detail.latency': '延迟', 'detail.body': '请求体', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情',
+    'kv_hit': '命中 {0}', 'kv_miss': '未命中 {0}',
+    'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
+    'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
+    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度',
+    'cache_title': '响应缓存', 'experimental_badge': '实验功能',
+    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（仅非流式请求）',
+    'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL', 'cache.hit_rate_label': '命中率:',
+    'health_check_title': '健康检查', 'probe': '探测', 'click_probe_hint': '点击"探测"检查供应商连通性', 'reset_circuit': '重置熔断',
+    'fetch_models': '拉取模型', 'fetching': '拉取中...',
+    'developer': '开发者：wonderful艾晨',
+    'about_desc1': '本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。',
+    'about_desc2': '功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。',
+    'api_endpoints_title': 'API 端点', 'tech_stack': '技术栈', 'help_title': '使用帮助',
+    'help.config': '编程工具配置：', 'help.config_desc': '将 API 地址设为 <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>，API Key 任意填写。',
+    'help.feedback': '问题反馈：', 'help.feedback_desc': '检查日志面板查看错误详情，或使用健康检查探测供应商连通性。',
+    'settings_title': '设置', 'settings_subtitle': '代理服务与供应商配置',
+    'ui_language': '界面语言', 'lang_zh': '简体中文', 'lang_en': 'English',
+    'proxy_service': '代理服务', 'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
+    'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
+    'key_placeholder': '输入新 API Key', 'save': '保存', 'key_save_hint': '保存后立即生效，无需重启服务。',
+    'provider_config': '供应商配置', 'add': '新增', 'refresh': '刷新', 'save_config': '保存配置',
+    'upstream_placeholder': '留空=原样',
+    'eff.none': '- 无 -', 'eff.low': '低', 'eff.medium': '中', 'eff.high': '高', 'eff.max': '最高',
+    'delete': '删除', 'add_model': '添加模型',
+    'add_provider_title': '新增供应商',
+    'addprov.name': '供应商名称', 'addprov.endpoint': '端点 URL', 'addprov.keyenv': 'API Key 环境变量名', 'addprov.keydefault': '默认 API Key（可选）',
+    'addprov.ph_name': '如 my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions', 'addprov.ph_keyenv': '如 MY_API_KEY', 'addprov.ph_keydefault': '留空则使用环境变量',
+    'data_mgmt': '数据管理', 'clear_all_records': '清空所有记录',
+    'add_provider_hint': '已添加供应商，点击"保存配置"生效',
+    'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
+  },
+  'en-US': {
+    'app_title': 'AIGate · Console',
+    'nav.dashboard': 'Overview', 'nav.records': 'Records', 'nav.routes': 'Routes', 'nav.health': 'Health', 'nav.about': 'About', 'nav.settings': 'Settings',
+    'loading': 'Loading...',
+    'service_running': 'Service running',
+    'app_service_title': 'AIGate Proxy Service',
+    'waiting_first_request': 'Waiting for the first API request...',
+    'conn_info': 'Connection Info', 'api_endpoint': 'API Endpoint',
+    'setup_hint': 'Set the API base URL to <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>; any API Key works.',
+    'view_routes': 'View routes', 'health_check': 'Health check',
+    'overview': 'Overview',
+    'stat.total_requests': 'Total Requests', 'stat.success_rate': 'Success Rate', 'stat.avg_latency': 'Avg Latency', 'stat.input_tokens': 'Input Tokens', 'stat.output_tokens': 'Output Tokens', 'stat.cache_hit': 'Cache Hit',
+    'no_cache_returned': 'Provider did not report cache hits',
+    'hit_count': 'Hit {0} tok',
+    'model_usage_rank': 'Top Models',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models',
+    'expand_all': 'Expand all', 'collapse': 'Collapse',
+    'other_n': '{0} others',
+    'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
+    'model_usage_detail': 'Model Details',
+    'tbl.model': 'Model', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit',
+    'req_token_trend': 'Requests / Tokens Trend',
+    'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
+    'no_trend': 'No trend data',
+    'provider_stats': 'Provider Stats',
+    'records_title': 'Request Logs', 'records_count': '{0} entries',
+    'export_json': 'Export JSON', 'clear': 'Clear',
+    'search_placeholder': 'Search model/provider/error...',
+    'opt.all_providers': 'All providers', 'opt.all_status': 'All status', 'opt.success': 'Success', 'opt.error': 'Error',
+    'no_match': 'No matches', 'no_logs': 'No request logs',
+    'badge.cached': 'Cached', 'badge.cached_title': 'Served from local cache, no upstream call', 'badge.kvcache_title': 'Upstream KV cache hit tokens',
+    'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.status': 'Status', 'detail.latency': 'Latency', 'detail.body': 'Body', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details',
+    'kv_hit': 'Hit {0}', 'kv_miss': 'Miss {0}',
+    'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
+    'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
+    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning',
+    'cache_title': 'Response Cache', 'experimental_badge': 'Experimental',
+    'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (non-streaming only)',
+    'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL', 'cache.hit_rate_label': 'Hit rate:',
+    'health_check_title': 'Health Check', 'probe': 'Probe', 'click_probe_hint': 'Click "Probe" to check provider connectivity', 'reset_circuit': 'Reset breaker',
+    'fetch_models': 'Fetch models', 'fetching': 'Fetching...',
+    'developer': 'Developer: wonderful艾晨',
+    'about_desc1': 'Local OpenAI-compatible reverse proxy with multi-provider routing, model mapping, and reasoning injection.',
+    'about_desc2': 'Features: multi-provider routing · model mapping · reasoning injection · real-time dashboard.',
+    'api_endpoints_title': 'API Endpoints', 'tech_stack': 'Tech Stack', 'help_title': 'Help',
+    'help.config': 'Coding tool setup:', 'help.config_desc': 'Set the API base URL to <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>; any API Key works.',
+    'help.feedback': 'Feedback:', 'help.feedback_desc': 'Check the logs panel for error details, or use health check to probe providers.',
+    'settings_title': 'Settings', 'settings_subtitle': 'Proxy service & provider config',
+    'ui_language': 'Interface Language', 'lang_zh': '简体中文', 'lang_en': 'English',
+    'proxy_service': 'Proxy Service', 'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
+    'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
+    'key_placeholder': 'Enter new API Key', 'save': 'Save', 'key_save_hint': 'Takes effect immediately, no restart needed.',
+    'provider_config': 'Providers', 'add': 'Add', 'refresh': 'Refresh', 'save_config': 'Save Config',
+    'upstream_placeholder': 'Blank = as-is',
+    'eff.none': '- None -', 'eff.low': 'Low', 'eff.medium': 'Medium', 'eff.high': 'High', 'eff.max': 'Max',
+    'delete': 'Delete', 'add_model': 'Add Model',
+    'add_provider_title': 'Add Provider',
+    'addprov.name': 'Provider name', 'addprov.endpoint': 'Endpoint URL', 'addprov.keyenv': 'API Key env var name', 'addprov.keydefault': 'Default API Key (optional)',
+    'addprov.ph_name': 'e.g. my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions', 'addprov.ph_keyenv': 'e.g. MY_API_KEY', 'addprov.ph_keydefault': 'Blank to use env var',
+    'data_mgmt': 'Data Management', 'clear_all_records': 'Clear all records',
+    'add_provider_hint': 'Provider added, click "Save Config" to apply',
+    'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
+  },
+};
+document.addEventListener('alpine:init', function() {
+  Alpine.store('i18n', { lang: (window.AIGATE_LANG || 'zh-CN') });
+});
+function t(key) {
+  var lang = (window.Alpine && Alpine.store('i18n')) ? Alpine.store('i18n').lang : (window.AIGATE_LANG || 'zh-CN');
+  var dict = I18N[lang] || I18N['zh-CN'];
+  var s = (dict && dict[key] != null) ? dict[key] : (I18N['zh-CN'][key] != null ? I18N['zh-CN'][key] : key);
+  for (var i = 1; i < arguments.length; i++) s = s.split('{' + (i - 1) + '}').join(arguments[i]);
+  return s;
+}
 function authHeaders() {
   const h = { 'Content-Type': 'application/json' };
   if (window.AIGATE_TOKEN) h['Authorization'] = 'Bearer ' + window.AIGATE_TOKEN;
@@ -651,15 +803,16 @@ function dashboard() {
   return {
     // Sidebar navigation — matches 68HUB layout
     navItems: [
-      { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', label:'概览' },
-      { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', label:'记录' },
-      { id:'routes', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>', label:'路由' },
-      { id:'health', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01" stroke-width="2"/></svg>', label:'健康' },
-      { id:'about', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>', label:'关于' },
-      { id:'settings', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', label:'设置' },
+      { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', labelKey:'nav.dashboard' },
+      { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', labelKey:'nav.records' },
+      { id:'routes', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>', labelKey:'nav.routes' },
+      { id:'health', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01" stroke-width="2"/></svg>', labelKey:'nav.health' },
+      { id:'about', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>', labelKey:'nav.about' },
+      { id:'settings', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', labelKey:'nav.settings' },
     ],
     activeTab: 'dashboard',
     loading: true,
+    version: (window.AIGATE_VERSION && window.AIGATE_VERSION.version) ? window.AIGATE_VERSION : {version:'?', git_commit:'', build_time:''},
 
     // Data
     logs: [], routes: {}, health: [], stats: null, cache: null,
@@ -667,7 +820,7 @@ function dashboard() {
 
     // Settings
     keysData: {}, editingKey: null, keyEditValue: '', keyMsg: '',
-    providersFormData: null, providersFormMsg: '',
+    providersFormData: null, providersFormMsg: '', providersFormOk: false,
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvKeyEnv: '', addProvKeyDefault: '',
 
     // Dashboard trend chart mode: 'requests' | 'latency' | 'tokens'
@@ -684,8 +837,21 @@ function dashboard() {
     pollTimer: null,
 
     async init() {
+      if (window.Alpine && Alpine.store('i18n')) {
+        document.documentElement.lang = (Alpine.store('i18n').lang === 'en-US') ? 'en' : 'zh';
+      }
+      document.title = t('app_title');
       await this.switchTab('dashboard');
       this.startPoll();
+    },
+
+    // 切换界面语言并持久化 (写入 lang.json + 更新运行态由后端处理)
+    setLang(l) {
+      if (window.Alpine && Alpine.store('i18n')) Alpine.store('i18n').lang = l;
+      window.AIGATE_LANG = l;
+      document.documentElement.lang = (l === 'en-US') ? 'en' : 'zh';
+      document.title = t('app_title');
+      fetch('/admin/api/lang', { method:'POST', headers: authHeaders(), body: JSON.stringify({ lang: l }) }).catch(function(){});
     },
 
     switchTab(tabId) {
@@ -753,14 +919,14 @@ function dashboard() {
         const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({env_var:envVar,value:this.keyEditValue})});
         const d=await r.json();
         if(r.ok) {
-          this.keyMsg=d.message||'已保存';
+          this.keyMsg=d.message||t('saved');
           this.editingKey=null; this.keyEditValue='';
           this.fetchKeys();
           setTimeout(()=>this.keyMsg='',3000);
         } else {
-          this.keyMsg=d.error||'保存失败';
+          this.keyMsg=d.error||t('save_failed');
         }
-      } catch(e){ this.keyMsg='网络错误'; }
+      } catch(e){ this.keyMsg=t('network_error'); }
     },
     async loadProvidersForm() {
        try {
@@ -796,8 +962,8 @@ function dashboard() {
        try {
          const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint})});
          if(r.ok) prov._testResult = await r.json();
-         else prov._testResult = {success:false,status:'请求失败',latency_ms:0};
-       } catch(e){ prov._testResult = {success:false,status:'网络错误',latency_ms:0}; }
+         else prov._testResult = {success:false,status:t('request_failed'),latency_ms:0};
+       } catch(e){ prov._testResult = {success:false,status:t('network_error'),latency_ms:0}; }
        prov._testing = false;
      },
      async fetchProviderModels(pi) {
@@ -807,12 +973,14 @@ function dashboard() {
         const r = await fetch('/admin/api/providers/'+encodeURIComponent(prov.name)+'/fetch-models', {method:'POST', headers:authHeaders()});
         const d = await r.json();
         if (r.ok && d.success) {
+          this.providersFormOk = true;
           this.providersFormMsg = d.message;
           await this.loadProvidersForm();
         } else {
-          this.providersFormMsg = d.error || '拉取失败';
+          this.providersFormOk = false;
+          this.providersFormMsg = d.error || t('fetch_failed');
         }
-      } catch(e) { this.providersFormMsg = '网络错误'; }
+      } catch(e) { this.providersFormMsg = t('network_error'); }
       prov._fetching = false;
       if (this.providersFormMsg) setTimeout(() => { this.providersFormMsg = ''; }, 4000);
     },
@@ -840,9 +1008,10 @@ function dashboard() {
          const json = JSON.stringify({providers:providers}, null, 2);
          const r=await fetch('/admin/api/providers/save',{method:'POST',headers:authHeaders(),body:JSON.stringify({json:json})});
          const d=await r.json();
-         this.providersFormMsg=d.message||d.error||'保存失败';
+         this.providersFormOk = !!d.message;
+         this.providersFormMsg=d.message||d.error||t('save_failed');
          if(d.message) { this.fetchRoutes(); setTimeout(()=>this.providersFormMsg='',3000); }
-       } catch(e){ this.providersFormMsg='网络错误'; }
+       } catch(e){ this.providersFormMsg=t('network_error'); }
      },
      confirmAddProvider() {
        if (!this.addProvName || !this.addProvEndpoint) return;
@@ -859,7 +1028,8 @@ function dashboard() {
        });
        this.showAddProvider = false;
        this.addProvName = ''; this.addProvEndpoint = ''; this.addProvKeyEnv = ''; this.addProvKeyDefault = '';
-       this.providersFormMsg = '已添加供应商，点击"保存配置"生效';
+       this.providersFormOk = true;
+       this.providersFormMsg = t('add_provider_hint');
        setTimeout(()=>this.providersFormMsg='',3000);
      },
 
@@ -885,7 +1055,7 @@ function dashboard() {
         segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
         offset+=len;
       });
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2a2d37" stroke-width="${w}"/>${segs}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="#cdd0d4" font-size="16" font-weight="700">${total}</text><text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#6b7280" font-size="10">请求</text>`;
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2a2d37" stroke-width="${w}"/>${segs}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="#cdd0d4" font-size="16" font-weight="700">${total}</text><text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#6b7280" font-size="10">${t('unit_requests')}</text>`;
     },
 
     get filteredLogs() {
@@ -902,7 +1072,6 @@ function dashboard() {
     get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
-    // Trend chart points (requests / latency / tokens) — 概览页统一趋势图
     // Daily trends chart points (requests / latency / tokens)
     get dailyTp() {
       if(!this.stats||this.stats.trends.length<2) return [];
@@ -922,7 +1091,8 @@ function dashboard() {
     },
 
     // Formatters
-    fmtTs(ts) { const d=new Date(ts*1000); return d.toLocaleTimeString('zh-CN',{hour12:false}); },
+    fmtTs(ts) { const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleTimeString(loc,{hour12:false}); },
+    fmtDateTime(ts){ const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleString(loc); },
     fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
     fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
     fmtB(b) {

@@ -207,7 +207,7 @@ pub async fn chat_completions(
             let (pt, ct, hit, miss) = extract_usage(&cached);
             crate::admin::record_request_with_tokens(
                 &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
-                true, hit, miss,
+                true, hit, miss, None,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -354,7 +354,7 @@ pub async fn chat_completions(
                 let (pt, ct, hit, miss) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
                     &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
-                    false, hit, miss,
+                    false, hit, miss, None,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -491,8 +491,14 @@ fn stream_response_with_tokens(
             None
         },
         loop_aborted: false,
+        error_closed: false,
         stream_errored: false,
         pending_error_sse: None,
+        finish_reason: None,
+        clean_finish: false,
+        errored_msg: None,
+        out_buf: Vec::new(),
+        line_buf: Vec::new(),
         log_buffer: Some(TokenLogData {
             log_buffer,
             model,
@@ -546,72 +552,181 @@ struct TokenStream<S> {
     loop_guard: Option<LoopDetector>,
     /// 已因死循环截断并发送 [DONE] 的标志, 防止重复触发.
     loop_aborted: bool,
+    /// 已因上游错误/空闲超时而兜底结束 (已发 [DONE]); 防止下次 poll 重复发/继续 poll 上游.
+    error_closed: bool,
     /// 流内检测到上游 SSE 错误事件 (HTTP 200 + error 事件), 等待改写成中文.
     stream_errored: bool,
     /// 改写后的中文 SSE 错误事件 JSON (不含 "data: " 前缀), 待转发一次.
     pending_error_sse: Option<String>,
+    /// 上游在流式 chunk 中带的非正常 finish_reason (error/length/content_filter 等).
+    /// 用于诊断"完成原因错误" (10004): AIGate 此前纯透传、无感知, 客户端据此报错.
+    finish_reason: Option<String>,
+    /// 流是否"干净结束": 上游发送过 finish_reason (任意值) 或 [DONE] 终止帧则为 true.
+    /// 用于补全"请求记录是否报错"的判断: 若上游连接正常关闭 (None 分支) 却从未见
+    /// finish_reason/[DONE], 说明响应被截断 (典型如 10014 的 mid-object split 丢尾帧),
+    /// 此前会被记成 200 成功 → 记录页不显示报错. 见 poll_next None 分支.
+    clean_finish: bool,
+    /// 上游 SSE error 事件改写后的中文错误信息 (供完成时写错误日志).
+    errored_msg: Option<String>,
+    /// 归一化后的 SSE 输出缓冲: 把上游 payload (data: 前缀 / 裸 JSON / 裸 [DONE]) 统一封装为
+    /// 标准 "data: {json}" 帧再转发客户端 (替代原始裸字节透传, 修复 zen 裸 JSON 被客户端拒收).
+    out_buf: Vec<u8>,
+    /// 跨 chunk 的半行缓冲: 上游裸 JSON 常被 TCP 切分在 chunk 边界 (mid-object split),
+    /// 累积到完整行 (\n 结尾) 再解析, 否则半个 JSON 被当裸 JSON 解析失败 → 整段丢失 → 10014.
+    line_buf: Vec<u8>,
     log_buffer: Option<TokenLogData>,
 }
 
 impl<S> TokenStream<S> {
-    /// 解析单个 SSE chunk 中的 usage 事件.
+    /// 解析一个上游 chunk: 累积到行缓冲后处理完整行 (供 poll_next 与测试调用).
+    /// 跨 chunk 的半行由 line_buf 续拼, 修复 mid-object split 导致的 10014.
     fn parse_sse_chunk(&mut self, data: &[u8]) {
         self.response_bytes += data.len();
-        let Ok(text) = std::str::from_utf8(data) else { return };
-        for line in text.lines() {
-            let line = line.trim();
-            let Some(json_str) = line.strip_prefix("data: ") else { continue };
-            if json_str == "[DONE]" { continue; }
-            let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else { continue };
-            // 检测上游以 SSE 错误事件形式返回的错误 (HTTP 200 + error 事件):
-            // 翻译为中文并改写, 否则正常 JSON 数据继续走下方 usage / delta 解析.
-            if let Some((msg, etype)) = translate_sse_error(&val) {
-                self.stream_errored = true;
-                let ev = serde_json::json!({ "error": { "message": msg, "type": etype } });
-                self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
+        self.line_buf.extend_from_slice(data);
+        self.drain_lines();
+    }
+
+    /// 把上游 chunk 字节累积进 line_buf, 仅处理以 \n 结尾的"完整行"; 半行 (mid-object split) 留在
+    /// 缓冲等下一 chunk 续拼. 这是修复 10014 ("响应数据无效") 的核心: 上游 zen 的裸 JSON 常被 TCP
+    /// 切分在 chunk 边界, 旧版逐 chunk 行式解析把半个 JSON 当裸 JSON 解析失败 → 整段丢失 → 残缺响应.
+    fn drain_lines(&mut self) {
+        // 防御: 异常长的未终结行直接丢弃, 防止内存无限增长 (正常 SSE 每行远小于此).
+        if self.line_buf.len() > 16 * 1024 * 1024 {
+            warn!("proxy: SSE line buffer overflow (>16MiB without newline), dropping partial line");
+            self.line_buf.clear();
+        }
+        while let Some(pos) = self.line_buf.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.line_buf[..pos].to_vec();
+            self.line_buf.drain(..=pos);
+            let Ok(text) = std::str::from_utf8(&raw) else {
+                // 非 UTF-8 的半行: 丢弃 (极罕见, 正常 SSE 均为 UTF-8).
+                continue;
+            };
+            let line = text.trim();
+            if line.is_empty() {
                 continue;
             }
-            // 从 usage 事件提取精确 token 数
-            if let Some(usage) = val.get("usage") {
-                if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                    self.tokens_pt = pt as u32;
-                }
-                if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
-                    self.tokens_ct = ct as u32;
-                }
-                // 上游 KV Cache 命中/未命中 (兼容 DeepSeek 扁平 schema 与 OpenAI 嵌套 schema)
-                let (hit, miss) = usage_cache(usage);
-                if hit > 0 { self.tokens_cache_hit = hit; }
-                if miss > 0 { self.tokens_cache_miss = miss; }
+            self.process_line(line);
+        }
+    }
+
+    /// 解析并归一化单行 SSE payload (data: 前缀 / 裸 JSON / 裸 [DONE]), 写入 out_buf 待转发.
+    /// 调用前该行必须已是完整行 (由 drain_lines 保证 \n 结尾).
+    fn process_line(&mut self, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        // 提取 SSE payload: 兼容三种上游格式
+        //  1) 标准 "data: {…}" / "data:{…}" (带或不带空格)
+        //  2) 裸 JSON chunk (NDJSON 风格): zen/opencode.ai 会把部分 chunk
+        //     (含 content / finish_reason 终止帧) 直接以 {"id":…,"object":"chat.completion.chunk",…}
+        //     发送, 不带 "data: " 前缀. 此前被当成 unparseable 整行丢弃 → 客户端收不到
+        //     完整内容/完成原因 → "完成原因错误" (10004).
+        //  3) 裸 "[DONE]" (无 data: 前缀的结束标记)
+        let json_str: &str = if let Some(rest) = line.strip_prefix("data:") {
+            rest.trim_start()
+        } else if line == "[DONE]" {
+            "[DONE]"
+        } else if line.starts_with('{') {
+            line
+        } else {
+            // 真正的 SSE 非数据行 (: 注释 / event: / id: / retry: 等) 忽略.
+            return;
+        };
+        if json_str == "[DONE]" {
+            // 上游显式发送终止帧: 标记流为干净结束 (否则 None 分支会误判为截断).
+            self.clean_finish = true;
+            // 归一化发射结束帧 (兼容裸 [DONE] 与 data: [DONE] 两种形式).
+            self.out_buf.extend_from_slice(b"data: [DONE]\n\n");
+            return;
+        }
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else {
+            // 调试日志: 记录网关无法解析的 SSE 行 (客户端严格 JSON.parse 会因此报错).
+            // 经跨 chunk 行缓冲后, 此处仅剩真正畸形的 JSON (不再是 mid-object 分片).
+            let head: String = json_str.chars().take(200).collect();
+            warn!(
+                "proxy: unparseable SSE payload (len={}, head={head:?})",
+                json_str.len()
+            );
+            return;
+        };
+        // 检测上游以 SSE 错误事件形式返回的错误 (HTTP 200 + error 事件):
+        // 翻译为中文并改写, 否则正常 JSON 数据继续走下方 usage / delta 解析.
+        if let Some((msg, etype)) = translate_sse_error(&val) {
+            // 诊断: 上游以 SSE error 事件 (HTTP 200 + error) 返回错误. 此前静默透传且不写日志,
+            // 请求会从 logs.jsonl 凭空消失 (正是 10004 在日志里查不到的根因之一).
+            warn!(
+                "proxy: upstream SSE error event (model={}, provider={}): {msg} [{etype}]",
+                self.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+                self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+            );
+            self.stream_errored = true;
+            self.errored_msg = Some(format!("{msg} [{etype}]"));
+            let ev = serde_json::json!({ "error": { "message": msg, "type": etype } });
+            self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
+            return;
+        }
+        // 从 usage 事件提取精确 token 数
+        if let Some(usage) = val.get("usage") {
+            if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                self.tokens_pt = pt as u32;
             }
-            // 部分供应商把 usage 放在 choices[0] 的内层; 同时取 delta 文本喂死循环检测器.
-            if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
-                if let Some(choice) = choices.first() {
-                    if let Some(inner_usage) = choice.get("usage") {
-                        if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                            self.tokens_pt = pt as u32;
-                        }
-                        if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
-                            self.tokens_ct = ct as u32;
-                        }
-                        // 上游 KV Cache 命中/未命中 (兼容两种 schema)
-                        let (hit, miss) = usage_cache(inner_usage);
-                        if hit > 0 { self.tokens_cache_hit = hit; }
-                        if miss > 0 { self.tokens_cache_miss = miss; }
+            if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
+                self.tokens_ct = ct as u32;
+            }
+            // 上游 KV Cache 命中/未命中 (兼容 DeepSeek 扁平 schema 与 OpenAI 嵌套 schema)
+            let (hit, miss) = usage_cache(usage);
+            if hit > 0 { self.tokens_cache_hit = hit; }
+            if miss > 0 { self.tokens_cache_miss = miss; }
+        }
+        // 部分供应商把 usage 放在 choices[0] 的内层; 同时取 delta 文本喂死循环检测器.
+        if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
+            if let Some(choice) = choices.first() {
+                if let Some(inner_usage) = choice.get("usage") {
+                    if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                        self.tokens_pt = pt as u32;
                     }
-                    // 取增量文本喂给死循环检测器 (content / reasoning_content / reasoning).
-                    if let Some(delta) = choice.get("delta") {
-                        for key in ["content", "reasoning_content", "reasoning"] {
-                            if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
-                                if let Some(detector) = self.loop_guard.as_mut() {
-                                    detector.feed(s);
-                                }
+                    if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
+                        self.tokens_ct = ct as u32;
+                    }
+                    // 上游 KV Cache 命中/未命中 (兼容两种 schema)
+                    let (hit, miss) = usage_cache(inner_usage);
+                    if hit > 0 { self.tokens_cache_hit = hit; }
+                    if miss > 0 { self.tokens_cache_miss = miss; }
+                }
+                // 取增量文本喂给死循环检测器 (content / reasoning_content / reasoning).
+                if let Some(delta) = choice.get("delta") {
+                    for key in ["content", "reasoning_content", "reasoning"] {
+                        if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
+                            if let Some(detector) = self.loop_guard.as_mut() {
+                                detector.feed(s);
                             }
                         }
                     }
                 }
+                // 诊断: 捕获非正常的 finish_reason (error/length/content_filter 等).
+                // 上游带 finish_reason="error" 时 AIGate 此前纯透传、无感知,
+                // 客户端据此报 "完成原因错误" (10004). warn 到 aigate.log 以便定位.
+                if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                    // 无论 finish_reason 取值, 只要上游发出了终止帧就标记干净结束.
+                    self.clean_finish = true;
+                    if !matches!(fr, "stop" | "tool_calls" | "function_call") {
+                        warn!(
+                            "proxy: upstream finish_reason={fr:?} (model={}, provider={}); client may report completion error (10004)",
+                            self.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+                            self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+                        );
+                        self.finish_reason = Some(fr.to_string());
+                    }
+                }
             }
         }
+        // 归一化发射: 把解析到的 payload 以标准 "data: {json}" SSE 帧重新封装转发.
+        // 每个成功解析的 payload 都转发 (无论是否含 choices), 保证客户端收到完整流;
+        // 上游 (zen/opencode.ai) 的裸 JSON chunk 经此补上 data: 前缀, 客户端即可正常解析.
+        self.out_buf.extend_from_slice(b"data: ");
+        self.out_buf.extend_from_slice(json_str.as_bytes());
+        self.out_buf.extend_from_slice(b"\n\n");
     }
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
@@ -643,6 +758,10 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
+        // 已因上游错误/空闲超时兜底结束: 上次已发 [DONE], 本次直接收尾.
+        if this.error_closed {
+            return Poll::Ready(None);
+        }
         loop {
             match Pin::new(&mut this.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
@@ -651,15 +770,38 @@ where
                 // 因 HTTP 头已发出 (200), 无法改为 JSON 错误响应, 只能以规范的 SSE
                 // error 事件呈现, 客户端 (OpenAI 兼容) 会按规范展示中文错误.
                 if this.stream_errored {
+                    // 先 flush 错误事件之前的归一化帧, 避免丢失已解析的内容.
+                    if !this.out_buf.is_empty() {
+                        let out = std::mem::take(&mut this.out_buf);
+                        return Poll::Ready(Some(Ok(Bytes::from(out))));
+                    }
                     if let Some(translated) = this.pending_error_sse.take() {
                         return Poll::Ready(Some(Ok(Bytes::from(format!("data: {translated}\n\n")))));
                     }
                     // 翻译后的 error 事件已转发, 直接终止流 (丢弃上游剩余数据).
+                    // Fix B2: 写一条带 error 标记的完成日志, 否则该请求会从请求日志中凭空消失
+                    // (与旧 Err 分支的盲区一致; 正是 10004 在 logs.jsonl 看不到的原因).
+                    if let Some(mut ld) = this.log_buffer.take() {
+                        ld.response_body_len = this.response_bytes;
+                        let err_msg = this.errored_msg.clone()
+                            .or_else(|| this.finish_reason.clone().map(|f| format!("finish_reason={f}")));
+                        tokio::spawn(async move {
+                            crate::admin::record_request(
+                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
+                                200, ld.start, ld.response_body_len, err_msg,
+                            ).await;
+                        });
+                    }
                     return Poll::Ready(None);
                 }
                 // 下游模型陷入死循环 → 立即截断流, 干净地发 [DONE] 结束.
                     // 不向客户端正文塞说明 (说明仅写运行日志, 满足"不污染正文").
                     if this.loop_guard.as_ref().map(|g| g.triggered()).unwrap_or(false) {
+                        // 先 flush 已解析的归一化帧, 避免截断时丢失内容.
+                        if !this.out_buf.is_empty() {
+                            let out = std::mem::take(&mut this.out_buf);
+                            return Poll::Ready(Some(Ok(Bytes::from(out))));
+                        }
                         if !this.loop_aborted {
                             this.loop_aborted = true;
                             warn!(
@@ -667,31 +809,94 @@ where
                                 this.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
                                 this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
                             );
-                            return Poll::Ready(Some(Ok(Bytes::from_static(b"data: [DONE]\n\n"))));
+                            // 收尾帧必须带合法 finish_reason: 否则 OpenAI 兼容客户端 (IDE) 因末帧缺
+                            // finish_reason 报 "完成原因错误" (10004). 用 "length" 语义=被截断的正常
+                            // 完成, 客户端当作正常收尾不报错; 空 delta 不污染正文. 若某客户端仍 10004,
+                            // 改 "stop" (最稳但把截断伪装成自然结束). 注意: 此处不置 clean_finish,
+                            // 使网关记录仍按"截断"标 error, 与客户端正常收尾互不干扰.
+                            let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
+                                        data: [DONE]\n\n";
+                            return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
                         }
                         // 已发过 [DONE], 终止流 (收尾日志由下方 None 分支写入).
                         return Poll::Ready(None);
                     }
-                    return Poll::Ready(Some(Ok(chunk)));
+                    // 返回归一化后的 SSE 帧 (替代原始裸字节透传): 每条上游行 → 恰好一帧, 不会重复.
+                    // 若本 chunk 无有效帧 (全是注释/空行), 继续取下一 chunk 避免发送空字节.
+                    if this.out_buf.is_empty() {
+                        continue;
+                    }
+                    let out = std::mem::take(&mut this.out_buf);
+                    return Poll::Ready(Some(Ok(Bytes::from(out))));
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    // 上游错误或空闲超时: 结束流, 让客户端看到正常结束.
+                    // 上游错误或空闲超时:
+                    //  - Fix A: 兜底补发终止帧让客户端优雅收尾, 避免卡在半截帧导致 "JSON 解析错误".
+                    //    与 LoopGuard 同一哲学: 先发一帧带合法 finish_reason 的终止帧, 再 [DONE].
+                    //    此处用 "stop" 而非 "length": 上游是意外断连/超时 (非我们主动截断),
+                    //    "stop" 语义=正常结束, 所有 OpenAI 兼容客户端都当正常收尾、不会报 10004;
+                    //    空 delta 不污染已转发的正文. 网关侧刻意不置 clean_finish → 记录页仍按
+                    //    "连接意外结束" 标红 (Fix B), 与客户端正常收尾互不干扰.
+                    //  - Fix B: 写一条带 error 标记的完成日志, 否则该请求会从请求日志中凭空消失,
+                    //    无法对账 (正是"客户端报错但网关日志看不到该请求"的根因之一).
                     warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
                     this.done = true;
-                    return Poll::Ready(None);
+                    this.error_closed = true;
+                    if let Some(mut ld) = this.log_buffer.take() {
+                        ld.response_body_len = this.response_bytes;
+                        // 先把错误信息格式化为 String (Send) 再进入 spawn, 否则 E 不 Send 会让 future 无法跨线程.
+                        let err_msg = format!("{e:?}");
+                        tokio::spawn(async move {
+                            crate::admin::record_request(
+                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
+                                200, ld.start, ld.response_body_len, Some(err_msg),
+                            ).await;
+                        });
+                    }
+                    let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                                data: [DONE]\n\n";
+                    return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
                 }
                 Poll::Ready(None) => {
+                    // 流正常结束: 处理 line_buf 中可能残留的最后一个未以 \n 结尾的对象
+                    // (mid-object split 的尾段被拆到最后一个 chunk). 否则该对象会丢失 → 10014.
+                    if !this.line_buf.is_empty() {
+                        let raw = std::mem::take(&mut this.line_buf);
+                        if let Ok(text) = std::str::from_utf8(&raw) {
+                            let line = text.trim();
+                            if !line.is_empty() {
+                                this.process_line(line);
+                            }
+                        }
+                    }
+                    // 若 flush 后又有归一化帧, 先发出去; 下次 None 再写收尾日志 (done 保证只写一次).
+                    if !this.out_buf.is_empty() {
+                        let out = std::mem::take(&mut this.out_buf);
+                        return Poll::Ready(Some(Ok(Bytes::from(out))));
+                    }
                     if !this.done {
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
                         let (pt, ct, hit, miss) = this.final_tokens(req_body_len);
+                        // 完成日志的 error 判定:
+                        //  - 流从未干净结束 (clean_finish==false): 上游连接关了却没发 finish_reason/[DONE],
+                        //    响应被截断 (典型 10014 mid-object split 丢尾帧) → 记为 error, 否则记录页会显示 200 成功.
+                        //  - 流干净结束但 finish_reason=="error": 记为 error (10004 类).
+                        // 必须在 async 块外计算 (this 是 &mut, 不能跨线程), 仅捕获拥有的 String 进 spawn.
+                        let err_for_log: Option<String> = if !this.clean_finish {
+                            Some("stream ended without upstream finish_reason/[DONE] (response likely truncated)".to_string())
+                        } else {
+                            this.finish_reason.clone()
+                                .filter(|f| f == "error")
+                                .map(|f| format!("finish_reason={f}"))
+                        };
                         if let Some(mut ld) = this.log_buffer.take() {
                             ld.response_body_len = this.response_bytes;
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
                                     ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss,
+                                    hit, miss, err_for_log,
                                 ).await;
                             });
                         }
@@ -907,59 +1112,10 @@ fn format_error_chain(e: &dyn std::error::Error) -> String {
     msg
 }
 
-/// 根据 HTTP 状态码返回中文说明 (覆盖纯文本响应体场景, 如上游 408 超时).
-///
-/// type 映射 (见 `format_upstream_error`) 更具体, 优先于此处; 此处作为兜底,
-/// 让任何状态码 (即使上游返回纯文本而非 JSON) 都能给出可读的中文提示.
-fn status_explanation(status: u16) -> &'static str {
-    match status {
-        400 => "请求参数错误（模型不支持、参数缺失或格式错误）",
-        401 => "认证失败（API Key 无效或已过期）",
-        402 => "账户需付费（余额不足或需订阅）",
-        403 => "权限不足（无权访问该模型或功能）",
-        404 => "资源不存在（端点或模型名错误）",
-        408 => "请求超时（上游处理超时，可能是模型思考时间长或供应商繁忙）",
-        409 => "请求冲突（并发或状态不一致）",
-        413 => "请求体过大（上下文或文件超出上限）",
-        429 => "请求频率超限（请稍后重试）",
-        500 => "服务器内部错误（供应商服务异常）",
-        502 => "网关错误（上游网关不可用）",
-        503 => "服务不可用（供应商过载或维护中）",
-        504 => "网关超时（上游处理超时未响应）",
-        _ => "",
-    }
-}
-
-/// 格式化上游错误信息: 解析 JSON 错误响应，添加中文说明.
-///
-/// 优先级: error.type 中文 > HTTP 状态码中文 > 原始信息.
-/// 这样即使上游返回纯文本 (如 `request timeout (HTTP Status: 408)`) 也能给中文说明.
-///
-/// 输入: upstream_status (如 400/408), err_body (原始响应体).
-/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
-///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
-/// 上游错误 `type` 字段 → 中文说明.
-///
-/// 覆盖 OpenAI / 硅基流动 / DeepSeek 等主流供应商的标准 `error.type`;
-/// 同时供 HTTP 错误响应 (`format_upstream_error`) 与流式 SSE 错误事件
-/// (`translate_sse_error`) 复用, 保证两套翻译路径一致.
-fn type_explanation(err_type: &str) -> &'static str {
-    match err_type {
-        "invalid_request_error" => "请求参数错误（可能是模型不支持、参数缺失或格式错误）",
-        "authentication_error" => "认证失败（API Key 无效或已过期）",
-        "rate_limit_error" => "请求频率超限（请稍后重试）",
-        "server_error" => "服务器内部错误（供应商服务异常）",
-        "context_length_exceeded" => "上下文长度超限（请求内容过长）",
-        "insufficient_quota" => "配额不足（账户余额耗尽）",
-        "permission_denied" => "权限不足（无权访问该模型或功能）",
-        _ => "",
-    }
-}
-
 /// 构造单行格式化错误信息 (type 中文优先, 其次 code, 其次状态码中文).
 fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_expl: &str) -> String {
-    if !err_type.is_empty() && !type_explanation(err_type).is_empty() {
-        format!("{status} {} [{err_type}]: {msg}", type_explanation(err_type))
+    if !err_type.is_empty() && !crate::i18n::error_type(err_type).is_empty() {
+        format!("{status} {} [{err_type}]: {msg}", crate::i18n::error_type(err_type))
     } else if !code.is_empty() {
         format!("{status} [{code}]: {msg}")
     } else if !err_type.is_empty() {
@@ -985,7 +1141,7 @@ fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_
 ///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
 fn format_upstream_error(status: u16, err_body: &str) -> String {
     // 兜底: 状态码中文说明 (即使纯文本响应体也生效)
-    let status_expl = status_explanation(status);
+    let status_expl = crate::i18n::http_status(status);
 
     // 尝试解析 JSON 错误响应
     if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(err_body) {
@@ -1052,7 +1208,7 @@ fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
     if msg.is_empty() && err_type.is_empty() && code.is_empty() {
         return None;
     }
-    let type_expl = type_explanation(&err_type);
+    let type_expl = crate::i18n::error_type(&err_type);
     let translated = if !type_expl.is_empty() {
         format!("{type_expl} [{err_type}]: {msg}")
     } else if !code.is_empty() {
@@ -1229,8 +1385,14 @@ mod tests {
             response_bytes: 0,
             loop_guard: None,
             loop_aborted: false,
+            error_closed: false,
             stream_errored: false,
             pending_error_sse: None,
+            finish_reason: None,
+            clean_finish: false,
+            errored_msg: None,
+            out_buf: Vec::new(),
+            line_buf: Vec::new(),
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -1310,8 +1472,14 @@ mod tests {
             response_bytes: 0,
             loop_guard: None,
             loop_aborted: false,
+            error_closed: false,
             stream_errored: false,
             pending_error_sse: None,
+            finish_reason: None,
+            clean_finish: false,
+            errored_msg: None,
+            out_buf: Vec::new(),
+            line_buf: Vec::new(),
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
