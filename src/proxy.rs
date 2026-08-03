@@ -491,6 +491,8 @@ fn stream_response_with_tokens(
             None
         },
         loop_aborted: false,
+        stream_errored: false,
+        pending_error_sse: None,
         log_buffer: Some(TokenLogData {
             log_buffer,
             model,
@@ -544,6 +546,10 @@ struct TokenStream<S> {
     loop_guard: Option<LoopDetector>,
     /// 已因死循环截断并发送 [DONE] 的标志, 防止重复触发.
     loop_aborted: bool,
+    /// 流内检测到上游 SSE 错误事件 (HTTP 200 + error 事件), 等待改写成中文.
+    stream_errored: bool,
+    /// 改写后的中文 SSE 错误事件 JSON (不含 "data: " 前缀), 待转发一次.
+    pending_error_sse: Option<String>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -557,6 +563,14 @@ impl<S> TokenStream<S> {
             let Some(json_str) = line.strip_prefix("data: ") else { continue };
             if json_str == "[DONE]" { continue; }
             let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else { continue };
+            // 检测上游以 SSE 错误事件形式返回的错误 (HTTP 200 + error 事件):
+            // 翻译为中文并改写, 否则正常 JSON 数据继续走下方 usage / delta 解析.
+            if let Some((msg, etype)) = translate_sse_error(&val) {
+                self.stream_errored = true;
+                let ev = serde_json::json!({ "error": { "message": msg, "type": etype } });
+                self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
+                continue;
+            }
             // 从 usage 事件提取精确 token 数
             if let Some(usage) = val.get("usage") {
                 if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
@@ -631,9 +645,19 @@ where
         let this = &mut *self;
         loop {
             match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Ready(Some(Ok(chunk))) => {
-                    this.parse_sse_chunk(&chunk);
-                    // 下游模型陷入死循环 → 立即截断流, 干净地发 [DONE] 结束.
+            Poll::Ready(Some(Ok(chunk))) => {
+                this.parse_sse_chunk(&chunk);
+                // 流内错误事件 (HTTP 200 + SSE error): 改写成中文 error 事件并干净结束流.
+                // 因 HTTP 头已发出 (200), 无法改为 JSON 错误响应, 只能以规范的 SSE
+                // error 事件呈现, 客户端 (OpenAI 兼容) 会按规范展示中文错误.
+                if this.stream_errored {
+                    if let Some(translated) = this.pending_error_sse.take() {
+                        return Poll::Ready(Some(Ok(Bytes::from(format!("data: {translated}\n\n")))));
+                    }
+                    // 翻译后的 error 事件已转发, 直接终止流 (丢弃上游剩余数据).
+                    return Poll::Ready(None);
+                }
+                // 下游模型陷入死循环 → 立即截断流, 干净地发 [DONE] 结束.
                     // 不向客户端正文塞说明 (说明仅写运行日志, 满足"不污染正文").
                     if this.loop_guard.as_ref().map(|g| g.triggered()).unwrap_or(false) {
                         if !this.loop_aborted {
@@ -914,6 +938,51 @@ fn status_explanation(status: u16) -> &'static str {
 /// 输入: upstream_status (如 400/408), err_body (原始响应体).
 /// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
 ///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
+/// 上游错误 `type` 字段 → 中文说明.
+///
+/// 覆盖 OpenAI / 硅基流动 / DeepSeek 等主流供应商的标准 `error.type`;
+/// 同时供 HTTP 错误响应 (`format_upstream_error`) 与流式 SSE 错误事件
+/// (`translate_sse_error`) 复用, 保证两套翻译路径一致.
+fn type_explanation(err_type: &str) -> &'static str {
+    match err_type {
+        "invalid_request_error" => "请求参数错误（可能是模型不支持、参数缺失或格式错误）",
+        "authentication_error" => "认证失败（API Key 无效或已过期）",
+        "rate_limit_error" => "请求频率超限（请稍后重试）",
+        "server_error" => "服务器内部错误（供应商服务异常）",
+        "context_length_exceeded" => "上下文长度超限（请求内容过长）",
+        "insufficient_quota" => "配额不足（账户余额耗尽）",
+        "permission_denied" => "权限不足（无权访问该模型或功能）",
+        _ => "",
+    }
+}
+
+/// 构造单行格式化错误信息 (type 中文优先, 其次 code, 其次状态码中文).
+fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_expl: &str) -> String {
+    if !err_type.is_empty() && !type_explanation(err_type).is_empty() {
+        format!("{status} {} [{err_type}]: {msg}", type_explanation(err_type))
+    } else if !code.is_empty() {
+        format!("{status} [{code}]: {msg}")
+    } else if !err_type.is_empty() {
+        format!("{status} [{err_type}]: {msg}")
+    } else if !status_expl.is_empty() {
+        format!("{status} {status_expl}: {msg}")
+    } else {
+        format!("{status}: {msg}")
+    }
+}
+
+/// 格式化上游错误信息: 解析 JSON 错误响应，添加中文说明.
+///
+/// 优先级: error.type 中文 > HTTP 状态码中文 > 原始信息.
+/// 这样即使上游返回纯文本 (如 `request timeout (HTTP Status: 408)`) 也能给中文说明.
+///
+/// 兼容性 (方案 B): 除标准 `{error:{message,type,code}}` 外, 也识别顶层
+/// `{message:...}` / `{detail:...}` 这类非标准结构 (硅基流动 / FastAPI 网关),
+/// 至少给出原始信息而非丢弃.
+///
+/// 输入: upstream_status (如 400/408), err_body (原始响应体).
+/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
+///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
 fn format_upstream_error(status: u16, err_body: &str) -> String {
     // 兜底: 状态码中文说明 (即使纯文本响应体也生效)
     let status_expl = status_explanation(status);
@@ -924,36 +993,26 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
             let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
             let err_type = error.get("type").and_then(|t| t.as_str()).unwrap_or("");
             let code = error.get("code").and_then(|c| c.as_str()).unwrap_or("");
-
-            // 根据错误类型添加中文说明 (比状态码更具体, 优先)
-            let type_expl = match err_type {
-                "invalid_request_error" => "请求参数错误（可能是模型不支持、参数缺失或格式错误）",
-                "authentication_error" => "认证失败（API Key 无效或已过期）",
-                "rate_limit_error" => "请求频率超限（请稍后重试）",
-                "server_error" => "服务器内部错误（供应商服务异常）",
-                "context_length_exceeded" => "上下文长度超限（请求内容过长）",
-                "insufficient_quota" => "配额不足（账户余额耗尽）",
-                "permission_denied" => "权限不足（无权访问该模型或功能）",
-                _ => "",
-            };
-
-            // 构造格式化错误信息: type 中文优先, 其次 code, 其次状态码中文
-            if !type_expl.is_empty() {
-                format!("{status} {type_expl} [{err_type}]: {msg}")
-            } else if !code.is_empty() {
-                format!("{status} [{code}]: {msg}")
-            } else if !err_type.is_empty() {
-                format!("{status} [{err_type}]: {msg}")
-            } else if !status_expl.is_empty() {
-                format!("{status} {status_expl}: {msg}")
+            format_error_line(status, msg, err_type, code, status_expl)
+        } else if let Some(m) = err_json.get("message").and_then(|m| m.as_str()) {
+            // 顶层 message 结构 → status 兜底 + 原文 (空串则回退原文)
+            if m.is_empty() {
+                format!("{status}: {err_body}")
             } else {
-                format!("{status}: {msg}")
+                format!("{status} {status_expl}: {m}")
+            }
+        } else if let Some(d) = err_json.get("detail").and_then(|d| d.as_str()) {
+            // 顶层 detail 结构 (FastAPI/Django) → status 兜底 + 原文 (空串则回退)
+            if d.is_empty() {
+                format!("{status}: {err_body}")
+            } else {
+                format!("{status} {status_expl}: {d}")
             }
         } else if !status_expl.is_empty() {
-            // JSON 但没有 error 字段, 用状态码中文兜底
+            // JSON 但无 error/message/detail 字段, 用状态码中文兜底
             format!("{status} {status_expl}: {err_body}")
         } else {
-            // JSON 但没有 error 字段，直接返回原始信息
+            // JSON 但不含任何已知字段，直接返回原始信息
             format!("{status}: {err_body}")
         }
     } else if !status_expl.is_empty() {
@@ -963,6 +1022,52 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
         // 非 JSON 格式且无状态码说明, 直接返回原始信息
         format!("{status}: {err_body}")
     }
+}
+
+/// 解析并翻译单个上游 SSE 事件是否为错误, 返回 `(中文说明, 错误类型)`.
+///
+/// 用于流式透传中检测上游以 `data: {"error":{...}}` 事件形式返回的错误
+/// (OpenAI 流式错误规范: HTTP 仍为 200, 错误在流内返回), 此时 HTTP 状态码
+/// 分支 (`format_upstream_error`) 不会触发, 必须在此翻译.
+///
+/// 兼容三类结构:
+///   1) 标准 `{"error":{message,type,code}}` (OpenAI / 硅基流动 / DeepSeek);
+///   2) 顶层 `{"message":...}`;
+///   3) 顶层 `{"detail":...}` (FastAPI / Django 网关).
+/// 正常数据 (无 error/message/detail) 返回 `None`, 不影响透传.
+fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
+    let (msg, err_type, code) = if let Some(e) = val.get("error").and_then(|e| e.as_object()) {
+        (
+            e.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+            e.get("type").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            e.get("code").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+        )
+    } else if let Some(m) = val.get("message").and_then(|m| m.as_str()) {
+        (m.to_string(), String::new(), String::new())
+    } else if let Some(d) = val.get("detail").and_then(|d| d.as_str()) {
+        (d.to_string(), String::new(), String::new())
+    } else {
+        return None;
+    };
+    if msg.is_empty() && err_type.is_empty() && code.is_empty() {
+        return None;
+    }
+    let type_expl = type_explanation(&err_type);
+    let translated = if !type_expl.is_empty() {
+        format!("{type_expl} [{err_type}]: {msg}")
+    } else if !code.is_empty() {
+        format!("[{code}]: {msg}")
+    } else if !err_type.is_empty() {
+        format!("[{err_type}]: {msg}")
+    } else {
+        msg.clone()
+    };
+    let etype_out = if err_type.is_empty() {
+        "stream_error".to_string()
+    } else {
+        err_type.clone()
+    };
+    Some((translated, etype_out))
 }
 
 #[cfg(test)]
@@ -1061,8 +1166,15 @@ mod tests {
         let result = format_upstream_error(500, err_body);
         assert_eq!(result, "500 服务器内部错误（供应商服务异常）: plain text error");
 
-        // 测试 5: JSON 但没有 error 字段 - 应返回原始信息
+        // 测试 5: 顶层 message 结构 (非标准) - 应提取 message 并附状态码中文
         let err_body = r#"{"message":"some error"}"#;
+        let result = format_upstream_error(400, err_body);
+        assert!(result.contains("400"));
+        assert!(result.contains("some error"));
+        // 注: 顶层 message 已被提取展示, 不再要求保留原始 JSON 结构
+
+        // 测试 5b: 未知 JSON 结构 (无 error/message/detail) - 兜底保留原文
+        let err_body = r#"{"foo":"bar"}"#;
         let result = format_upstream_error(400, err_body);
         assert!(result.contains("400"));
         assert!(result.contains(err_body));
@@ -1117,6 +1229,8 @@ mod tests {
             response_bytes: 0,
             loop_guard: None,
             loop_aborted: false,
+            stream_errored: false,
+            pending_error_sse: None,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -1148,6 +1262,67 @@ mod tests {
         );
         assert_eq!(ts.tokens_cache_hit, 200);
         assert_eq!(ts.tokens_cache_miss, 50);
+    }
+
+    /// 流式错误事件翻译: 标准 error 事件 / 顶层 message / 顶层 detail / 正常数据返回 None.
+    #[test]
+    fn test_translate_sse_error() {
+        // 标准 OpenAI 流式错误事件 → 按 type 翻译中文
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"error":{"message":"model not found","type":"invalid_request_error"}}"#,
+        )
+        .unwrap();
+        let (msg, etype) = translate_sse_error(&v).unwrap();
+        assert_eq!(etype, "invalid_request_error");
+        assert!(msg.contains("请求参数错误"), "got: {msg}");
+
+        // 顶层 message 结构 (非标准) → 返回原文 + 默认 stream_error 类型
+        let v: serde_json::Value = serde_json::from_str(r#"{"message":"bad gateway"}"#).unwrap();
+        let (msg, etype) = translate_sse_error(&v).unwrap();
+        assert_eq!(etype, "stream_error");
+        assert!(msg.contains("bad gateway"));
+
+        // 顶层 detail 结构 (FastAPI) → 返回原文
+        let v: serde_json::Value = serde_json::from_str(r#"{"detail":"Validation Error"}"#).unwrap();
+        let (msg, _) = translate_sse_error(&v).unwrap();
+        assert!(msg.contains("Validation Error"));
+
+        // 正常数据 (无 error/message/detail) → 返回 None, 不影响透传
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"choices":[{"delta":{"content":"hi"}}]}"#).unwrap();
+        assert!(translate_sse_error(&v).is_none());
+    }
+
+    /// 流式透传中检测到 SSE 错误事件 → 改写为中文 error 事件并干净结束流.
+    #[test]
+    fn test_stream_translates_sse_error() {
+        use futures::stream;
+        use futures::StreamExt;
+        let mut ts = TokenStream {
+            inner: stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from(
+                "data: {\"error\":{\"message\":\"model not found\",\"type\":\"invalid_request_error\"}}\n\n",
+            ))]),
+            done: false,
+            tokens_pt: 0,
+            tokens_ct: 0,
+            tokens_cache_hit: 0,
+            tokens_cache_miss: 0,
+            response_bytes: 0,
+            loop_guard: None,
+            loop_aborted: false,
+            stream_errored: false,
+            pending_error_sse: None,
+            log_buffer: None,
+        };
+        // 第一次 poll: 收到翻译后的中文 SSE error 事件
+        let first = futures::executor::block_on(ts.next()).unwrap().unwrap();
+        let text = String::from_utf8(first.to_vec()).unwrap();
+        assert!(text.starts_with("data: "), "应为 SSE 帧: {text}");
+        assert!(text.contains("请求参数错误"), "应为中文翻译: {text}");
+        assert!(text.contains("invalid_request_error"));
+        // 第二次 poll: 流已干净终止
+        let second = futures::executor::block_on(ts.next());
+        assert!(second.is_none());
     }
 }
 
