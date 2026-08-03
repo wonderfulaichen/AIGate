@@ -45,6 +45,11 @@ pub struct RequestLog {
     /// 上游 KV Cache 未命中 token 数 (usage.prompt_cache_miss_tokens).
     #[serde(default)]
     pub prompt_cache_miss_tokens: u32,
+    /// 首 token 延迟 (ms): 从请求开始到上游吐出第一个增量内容的耗时.
+    /// 用于计算"纯生成吐字速度" = 输出 token / (总耗时 - 首 token 延迟), 排除排队与 TTFT.
+    /// 非流式/命中本地缓存的请求此项为 None.
+    #[serde(default)]
+    pub first_token_ms: Option<u64>,
 }
 
 /// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
@@ -183,6 +188,7 @@ pub async fn record_request(
         cached: false,
         prompt_cache_hit_tokens: 0,
         prompt_cache_miss_tokens: 0,
+        first_token_ms: None,
     };
     log_buffer.push(log).await;
 }
@@ -202,6 +208,7 @@ pub async fn record_request_with_tokens(
     cached: bool,
     cache_hit_tokens: u32,
     cache_miss_tokens: u32,
+    first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
     let log = RequestLog {
@@ -218,6 +225,7 @@ pub async fn record_request_with_tokens(
         cached,
         prompt_cache_hit_tokens: cache_hit_tokens,
         prompt_cache_miss_tokens: cache_miss_tokens,
+        first_token_ms,
     };
     log_buffer.push(log).await;
 }
@@ -586,6 +594,7 @@ pub async fn api_mock(
             cached: false,
             prompt_cache_hit_tokens: rng.gen_range(0, 400) as u32,
             prompt_cache_miss_tokens: rng.gen_range(0, 100) as u32,
+            first_token_ms: None,
         });
     }
 
@@ -612,6 +621,7 @@ pub async fn api_mock(
             cached: false,
             prompt_cache_hit_tokens: 0,
             prompt_cache_miss_tokens: 0,
+            first_token_ms: None,
         });
     }
 
@@ -772,6 +782,9 @@ pub struct ModelStats {
     /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
+    /// 纯生成吐字速度 (tok/s): 仅统计首 token 延迟已知的流式请求,
+    /// = Σ输出token / Σ(总耗时-首token延迟) × 1000. 排除排队与 TTFT, 比 avg_latency 反推更准.
+    pub gen_speed: f64,
 }
 
 /// 单个供应商的聚合统计.
@@ -787,6 +800,8 @@ pub struct ProviderStats {
     /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
+    /// 纯生成吐字速度 (tok/s), 同 ModelStats.gen_speed.
+    pub gen_speed: f64,
 }
 
 /// 日趋势 (通用: 按小时/天/月聚合均使用此结构).
@@ -950,6 +965,21 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+            // 纯生成吐字速度: 仅累计首 token 延迟已知的流式请求 (ft<总耗时 且 有输出 token),
+            // gen_ms = 总耗时 - 首 token 延迟, 排除排队与 TTFT.
+            let (gen_ct, gen_ms): (u64, u64) = logs
+                .iter()
+                .filter_map(|l| {
+                    l.first_token_ms
+                        .filter(|&ft| ft < l.latency_ms && l.completion_tokens > 0)
+                        .map(|ft| (l.completion_tokens as u64, l.latency_ms - ft))
+                })
+                .fold((0u64, 0u64), |(ac, am), (c, m)| (ac + c, am + m));
+            let gen_speed = if gen_ms > 0 {
+                gen_ct as f64 / gen_ms as f64 * 1000.0
+            } else {
+                0.0
+            };
             ModelStats {
                 model: model.to_string(),
                 requests: reqs,
@@ -960,6 +990,7 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_completion_tokens: ct,
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
+                gen_speed,
             }
         })
         .collect();
@@ -981,6 +1012,20 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+            // 纯生成吐字速度, 同 per_model 口径.
+            let (gen_ct, gen_ms): (u64, u64) = logs
+                .iter()
+                .filter_map(|l| {
+                    l.first_token_ms
+                        .filter(|&ft| ft < l.latency_ms && l.completion_tokens > 0)
+                        .map(|ft| (l.completion_tokens as u64, l.latency_ms - ft))
+                })
+                .fold((0u64, 0u64), |(ac, am), (c, m)| (ac + c, am + m));
+            let gen_speed = if gen_ms > 0 {
+                gen_ct as f64 / gen_ms as f64 * 1000.0
+            } else {
+                0.0
+            };
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -991,6 +1036,7 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_completion_tokens: ct,
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
+                gen_speed,
             }
         })
         .collect();
@@ -1079,6 +1125,7 @@ mod tests {
             cached: false,
             prompt_cache_hit_tokens: hit,
             prompt_cache_miss_tokens: miss,
+            first_token_ms: None,
         }
     }
 

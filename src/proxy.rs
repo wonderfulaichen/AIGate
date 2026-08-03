@@ -207,7 +207,7 @@ pub async fn chat_completions(
             let (pt, ct, hit, miss) = extract_usage(&cached);
             crate::admin::record_request_with_tokens(
                 &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
-                true, hit, miss, None,
+                true, hit, miss, None, None,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -354,7 +354,7 @@ pub async fn chat_completions(
                 let (pt, ct, hit, miss) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
                     &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
-                    false, hit, miss, None,
+                    false, hit, miss, None, None,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -497,17 +497,18 @@ fn stream_response_with_tokens(
         finish_reason: None,
         clean_finish: false,
         errored_msg: None,
-        out_buf: Vec::new(),
-        line_buf: Vec::new(),
-        log_buffer: Some(TokenLogData {
-            log_buffer,
-            model,
-            provider,
-            endpoint,
-            start,
-            req_body_len,
-            response_body_len: 0,
-        }),
+            out_buf: Vec::new(),
+            line_buf: Vec::new(),
+            first_token_at: None,
+            log_buffer: Some(TokenLogData {
+                log_buffer,
+                model,
+                provider,
+                endpoint,
+                start,
+                req_body_len,
+                response_body_len: 0,
+            }),
     };
 
     let body = Body::from_stream(tracked);
@@ -574,6 +575,9 @@ struct TokenStream<S> {
     /// 跨 chunk 的半行缓冲: 上游裸 JSON 常被 TCP 切分在 chunk 边界 (mid-object split),
     /// 累积到完整行 (\n 结尾) 再解析, 否则半个 JSON 被当裸 JSON 解析失败 → 整段丢失 → 10014.
     line_buf: Vec<u8>,
+    /// 首 token 时刻 (Instant): 第一次收到增量文本内容 (content/reasoning) 的时间,
+    /// 用于计算首 token 延迟 = 此刻 - 请求开始. 仅流式吐字时记录.
+    first_token_at: Option<std::time::Instant>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -696,12 +700,20 @@ impl<S> TokenStream<S> {
                 }
                 // 取增量文本喂给死循环检测器 (content / reasoning_content / reasoning).
                 if let Some(delta) = choice.get("delta") {
+                    let mut has_token = false;
                     for key in ["content", "reasoning_content", "reasoning"] {
                         if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
+                            if !s.is_empty() {
+                                has_token = true;
+                            }
                             if let Some(detector) = self.loop_guard.as_mut() {
                                 detector.feed(s);
                             }
                         }
+                    }
+                    // 首次出现增量文本即记录首 token 时刻 (用于首 token 延迟 / 纯生成速度计算).
+                    if has_token && self.first_token_at.is_none() {
+                        self.first_token_at = Some(std::time::Instant::now());
                     }
                 }
                 // 诊断: 捕获非正常的 finish_reason (error/length/content_filter 等).
@@ -892,11 +904,15 @@ where
                         };
                         if let Some(mut ld) = this.log_buffer.take() {
                             ld.response_body_len = this.response_bytes;
+                            // 首 token 延迟必须在 async 块外计算 (this 是 &mut 不能跨线程), 仅持有一个 Copy 的 Option<u64> 进 spawn.
+                            let first_token_ms = this.first_token_at.map(|t| t.duration_since(ld.start).as_millis() as u64);
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
                                     ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss, err_for_log,
+                                    hit, miss,
+                                    first_token_ms,
+                                    err_for_log,
                                 ).await;
                             });
                         }
@@ -1393,6 +1409,7 @@ mod tests {
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
+            first_token_at: None,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -1480,6 +1497,7 @@ mod tests {
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
+            first_token_at: None,
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件

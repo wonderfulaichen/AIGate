@@ -188,7 +188,7 @@ input.search-input::placeholder{color:#6b7280}
           <!-- 模型用量明细（合并自 Token 统计页，避免重复） -->
           <div class="card"><div class="card-body">
             <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('model_usage_detail')"></div>
-            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="8" class="text-center py-8" style="color:#6b7280" x-text="t('no_data')"></td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(m.total_cache_hit_tokens)+' / '+fmtT(m.total_cache_miss_tokens)" x-text="(m.total_cache_hit_tokens+m.total_cache_miss_tokens>0)?((m.total_cache_hit_tokens/(m.total_cache_hit_tokens+m.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
+            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th><th class="text-right" x-text="t('tbl.gen_speed')"></th></tr></thead><tbody><template x-if="stats.per_model.length===0"><tr><td colspan="9" class="text-center py-8" style="color:#6b7280" x-text="t('no_data')"></td></tr></template><template x-for="m in stats.per_model" :key="m.model"><tr><td style="color:#a5b4fc" x-text="m.model"></td><td class="text-right" x-text="m.requests"></td><td class="text-right" style="color:#34d399" x-text="m.requests-m.errors"></td><td class="text-right" :class="m.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="m.errors"></td><td class="text-right" x-text="fmtMs(m.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(m.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(m.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(m.total_cache_hit_tokens)+' / '+fmtT(m.total_cache_miss_tokens)" x-text="(m.total_cache_hit_tokens+m.total_cache_miss_tokens>0)?((m.total_cache_hit_tokens/(m.total_cache_hit_tokens+m.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td><td class="text-right" x-text="(m.gen_speed>0)?m.gen_speed.toFixed(0)+' '+t('unit_tokps'):'—'"></td></tr></template></tbody></table></div>
           </div></div>
           <div class="card"><div class="card-body">
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -209,7 +209,8 @@ input.search-input::placeholder{color:#6b7280}
               <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px" x-text="t('no_trend')"></div></template>
               <template x-if="stats.trends.length>0">
                 <div>
-                  <svg class="w-full" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 120'">
+                  <div class="overflow-x-auto">
+                  <svg class="w-full" style="min-width:(stats.trends.length*70+50)+'px'" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 132'">
                     <defs>
                       <linearGradient id="da" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".15"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0"/></linearGradient>
                       <linearGradient id="dlat" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b" stop-opacity=".15"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/></linearGradient>
@@ -219,9 +220,8 @@ input.search-input::placeholder{color:#6b7280}
                     <template x-if="dailyTp.length>=2"><path :d="dailyArea" :fill="dailyMode==='tokens'?'url(#dtok)':dailyMode==='latency'?'url(#dlat)':'url(#da)'"/></template>
                     <polyline :points="dailyTps" fill="none" :stroke="dailyMode==='tokens'?'#a78bfa':dailyMode==='latency'?'#f59e0b':'#818cf8'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                     <template x-for="(pt,j) in dailyTp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2.5" :fill="dailyMode==='tokens'?'#a78bfa':dailyMode==='latency'?'#f59e0b':'#818cf8'" stroke="#1e2028" stroke-width="1"/></template>
+                    <template x-for="(t,j) in stats.trends" :key="'lb'+t.date"><text x="(dailyTp[j]||{}).x" y="126" text-anchor="middle" font-size="10" :fill="'#6b7280'" x-show="(j % Math.max(1, Math.ceil(stats.trends.length/8))===0) || j===stats.trends.length-1" x-text="t.date"></text></template>
                   </svg>
-                  <div class="flex justify-between mt-1 text-[10px] overflow-hidden" style="color:#6b7280">
-                    <template x-for="(t,j) in stats.trends" :key="t.date"><span x-show="(j % Math.max(1, Math.ceil(stats.trends.length/8))===0) || j===stats.trends.length-1" x-text="t.date" class="whitespace-nowrap"></span></template>
                   </div>
                   <div class="flex gap-2 mt-3 overflow-x-auto pb-1">
                     <template x-for="t in stats.trends" :key="t.date">
@@ -236,7 +236,7 @@ input.search-input::placeholder{color:#6b7280}
             </div></div>
           <div class="card"><div class="card-body">
             <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:#6b7280" x-text="t('provider_stats')"></div>
-            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.provider')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(p.total_cache_hit_tokens)+' / '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_cache_hit_tokens+p.total_cache_miss_tokens>0)?((p.total_cache_hit_tokens/(p.total_cache_hit_tokens+p.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td></tr></template></tbody></table></div>
+            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.provider')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th><th class="text-right" x-text="t('tbl.gen_speed')"></th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:#34d399" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[#f87171]':'text-[#6b7280]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(p.total_cache_hit_tokens)+' / '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_cache_hit_tokens+p.total_cache_miss_tokens>0)?((p.total_cache_hit_tokens/(p.total_cache_hit_tokens+p.total_cache_miss_tokens)*100).toFixed(0)+'%'):'—'"></td><td class="text-right" x-text="(p.gen_speed>0)?p.gen_speed.toFixed(0)+' '+t('unit_tokps'):'—'"></td></tr></template></tbody></table></div>
           </div></div>
         </div>
       </template>
@@ -284,7 +284,7 @@ input.search-input::placeholder{color:#6b7280}
                     <span class="truncate max-w-[10%] shrink-0" style="color:#6b7280" x-text="log.provider"></span>
                     <span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
                     <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 badge-primary" :title="t('badge.cached_title')" x-text="t('badge.cached')"></span></template>
-                    <template x-if="log.prompt_cache_hit_tokens>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" :title="t('badge.kvcache_title')" x-text="t('hit_count', fmtT(log.prompt_cache_hit_tokens))"></span></template>
+                    <template x-if="(log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" :title="'KV '+fmtT(log.prompt_cache_hit_tokens)+' / '+fmtT(log.prompt_cache_miss_tokens)+' tok'" x-text="'KV '+(((log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0)?((log.prompt_cache_hit_tokens/(log.prompt_cache_hit_tokens+log.prompt_cache_miss_tokens)*100).toFixed(0)):'0')+'%'"></span></template>
                     <span class="w-14 text-right font-mono shrink-0" style="color:#6b7280" x-text="log.latency_ms+'ms'"></span>
                     <span class="w-16 text-right shrink-0" style="color:#6b7280" x-text="fmtB(log.body_len)"></span>
                     <template x-if="log.error"><span class="text-[#f87171] truncate min-w-0 text-[11px]" x-text="log.error.substring(0,45)"></span></template>
@@ -298,8 +298,9 @@ input.search-input::placeholder{color:#6b7280}
                       <span><span x-text="t('detail.status')"></span>: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
                       <span><span x-text="t('detail.latency')"></span>: <span style="color:#cdd0d4" x-text="log.latency_ms+'ms'"></span></span>
                       <span><span x-text="t('detail.body')"></span>: <span style="color:#cdd0d4" x-text="fmtB(log.body_len)"></span></span>
-                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.kv_cache')"></span>: <span style="color:#22d3ee" x-text="t('kv_hit', fmtT(log.prompt_cache_hit_tokens))"></span><span style="color:#6b7280"> / </span><span style="color:#cdd0d4" x-text="t('kv_miss', fmtT(log.prompt_cache_miss_tokens))"></span></span></template>
+                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.kv_cache')"></span>: <span style="color:#22d3ee" x-text="t('kv_hit', fmtT(log.prompt_cache_hit_tokens))"></span><span style="color:#6b7280"> / </span><span style="color:#cdd0d4" x-text="t('kv_miss', fmtT(log.prompt_cache_miss_tokens))"></span><template x-if="(log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0"><span style="color:#6b7280"> (<span x-text="((log.prompt_cache_hit_tokens/(log.prompt_cache_hit_tokens+log.prompt_cache_miss_tokens)*100).toFixed(1))"></span>%</span></template></span></template>
                       <template x-if="log.error"><span class="w-full mt-1"><span x-text="t('detail.error')"></span>: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
+                      <template x-if="log.first_token_ms && log.first_token_ms < log.latency_ms && log.completion_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.gen_speed')"></span>: <span style="color:#34d399" x-text="(log.completion_tokens/((log.latency_ms-log.first_token_ms)/1000)).toFixed(0)+' '+t('unit_tokps')"></span><span style="color:#6b7280"> (TTFT <span x-text="log.first_token_ms"></span>ms)</span></span></template>
                     </div>
                   </div>
                 </div>
@@ -687,9 +688,10 @@ const I18N = {
     'search_placeholder': '搜索模型/供应商/错误...',
     'opt.all_providers': '全部供应商', 'opt.all_status': '全部状态', 'opt.success': '成功', 'opt.error': '错误',
     'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
-    'badge.cached': '缓存', 'badge.cached_title': '命中本地缓存, 未请求上游', 'badge.kvcache_title': '上游 KV Cache 命中 token 数',
+    'badge.cached': '缓存', 'badge.cached_title': '命中本地缓存, 未请求上游', 'badge.kvcache_title': 'KV Cache 命中率: 命中/未命中 token 数',
     'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.status': '状态码', 'detail.latency': '延迟', 'detail.body': '请求体', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情',
     'kv_hit': '命中 {0}', 'kv_miss': '未命中 {0}',
+    'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
     'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度',
@@ -750,9 +752,10 @@ const I18N = {
     'search_placeholder': 'Search model/provider/error...',
     'opt.all_providers': 'All providers', 'opt.all_status': 'All status', 'opt.success': 'Success', 'opt.error': 'Error',
     'no_match': 'No matches', 'no_logs': 'No request logs',
-    'badge.cached': 'Cached', 'badge.cached_title': 'Served from local cache, no upstream call', 'badge.kvcache_title': 'Upstream KV cache hit tokens',
+    'badge.cached': 'Cached', 'badge.cached_title': 'Served from local cache, no upstream call', 'badge.kvcache_title': 'KV Cache hit rate: hit/miss token counts',
     'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.status': 'Status', 'detail.latency': 'Latency', 'detail.body': 'Body', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details',
     'kv_hit': 'Hit {0}', 'kv_miss': 'Miss {0}',
+    'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
     'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
     'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning',
