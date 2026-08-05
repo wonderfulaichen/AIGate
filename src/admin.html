@@ -12,6 +12,11 @@ html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:#171212;color:#cdd0d4;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,sans-serif;font-size:13px}
 *{scrollbar-width:none;-ms-overflow-style:none}
 *::-webkit-scrollbar{display:none}
+/* 图表滚动区域：显示细滚动条（悬停时明显） */
+.chart-scroll{scrollbar-width:thin;scrollbar-color:#4a4d5a transparent}
+.chart-scroll::-webkit-scrollbar{height:6px;background:transparent}
+.chart-scroll::-webkit-scrollbar-thumb{background:rgba(74,77,90,.5);border-radius:3px}
+.chart-scroll::-webkit-scrollbar-thumb:hover{background:#6b7280}
 .content-area{height:100vh;overflow-y:auto;overflow-x:hidden}
 
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
@@ -95,18 +100,18 @@ input.search-input::placeholder{color:#6b7280}
           <div class="card w-full max-w-lg"><div class="card-body space-y-3">
             <div class="flex items-center justify-between">
               <span class="text-xs font-bold uppercase tracking-wider" style="color:#6b7280" x-text="t('conn_info')"></span>
-              <span class="text-xs" style="color:#6b7280" x-text="t('api_endpoint')"></span>
+              <button @click="copyText(baseUrl, 'conn')" class="btn-ghost text-xs" x-text="copiedField==='conn' ? t('copied') : t('copy')"></button>
             </div>
             <div class="flex items-center gap-2 font-mono text-sm px-3 py-2 rounded" style="background:rgba(255,255,255,.04)">
               <span style="color:#6b7280">POST</span>
-              <span style="color:#a5b4fc">http://127.0.0.1:8787/v1/chat/completions</span>
+              <span class="truncate" style="color:#a5b4fc" x-text="baseUrl + '/chat/completions'"></span>
             </div>
             <div class="flex items-center gap-2 font-mono text-sm px-3 py-2 rounded" style="background:rgba(255,255,255,.04)">
               <span style="color:#6b7280">GET</span>
-              <span style="color:#a5b4fc">http://127.0.0.1:8787/v1/models</span>
+              <span class="truncate" style="color:#a5b4fc" x-text="baseUrl + '/models'"></span>
             </div>
             <div class="text-xs" style="color:#6b7280">
-              <p x-html="t('setup_hint')"></p>
+              <p x-text="t('setup_hint')"></p>
             </div>
           </div></div>
           <div class="flex gap-3">
@@ -208,9 +213,9 @@ input.search-input::placeholder{color:#6b7280}
               </div>
               <template x-if="stats.trends.length===0"><div class="flex items-center justify-center h-48" style="color:#6b7280;font-size:13px" x-text="t('no_trend')"></div></template>
               <template x-if="stats.trends.length>0">
-                <div>
-                  <div class="overflow-x-auto">
-                  <svg class="w-full" style="min-width:(stats.trends.length*70+50)+'px'" :viewBox="'0 0 '+(stats.trends.length*70+50)+' 132'">
+                <div class="overflow-x-auto chart-scroll">
+                  <div style="width:(stats.trends.length*70)+'px';min-width:(stats.trends.length*70)+'px';padding-bottom:4px">
+                  <svg class="w-full block" :viewBox="'0 0 '+(stats.trends.length*70)+' 132'">
                     <defs>
                       <linearGradient id="da" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#818cf8" stop-opacity=".15"/><stop offset="100%" stop-color="#818cf8" stop-opacity="0"/></linearGradient>
                       <linearGradient id="dlat" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f59e0b" stop-opacity=".15"/><stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/></linearGradient>
@@ -222,14 +227,14 @@ input.search-input::placeholder{color:#6b7280}
                     <template x-for="(pt,j) in dailyTp" :key="j"><circle :cx="pt.x" :cy="pt.y" r="2.5" :fill="dailyMode==='tokens'?'#a78bfa':dailyMode==='latency'?'#f59e0b':'#818cf8'" stroke="#1e2028" stroke-width="1"/></template>
                     <template x-for="(t,j) in stats.trends" :key="'lb'+t.date"><text x="(dailyTp[j]||{}).x" y="126" text-anchor="middle" font-size="10" :fill="'#6b7280'" x-show="(j % Math.max(1, Math.ceil(stats.trends.length/8))===0) || j===stats.trends.length-1" x-text="t.date"></text></template>
                   </svg>
-                  </div>
-                  <div class="flex gap-2 mt-3 overflow-x-auto pb-1">
-                    <template x-for="t in stats.trends" :key="t.date">
-                      <div class="shrink-0 text-center rounded px-2 py-1.5" style="background:rgba(255,255,255,.03);min-width:66px">
-                        <div class="text-[10px]" style="color:#6b7280" x-text="t.date"></div>
-                        <div class="text-xs font-semibold mt-0.5" style="color:#cdd0d4" x-text="dailyMode==='tokens' ? fmtT((t.total_prompt_tokens||0)+(t.total_completion_tokens||0))+' '+t('unit_tokens') : dailyMode==='latency' ? fmtMs(t.avg_latency||0) : t.requests+' '+t('unit_times')"></div>
+                  <div class="flex mt-3">
+                    <template x-for="tr in stats.trends" :key="tr.date">
+                      <div class="shrink-0 text-center rounded px-1 py-1.5" style="background:rgba(255,255,255,.03);width:70px">
+                        <div class="text-[10px]" style="color:#6b7280" x-text="tr.date"></div>
+                        <div class="text-xs font-semibold mt-0.5" style="color:#cdd0d4" x-text="dailyMode==='tokens' ? fmtT((tr.total_prompt_tokens||0)+(tr.total_completion_tokens||0))+' '+t('unit_tokens') : dailyMode==='latency' ? fmtMs(tr.avg_latency||0) : tr.requests+' '+t('unit_times')"></div>
                       </div>
                     </template>
+                  </div>
                   </div>
                 </div>
               </template>
@@ -453,8 +458,15 @@ input.search-input::placeholder{color:#6b7280}
         </div>
         <div class="pt-3 border-t" style="border-color:#2a2d37">
           <div class="text-xs font-bold uppercase tracking-wider mb-2" style="color:#6b7280" x-text="t('help_title')"></div>
-          <div class="text-xs space-y-2" style="color:#6b7280">
-            <p><span class="text-[#cdd0d4]" x-text="t('help.config')"></span> <span x-html="t('help.config_desc')"></span></p>
+          <div class="text-xs space-y-3" style="color:#6b7280">
+            <div>
+              <span class="text-[#cdd0d4]" x-text="t('help.config')"></span>
+              <div class="mt-1 flex items-center gap-2">
+                <code class="font-mono text-xs px-2 py-1 rounded truncate" style="background:rgba(255,255,255,.04);color:#818cf8" x-text="baseUrl"></code>
+                <button @click="copyText(baseUrl, 'about')" class="btn-ghost text-xs shrink-0" x-text="copiedField==='about' ? t('copied') : t('copy')"></button>
+              </div>
+              <p class="mt-1" x-text="t('help.config_desc')"></p>
+            </div>
             <p><span class="text-[#cdd0d4]" x-text="t('help.feedback')"></span> <span x-text="t('help.feedback_desc')"></span></p>
           </div>
         </div>
@@ -483,11 +495,20 @@ input.search-input::placeholder{color:#6b7280}
           <div class="grid grid-cols-2 gap-4 text-sm">
             <div>
               <span style="color:#6b7280" x-text="t('listen_addr')"></span>
-              <p class="font-mono text-xs mt-0.5" style="color:#cdd0d4">127.0.0.1:8787</p>
+              <p class="font-mono text-xs mt-0.5" style="color:#cdd0d4" x-text="listenAddr()"></p>
             </div>
             <div>
               <span style="color:#6b7280" x-text="t('status')"></span>
               <p class="mt-0.5"><span class="badge badge-success" x-text="t('running')"></span></p>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t" style="border-color:#2a2d37">
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <span class="text-xs" style="color:#6b7280" x-text="t('base_url')"></span>
+                <p class="font-mono text-xs mt-0.5 truncate" style="color:#818cf8" x-text="baseUrl"></p>
+              </div>
+              <button @click="copyText(baseUrl, 'settings')" class="btn-ghost text-xs shrink-0" x-text="copiedField==='settings' ? t('copied') : t('copy')"></button>
             </div>
           </div>
         </div></div>
@@ -666,7 +687,7 @@ const I18N = {
     'app_service_title': 'AIGate 代理服务',
     'waiting_first_request': '等待第一次 API 请求...',
     'conn_info': '连接信息', 'api_endpoint': 'API 端点',
-    'setup_hint': '在编程工具中将 API 地址设为 <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>，API Key 任意填写。',
+    'setup_hint': '将上方地址填入编程工具的 API 地址，API Key 任意填写。',
     'view_routes': '查看路由配置', 'health_check': '健康检查',
     'overview': '概览',
     'stat.total_requests': '总请求', 'stat.success_rate': '成功率', 'stat.avg_latency': '平均延迟', 'stat.input_tokens': '输入 Tokens', 'stat.output_tokens': '输出 Tokens', 'stat.cache_hit': '缓存命中',
@@ -704,11 +725,12 @@ const I18N = {
     'about_desc1': '本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。',
     'about_desc2': '功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。',
     'api_endpoints_title': 'API 端点', 'tech_stack': '技术栈', 'help_title': '使用帮助',
-    'help.config': '编程工具配置：', 'help.config_desc': '将 API 地址设为 <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>，API Key 任意填写。',
+    'help.config': '编程工具配置：', 'help.config_desc': '将上方「中转 Base URL」填入编程工具（Trae / Cursor / CodeBuddy 等）的 API 地址，API Key 任意填写。',
     'help.feedback': '问题反馈：', 'help.feedback_desc': '检查日志面板查看错误详情，或使用健康检查探测供应商连通性。',
     'settings_title': '设置', 'settings_subtitle': '代理服务与供应商配置',
     'ui_language': '界面语言', 'lang_zh': '简体中文', 'lang_en': 'English',
     'proxy_service': '代理服务', 'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
+    'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制',
     'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
     'key_placeholder': '输入新 API Key', 'save': '保存', 'key_save_hint': '保存后立即生效，无需重启服务。',
     'provider_config': '供应商配置', 'add': '新增', 'refresh': '刷新', 'save_config': '保存配置',
@@ -730,7 +752,7 @@ const I18N = {
     'app_service_title': 'AIGate Proxy Service',
     'waiting_first_request': 'Waiting for the first API request...',
     'conn_info': 'Connection Info', 'api_endpoint': 'API Endpoint',
-    'setup_hint': 'Set the API base URL to <code class="font-mono px-1 rounded" style="background:rgba(255,255,255,.06);color:#cdd0d4">http://127.0.0.1:8787/v1</code>; any API Key works.',
+    'setup_hint': "Use the address above as your coding tool's API base URL; any API Key works.",
     'view_routes': 'View routes', 'health_check': 'Health check',
     'overview': 'Overview',
     'stat.total_requests': 'Total Requests', 'stat.success_rate': 'Success Rate', 'stat.avg_latency': 'Avg Latency', 'stat.input_tokens': 'Input Tokens', 'stat.output_tokens': 'Output Tokens', 'stat.cache_hit': 'Cache Hit',
@@ -768,11 +790,12 @@ const I18N = {
     'about_desc1': 'Local OpenAI-compatible reverse proxy with multi-provider routing, model mapping, and reasoning injection.',
     'about_desc2': 'Features: multi-provider routing · model mapping · reasoning injection · real-time dashboard.',
     'api_endpoints_title': 'API Endpoints', 'tech_stack': 'Tech Stack', 'help_title': 'Help',
-    'help.config': 'Coding tool setup:', 'help.config_desc': 'Set the API base URL to <code class="font-mono px-1 py-0.5 rounded" style="background:rgba(255,255,255,.04)">http://127.0.0.1:8787/v1</code>; any API Key works.',
+    'help.config': 'Coding tool setup:', 'help.config_desc': 'Paste the "Proxy Base URL" above into your coding tool (Trae / Cursor / CodeBuddy, etc.) as the API base URL; any API Key works.',
     'help.feedback': 'Feedback:', 'help.feedback_desc': 'Check the logs panel for error details, or use health check to probe providers.',
     'settings_title': 'Settings', 'settings_subtitle': 'Proxy service & provider config',
     'ui_language': 'Interface Language', 'lang_zh': '简体中文', 'lang_en': 'English',
     'proxy_service': 'Proxy Service', 'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
+    'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied',
     'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
     'key_placeholder': 'Enter new API Key', 'save': 'Save', 'key_save_hint': 'Takes effect immediately, no restart needed.',
     'provider_config': 'Providers', 'add': 'Add', 'refresh': 'Refresh', 'save_config': 'Save Config',
@@ -817,6 +840,11 @@ function dashboard() {
     loading: true,
     version: (window.AIGATE_VERSION && window.AIGATE_VERSION.version) ? window.AIGATE_VERSION : {version:'?', git_commit:'', build_time:''},
 
+    // 中转 Base URL: 由当前页面 origin 推导 (admin 与代理同端口), 自动适配实际端口
+    baseUrl: (window.location.origin ? window.location.origin : 'http://127.0.0.1:8787') + '/v1',
+    copiedField: '',
+    copyTimer: null,
+
     // Data
     logs: [], routes: {}, health: [], stats: null, cache: null,
     healthLoading: false, showAllModels: false,
@@ -855,6 +883,34 @@ function dashboard() {
       document.documentElement.lang = (l === 'en-US') ? 'en' : 'zh';
       document.title = t('app_title');
       fetch('/admin/api/lang', { method:'POST', headers: authHeaders(), body: JSON.stringify({ lang: l }) }).catch(function(){});
+    },
+
+    // 监听地址 (由 baseUrl 去掉协议与 /v1 后缀派生)
+    listenAddr() {
+      return (this.baseUrl || '').replace(/^https?:\/\//, '').replace(/\/v1$/, '').replace(/\/$/, '');
+    },
+
+    // 复制文本到剪贴板; 复制后短暂标记 copiedField 显示「已复制」
+    copyText(text, key) {
+      const self = this;
+      const mark = function () {
+        self.copiedField = key || 'default';
+        if (self.copyTimer) clearTimeout(self.copyTimer);
+        self.copyTimer = setTimeout(function () { self.copiedField = ''; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(mark).catch(function () { self.fallbackCopy(text); mark(); });
+      } else {
+        self.fallbackCopy(text); mark();
+      }
+    },
+    fallbackCopy(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      } catch (e) {}
     },
 
     switchTab(tabId) {
@@ -1084,7 +1140,7 @@ function dashboard() {
       else if(this.dailyMode==='tokens') vals=t.map(d=>(d.total_prompt_tokens||0)+(d.total_completion_tokens||0));
       else vals=t.map(d=>d.requests);
       const mv=Math.max(...vals,1);
-      const w=n*70+50,h=120,pX=35,pY=12;
+      const w=n*70,h=120,pX=35,pY=12;
       return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(vals[i]/mv)*(h-2*pY)}));
     },
     get dailyTps() { return this.dailyTp.map(p=>p.x+','+p.y).join(' '); },
