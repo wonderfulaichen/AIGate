@@ -2,7 +2,7 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.4.2] - Unreleased
+## [0.4.2] - 2026-08-15
 
 ### 新增
 - 缓存首次写入（cache\_creation）独立计费维度：Anthropic 等供应商写入缓存独立计费（常为输入的 1.25x）。`ModelPrice` 新增 `cache_creation_per_m: Option<f64>`（缺失回退输入价，兼容既有配置）；`usage_cache` / 流式解析 / `extract_usage` 全链路从 Anthropic `cache_creation_input_tokens` 与 OpenAI `prompt_tokens_details.cache_creation_tokens` 拆分 creation，落库 `RequestLog.prompt_cache_creation_tokens`；`compute_cost` 按 hit / creation / fresh 三段独立计价，对无 creation 口径的供应商（DeepSeek 等）结果与旧实现完全一致。受 opencode-visual-cache 插件启发补齐。
