@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize}};
+use std::time::{Duration, Instant};
 
 use reqwest::dns::{Name, Resolve, Resolving};
 
@@ -32,6 +32,7 @@ use wry::WebViewBuilder;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 mod admin;
+mod anthropic;
 mod cache;
 mod i18n;
 mod lang;
@@ -40,10 +41,18 @@ mod config;
 mod thinking;
 mod keys;
 mod providers;
+mod pricing;
 mod proxy;
 mod loop_guard;
 mod store;
 mod version;
+mod tooltip;
+mod balance;
+mod currency;
+mod proxy_cfg;
+mod seen_version;
+
+use admin::compute_realtime_stats_sync;
 
 use config::Config;
 use proxy::AppState;
@@ -150,36 +159,78 @@ fn exe_dir() -> std::path::PathBuf {
 
 fn ensure_default_configs(base: &std::path::Path) {
     let providers_path = base.join("providers.json");
-    if !providers_path.exists() {
+
+    // 只要 providers.json 不存在就重建默认配置。
+    // 取消「还要求 .aigate_initialized 不存在」的旧门槛: 该门槛本意是防止在
+    // 缺少真实配置的新目录里静默播种空配置遮蔽用户数据, 但其防遮蔽作用已被
+    // 「已存在即不覆盖」完全覆盖; 反而制造了「用户主动删配置后无法自动恢复、
+    // 程序直接因读不到配置而崩溃」的坑。现改为: 删 providers.json 直接重建默认,
+    // 真有备份的用户把原文件放回即可, 不会被覆盖。
+    let needs_seed = !providers_path.exists();
+    if needs_seed {
         // 默认配置预设常用供应商 (真实公开 endpoint, 不写任何密钥):
         // - endpoint 均为真实可达地址, 不再用 api.example.com 占位符 (避免误触熔断);
         // - api_key 仅通过 api_key_env 指向环境变量, 由用户自行填写, 绝不硬编码密钥;
-        // - models 留空, 由面板「拉取模型」从上游 /v1/models 自动获取, 避免模型 ID 过时。
+        // - 协议: 缺省 OpenAI chat/completions; 同一供应商下个别模型若官方规定走
+        //   /messages (Anthropic 格式, 如 opencode go 的 MiniMax/Qwen3-*-plus·max、
+        //   zen 的 Claude 系列), 直接在模型条目加 "api_format":"anthropic" 标注,
+        //   代理会自动将该模型请求的端点由 /chat/completions 改写为 /messages,
+        //   客户端侧始终是 OpenAI 兼容. 不再需要为同供应商拆分多个配置块.
+        // - 每个供应商预填各自端点的常用模型 (upstream_model 为上游真实 ID),
+        //   其余模型可在面板「拉取模型」从上游 /v1/models 自动获取后补充.
         let default = r#"{
-  "_说明": "providers 为供应商列表, 已预设常用供应商(真实 endpoint, key 走环境变量)。字段: name 名称; endpoint 上游 /v1/chat/completions 地址(必须真实可达); api_key_env 读取 Key 的环境变量名; models 模型表(留空, 在面板点「拉取模型」自动获取)。models 的键是客户端使用的【模型中转ID】(可自取), upstream_model 才是上游真实模型 ID。",
+  "_说明": "providers 为供应商列表, 已预设常用供应商(真实 endpoint, key 走环境变量)。字段: name 名称; endpoint 上游地址(必须真实可达, 缺省 /chat/completions); api_format 协议格式(缺省 openai, 可逐模型覆盖为 anthropic / /messages); api_key_env 读取 Key 的环境变量名; balance_endpoint 余额查询地址(可选); models 模型表。models 的键是客户端使用的【模型中转ID】(可自取), upstream_model 才是上游真实模型 ID。同一供应商下不同模型可能走不同协议(如 opencode go 网关 glm/kimi→/chat/completions, minimax/qwen3-*-plus·max→/messages), 无需拆分供应商, 直接在模型条目加 \"api_format\":\"anthropic\" 即可, 代理会自动改写端点路径。",
   "providers": [
     {
       "name": "zen",
       "endpoint": "https://opencode.ai/zen/v1/chat/completions",
       "api_key_env": "OPENCODE_ZEN_KEY",
       "api_key_default": "public",
-      "models": {}
+      "models": {
+        "deepseek-v4-flash": { "upstream_model": "deepseek-v4-flash" },
+        "glm-5.2": { "upstream_model": "glm-5.2" },
+        "kimi-k3": { "upstream_model": "kimi-k3" },
+        "claude-sonnet-4-6": { "upstream_model": "claude-sonnet-4-6", "api_format": "anthropic" }
+      }
     },
     {
       "name": "go",
       "endpoint": "https://opencode.ai/zen/go/v1/chat/completions",
       "api_key_env": "OPENCODE_GO_KEY",
-      "models": {}
+      "models": {
+        "deepseek-v4-flash-GO": { "upstream_model": "deepseek-v4-flash" },
+        "glm-5.2-GO": { "upstream_model": "glm-5.2" },
+        "kimi-k3-GO": { "upstream_model": "kimi-k3" },
+        "mimo-v2.5": { "upstream_model": "mimo-v2.5" },
+        "minimax-m2.5": { "upstream_model": "minimax-m2.5", "api_format": "anthropic" },
+        "minimax-m2.7": { "upstream_model": "minimax-m2.7", "api_format": "anthropic" },
+        "qwen3.8-max": { "upstream_model": "qwen3.8-max", "api_format": "anthropic" },
+        "qwen3.7-max": { "upstream_model": "qwen3.7-max", "api_format": "anthropic" }
+      }
     },
     {
       "name": "deepseek",
       "endpoint": "https://api.deepseek.com/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "models": {}
+      "balance_endpoint": "https://api.deepseek.com/user/balance",
+      "models": {
+        "deepseek-v4-flash-DS": { "upstream_model": "deepseek-v4-flash" },
+        "deepseek-v4-pro-DS": { "upstream_model": "deepseek-v4-pro" }
+      }
     }
   ]
 }"#;
         let _ = std::fs::write(&providers_path, default);
+
+        // 醒目警告: tracing 此时尚未初始化 (在 main 中更晚建立), 故直接 eprintln
+        // 并追加到 exe 同目录 aigate.log, 确保即便窗口隐藏版也能在诊断日志中看到。
+        let warn = format!(
+            "[AIGate] 警告: 在 {p} 未找到 providers.json, 已自动创建【默认配置】(常用供应商+预填模型, key 需自行填入环境变量)。\n\
+若你已有真实配置, 请将原 providers.json 复制到该目录并重启 AIGate, 否则面板看到的是默认配置。",
+            p = providers_path.display()
+        );
+        eprintln!("{warn}");
+        append_diag_log(base, &warn);
     }
 
     let env_path = base.join(".env");
@@ -193,6 +244,16 @@ fn ensure_default_configs(base: &std::path::Path) {
 
     let data_dir = base.join("data");
     let _ = std::fs::create_dir_all(&data_dir);
+}
+
+/// 在 tracing 尚未初始化时, 把诊断警告直接追加到 exe 同目录的 aigate.log,
+/// 保证窗口隐藏版 (无控制台) 也能在诊断日志中看到关键提示.
+fn append_diag_log(base: &std::path::Path, msg: &str) {
+    use std::io::Write;
+    let log_path = base.join("aigate.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = writeln!(f, "{msg}");
+    }
 }
 
 // ─── 管理面板 API 鉴权中间件 ───
@@ -348,6 +409,34 @@ fn toggle_console(show: bool) {
 #[cfg(not(windows))]
 fn toggle_console(_show: bool) {}
 
+/// 根据环境变量配置上游请求的代理策略 (诊断 opencode.ai 等 TLS 握手 EOF 用).
+fn apply_proxy_env(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    let status = crate::proxy_cfg::proxy_status();
+    match status.mode {
+        "no_proxy" => {
+            info!("proxy: AIGATE_NO_PROXY set -> system proxy disabled");
+            builder.no_proxy()
+        }
+        "custom" => {
+            let url = status.url.unwrap_or_default();
+            match reqwest::Proxy::all(&url) {
+                Ok(p) => {
+                    info!("proxy: AIGATE_PROXY set -> using explicit proxy {url}");
+                    builder.proxy(p)
+                }
+                Err(e) => {
+                    warn!("proxy: invalid AIGATE_PROXY '{url}': {e}, falling back to system proxy");
+                    builder
+                }
+            }
+        }
+        _ => {
+            info!("proxy: using system proxy (HTTPS_PROXY/https_proxy) by default");
+            builder
+        }
+    }
+}
+
 // ─── 主入口 ───
 
 fn main() {
@@ -404,7 +493,7 @@ fn main() {
         }
     };
 
-    let client = match reqwest::Client::builder()
+    let client = match apply_proxy_env(reqwest::Client::builder())
         .dns_resolver(Arc::new(Ipv4Resolver::new()))
         .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_secs))
         .timeout(std::time::Duration::from_secs(config.request_timeout_secs))
@@ -448,10 +537,19 @@ fn main() {
             if reachable {
                 info!("main: precheck ok for provider={name}");
             } else {
-                warn!("main: precheck FAILED for provider={name}, preset circuit OPEN");
-                if let Some(cb) = breakers.lock().unwrap().get_mut(&name) {
-                    cb.force_open();
-                }
+                // 启动瞬时探测失败仅作告警, 不再 force_open 永久钉死熔断.
+                //
+                // 根因: 预检只在启动那一刹那探测一次, 误判率高
+                //   (服务先于网络/代理启动、5s 超时过短、代理未就绪等).
+                // 一旦 force_open, 熔断进入 Open, 即便上游随后恢复,
+                // 也只能靠运行期自愈的 60s 节奏缓慢探测; 若某次 HalfOpen
+                // 探测请求因 handler 中途退出而漏调 report_breaker,
+                // probe_in_flight 会永久为 true → 该供应商死锁在 503, 无法自愈.
+                //
+                // 改为: 启动探测失败只告警, 运行期熔断自愈机制全权负责.
+                // 第一次真实请求仍以 Closed 状态正常放行,
+                // 若上游真不可用, 连续失败会由运行期熔断接管 (Open→HalfOpen→恢复).
+                warn!("main: precheck FAILED for provider={name} (startup snapshot only; runtime breaker handles recovery)");
             }
         }
     });
@@ -471,13 +569,19 @@ fn main() {
         retry_backoff: Duration::from_millis(config.retry_backoff_ms),
         key_store: keys::KeyStore::new("data"),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
+        stats_cache: Arc::new(tokio::sync::Mutex::new(None)),
         loop_guard: config.loop_guard.clone(),
+        strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
+        max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
+        strip_saved_chars: Arc::new(AtomicUsize::new(0)),
+        trim_saved_chars: Arc::new(AtomicUsize::new(0)),
         breakers,
     };
 
     // 管理面板 API 路由: 配置了 AIGATE_ADMIN_TOKEN 时整体启用 Bearer 鉴权.
     let mut admin_api = Router::new()
         .route("/admin/api/logs", get(admin::api_logs).delete(admin::api_logs_delete))
+        .route("/admin/api/errors", get(admin::api_errors))
         .route("/admin/api/routes", get(admin::api_routes))
         .route("/admin/api/providers", get(admin::api_providers_get))
         .route("/admin/api/providers/save", post(admin::api_providers_save))
@@ -489,10 +593,21 @@ fn main() {
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
+        .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
+        .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
+        .route("/admin/api/forward-savings", get(admin::api_forward_savings_get))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock))
         .route("/admin/api/lang", get(admin::api_lang).post(admin::api_lang_set))
-        .route("/admin/api/version", get(admin::api_version));
+        .route("/admin/api/version", get(admin::api_version))
+        .route("/admin/api/proxy-config", get(admin::api_proxy_config))
+        .route("/admin/api/changelog", get(admin::api_changelog))
+    .route("/admin/api/seen-version", get(admin::api_seen_version_get).post(admin::api_seen_version_post))
+        .route("/admin/api/realtime", get(admin::api_realtime))
+        .route("/admin/api/tooltip-config", get(admin::api_tooltip_config_get).post(admin::api_tooltip_config_set))
+        .route("/admin/api/currency", get(admin::api_currency_get).post(admin::api_currency_set))
+        .route("/admin/api/balance", get(admin::api_balance))
+        .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));
     if config.admin_token.is_some() {
         admin_api = admin_api.layer(middleware::from_fn_with_state(state.clone(), require_admin_token));
     }
@@ -502,6 +617,7 @@ fn main() {
         .route("/v1/models", get(handle_models))
         .route("/health", get(|| async { "ok" }))
         .route("/admin", get(admin::admin_page))
+        .route("/admin/static/:file", get(admin::admin_static))
         .merge(admin_api)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -545,13 +661,14 @@ fn main() {
             .with_title("AIGate")
             .with_window_icon(window_icon)
             .with_inner_size(LogicalSize::new(1200.0, 800.0))
+            .with_min_inner_size(LogicalSize::new(800.0, 600.0))
             .build(&event_loop)
             .expect("创建窗口失败"),
     );
 
     // ── WebView (wry 0.38: new/with_url 均不返回 Result) ──
     let admin_url = format!("http://127.0.0.1:{port}/admin");
-    let _webview = WebViewBuilder::new(window.as_ref())
+    let webview = WebViewBuilder::new(window.as_ref())
         .with_url(&admin_url)
         .build()
         .expect("构建 WebView 失败");
@@ -563,8 +680,15 @@ fn main() {
     toggle_console(false);
 
     // ── 事件循环 ──
+    let mut last_tooltip_update = Instant::now();
+    let mut tooltip_version = String::new();
     let _ = event_loop.run(move |event, elwt| {
-        elwt.set_control_flow(ControlFlow::Wait);
+        // 用 WaitUntil 替代 Wait: Wait 在没有窗口/托盘事件时永久阻塞, 事件循环体不执行,
+        // 导致下方 tooltip 定时更新代码永不运行 (用户最小化到托盘后悬停看到的永远是初始文本).
+        // WaitUntil 保证即使无事件, 也会按 tooltip 更新周期按时唤醒执行.
+        let tooltip_cfg = tooltip::load_config();
+        let wake_interval = Duration::from_secs(tooltip_cfg.update_interval_secs.clamp(1, 10) as u64);
+        elwt.set_control_flow(ControlFlow::WaitUntil(Instant::now() + wake_interval));
 
         // 处理托盘菜单事件
         while let Ok(menu_event) = handles.menu_rx.try_recv() {
@@ -597,14 +721,54 @@ fn main() {
             }
         }
 
+        // 更新任务栏 tooltip (根据配置)
+        let config = tooltip_cfg; // 复用循环开头读取的配置 (与 WaitUntil 唤醒周期一致)
+        let interval = config.update_interval_secs.clamp(1, 10) as u64;
+        if last_tooltip_update.elapsed() >= Duration::from_secs(interval) {
+            last_tooltip_update = Instant::now();
+            if config.enabled {
+                let stats = compute_realtime_stats_sync(&state_for_shutdown.log_buffer);
+                let mut lines = vec![format!("AIGate v{}", crate::version::VERSION), "━━━━━━━━━━━━━".to_string()];
+                if config.metrics.requests_per_second {
+                    lines.push(format!("请求速度: {:.1} req/s", stats.requests_per_second));
+                }
+                if config.metrics.avg_latency_ms {
+                    lines.push(format!("平均延迟: {:.0} ms", stats.avg_latency_ms));
+                }
+                if config.metrics.cache_hit_rate {
+                    lines.push(format!("缓存命中: {:.1}%", stats.cache_hit_rate * 100.0));
+                }
+                if config.metrics.gen_speed {
+                    lines.push(format!("生成速度: {:.1} tok/s", stats.gen_speed));
+                }
+                if config.metrics.today_requests {
+                    lines.push(format!("今日请求: {}", stats.today_requests));
+                }
+                let new_tooltip = lines.join("\n");
+                if new_tooltip != tooltip_version {
+                    tooltip_version = new_tooltip;
+                    let _ = handles._tray.set_tooltip(Some(&tooltip_version));
+                }
+            } else {
+                // tooltip 禁用，显示基础信息
+                let basic = format!("AIGate v{} (已禁用)", crate::version::VERSION);
+                if basic != tooltip_version {
+                    tooltip_version = basic;
+                    let _ = handles._tray.set_tooltip(Some(&tooltip_version));
+                }
+            }
+        }
+
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
                     // 关闭窗口 → 最小化到托盘, 不退出
                     window.set_visible(false);
                 }
-                WindowEvent::Resized(_size) => {
-                    // webview 会自动跟随窗口大小
+                WindowEvent::Resized(size) => {
+                    // 修复: winit 0.29 + wry 0.38 在 Windows 上, 双击标题栏从最大化恢复时
+                    // WebView 不会自动跟随窗口大小重绘. 显式调用 set_bounds 强制 WebView 重新适配.
+                    let _ = webview.set_bounds(wry::Rect { x: 0, y: 0, width: size.width, height: size.height });
                 }
                 _ => {}
             },

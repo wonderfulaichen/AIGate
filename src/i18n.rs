@@ -191,6 +191,11 @@ pub fn error_type(t: &str) -> &'static str {
         "insufficientquota" | "quotaexceeded" | "quota" => {
             pick("配额不足（账户余额耗尽）", "Insufficient quota (balance exhausted)")
         }
+        "freeusagelimiterror" | "freeusagelimit" | "freeusagelimitexceeded"
+        | "freelimitexceeded" | "usagelimitexceeded" | "usagelimit" => pick(
+            "免费额度超限（免费档已用尽，请稍后再试或升级套餐）",
+            "Free usage limit exceeded (free tier exhausted; retry later or upgrade)",
+        ),
         "servererror" | "internalservererror" | "internalerror" | "serviceerror" => pick(
             "服务器内部错误（供应商服务异常）",
             "Internal server error (provider fault)",
@@ -211,6 +216,29 @@ pub fn error_type(t: &str) -> &'static str {
         }
         _ => "",
     }
+}
+
+/// 翻译上游英文错误正文中的常见短语为中文 (保守替换, 未知内容原样保留).
+///
+/// 仅替换已知的固定英文短语 (如 `Rate limit exceeded`、`Please try again later`、
+/// `Error from provider (X):`), 其余 (含动态供应商名与其他原文) 保持不变, 避免误译.
+/// 用于让中文用户看到的错误正文也是中文, 同时保留英文原文用于排障.
+pub fn translate_upstream_message(msg: &str) -> String {
+    let mut s = msg.to_string();
+    // `Error from provider (X):` → `来自供应商 (X) 的错误：`
+    // 仅替换前缀, 保留括号内动态供应商名.
+    if let Some(rest) = s.strip_prefix("Error from provider (") {
+        s = format!("来自供应商 ({rest}");
+    }
+    // 已知短语保守替换 (顺序无关, 互不重叠).
+    s = s
+        .replace("Rate limit exceeded", "请求频率超限")
+        .replace("Rate limited", "请求频率受限")
+        .replace("Too many requests", "请求过多")
+        .replace("Please try again later", "请稍后再试")
+        .replace("Please retry later", "请稍后再试")
+        .replace("Please try again", "请稍后再试");
+    s
 }
 
 /// 熔断状态原始值 (closed / open / half-open) → 文案 (供面板展示).
@@ -387,6 +415,14 @@ pub fn msg_lang_unsupported(lang: &str) -> String {
     fmt_msg!("不支持的语言: {}", "Unsupported language: {}", lang)
 }
 
+/// 上游流在上游返回 finish_reason/[DONE] 之前结束, 响应可能被截断.
+pub fn msg_stream_truncated() -> &'static str {
+    pick(
+        "stream 在上游返回 finish_reason/[DONE] 之前结束（响应可能被截断）",
+        "Stream ended without upstream finish_reason/[DONE] (response likely truncated)",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +487,19 @@ mod tests {
         // 还原默认, 避免影响后续 (串行) 测试
         set_current_lang(Lang::Zh);
         assert_eq!(error_type("rate_limit_error"), "请求频率超限（请稍后重试）");
+    }
+
+    #[test]
+    fn stream_truncated_i18n() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+        set_current_lang(Lang::Zh);
+        assert_eq!(
+            msg_stream_truncated(),
+            "stream 在上游返回 finish_reason/[DONE] 之前结束（响应可能被截断）"
+        );
+        set_current_lang(Lang::En);
+        assert!(msg_stream_truncated()
+            .contains("Stream ended without upstream finish_reason/[DONE]"));
+        set_current_lang(Lang::Zh);
     }
 }

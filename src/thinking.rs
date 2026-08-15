@@ -20,7 +20,7 @@ fn normalize_effort(v: &str) -> String {
     match v.to_ascii_lowercase().as_str() {
         "minimal" | "low" => "low".to_string(),
         "medium" => "medium".to_string(),
-        "high" => "high".to_string(),
+        "high" | "xhigh" => "high".to_string(),
         "max" | "maximum" | "maximize" => "max".to_string(),
         other => other.to_string(),
     }
@@ -48,6 +48,16 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
     };
 
     let mut explicitly_disabled = false;
+
+    // 0. 部分 SDK/客户端把 thinking 塞进 extra_body (而非顶层), 先提到顶层统一处理.
+    //    仅当顶层尚无 thinking 时才搬, 避免覆盖客户端显式表达.
+    if !obj.contains_key("thinking") {
+        if let Some(eb) = obj.get_mut("extra_body").and_then(|e| e.as_object_mut()) {
+            if let Some(t) = eb.remove("thinking") {
+                obj.insert("thinking".to_string(), t);
+            }
+        }
+    }
 
     // 1. 处理客户端发来的 thinking 字段
     if let Some(thinking) = obj.remove("thinking") {
@@ -94,6 +104,14 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
         obj.insert("reasoning_effort".to_string(), Value::String(n));
     }
 
+    // 3. 推理激活时剥离采样参数: 部分上游 (DeepSeek-reasoner / Qwen-thinking 等) 固定
+    //    temperature、top_p, 请求携带会直接 400. 推理激活即 reasoning_effort 存在
+    //    (thinking:true / 对象 / 配置档注入, 且未被显式关闭). 普通模型不受影响.
+    if obj.contains_key("reasoning_effort") {
+        obj.remove("temperature");
+        obj.remove("top_p");
+    }
+
     explicitly_disabled
 }
 
@@ -107,7 +125,10 @@ mod tests {
         ModelConfig {
             upstream_model: None,
             reasoning_effort: Some(effort.to_string()),
+            free: None,
             extra_body: None,
+            api_format: None,
+            price: None,
         }
     }
 
@@ -115,7 +136,10 @@ mod tests {
         ModelConfig {
             upstream_model: None,
             reasoning_effort: None,
+            free: None,
             extra_body: None,
+            api_format: None,
+            price: None,
         }
     }
 
@@ -183,5 +207,46 @@ mod tests {
         let mut body = json!({ "model": "x", "reasoning_effort": "high" });
         normalize_thinking(&mut body, &no_effort_model());
         assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn extra_body_thinking_extracted() {
+        let mut body = json!({ "model": "x", "extra_body": { "thinking": true } });
+        normalize_thinking(&mut body, &no_effort_model());
+        assert!(body.get("extra_body").is_none() || body["extra_body"].get("thinking").is_none());
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn xhigh_alias_normalized() {
+        let mut body = json!({ "model": "x", "reasoning_effort": "xhigh" });
+        normalize_thinking(&mut body, &no_effort_model());
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn top_level_thinking_beats_extra_body() {
+        let mut body = json!({ "model": "x", "thinking": false, "extra_body": { "thinking": true } });
+        let disabled = normalize_thinking(&mut body, &no_effort_model());
+        // 顶层 thinking:false 优先, 不被 extra_body 覆盖
+        assert!(disabled);
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn sampling_params_stripped_when_reasoning_active() {
+        let mut body = json!({ "model": "x", "thinking": true, "temperature": 0.0, "top_p": 0.9 });
+        normalize_thinking(&mut body, &no_effort_model());
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn sampling_params_kept_when_reasoning_off() {
+        let mut body = json!({ "model": "x", "temperature": 0.5, "top_p": 0.8 });
+        normalize_thinking(&mut body, &no_effort_model());
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(body["top_p"], 0.8);
     }
 }

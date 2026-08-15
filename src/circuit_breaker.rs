@@ -73,6 +73,9 @@ pub struct CircuitBreaker {
     opened_at: Option<Instant>,
     /// HalfOpen 下是否已有探测在飞 (保证同时仅 1 个探测).
     probe_in_flight: bool,
+    /// 探测开始时刻: 用于探测请求因 handler 中途退出而漏调 report_breaker
+    /// 时, 超时后强制释放名额, 避免 provider 永久死锁在 503.
+    probe_since: Option<Instant>,
 }
 
 impl CircuitBreaker {
@@ -89,6 +92,7 @@ impl CircuitBreaker {
             consecutive_successes: 0,
             opened_at: None,
             probe_in_flight: false,
+            probe_since: None,
         }
     }
 
@@ -116,10 +120,21 @@ impl CircuitBreaker {
             CircuitState::Closed => true,
             CircuitState::Open => false,
             CircuitState::HalfOpen => {
+                // 防御死锁: 探测名额被占, 但探测开始已超过 timeout 仍未回填
+                // (handler 中途退出漏调 report_breaker), 强制释放名额放行新探测.
+                if self.probe_in_flight {
+                    if let Some(since) = self.probe_since {
+                        if since.elapsed() >= self.config.timeout {
+                            self.probe_in_flight = false;
+                            self.probe_since = None;
+                        }
+                    }
+                }
                 if self.probe_in_flight {
                     false
                 } else {
                     self.probe_in_flight = true;
+                    self.probe_since = Some(Instant::now());
                     true
                 }
             }
@@ -133,6 +148,7 @@ impl CircuitBreaker {
         self.consecutive_failures = 0;
         if self.state == CircuitState::HalfOpen {
             self.probe_in_flight = false;
+            self.probe_since = None;
             if self.consecutive_successes >= self.config.success_threshold {
                 self.close();
             }
@@ -156,6 +172,7 @@ impl CircuitBreaker {
             }
             CircuitState::HalfOpen => {
                 self.probe_in_flight = false;
+                self.probe_since = None;
                 self.open();
             }
             CircuitState::Open => {}
@@ -183,12 +200,14 @@ impl CircuitBreaker {
         self.state = CircuitState::Open;
         self.opened_at = Some(Instant::now());
         self.probe_in_flight = false;
+        self.probe_since = None;
     }
 
     fn close(&mut self) {
         self.state = CircuitState::Closed;
         self.opened_at = None;
         self.probe_in_flight = false;
+        self.probe_since = None;
         self.window.clear();
         self.consecutive_failures = 0;
         self.consecutive_successes = 0;
@@ -197,14 +216,6 @@ impl CircuitBreaker {
     /// 手动强制关闭熔断 (运维用, 如面板"重置熔断"按钮).
     pub fn force_close(&mut self) {
         self.close();
-    }
-
-    /// 手动强制打开熔断 (启动预检发现供应商不可达时使用).
-    ///
-    /// 进入 Open 后按 timeout 超时推进到 HalfOpen, 由探测请求决定是否恢复,
-    /// 期间所有请求快速失败 (503), 避免苦等上游超时.
-    pub fn force_open(&mut self) {
-        self.open();
     }
 }
 

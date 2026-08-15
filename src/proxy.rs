@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -35,6 +35,10 @@ pub struct AppState {
     pub registry: Arc<RwLock<ProviderRegistry>>,
     /// 内存请求日志缓冲区.
     pub log_buffer: LogBuffer,
+    /// 统计结果缓存: (seq, granularity, providers_mtime) → UsageStats.
+    /// 仅当日志有新写入或价格配置变化时失效, 避免每次面板刷新/轮询全量重算.
+    /// 内层 Arc<Mutex> 保证 AppState 可 Clone (axum State 跨任务共享同一缓存实例).
+    pub stats_cache: Arc<tokio::sync::Mutex<Option<(u64, String, u64, crate::admin::UsageStats)>>>,
     /// API Key 存储.
     pub key_store: KeyStore,
     /// 管理面板 API 鉴权令牌 (None 表示不鉴权).
@@ -53,6 +57,17 @@ pub struct AppState {
     pub breakers: BreakerMap,
     /// 模型死循环检测配置 (用于构造流式检测器, 默认开启).
     pub loop_guard: LoopGuardConfig,
+    /// 转发上游前是否剥离历史 assistant 消息中的推理链 (见 Config::strip_history_reasoning).
+    /// 运行时可通过管理面板开关切换 (AtomicBool, 重启后回到环境变量默认值).
+    pub strip_history_reasoning: Arc<AtomicBool>,
+    /// 长会话历史裁剪: 仅保留最近 N 条 user 轮 (见 Config::max_history_turns).
+    /// 默认 0 = 不裁剪. 作为 AtomicUsize 存储在 AppState, 与 strip_history_reasoning 一致,
+    /// 便于未来运行时面板可调 (当前仅环境变量控制, 重启生效).
+    pub max_history_turns: Arc<AtomicUsize>,
+    /// 转发优化省量统计: 累计剥离的推理链字符数 (供面板展示, 重启清零).
+    pub strip_saved_chars: Arc<AtomicUsize>,
+    /// 转发优化省量统计: 累计裁剪的历史字符数 (供面板展示, 重启清零).
+    pub trim_saved_chars: Arc<AtomicUsize>,
 }
 
 /// 熔断器表类型别名.
@@ -104,7 +119,10 @@ pub fn sync_breakers(breakers: &BreakerMap, provider_names: &[String], cfg: &Cir
 /// 视为**可达**; 仅当连接层错误 (DNS 失败 / 连接被拒 / 超时) 才视为**不可达**.
 /// `/models` 仅返回模型列表元数据, 不消耗生成 token, 成本可忽略.
 pub async fn precheck_provider(client: &Client, endpoint: &str, timeout: Duration) -> bool {
-    let models_url = endpoint.replace("/chat/completions", "/models");
+    // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
+    let models_url = endpoint
+        .replace("/chat/completions", "/models")
+        .replace("/messages", "/models");
     match client.get(&models_url).timeout(timeout).send().await {
         // 任何 HTTP 响应 = TCP/TLS 已建连 = 可达.
         Ok(_) => true,
@@ -129,7 +147,7 @@ pub async fn chat_completions(
         Ok(b) => b,
         Err(e) => {
             crate::admin::record_request(
-                &state.log_buffer, "-", "-", "-", 400, start, 0, Some(e.to_string()),
+                &state.log_buffer, "-", "-", "-", None, 400, start, 0, Some(e.to_string()),
             ).await;
             return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
         }
@@ -145,7 +163,7 @@ pub async fn chat_completions(
         Some(r) => r,
         None => {
             crate::admin::record_request(
-                &state.log_buffer, &model, "-", "-", 404, start, bytes.len(), None,
+                &state.log_buffer, &model, "-", "-", None, 404, start, bytes.len(), None,
             ).await;
             return Err(error_response(
                 StatusCode::NOT_FOUND,
@@ -154,17 +172,26 @@ pub async fn chat_completions(
         }
     };
     let provider_name = route.provider.name.clone();
-    let endpoint = route.provider.endpoint.clone();
+    let mut endpoint = route.provider.endpoint.clone();
     let model_cfg = route.model.clone();
     let provider = route.provider.clone(); // 保存 provider 用于后续 headers 和 api_key
     drop(route); // 释放读锁
+
+    // 模型级 Anthropic 判定: 优先模型 api_format, 回落供应商级 api_format.
+    let anthropic_mode = model_cfg.is_anthropic(&provider);
+    // 该模型走 Anthropic /messages, 但供应商端点仍是 OpenAI chat/completions 时,
+    // 自动改写端点路径 (如 opencode go 网关 /zen/go/v1/chat/completions → /messages).
+    // 若供应商端点本身已是 /messages (如原 go-anthropic), 则不改动.
+    if anthropic_mode && endpoint.ends_with("/chat/completions") {
+        endpoint = endpoint.replace("/chat/completions", "/messages");
+    }
 
     // 2.5 熔断检查: 供应商处于 Open / 探测名额占用时快速失败 (503),
     //     避免把请求打向已挂的上游, 也避免苦等 660s 超时.
     if !check_breaker(&state.breakers, &provider_name) {
         warn!("proxy: circuit open for provider={provider_name}, fast-fail 503");
         crate::admin::record_request(
-            &state.log_buffer, &model, &provider_name, &endpoint, 503, start, bytes.len(),
+            &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start, bytes.len(),
             Some("circuit breaker open".to_string()),
         ).await;
         return Err(error_response(
@@ -183,7 +210,7 @@ pub async fn chat_completions(
         Ok(k) => k,
         Err(e) => {
             crate::admin::record_request(
-                &state.log_buffer, &model, &provider_name, &endpoint, 500, start, bytes.len(), Some(e.clone()),
+                &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.clone()),
             ).await;
             return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e));
         }
@@ -191,7 +218,53 @@ pub async fn chat_completions(
 
     // 5. 注入模型级参数 (reasoning_effort / extra_body): 固定按 providers.json 配置档注入,
     //    不做自适应探测/降级 —— 思考强度完全由配置档决定 (客户端显式关闭/自带档位时尊重客户端).
-    let (bytes, _injected) = inject_model_params(bytes, &model_cfg);
+    let (bytes, _injected, strip_saved, trim_saved) = inject_model_params(
+        bytes,
+        &model_cfg,
+        state.strip_history_reasoning.load(Ordering::Relaxed),
+        state.max_history_turns.load(Ordering::Relaxed),
+    );
+    // 转发优化省量统计 (供面板展示; 仅实际发生裁剪/剥离时累计).
+    if strip_saved > 0 {
+        state
+            .strip_saved_chars
+            .fetch_add(strip_saved, Ordering::Relaxed);
+    }
+    if trim_saved > 0 {
+        state
+            .trim_saved_chars
+            .fetch_add(trim_saved, Ordering::Relaxed);
+    }
+    // 5.1 Anthropic /messages 模式: 请求体 OpenAI → Anthropic 格式转换.
+    //     客户端侧始终是 OpenAI 兼容, 转换只在网关与上游之间进行.
+    //     (anthropic_mode / endpoint 改写已在上方按模型级 api_format 完成)
+    let bytes = if anthropic_mode {
+        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(v) => {
+                // prompt cache 开关: 供应商级默认开 (go 网关 minimax/qwen 已证实支持);
+                // 个别网关改写/不支持 client cache_control 时报错时, 由 providers.json 设为 false.
+                let prompt_cache = provider.prompt_cache.unwrap_or(true);
+                let converted = crate::anthropic::openai_to_anthropic(&v, prompt_cache);
+                match serde_json::to_vec(&converted) {
+                    Ok(b) => bytes::Bytes::from(b),
+                    Err(e) => {
+                        crate::admin::record_request(
+                            &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.to_string()),
+                        ).await;
+                        return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
+                    }
+                }
+            }
+            Err(e) => {
+                crate::admin::record_request(
+                    &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 400, start, bytes.len(), Some(e.to_string()),
+                ).await;
+                return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
+            }
+        }
+    } else {
+        bytes
+    };
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
     // 5.5 响应缓存查询: 缓存开启且为非流式请求时, 命中直接返回 (省 token + 延迟).
@@ -204,10 +277,12 @@ pub async fn chat_completions(
     };
     if let Some(key) = &cache_key {
         if let Some(cached) = state.cache.get(key) {
-            let (pt, ct, hit, miss) = extract_usage(&cached);
+            let (pt, ct, hit, miss, creation) = extract_usage(&cached);
+            // 命中缓存 = 完全没打上游, 本应消耗的 prompt+completion token 全部省下 (供面板"优化成果"展示).
+            state.cache.record_hit_saved((pt + ct) as u64);
             crate::admin::record_request_with_tokens(
-                &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, cached.len(),
-                true, hit, miss, None, None,
+                &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, cached.len(),
+                true, hit, miss, creation, None, None,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -249,7 +324,7 @@ pub async fn chat_completions(
         if !check_breaker(&state.breakers, &provider_name) {
             warn!("proxy: circuit open for provider={provider_name}, fast-fail 503");
             crate::admin::record_request(
-                &state.log_buffer, &model, &provider_name, &endpoint, 503, start,
+                &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start,
                 body_len_val, Some("circuit breaker open".to_string()),
             ).await;
             return Err(error_response(
@@ -285,8 +360,10 @@ pub async fn chat_completions(
             }
             Err(e) => {
                 let chain = format_error_chain(&e);
-                // 仅连接层 / 超时错误可重试; 其余 (如请求构造错误) 直接失败.
-                let retryable = e.is_connect() || e.is_timeout();
+                // 可重试: 连接层错误 (is_connect) / 超时 (is_timeout) /
+                // 请求发送阶段断连 (is_request, 如 "connection closed before message completed").
+                // 不可重试: 响应体已开始读取 (is_body) — 流已开始, 重试会产生重复内容.
+                let retryable = e.is_connect() || e.is_timeout() || e.is_request();
                 if retryable && attempt < total_attempts {
                     warn!("proxy: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
                     retry_backoff(attempt, state.retry_backoff).await;
@@ -304,11 +381,12 @@ pub async fn chat_completions(
         warn!("proxy: send() failed for {ep_clone}: {chain}");
         let model2 = model.clone();
         let p2 = provider_name.clone();
+        let up2 = model_cfg.upstream_model.clone();
         let lb = state.log_buffer.clone();
         let s = start;
         let chain_clone = chain.clone();
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &model2, &p2, &ep_clone, 502, s, body_len_val, Some(chain_clone)).await;
+            crate::admin::record_request(&lb, &model2, &p2, &ep_clone, up2.as_deref(), 502, s, body_len_val, Some(chain_clone)).await;
         });
         return Err(error_response(StatusCode::BAD_GATEWAY, &format!("upstream error: {chain}")));
     }
@@ -323,6 +401,15 @@ pub async fn chat_completions(
             "proxy: upstream {upstream_status} for {endpoint}: {err}",
             err = &err_body[..err_body.len().min(500)]
         );
+        // Anthropic 错误体格式 {"type":"error","error":{...}} → OpenAI {"error":{...}},
+        // 使 format_upstream_error 的中文解析 (读 error.message/type) 正常工作.
+        let err_body = if anthropic_mode {
+            serde_json::from_str::<serde_json::Value>(&err_body)
+                .map(|v| crate::anthropic::anthropic_error_to_openai(&v).to_string())
+                .unwrap_or(err_body)
+        } else {
+            err_body
+        };
         // 解析错误信息，添加中文说明
         let err_msg = format_upstream_error(upstream_status, &err_body);
         // 5xx 视为供应商故障 → 记失败 (可能触发熔断); 4xx (含 429) 视为
@@ -331,10 +418,11 @@ pub async fn chat_completions(
         let err_clone = err_msg.clone();
         let model2 = model.clone();
         let p2 = provider_name.clone();
+        let up2 = model_cfg.upstream_model.clone();
         let ep2 = endpoint.clone();
         let lb = state.log_buffer.clone();
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &model2, &p2, &ep2, upstream_status, start, body_len_val, Some(err_clone)).await;
+            crate::admin::record_request(&lb, &model2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone)).await;
         });
         return Err(error_response(
             StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -350,11 +438,22 @@ pub async fn chat_completions(
     if let Some(key) = &cache_key {
         match upstream.text().await {
             Ok(body_text) => {
+                // Anthropic 非流式响应体 → OpenAI 格式 (usage 提取/客户端展示均需 OpenAI 结构)
+                let body_text = if anthropic_mode {
+                    match serde_json::from_str::<serde_json::Value>(&body_text) {
+                        Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
+                        Err(_) => body_text,
+                    }
+                } else {
+                    body_text
+                };
+                // 入缓存存 OpenAI 格式: 命中分支 (make_key 命中后) 直接把缓存体返回给客户端,
+                // 若在此存上游原始体, anthropic 模式下命中返回的是 Anthropic 结构 → 客户端解析错误.
                 state.cache.put(key, &body_text);
-                let (pt, ct, hit, miss) = extract_usage(&body_text);
+                let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
-                    &state.log_buffer, &model, &provider_name, &endpoint, start, pt, ct, body_text.len(),
-                    false, hit, miss, None, None,
+                    &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
+                    false, hit, miss, creation, None, None,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -374,10 +473,12 @@ pub async fn chat_completions(
         model,
         provider_name,
         endpoint,
+        model_cfg.upstream_model.clone(),
         start,
         body_len_val,
         state.loop_guard.clone(),
         state.stream_idle_timeout,
+        anthropic_mode,
     );
     Ok(resp)
 }
@@ -467,10 +568,12 @@ fn stream_response_with_tokens(
     model: String,
     provider: String,
     endpoint: String,
+    upstream_model: Option<String>,
     start: std::time::Instant,
     req_body_len: usize,
     loop_cfg: LoopGuardConfig,
     idle: Duration,
+    anthropic: bool,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -484,6 +587,7 @@ fn stream_response_with_tokens(
         tokens_ct: 0,
         tokens_cache_hit: 0,
         tokens_cache_miss: 0,
+        tokens_cache_creation: 0,
         response_bytes: 0,
         loop_guard: if loop_cfg.enabled {
             Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
@@ -500,11 +604,17 @@ fn stream_response_with_tokens(
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            anthropic_conv: if anthropic {
+                Some(crate::anthropic::AnthropicStreamConv::new())
+            } else {
+                None
+            },
             log_buffer: Some(TokenLogData {
                 log_buffer,
                 model,
                 provider,
                 endpoint,
+                upstream_model,
                 start,
                 req_body_len,
                 response_body_len: 0,
@@ -528,6 +638,7 @@ struct TokenLogData {
     model: String,
     provider: String,
     endpoint: String,
+    upstream_model: Option<String>,
     start: std::time::Instant,
     req_body_len: usize,
     response_body_len: usize,
@@ -543,10 +654,12 @@ struct TokenStream<S> {
     done: bool,
     tokens_pt: u32,
     tokens_ct: u32,
-    /// 上游 KV Cache 命中 token 数 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema).
+    /// 上游 KV Cache 命中 (从缓存读取) token 数 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema).
     tokens_cache_hit: u32,
-    /// 上游 KV Cache 未命中 token 数 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema).
+    /// 上游 KV Cache 全新未命中 token 数 (兼容各 schema).
     tokens_cache_miss: u32,
+    /// 上游 KV Cache 首次写入 (creation) token 数 (仅 Anthropic / OpenAI cache_creation 口径, 其余 0).
+    tokens_cache_creation: u32,
     /// 累计 SSE 响应 body 总字节数 (用于无 usage 时的估算).
     response_bytes: usize,
     /// 模型死循环检测器 (None 表示功能关闭, 不检测).
@@ -578,6 +691,9 @@ struct TokenStream<S> {
     /// 首 token 时刻 (Instant): 第一次收到增量文本内容 (content/reasoning) 的时间,
     /// 用于计算首 token 延迟 = 此刻 - 请求开始. 仅流式吐字时记录.
     first_token_at: Option<std::time::Instant>,
+    /// Anthropic /messages 模式: 非 None 时, 上游 SSE (event:/data: 行) 经此转换器
+    /// 翻译为 OpenAI 格式 payload 再走统一处理 (usage/loop_guard/归一化发射全部复用).
+    anthropic_conv: Option<crate::anthropic::AnthropicStreamConv>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -620,7 +736,14 @@ impl<S> TokenStream<S> {
         if line.is_empty() {
             return;
         }
-        // 提取 SSE payload: 兼容三种上游格式
+        // Anthropic /messages 模式: event:/data: 行经转换器翻译为 OpenAI payload, 再走统一处理.
+        if let Some(conv) = &mut self.anthropic_conv {
+            for payload in conv.feed_line(line) {
+                self.handle_payload(&payload);
+            }
+            return;
+        }
+        // OpenAI 模式: 提取 SSE payload, 兼容三种上游格式
         //  1) 标准 "data: {…}" / "data:{…}" (带或不带空格)
         //  2) 裸 JSON chunk (NDJSON 风格): zen/opencode.ai 会把部分 chunk
         //     (含 content / finish_reason 终止帧) 直接以 {"id":…,"object":"chat.completion.chunk",…}
@@ -637,6 +760,12 @@ impl<S> TokenStream<S> {
             // 真正的 SSE 非数据行 (: 注释 / event: / id: / retry: 等) 忽略.
             return;
         };
+        self.handle_payload(json_str);
+    }
+
+    /// 处理单个 OpenAI 格式 SSE payload 字符串 (usage/delta/finish_reason 提取 + 归一化发射).
+    /// OpenAI 模式直接调用; Anthropic 模式由转换器翻译后的 payload 调用.
+    fn handle_payload(&mut self, json_str: &str) {
         if json_str == "[DONE]" {
             // 上游显式发送终止帧: 标记流为干净结束 (否则 None 分支会误判为截断).
             self.clean_finish = true;
@@ -678,10 +807,14 @@ impl<S> TokenStream<S> {
             if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                 self.tokens_ct = ct as u32;
             }
-            // 上游 KV Cache 命中/未命中 (兼容 DeepSeek 扁平 schema 与 OpenAI 嵌套 schema)
-            let (hit, miss) = usage_cache(usage);
-            if hit > 0 { self.tokens_cache_hit = hit; }
-            if miss > 0 { self.tokens_cache_miss = miss; }
+            // 上游 KV Cache 命中/未命中/首次写入 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema)
+            // 同一 usage 事件内 hit / miss / creation 任一非零则整体覆盖, 避免分块 usage 互相覆盖致数值错乱.
+            let (hit, miss, creation) = usage_cache(usage);
+            if hit > 0 || miss > 0 || creation > 0 {
+                self.tokens_cache_hit = hit;
+                self.tokens_cache_miss = miss;
+                self.tokens_cache_creation = creation;
+            }
         }
         // 部分供应商把 usage 放在 choices[0] 的内层; 同时取 delta 文本喂死循环检测器.
         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
@@ -693,12 +826,18 @@ impl<S> TokenStream<S> {
                     if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                         self.tokens_ct = ct as u32;
                     }
-                    // 上游 KV Cache 命中/未命中 (兼容两种 schema)
-                    let (hit, miss) = usage_cache(inner_usage);
-                    if hit > 0 { self.tokens_cache_hit = hit; }
-                    if miss > 0 { self.tokens_cache_miss = miss; }
+                    // 上游 KV Cache 命中/未命中/首次写入 (兼容两种 schema); 任一非零则整体覆盖.
+                    let (hit, miss, creation) = usage_cache(inner_usage);
+                    if hit > 0 || miss > 0 || creation > 0 {
+                        self.tokens_cache_hit = hit;
+                        self.tokens_cache_miss = miss;
+                        self.tokens_cache_creation = creation;
+                    }
                 }
-                // 取增量文本喂给死循环检测器 (content / reasoning_content / reasoning).
+                // 取增量文本: 死循环检测器只喂 content 正文.
+                // 思考字段 (reasoning_content/reasoning) 只计入 has_token (首 token 计时), 不喂检测器:
+                // 思考过程天然高频复述同一短语, 在 384 字符窗口内易凑成 6 连重复,
+                // 曾导致 deepseek-v4-flash-GO 等 max 思考档模型 7% 请求被误截断 (2026-08-11 实机证据).
                 if let Some(delta) = choice.get("delta") {
                     let mut has_token = false;
                     for key in ["content", "reasoning_content", "reasoning"] {
@@ -706,8 +845,10 @@ impl<S> TokenStream<S> {
                             if !s.is_empty() {
                                 has_token = true;
                             }
-                            if let Some(detector) = self.loop_guard.as_mut() {
-                                detector.feed(s);
+                            if key == "content" {
+                                if let Some(detector) = self.loop_guard.as_mut() {
+                                    detector.feed(s);
+                                }
                             }
                         }
                     }
@@ -743,7 +884,7 @@ impl<S> TokenStream<S> {
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
     /// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
-    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32) {
+    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32, u32) {
         let pt = if self.tokens_pt > 0 {
             self.tokens_pt
         } else {
@@ -756,8 +897,8 @@ impl<S> TokenStream<S> {
             // 估算: 响应 body 字节 / 4 ≈ completion token 数
             std::cmp::max(1, (self.response_bytes / 4) as u32)
         };
-        // 缓存命中/未命中: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
-        (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss)
+        // 缓存命中/未命中/首次写入: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
+        (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss, self.tokens_cache_creation)
     }
 }
 
@@ -799,7 +940,7 @@ where
                             .or_else(|| this.finish_reason.clone().map(|f| format!("finish_reason={f}")));
                         tokio::spawn(async move {
                             crate::admin::record_request(
-                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
+                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
                                 200, ld.start, ld.response_body_len, err_msg,
                             ).await;
                         });
@@ -816,16 +957,24 @@ where
                         }
                         if !this.loop_aborted {
                             this.loop_aborted = true;
+                            // 附带最近检测窗口的文本样本 (≤384 字符, 换行转义为 \n), 供事后区分
+                            // 「思考重复误报」与「正文真循环」: 样本含 reasoning 特征词/缩进则多为误报.
+                            let sample = this.loop_guard.as_ref()
+                                .map(|g| g.recent_text().replace('\n', "\\n"))
+                                .unwrap_or_default();
                             warn!(
-                                "proxy: model loop detected, truncating stream (model={}, provider={}); loop note logged only",
+                                "proxy: model loop detected, truncating stream (model={}, provider={}); sample={:?}",
                                 this.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
                                 this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+                                sample,
                             );
                             // 收尾帧必须带合法 finish_reason: 否则 OpenAI 兼容客户端 (IDE) 因末帧缺
                             // finish_reason 报 "完成原因错误" (10004). 用 "length" 语义=被截断的正常
                             // 完成, 客户端当作正常收尾不报错; 空 delta 不污染正文. 若某客户端仍 10004,
-                            // 改 "stop" (最稳但把截断伪装成自然结束). 注意: 此处不置 clean_finish,
-                            // 使网关记录仍按"截断"标 error, 与客户端正常收尾互不干扰.
+                            // 改 "stop" (最稳但把截断伪装成自然结束).
+                            // 置 clean_finish: 流由网关主动干净收尾 (发了合法终止帧+[DONE]),
+                            // 不属于"上游连接意外结束"; 记录页报错由 loop_aborted 分支单独判定.
+                            this.clean_finish = true;
                             let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                         data: [DONE]\n\n";
                             return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
@@ -845,10 +994,13 @@ where
                     // 上游错误或空闲超时:
                     //  - Fix A: 兜底补发终止帧让客户端优雅收尾, 避免卡在半截帧导致 "JSON 解析错误".
                     //    与 LoopGuard 同一哲学: 先发一帧带合法 finish_reason 的终止帧, 再 [DONE].
-                    //    此处用 "stop" 而非 "length": 上游是意外断连/超时 (非我们主动截断),
-                    //    "stop" 语义=正常结束, 所有 OpenAI 兼容客户端都当正常收尾、不会报 10004;
-                    //    空 delta 不污染已转发的正文. 网关侧刻意不置 clean_finish → 记录页仍按
-                    //    "连接意外结束" 标红 (Fix B), 与客户端正常收尾互不干扰.
+                    //    此处 finish_reason 用 "length" 而非 "stop": 本分支是上游意外断连/空闲超时
+                    //    导致流中断, 内容多半不完整; "length" 语义=响应被截断, 规范 OpenAI 兼容
+                    //    客户端会提示"响应不完整, 请重试", 比用 "stop"(假装正常完成) 更诚实——
+                    //    否则用户会拿到残缺答案却误以为完整. 代价: 少数把任意非 stop 当异常的旧
+                    //    客户端可能报 10004; 但 length 是合法 finish_reason, 规范客户端只当警告,
+                    //    故优先诚实. 空 delta 不污染已转发的正文. 网关侧刻意不置 clean_finish →
+                    //    记录页仍按"连接意外结束"标红 (Fix B), 与客户端收尾互不干扰.
                     //  - Fix B: 写一条带 error 标记的完成日志, 否则该请求会从请求日志中凭空消失,
                     //    无法对账 (正是"客户端报错但网关日志看不到该请求"的根因之一).
                     warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
@@ -860,12 +1012,12 @@ where
                         let err_msg = format!("{e:?}");
                         tokio::spawn(async move {
                             crate::admin::record_request(
-                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
+                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
                                 200, ld.start, ld.response_body_len, Some(err_msg),
                             ).await;
                         });
                     }
-                    let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                    let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                 data: [DONE]\n\n";
                     return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
                 }
@@ -889,14 +1041,17 @@ where
                     if !this.done {
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
-                        let (pt, ct, hit, miss) = this.final_tokens(req_body_len);
+                        let (pt, ct, hit, miss, creation) = this.final_tokens(req_body_len);
                         // 完成日志的 error 判定:
+                        //  - 死循环检测截断 (loop_aborted): 用专属文案, 避免误显示为上游截断.
                         //  - 流从未干净结束 (clean_finish==false): 上游连接关了却没发 finish_reason/[DONE],
                         //    响应被截断 (典型 10014 mid-object split 丢尾帧) → 记为 error, 否则记录页会显示 200 成功.
                         //  - 流干净结束但 finish_reason=="error": 记为 error (10004 类).
                         // 必须在 async 块外计算 (this 是 &mut, 不能跨线程), 仅捕获拥有的 String 进 spawn.
-                        let err_for_log: Option<String> = if !this.clean_finish {
-                            Some("stream ended without upstream finish_reason/[DONE] (response likely truncated)".to_string())
+                        let err_for_log: Option<String> = if this.loop_aborted {
+                            Some("model loop detected, stream truncated by AIGate".to_string())
+                        } else if !this.clean_finish {
+                            Some(crate::i18n::msg_stream_truncated().to_string())
                         } else {
                             this.finish_reason.clone()
                                 .filter(|f| f == "error")
@@ -908,9 +1063,9 @@ where
                             let first_token_ms = this.first_token_at.map(|t| t.duration_since(ld.start).as_millis() as u64);
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
-                                    &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint,
+                                    &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
                                     ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss,
+                                    hit, miss, creation,
                                     first_token_ms,
                                     err_for_log,
                                 ).await;
@@ -953,68 +1108,197 @@ async fn retry_backoff(attempt: u32, base: Duration) {
 ///   3) Anthropic 原生 (OpenCode GO / Claude 后端): `usage.cache_read_input_tokens` (命中)
 ///      + `usage.input_tokens` (非缓存输入, 含首次写入, 作为未命中).
 /// 均未提供时返回 (0, 0).
-fn usage_cache(usage: &serde_json::Value) -> (u32, u32) {
-    // 1) 扁平 schema (DeepSeek 等)
+/// 从上游 `usage` 提取 KV Cache 统计, 返回 `(hit, miss, creation)`:
+/// - `hit`     : 命中 (从缓存读取), 多数 schema 的 cache_read.
+/// - `miss`    : 全新未缓存输入 (fresh), 按 input 价计费.
+/// - `creation`: 首次写入缓存 (仅 Anthropic / OpenAI cache_creation 口径; 多数供应商为 0,
+///               此时并入 `miss` 按 input 价计, 等价旧行为).
+///
+/// 计费口径: 三者之和 ≈ prompt_tokens; `compute_cost` 对 creation 缺失独立价时回退 input 价,
+/// 故对无 creation 口径的供应商 (DeepSeek 等) 结果与旧实现完全一致.
+pub(crate) fn usage_cache(usage: &serde_json::Value) -> (u32, u32, u32) {
+    // 1) 扁平 schema (DeepSeek 等): hit=hit, miss=miss(含首次写入, 按 input 计), creation=0.
     if let Some(hit) = usage.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()) {
         let hit = hit as u32;
         let miss = usage
             .get("prompt_cache_miss_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        return (hit, miss);
+        return (hit, miss, 0);
     }
-    // 2) OpenAI 原生嵌套 schema
+    // 2) OpenAI 原生嵌套 schema: cached_tokens=hit, cache_creation_tokens=creation.
     if let Some(cached) = usage
         .get("prompt_tokens_details")
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|v| v.as_u64())
     {
         let cached = cached as u32;
+        let creation = usage
+            .get("prompt_tokens_details")
+            .and_then(|d| d.get("cache_creation_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
         let pt = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let miss = pt.saturating_sub(cached);
-        return (cached, miss);
+        let miss = pt.saturating_sub(cached).saturating_sub(creation);
+        return (cached, miss, creation);
     }
     // 3) Anthropic 原生 schema (OpenCode GO / Claude 后端):
-    //    cache_read_input_tokens = 命中 (从缓存读取); input_tokens 已是"非缓存输入" (含首次写入), 直接作未命中.
-    //    注意: Anthropic 的 input_tokens 不含 cache_read, 总量 = input_tokens + cache_read_input_tokens, 不可相减.
+    //    cache_read_input_tokens=命中, cache_creation_input_tokens=首次写入,
+    //    input_tokens=全新未缓存输入(作 miss). 三者之和 = 总量, 不可随意相减.
     if let Some(read) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
         let read = read as u32;
+        let creation = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
         let miss = if let Some(inp) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
             inp as u32
         } else {
-            // 部分转换层把总量放在 prompt_tokens, 此时未命中 = 总量 - 缓存命中
+            // 部分转换层把总量放在 prompt_tokens, 此时未命中 = 总量 - 命中 - 写入.
             (usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32)
                 .saturating_sub(read)
+                .saturating_sub(creation)
         };
-        return (read, miss);
+        return (read, miss, creation);
     }
-    (0, 0)
+    (0, 0, 0)
 }
 
 /// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
 ///
-/// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
-/// 后两者来自上游 `usage` 的 KV Cache 命中统计 (兼容 DeepSeek 扁平 / OpenAI 嵌套 schema),
+/// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens).
+/// 后三者来自上游 `usage` 的 KV Cache 统计 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema),
 /// 未提供时为 0.
-fn extract_usage(text: &str) -> (u32, u32, u32, u32) {
+fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0, 0, 0);
+        return (0, 0, 0, 0, 0);
     };
     let mut pt = 0u32;
     let mut ct = 0u32;
     let mut hit = 0u32;
     let mut miss = 0u32;
+    let mut creation = 0u32;
     if let Some(u) = v.get("usage") {
         pt = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
         ct = u
             .get("completion_tokens")
             .and_then(|x| x.as_u64())
             .unwrap_or(0) as u32;
-        let (h, m) = usage_cache(u);
+        let (h, m, c) = usage_cache(u);
         hit = h;
         miss = m;
+        creation = c;
     }
-    (pt, ct, hit, miss)
+    (pt, ct, hit, miss, creation)
+}
+
+/// 转发上游前瘦身历史: 移除不含 tool_calls 的 assistant 消息中的推理链.
+///
+/// 上游回传的 `reasoning_content` / `reasoning` 会随多轮历史累积, 既浪费输入 token
+/// 又无推理价值 (推理链不应被"喂回"模型), 还会干扰 KV 缓存命中. 带 tool_calls 的
+/// assistant 消息保留推理链 (部分客户端规范要求 reasoning 与 tool_calls 并存).
+/// 返回被剥离的推理链字符数 (供面板"转发优化省量"统计).
+fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> usize {
+    let Some(obj) = body.as_object_mut() else {
+        return 0;
+    };
+    let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return 0;
+    };
+    let mut saved_chars = 0usize;
+    for msg in messages.iter_mut() {
+        let Some(m) = msg.as_object_mut() else {
+            continue;
+        };
+        if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            continue;
+        }
+        // 保留带工具调用的 assistant 消息推理链.
+        let has_tool_calls = m
+            .get("tool_calls")
+            .and_then(|t| t.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
+        if has_tool_calls {
+            continue;
+        }
+        for key in ["reasoning_content", "reasoning"] {
+            if let Some(v) = m.remove(key) {
+                // 估算省量: 字段序列化文本的字节数 (JSON 转义后长度, 与上游 input 计费同源).
+                saved_chars += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
+            }
+        }
+    }
+    saved_chars
+}
+
+/// 长会话历史裁剪: 仅保留最近 `n` 条 user 轮, 更早的历史整体丢弃, 降低每轮 input token.
+///
+/// 规则 (从 messages 数组尾部向前扫描):
+/// - 所有 `system` 消息始终保留 (prompt 前缀, 不可裁).
+/// - 从尾部向前保留, 直到累计 `n` 条 `user` 消息为止; 这些 user 之间的 assistant/tool
+///   消息一并保留 (tool 链不能拆散); 更旧的前缀整体丢弃 (含其 user).
+/// - 当前最新请求 (最后一条 user) 必然保留.
+///
+/// 默认 `n == 0` 时调用方不会进入本函数 (在 inject_model_params 已 gate).
+/// 返回被丢弃消息的序列化字节数 (供面板"转发优化省量"统计).
+fn trim_history_turns(body: &mut serde_json::Value, n: usize) -> usize {
+    let Some(obj) = body.as_object_mut() else {
+        return 0;
+    };
+    let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return 0;
+    };
+    let len = messages.len();
+    if len == 0 {
+        return 0;
+    }
+
+    let mut keep = vec![false; len];
+    let mut user_count = 0usize;
+
+    // 先无条件保留所有 system (prompt 前缀, 不可裁), 与后续反向扫描的 break 互不干扰.
+    for i in 0..len {
+        if messages[i]
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("")
+            == "system"
+        {
+            keep[i] = true;
+        }
+    }
+
+    // 从尾部向前扫描, 保留最近 n 条 user 及其间消息 (system 已标记, 此处仅处理 non-system).
+    for i in (0..len).rev() {
+        let role = messages[i]
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        if role == "system" {
+            continue; // 已标记, 跳过
+        }
+        keep[i] = true;
+        if role == "user" {
+            user_count += 1;
+            if user_count >= n {
+                break;
+            }
+        }
+    }
+
+    // 重组: 仅保留标记索引, 保持原顺序; 同时累计被丢弃消息的序列化字节数.
+    let mut retained: Vec<serde_json::Value> = Vec::with_capacity(len);
+    let mut saved_chars = 0usize;
+    for i in 0..len {
+        if keep[i] {
+            retained.push(messages[i].clone());
+        } else {
+            saved_chars += serde_json::to_string(&messages[i]).map(|s| s.len()).unwrap_or(0);
+        }
+    }
+    *messages = retained;
+    saved_chars
 }
 
 /// 注入模型级参数到请求 body.
@@ -1023,14 +1307,30 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32) {
 /// - reasoning_effort: 配置档仅作"客户端无指示时的默认". 客户端显式关闭思考
 ///   (`thinking:false`) 或已自带档位时不注入/不覆盖, 客户端档位优先.
 /// - extra_body: 逐字段注入, 不覆盖已有字段.
+/// 返回 (序列化后的 bytes, 是否有注入, 剥离推理链省量字符数, 历史裁剪省量字符数).
+/// 后两者供面板"转发优化省量"统计展示.
 fn inject_model_params(
     bytes: bytes::Bytes,
     model_cfg: &crate::providers::ModelConfig,
-) -> (bytes::Bytes, bool) {
+    strip_history_reasoning: bool,
+    max_history_turns: usize,
+) -> (bytes::Bytes, bool, usize, usize) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return (bytes, false); // 解析失败, 原样返回
+        return (bytes, false, 0, 0); // 解析失败, 原样返回
     };
     let had_effort = v.get("reasoning_effort").is_some();
+
+    // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
+    let mut strip_saved = 0usize;
+    if strip_history_reasoning {
+        strip_saved = strip_history_reasoning_messages(&mut v);
+    }
+
+    // 长会话历史裁剪: 仅保留最近 N 条 user 轮, 更早的整体丢弃 (默认 0 = 不裁剪).
+    let mut trim_saved = 0usize;
+    if max_history_turns > 0 {
+        trim_saved = trim_history_turns(&mut v, max_history_turns);
+    }
 
     // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
     // 返回客户端是否显式关闭思考 (thinking:false), 用于跳过配置档兜底注入.
@@ -1045,7 +1345,12 @@ fn inject_model_params(
         .map(|v| v.is_object())
         .unwrap_or(false);
     if !has_remap && !has_effort && !has_extra {
-        return (serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(), false);
+        return (
+            serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(),
+            false,
+            strip_saved,
+            trim_saved,
+        );
     };
 
     // 替换 model 为上游真实模型名
@@ -1084,7 +1389,12 @@ fn inject_model_params(
     }
 
     let injected = v.get("reasoning_effort").is_some() && !had_effort;
-    (serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(), injected)
+    (
+        serde_json::to_vec(&v).unwrap_or_else(|_| bytes.to_vec()).into(),
+        injected,
+        strip_saved,
+        trim_saved,
+    )
 }
 
 /// 过滤客户端 headers: 白名单模式, 只转发安全的标准 headers.
@@ -1162,10 +1472,13 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
     // 尝试解析 JSON 错误响应
     if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(err_body) {
         if let Some(error) = err_json.get("error") {
-            let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            let raw_msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            // 上游英文错误正文保守翻译为中文 (未知短语原样保留), 让中文用户
+            // 也能看懂错误原因; 英文原文保留便于排障.
+            let msg = crate::i18n::translate_upstream_message(raw_msg);
             let err_type = error.get("type").and_then(|t| t.as_str()).unwrap_or("");
             let code = error.get("code").and_then(|c| c.as_str()).unwrap_or("");
-            format_error_line(status, msg, err_type, code, status_expl)
+            format_error_line(status, &msg, err_type, code, status_expl)
         } else if let Some(m) = err_json.get("message").and_then(|m| m.as_str()) {
             // 顶层 message 结构 → status 兜底 + 原文 (空串则回退原文)
             if m.is_empty() {
@@ -1208,7 +1521,7 @@ fn format_upstream_error(status: u16, err_body: &str) -> String {
 ///   3) 顶层 `{"detail":...}` (FastAPI / Django 网关).
 /// 正常数据 (无 error/message/detail) 返回 `None`, 不影响透传.
 fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
-    let (msg, err_type, code) = if let Some(e) = val.get("error").and_then(|e| e.as_object()) {
+    let (raw_msg, err_type, code) = if let Some(e) = val.get("error").and_then(|e| e.as_object()) {
         (
             e.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
             e.get("type").and_then(|t| t.as_str()).unwrap_or("").to_string(),
@@ -1221,6 +1534,8 @@ fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
     } else {
         return None;
     };
+    // 上游英文错误正文保守翻译为中文 (未知短语原样保留).
+    let msg = crate::i18n::translate_upstream_message(&raw_msg);
     if msg.is_empty() && err_type.is_empty() && code.is_empty() {
         return None;
     }
@@ -1251,7 +1566,10 @@ mod tests {
         ModelConfig {
             upstream_model: None,
             reasoning_effort: Some(effort.to_string()),
+            free: None,
             extra_body: None,
+            api_format: None,
+            price: None,
         }
     }
 
@@ -1259,7 +1577,10 @@ mod tests {
         ModelConfig {
             upstream_model: None,
             reasoning_effort: None,
+            free: None,
             extra_body: None,
+            api_format: None,
+            price: None,
         }
     }
 
@@ -1272,7 +1593,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -1283,7 +1604,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -1293,7 +1614,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -1303,9 +1624,80 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _) = inject_model_params(bytes::Bytes::from(body), &cfg);
+        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
+    }
+
+    /// strip_history_reasoning: 不含 tool_calls 的 assistant 消息推理链被剥离.
+    #[test]
+    fn strip_history_reasoning_removes_content() {
+        let mut body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "assistant", "content": "a", "reasoning_content": "long chain", "reasoning": "r" },
+                { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
+            ]
+        });
+        let saved = strip_history_reasoning_messages(&mut body);
+        let msgs = body["messages"].as_array().unwrap();
+        assert!(msgs[1].get("reasoning_content").is_none());
+        assert!(msgs[1].get("reasoning").is_none());
+        // 带 tool_calls 的 assistant 消息保留推理链
+        assert_eq!(msgs[2]["reasoning_content"], "keep");
+        // 省量统计: 剥离了 "long chain" + "r" 两个字段的序列化字节数 (>0, 且带 tool_calls 的不计)
+        assert!(saved > 0, "应统计到被剥离推理链的字符数");
+    }
+
+    /// trim_history_turns: 仅保留最近 N 条 user 轮, system 始终保留, tool 链随所属轮保留.
+    #[test]
+    fn trim_history_keeps_last_n_user_turns_and_system() {
+        let mut body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                { "role": "system", "content": "preamble" },
+                { "role": "user", "content": "old-1" },
+                { "role": "assistant", "content": "a1" },
+                { "role": "user", "content": "old-2" },
+                { "role": "assistant", "content": "a2" },
+                { "role": "user", "content": "mid-3" },
+                { "role": "assistant", "content": "a3" },
+                { "role": "user", "content": "new-4" }
+            ]
+        });
+        let saved = trim_history_turns(&mut body, 2); // 仅保留最近 2 条 user 轮
+        let msgs = body["messages"].as_array().unwrap();
+        // system 保留 + 最近 2 条 user (mid-3, new-4) 及其间 assistant 回复 a3
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[1]["content"], "mid-3");
+        assert_eq!(msgs[2]["content"], "a3");
+        assert_eq!(msgs[3]["content"], "new-4");
+        // 早期的 old-1 / old-2 及其 assistant 回复被丢弃
+        assert!(!msgs.iter().any(|m| m.get("content").and_then(|c| c.as_str()) == Some("old-1")));
+        assert!(!msgs.iter().any(|m| m.get("content").and_then(|c| c.as_str()) == Some("old-2")));
+        // 省量统计: 丢弃了 4 条消息 (system 前的 old-1/a1/old-2/a2), 序列化字节数 > 0
+        assert!(saved > 0, "应统计到被裁剪历史的字符数");
+    }
+
+    /// trim_history_turns: tool 链不可拆散 — 保留的 user 与其后续 tool 消息一起保留.
+    #[test]
+    fn trim_history_preserves_tool_chain() {
+        let mut body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                { "role": "user", "content": "u1" },
+                { "role": "assistant", "content": "a1", "tool_calls": [{ "id": "t1" }] },
+                { "role": "tool", "content": "result1", "tool_call_id": "t1" },
+                { "role": "user", "content": "u2" }
+            ]
+        });
+        trim_history_turns(&mut body, 1); // 仅保留最新 1 条 user (u2)
+        let msgs = body["messages"].as_array().unwrap();
+        // u2 单独一条 user, 之前的 u1+assistant(tool_calls)+tool 整链丢弃
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["content"], "u2");
     }
 
     /// 测试 format_upstream_error 函数.
@@ -1317,7 +1709,9 @@ mod tests {
         assert!(result.contains("400"));
         assert!(result.contains("请求参数错误"));
         assert!(result.contains("invalid_request_error"));
-        assert!(result.contains("Error from provider"));
+        // 上游正文已被翻译: 'Error from provider (X):' → '来自供应商 (X):'
+        assert!(result.contains("来自供应商 (Console)"));
+        assert!(!result.contains("Error from provider"));
 
         // 测试 2: authentication_error - 应包含认证失败说明
         let err_body = r#"{"error":{"message":"Invalid API key","type":"authentication_error"}}"#;
@@ -1326,12 +1720,28 @@ mod tests {
         assert!(result.contains("认证失败"));
         assert!(result.contains("Invalid API key"));
 
-        // 测试 3: rate_limit_error - 应包含频率限制说明
+        // 测试 3: rate_limit_error - 应包含频率限制说明; 上游英文正文应被翻译为中文
         let err_body = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#;
         let result = format_upstream_error(429, err_body);
         assert!(result.contains("429"));
         assert!(result.contains("请求频率超限"));
-        assert!(result.contains("Rate limit exceeded"));
+        // 翻译后不再保留原始英文短语 'Rate limit exceeded'
+        assert!(!result.contains("Rate limit exceeded"));
+
+        // 测试 3b: FreeUsageLimitError (Console 免费档超限) - type 应映射到中文说明,
+        // 且含 "Error from provider (X): Rate limit exceeded. Please try again later."
+        // 这类正文也应被翻译为纯中文 (供应商名保留).
+        let err_body = r#"{"error":{"message":"Error from provider (Console): Rate limit exceeded. Please try again later.","type":"FreeUsageLimitError"}}"#;
+        let result = format_upstream_error(429, err_body);
+        assert!(result.contains("429"));
+        assert!(result.contains("免费额度超限"));
+        assert!(result.contains("FreeUsageLimitError"));
+        assert!(result.contains("来自供应商 (Console)"));
+        assert!(result.contains("请求频率超限"));
+        assert!(result.contains("请稍后再试"));
+        // 翻译后英文原文短语不应再出现
+        assert!(!result.contains("Rate limit exceeded"));
+        assert!(!result.contains("Please try again later"));
 
         // 测试 4: 非 JSON 格式 + 状态码有说明 - 应基于状态码给中文说明
         let err_body = "plain text error";
@@ -1377,14 +1787,14 @@ mod tests {
     fn test_extract_usage_cache_fields() {
         // 含 cache 字段 → 完整提取 4 元组
         let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":5}}"#;
-        assert_eq!(extract_usage(body), (10, 20, 100, 5));
+        assert_eq!(extract_usage(body), (10, 20, 100, 5, 0));
 
         // 无 cache 字段 → 命中/未命中记 0
         let body = r#"{"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
-        assert_eq!(extract_usage(body), (7, 3, 0, 0));
+        assert_eq!(extract_usage(body), (7, 3, 0, 0, 0));
 
         // 非 JSON → 全部为 0
-        assert_eq!(extract_usage("not json"), (0, 0, 0, 0));
+        assert_eq!(extract_usage("not json"), (0, 0, 0, 0, 0));
     }
 
     /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
@@ -1398,6 +1808,7 @@ mod tests {
             tokens_ct: 0,
             tokens_cache_hit: 0,
             tokens_cache_miss: 0,
+            tokens_cache_creation: 0,
             response_bytes: 0,
             loop_guard: None,
             loop_aborted: false,
@@ -1410,6 +1821,7 @@ mod tests {
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            anthropic_conv: None,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -1441,6 +1853,7 @@ mod tests {
         );
         assert_eq!(ts.tokens_cache_hit, 200);
         assert_eq!(ts.tokens_cache_miss, 50);
+        assert_eq!(ts.tokens_cache_creation, 30);
     }
 
     /// 流式错误事件翻译: 标准 error 事件 / 顶层 message / 顶层 detail / 正常数据返回 None.
@@ -1486,6 +1899,7 @@ mod tests {
             tokens_ct: 0,
             tokens_cache_hit: 0,
             tokens_cache_miss: 0,
+            tokens_cache_creation: 0,
             response_bytes: 0,
             loop_guard: None,
             loop_aborted: false,
@@ -1498,6 +1912,7 @@ mod tests {
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            anthropic_conv: None,
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件

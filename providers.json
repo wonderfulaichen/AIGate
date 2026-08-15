@@ -1,5 +1,5 @@
 {
-  "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。",
+  "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。注意：OpenCode 等网关同一供应商下不同模型可能走不同端点（如 go 网关的 glm/kimi 走 /chat/completions，minimax / qwen3-*-plus·max 走 /messages）。AIGate 支持【模型级 api_format 覆盖】：在模型条目加 \"api_format\": \"anthropic\" 即可让该模型走 /messages，无需为同一供应商拆分多个配置块；未设置则回落供应商级 api_format（缺省 openai）。点「获取模型」拉取上游时会按官方清单自动标注 api_format。",
   "providers": [
     {
       "name": "zen",
@@ -9,6 +9,7 @@
       "models": {
         "zen-coder":  {"upstream_model": "deepseek-v4-flash-free", "reasoning_effort": "max"},
         "zen-chat":   {"upstream_model": "mimo-v2.5-free", "reasoning_effort": "high"},
+        "zen-claude": {"upstream_model": "claude-sonnet-4-6", "api_format": "anthropic", "reasoning_effort": "high"},
         "zen-mini":   {"upstream_model": "north-mini-code-free"},
         "zen-vision": {"upstream_model": "big-pickle"}
       }
@@ -21,13 +22,16 @@
         "go-coder":  {"upstream_model": "kimi-k2.7-code", "reasoning_effort": "high"},
         "go-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"},
         "go-flash":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
-        "go-glm":    {"upstream_model": "glm-5.2", "reasoning_effort": "high"}
+        "go-glm":    {"upstream_model": "glm-5.2", "reasoning_effort": "high"},
+        "go-mm":     {"upstream_model": "minimax-m2.5", "api_format": "anthropic"},
+        "go-qwen":   {"upstream_model": "qwen3.7-max", "api_format": "anthropic"}
       }
     },
     {
       "name": "deepseek",
       "endpoint": "https://api.deepseek.com/v1/chat/completions",
       "api_key_env": "DEEPSEEK_API_KEY",
+      "balance_endpoint": "https://api.deepseek.com/user/balance",
       "models": {
         "ds-coder":  {"upstream_model": "deepseek-v4-flash", "reasoning_effort": "max"},
         "ds-reason": {"upstream_model": "deepseek-v4-pro", "reasoning_effort": "max"}

@@ -35,6 +35,16 @@ pub struct Config {
     pub cache_max_entries: usize,
     /// 模型死循环检测配置 (可经环境变量覆盖, 默认开启).
     pub loop_guard: LoopGuardConfig,
+    /// 转发上游前是否剥离历史 assistant 消息中的推理链 (reasoning_content/reasoning).
+    /// 默认开启: 多轮对话中上游回传的推理链会随历史累积, 既浪费输入 token 又无推理价值
+    /// (推理链不应被"喂回"模型), 还会干扰 KV 缓存命中. 带 tool_calls 的 assistant 消息保留
+    /// (部分客户端规范要求推理链与工具调用并存).
+    pub strip_history_reasoning: bool,
+    /// 长会话历史裁剪: 仅保留最近 N 条 user 轮, 更早的历史整体丢弃 (降低每轮 input token).
+    /// 默认 0 = 不裁剪 (保持现状). 设为正整数即开启 (推荐 10~30). 这是"以质量换成本"的
+    /// 显式开关, 默认关闭以免悄悄丢失早期上下文依赖. system 消息始终保留, tool 链随所属
+    /// user 轮一并保留/丢弃.
+    pub max_history_turns: usize,
 }
 
 impl Config {
@@ -79,6 +89,8 @@ impl Config {
                 min_repeat: env_usize("LOOP_GUARD_MIN_REPEAT", 6),
                 max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 4096),
             },
+            strip_history_reasoning: env_bool("STRIP_HISTORY_REASONING", true), // 默认开启
+            max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪
         }
     }
 }

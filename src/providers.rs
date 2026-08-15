@@ -9,6 +9,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::pricing::ModelPrice;
+
 /// 单个模型的配置.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
@@ -20,9 +22,66 @@ pub struct ModelConfig {
     pub upstream_model: Option<String>,
     /// 思考强度: low / medium / high / max (仅对支持推理的模型生效).
     pub reasoning_effort: Option<String>,
+    /// 是否为免费模型 (显式标记, 可选).
+    ///
+    /// 未显式标记时, [`is_free`](Self::is_free) 会自动回退识别
+    /// `upstream_model` 字符串是否包含 `free` 或 `免费` (小写不敏感).
+    #[serde(default)]
+    pub free: Option<bool>,
     /// 额外注入到请求 body 的字段 (任意 JSON 键值对).
     #[serde(default)]
     pub extra_body: Option<serde_json::Value>,
+    /// 模型级 API 格式覆盖: 可选 "openai" / "anthropic".
+    ///
+    /// 不设置时回落到供应商级 [`ProviderConfig::api_format`].
+    /// 用途: 同供应商(如 opencode go / zen 网关)下, 不同模型可能走不同端点
+    /// (glm/kimi → /chat/completions, minimax / qwen3-plus·max → /messages),
+    /// 仅靠供应商级 `api_format` 无法区分, 需在此逐个标注.
+    /// 点「获取」拉取上游模型时, 见 [`default_api_format`] 自动打标.
+    #[serde(default)]
+    pub api_format: Option<String>,
+    /// 模型价格（元 / 百万 tokens）— 费用统计用.
+    ///
+    /// 优先级高于内置默认价格表（见 `crate::pricing`）. 缺省时回退内置表;
+    /// 内置表也未覆盖的模型, 费用记为 0（"未配置价格"）.
+    ///
+    /// 字段: `{ "input_per_m": 1.0, "output_per_m": 2.0, "cache_read_per_m": 0.02 }`,
+    /// `cache_read_per_m` 可选（KV Cache 命中价, 缺失则按输入价计）.
+    #[serde(default)]
+    pub price: Option<ModelPrice>,
+}
+
+impl ModelConfig {
+    /// 判定模型是否免费.
+    ///
+    /// 规则: 显式 `free: true` 优先; 否则回退自动识别
+    /// `upstream_model` (或 model id) 是否包含 `free` / `免费` (小写不敏感).
+    pub fn is_free(&self, model_id: &str) -> bool {
+        if self.free == Some(true) {
+            return true;
+        }
+        if self.free == Some(false) {
+            return false;
+        }
+        let s = self
+            .upstream_model
+            .as_deref()
+            .unwrap_or(model_id)
+            .to_lowercase();
+        s.contains("free") || s.contains("免费")
+    }
+
+    /// 判定该模型是否走 Anthropic /messages 协议.
+    ///
+    /// 优先级: 模型级 `api_format` 覆盖 > 供应商级 `api_format` (回落).
+    /// 例: go 供应商整体 openai, 但某 minimax 模型标 `api_format: "anthropic"`,
+    ///     则该模型走 /messages, 其余模型仍走 /chat/completions.
+    pub fn is_anthropic(&self, provider: &ProviderConfig) -> bool {
+        match &self.api_format {
+            Some(f) => f == "anthropic",
+            None => provider.is_anthropic(),
+        }
+    }
 }
 
 /// 单个供应商的配置.
@@ -36,11 +95,33 @@ pub struct ProviderConfig {
     pub api_key_env: String,
     /// 未配置环境变量时的默认值 (如 Zen 的 "public").
     pub api_key_default: Option<String>,
+    /// 余额查询 API 端点 (可选).
+    #[serde(default)]
+    pub balance_endpoint: Option<String>,
     /// 额外注入的 HTTP 请求头.
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
+    /// 上游 API 格式: 缺省 "openai" (chat/completions);
+    /// 设为 "anthropic" 时, 代理把 OpenAI 请求体转换为 Anthropic /messages 格式,
+    /// 并把 Anthropic 流式/非流式响应逆转换为 OpenAI 格式返回客户端.
+    /// (OpenCode Go 网关的 MiniMax/Qwen 系列走 /messages, 见官方 go.mdx.)
+    #[serde(default)]
+    pub api_format: Option<String>,
+    /// 供应商级 prompt caching 开关 (仅 Anthropic /messages 协议生效).
+    /// 默认 true: 在 system 末块 + 最后一条 user 消息注入 cache_control, 使上游第二轮起
+    /// 命中 prompt cache (input 按 0.1x 计 + 一次性写入费). 个别网关不支持/会改写 client
+    /// cache_control 时报错, 可设 false 关闭. 仅对走 /messages 的模型生效.
+    #[serde(default)]
+    pub prompt_cache: Option<bool>,
     /// 该供应商支持的模型, key 是 model id.
     pub models: HashMap<String, ModelConfig>,
+}
+
+impl ProviderConfig {
+    /// 是否使用 Anthropic /messages 协议.
+    pub fn is_anthropic(&self) -> bool {
+        self.api_format.as_deref() == Some("anthropic")
+    }
 }
 
 /// providers.json 的顶层结构.
@@ -187,13 +268,58 @@ impl ProviderRegistry {
                     ModelConfig {
                         upstream_model: Some(id.clone()),
                         reasoning_effort: None,
+                        free: None,
                         extra_body: None,
+                        api_format: default_api_format(&provider.name, id).map(|s| s.to_string()),
+                        price: None,
                     },
                 );
                 added += 1;
             }
         }
         (added, skipped)
+    }
+}
+
+/// 按官方网关清单, 为「供应商 + 模型 ID」推断默认 API 格式 (OpenAI / Anthropic).
+///
+/// 数据来源: opencode 官方文档 `go.mdx` / `zen.mdx` (已对照源码核实):
+///
+/// - **go 网关** (`/zen/go/v1`):
+///   - `glm` / `kimi` / `deepseek` / `mimo` → `/chat/completions` (OpenAI)
+///   - `minimax-*`、`qwen3.*-plus/max` (含 m2.5) → `/messages` (Anthropic)
+/// - **zen 网关** (`/zen/v1`):
+///   - `minimax-m2.5/m2.7`、`deepseek`、`glm`、`kimi` → `/chat/completions` (OpenAI)
+///   - `claude-*`、`qwen3.5/3.6/3.7-plus/max` → `/messages` (Anthropic)
+///   - `gpt-*` → `/responses` (AIGate 暂不支持, 不标注, 留待部署方手动处理)
+///
+/// 返回 `Some("anthropic")` 表示需走 Anthropic /messages; 返回 `None` 表示
+/// 回落 OpenAI (即不写 `api_format` 字段). 仅匹配已知前缀, 未知供应商一律 `None`.
+pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'static str> {
+    let id = model_id.to_lowercase();
+    let provider = provider_name.to_lowercase();
+    match provider.as_str() {
+        "go" => {
+            // minimax-* 与 qwen3.*-plus/max 走 /messages
+            if id.starts_with("minimax")
+                || (id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")))
+            {
+                Some("anthropic")
+            } else {
+                None
+            }
+        }
+        "zen" => {
+            // claude-* 与 qwen3*-plus/max 走 /messages; minimax-m2.x / deepseek / glm / kimi 回落 openai
+            if id.starts_with("claude")
+                || (id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")))
+            {
+                Some("anthropic")
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -209,7 +335,11 @@ pub async fn fetch_models_from_upstream(
     provider: &ProviderConfig,
     key: &str,
 ) -> Result<Vec<String>, String> {
-    let models_url = provider.endpoint.replace("/chat/completions", "/models");
+    // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
+    let models_url = provider
+        .endpoint
+        .replace("/chat/completions", "/models")
+        .replace("/messages", "/models");
     let mut req = client.get(&models_url);
     if !key.is_empty() {
         req = req.header("Authorization", format!("Bearer {key}"));
@@ -295,6 +425,31 @@ mod tests {
     "#;
 
     #[test]
+    fn is_free_detects_flag_and_name() {
+        let base = |upstream: Option<&str>, free: Option<bool>| ModelConfig {
+            upstream_model: upstream.map(|s| s.to_string()),
+            reasoning_effort: None,
+            free,
+            extra_body: None,
+            api_format: None,
+            price: None,
+        };
+        // 显式 free: true 优先
+        assert!(base(Some("gpt-4o"), Some(true)).is_free("gpt-4o"));
+        // 显式 free: false 覆盖命名回退
+        assert!(!base(Some("deepseek-v4-flash-free"), Some(false)).is_free("x"));
+        // 未标记时回退 upstream_model 含 free (大小写不敏感)
+        assert!(base(Some("DeepSeek-V4-Flash-FREE"), None).is_free("x"));
+        // 未标记时回退含中文"免费"
+        assert!(base(Some("qwen-免费"), None).is_free("x"));
+        // 未标记且不含关键词 → 非免费
+        assert!(!base(Some("gpt-4o"), None).is_free("gpt-4o"));
+        // upstream_model 为空时回退 model_id
+        assert!(base(None, None).is_free("kimi-free"));
+        assert!(!base(None, None).is_free("kimi-pro"));
+    }
+
+    #[test]
     fn loads_providers_and_models() {
         let reg = ProviderRegistry::from_str(SAMPLE_JSON).unwrap();
         assert_eq!(reg.model_ids().len(), 2);
@@ -334,7 +489,10 @@ mod tests {
                 ModelConfig {
                     upstream_model: Some("deepseek-v4-flash".to_string()),
                     reasoning_effort: None,
+                    free: None,
                     extra_body: None,
+                    api_format: None,
+                    price: None,
                 },
             );
         }
@@ -418,5 +576,66 @@ mod tests {
     fn extract_empty_is_error() {
         let body: serde_json::Value = serde_json::json!({ "data": [] });
         assert!(extract_model_ids(&body).is_err());
+    }
+
+    #[test]
+    fn default_api_format_tags_gateway_specific_models() {
+        // go 网关: minimax / qwen3*-plus·max → anthropic; glm/kimi/deepseek → None(openai)
+        assert_eq!(default_api_format("go", "minimax-m2.5"), Some("anthropic"));
+        assert_eq!(default_api_format("go", "qwen3.7-max"), Some("anthropic"));
+        assert_eq!(default_api_format("go", "qwen3.5-plus"), Some("anthropic"));
+        assert_eq!(default_api_format("go", "glm-5.2"), None);
+        assert_eq!(default_api_format("go", "kimi-k2.7-code"), None);
+        assert_eq!(default_api_format("go", "deepseek-v4-pro"), None);
+        // zen 网关: claude / qwen3*-plus·max → anthropic; minimax-m2.x / deepseek / glm → None
+        assert_eq!(default_api_format("zen", "claude-sonnet-4-6"), Some("anthropic"));
+        assert_eq!(default_api_format("zen", "qwen3.6-max"), Some("anthropic"));
+        assert_eq!(default_api_format("zen", "minimax-m2.5"), None);
+        assert_eq!(default_api_format("zen", "deepseek-v4-flash"), None);
+        // 未知供应商一律 None
+        assert_eq!(default_api_format("deepseek", "deepseek-chat"), None);
+        // 大小写不敏感
+        assert_eq!(default_api_format("GO", "MiniMax-M2.5"), Some("anthropic"));
+    }
+
+    #[test]
+    fn model_is_anthropic_prefers_model_over_provider() {
+        let openai_provider = ProviderConfig {
+            name: "go".into(),
+            endpoint: "https://x/v1/chat/completions".into(),
+            api_key_env: "K".into(),
+            api_key_default: None,
+            balance_endpoint: None,
+            headers: None,
+            api_format: Some("openai".into()),
+            prompt_cache: None,
+            models: HashMap::new(),
+        };
+        // 供应商 openai + 模型未标注 → openai
+        let m_default = ModelConfig {
+            upstream_model: Some("glm-5.2".into()),
+            reasoning_effort: None,
+            free: None,
+            extra_body: None,
+            api_format: None,
+            price: None,
+        };
+        assert!(!m_default.is_anthropic(&openai_provider));
+        // 供应商 openai + 模型标注 anthropic → anthropic
+        let m_override = ModelConfig {
+            upstream_model: Some("minimax-m2.5".into()),
+            reasoning_effort: None,
+            free: None,
+            extra_body: None,
+            api_format: Some("anthropic".into()),
+            price: None,
+        };
+        assert!(m_override.is_anthropic(&openai_provider));
+        // 供应商 anthropic + 模型回落 → anthropic
+        let anthropic_provider = ProviderConfig {
+            api_format: Some("anthropic".into()),
+            ..openai_provider.clone()
+        };
+        assert!(m_default.is_anthropic(&anthropic_provider));
     }
 }

@@ -3,21 +3,48 @@
 //! 访问 http://127.0.0.1:8787/admin 打开面板.
 //! 功能: 实时请求日志 / 使用统计 / 路由配置查看 / 健康检查.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
-use axum::response::Html;
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse};
+use axum::body::Bytes;
 use axum::Json;
 use futures::future::join_all;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::store::LogStore;
+use crate::tooltip::{self, TooltipConfig};
+use crate::balance::{BalanceManager, ProviderBalanceConfig};
+use crate::pricing::{self, ModelPrice};
 
 /// 面板「最近请求」实时展示保留的条数 (仅前端展示, 不影响全量统计/持久化).
 const LOG_CAPACITY: usize = 100;
+
+/// 面板「错误」独立保留条数 (按"错误"维度, 与最近请求窗口完全分离).
+/// 正常请求再多也不会挤掉错误展示——错误从全量 inner 按错误维度过滤返回.
+const ERROR_CAPACITY: usize = 100;
+
+/// 实时统计 (供任务栏 tooltip 展示), 基于最近 N 秒日志聚合.
+#[derive(Debug, Clone, Serialize)]
+pub struct RealtimeStats {
+    /// 最近 10 秒请求速度 (req/s).
+    pub requests_per_second: f64,
+    /// 最近 10 秒平均延迟 (ms).
+    pub avg_latency_ms: f64,
+    /// 最近 10 秒缓存命中率 (0.0~1.0).
+    pub cache_hit_rate: f64,
+    /// 最近 10 秒生成速度 (tok/s).
+    pub gen_speed: f64,
+    /// 今日总请求数.
+    pub today_requests: usize,
+    /// 当前时间戳 (秒).
+    pub timestamp: u64,
+}
 
 /// 单条请求日志.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -45,11 +72,20 @@ pub struct RequestLog {
     /// 上游 KV Cache 未命中 token 数 (usage.prompt_cache_miss_tokens).
     #[serde(default)]
     pub prompt_cache_miss_tokens: u32,
+    /// 上游 KV Cache 首次写入 (creation) token 数 (Anthropic `cache_creation_input_tokens`
+    /// / OpenAI `prompt_tokens_details.cache_creation_tokens`). 多数供应商 (DeepSeek 等)
+    /// 无独立 creation 口径, 记 0, 此时 creation 计入未命中按 input 价计.
+    #[serde(default)]
+    pub prompt_cache_creation_tokens: u32,
     /// 首 token 延迟 (ms): 从请求开始到上游吐出第一个增量内容的耗时.
     /// 用于计算"纯生成吐字速度" = 输出 token / (总耗时 - 首 token 延迟), 排除排队与 TTFT.
     /// 非流式/命中本地缓存的请求此项为 None.
     #[serde(default)]
     pub first_token_ms: Option<u64>,
+    /// 上游真实模型 ID (由 providers.json 的 upstream_model 透传). 用于按"供应商/上游模型"聚合统计, 避免按中转 ID 统计造成的混乱.
+    /// 路由未查到/解析失败等未知场景为 None, 统计时回退到中转 model.
+    #[serde(default)]
+    pub upstream_model: Option<String>,
 }
 
 /// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
@@ -58,15 +94,42 @@ pub struct RequestLog {
 #[derive(Clone)]
 pub struct LogBuffer {
     inner: Arc<Mutex<VecDeque<RequestLog>>>,
+    /// 写入序列号: 每次 push/clear 递增, 供统计缓存做失效判断 (读端纳秒级, 无需克隆全量).
+    seq: Arc<AtomicU64>,
     store: Option<LogStore>,
+    // ─── 本轮 (进程启动以来) 累计计数, 在 push 时原子累加, 不受 5000 条滚动窗口封顶影响 ───
+    /// 本轮请求总数 (含错误/缓存命中).
+    session_requests: Arc<AtomicU64>,
+    /// 本轮成功请求数.
+    session_success: Arc<AtomicU64>,
+    /// 本轮输入 token 累计.
+    session_prompt_tokens: Arc<AtomicU64>,
+    /// 本轮输出 token 累计.
+    session_completion_tokens: Arc<AtomicU64>,
+    /// 本轮上游 KV Cache 命中 token 累计.
+    session_cache_hit_tokens: Arc<AtomicU64>,
+    /// 本轮上游 KV Cache 未命中 token 累计.
+    session_cache_miss_tokens: Arc<AtomicU64>,
 }
 
 impl LogBuffer {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(VecDeque::with_capacity(crate::store::MAX_LINES))),
+            seq: Arc::new(AtomicU64::new(0)),
             store: None,
+            session_requests: Arc::new(AtomicU64::new(0)),
+            session_success: Arc::new(AtomicU64::new(0)),
+            session_prompt_tokens: Arc::new(AtomicU64::new(0)),
+            session_completion_tokens: Arc::new(AtomicU64::new(0)),
+            session_cache_hit_tokens: Arc::new(AtomicU64::new(0)),
+            session_cache_miss_tokens: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// 当前写入序列号 (单调增). 统计缓存以 (seq, granularity, providers_mtime) 判断是否失效.
+    pub fn seq(&self) -> u64 {
+        self.seq.load(Ordering::Acquire)
     }
 
     /// 附加持久化存储 (启动时调用), 并从文件加载全量日志到内存.
@@ -93,6 +156,21 @@ impl LogBuffer {
             buf.pop_front();
         }
         buf.push_back(log.clone());
+        // 写入序列号递增 (缓存失效信号).
+        self.seq.fetch_add(1, Ordering::Release);
+        // 本轮 (进程级) 累计计数: 独立于滚动窗口, 重启清零.
+        self.session_requests.fetch_add(1, Ordering::Relaxed);
+        if log.status < 400 {
+            self.session_success.fetch_add(1, Ordering::Relaxed);
+        }
+        self.session_prompt_tokens
+            .fetch_add(log.prompt_tokens as u64, Ordering::Relaxed);
+        self.session_completion_tokens
+            .fetch_add(log.completion_tokens as u64, Ordering::Relaxed);
+        self.session_cache_hit_tokens
+            .fetch_add(log.prompt_cache_hit_tokens as u64, Ordering::Relaxed);
+        self.session_cache_miss_tokens
+            .fetch_add(log.prompt_cache_miss_tokens as u64, Ordering::Relaxed);
         // 异步持久化 (文件为全量权威源, 不受内存容量限制).
         if let Some(store) = &self.store {
             let store = store.clone();
@@ -102,10 +180,38 @@ impl LogBuffer {
         }
     }
 
+    /// 本轮 (进程启动以来) 累计统计快照, 不受日志滚动窗口封顶影响.
+    pub fn session_stats(&self) -> SessionStats {
+        SessionStats {
+            requests: self.session_requests.load(Ordering::Relaxed),
+            success: self.session_success.load(Ordering::Relaxed),
+            prompt_tokens: self.session_prompt_tokens.load(Ordering::Relaxed),
+            completion_tokens: self.session_completion_tokens.load(Ordering::Relaxed),
+            cache_hit_tokens: self.session_cache_hit_tokens.load(Ordering::Relaxed),
+            cache_miss_tokens: self.session_cache_miss_tokens.load(Ordering::Relaxed),
+        }
+    }
+
     /// 返回全量日志 (用于统计/聚合), 基于内存中加载的全量数据, 不消费.
     pub async fn drain_all(&self) -> Vec<RequestLog> {
         let buf = self.inner.lock().await;
         buf.iter().cloned().collect()
+    }
+
+    /// 只读遍历 (不克隆全量): 持锁期间对每个日志调用 `f`, 用于实时聚合等只需流式消费的场景.
+    /// 相较 `drain_all` 省去一次 5000 条深拷贝 (含多个 String 字段) 的堆分配,
+    /// 且锁持有时间仅覆盖遍历本身, 不覆盖后续聚合, 降低对写入路径 (proxy 响应链路) 的阻塞.
+    pub fn for_each_recent<F>(&self, start_ts: u64, mut f: F)
+    where
+        F: FnMut(&RequestLog),
+    {
+        if let Ok(buf) = self.inner.try_lock() {
+            for log in buf.iter() {
+                if log.timestamp >= start_ts {
+                    f(log);
+                }
+            }
+        }
     }
 
     /// 将当前内存全量日志同步重写到文件 (退出/清空前调用, 确保尾写不丢).
@@ -137,6 +243,19 @@ impl LogBuffer {
         buf.iter().rev().take(n).cloned().collect()
     }
 
+    /// 取最近 N 条**错误**日志 (按"错误"维度独立留存, 不受 `recent` 请求窗口冲刷).
+    /// 错误判定: status>=400 或 error 字段非空. 内存 inner 保留全量(MAX_LINES),
+    /// 故错误数量与"最近 N 条请求"完全解耦——正常请求再多也不会挤掉错误展示.
+    pub async fn recent_errors(&self, n: usize) -> Vec<RequestLog> {
+        let buf = self.inner.lock().await;
+        buf.iter()
+            .rev()
+            .filter(|l| l.status >= 400 || l.error.is_some())
+            .take(n)
+            .cloned()
+            .collect()
+    }
+
     /// 当前内存中日志条数.
     pub async fn len(&self) -> usize {
         self.inner.lock().await.len()
@@ -146,6 +265,8 @@ impl LogBuffer {
     pub async fn clear(&self) {
         let mut buf = self.inner.lock().await;
         buf.clear();
+        // 清空也是数据变更, 递增序列号使统计缓存失效.
+        self.seq.fetch_add(1, Ordering::Release);
         if let Some(store) = &self.store {
             let store = store.clone();
             tokio::spawn(async move {
@@ -169,6 +290,7 @@ pub async fn record_request(
     model: &str,
     provider: &str,
     endpoint: &str,
+    upstream_model: Option<&str>,
     status: u16,
     start: Instant,
     body_len: usize,
@@ -188,7 +310,9 @@ pub async fn record_request(
         cached: false,
         prompt_cache_hit_tokens: 0,
         prompt_cache_miss_tokens: 0,
+        prompt_cache_creation_tokens: 0,
         first_token_ms: None,
+        upstream_model: upstream_model.map(|s| s.to_string()),
     };
     log_buffer.push(log).await;
 }
@@ -201,6 +325,7 @@ pub async fn record_request_with_tokens(
     model: &str,
     provider: &str,
     endpoint: &str,
+    upstream_model: Option<&str>,
     start: Instant,
     prompt_tokens: u32,
     completion_tokens: u32,
@@ -208,6 +333,7 @@ pub async fn record_request_with_tokens(
     cached: bool,
     cache_hit_tokens: u32,
     cache_miss_tokens: u32,
+    cache_creation_tokens: u32,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
@@ -225,7 +351,9 @@ pub async fn record_request_with_tokens(
         cached,
         prompt_cache_hit_tokens: cache_hit_tokens,
         prompt_cache_miss_tokens: cache_miss_tokens,
+        prompt_cache_creation_tokens: cache_creation_tokens,
         first_token_ms,
+        upstream_model: upstream_model.map(|s| s.to_string()),
     };
     log_buffer.push(log).await;
 }
@@ -251,14 +379,71 @@ pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<Str
     Html(html)
 }
 
+/// GET /admin/static/:file — 返回随包内联的前端依赖 (Alpine.js / Tailwind),
+/// 走本地服务而非境外 CDN, 解决国内打不开 jsdelivr/tailwindcss 导致的面板黑屏.
+/// `:file` 仅允许白名单文件名, 杜绝路径穿越.
+pub async fn admin_static(Path(file): Path<String>) -> impl IntoResponse {
+    let body: &'static str = match file.as_str() {
+        "alpine.min.js" => ALPINE_JS,
+        "tailwind.js" => TAILWIND_JS,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "not found",
+            )
+                .into_response();
+        }
+    };
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        Bytes::from_static(body.as_bytes()),
+    )
+        .into_response()
+}
+
 /// 管理面板前端页面 (编译时嵌入).
 const ADMIN_HTML: &str = include_str!("admin.html");
+/// 更新日志 (Keep a Changelog 风格), 烤入二进制供关于页展示.
+const CHANGELOG: &str = include_str!("../CHANGELOG.md");
+/// Alpine.js (随包内联, 替代 cdn.jsdelivr.net) — 面板渲染引擎, 缺失会导致整页不渲染(黑屏).
+const ALPINE_JS: &str = include_str!("admin_static/alpine.min.js");
+/// Tailwind 运行时 JIT (随包内联, 替代 cdn.tailwindcss.com) — 负责工具类样式生成.
+const TAILWIND_JS: &str = include_str!("admin_static/tailwind.js");
 
-/// GET /admin/api/logs — 返回最近 100 条请求日志 (展示用, 内存限长).
+/// 给展示用日志附加 `free` 标记 (免费模型), 判定与路由配置页完全一致 (注册表 is_free),
+/// 不污染磁盘持久化的 RequestLog 结构, 仅在 API 响应层注入.
+fn request_logs_with_free(
+    logs: Vec<RequestLog>,
+    free_ids: &std::collections::HashSet<String>,
+) -> Vec<serde_json::Value> {
+    logs.into_iter()
+        .map(|l| {
+            let mut v = serde_json::to_value(&l).unwrap_or(serde_json::Value::Null);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("free".into(), serde_json::Value::Bool(free_ids.contains(&l.model)));
+            }
+            v
+        })
+        .collect()
+}
+
+/// GET /admin/api/logs — 返回最近 100 条请求日志 (展示用, 内存限长), 附带免费标记.
 pub async fn api_logs(
     State(state): State<super::proxy::AppState>,
-) -> Json<Vec<RequestLog>> {
-    Json(state.log_buffer.recent(LOG_CAPACITY).await)
+) -> Json<Vec<serde_json::Value>> {
+    let logs = state.log_buffer.recent(LOG_CAPACITY).await;
+    let registry = state.registry.read().await;
+    let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for provider in registry.providers() {
+        for (model_id, mcfg) in provider.models {
+            if mcfg.is_free(&model_id) {
+                free_ids.insert(model_id.to_string());
+            }
+        }
+    }
+    drop(registry);
+    Json(request_logs_with_free(logs, &free_ids))
 }
 
 /// DELETE /admin/api/logs — 清空日志缓冲区.
@@ -272,14 +457,37 @@ pub async fn api_logs_delete(
     Json(serde_json::json!({ "message": crate::i18n::msg_logs_cleared(count) }))
 }
 
+/// GET /admin/api/errors — 返回最近 N 条错误日志 (独立维度, 与请求窗口分离, 不被冲刷), 附带免费标记.
+pub async fn api_errors(
+    State(state): State<super::proxy::AppState>,
+) -> Json<Vec<serde_json::Value>> {
+    let logs = state.log_buffer.recent_errors(ERROR_CAPACITY).await;
+    let registry = state.registry.read().await;
+    let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for provider in registry.providers() {
+        for (model_id, mcfg) in provider.models {
+            if mcfg.is_free(&model_id) {
+                free_ids.insert(model_id.to_string());
+            }
+        }
+    }
+    drop(registry);
+    Json(request_logs_with_free(logs, &free_ids))
+}
+
 /// 路由配置的脱敏视图.
 #[derive(Serialize)]
 pub struct RouteInfo {
     model_id: String,
     provider: String,
     endpoint: String,
+    /// 该模型实际转发的端点路径: 与 proxy.rs 运行时一致,
+    /// 模型级 api_format=anthropic 且供应商端点为 /chat/completions 时改写为 /messages.
+    api_format: String,
     upstream_model: Option<String>,
     reasoning_effort: Option<String>,
+    /// 是否免费模型 (显式 free 标记或 upstream_model 含 free/免费).
+    free: bool,
 }
 
 /// GET /admin/api/routes — 返回当前路由配置.
@@ -297,12 +505,22 @@ pub async fn api_routes(
         .into_iter()
         .filter_map(|id| {
             let entry = registry.lookup(id)?;
+            // 复刻 proxy.rs 运行时的端点改写逻辑: 模型级 api_format=anthropic
+            // 且供应商端点仍是 /chat/completions 时, 改写为 /messages.
+            let mut endpoint = entry.provider.endpoint.clone();
+            let anthropic_mode = entry.model.is_anthropic(&entry.provider);
+            if anthropic_mode && endpoint.ends_with("/chat/completions") {
+                endpoint = endpoint.replace("/chat/completions", "/messages");
+            }
+            let api_format = if anthropic_mode { "anthropic" } else { "openai" }.to_string();
             Some(RouteInfo {
                 model_id: id.to_string(),
                 provider: entry.provider.name.clone(),
-                endpoint: entry.provider.endpoint.clone(),
+                endpoint,
+                api_format,
                 upstream_model: entry.model.upstream_model.clone(),
                 reasoning_effort: entry.model.reasoning_effort.clone(),
+                free: entry.model.is_free(id),
             })
         })
         .collect();
@@ -594,7 +812,9 @@ pub async fn api_mock(
             cached: false,
             prompt_cache_hit_tokens: rng.gen_range(0, 400) as u32,
             prompt_cache_miss_tokens: rng.gen_range(0, 100) as u32,
+            prompt_cache_creation_tokens: 0,
             first_token_ms: None,
+            upstream_model: None,
         });
     }
 
@@ -621,7 +841,9 @@ pub async fn api_mock(
             cached: false,
             prompt_cache_hit_tokens: 0,
             prompt_cache_miss_tokens: 0,
+            prompt_cache_creation_tokens: 0,
             first_token_ms: None,
+            upstream_model: None,
         });
     }
 
@@ -735,6 +957,295 @@ pub async fn api_version() -> Json<serde_json::Value> {
     Json(crate::version::to_json())
 }
 
+/// GET /admin/api/proxy-config — 返回当前代理策略状态 (启动时由环境变量决定).
+pub async fn api_proxy_config() -> Json<serde_json::Value> {
+    Json(serde_json::json!(crate::proxy_cfg::proxy_status()))
+}
+
+/// GET /admin/api/changelog — 返回解析后的更新日志 (供关于页展示).
+///
+/// 解析烤入的 `CHANGELOG.md` (Keep a Changelog 风格): 按 `## [` 切分版本块,
+/// 提取版本号/日期, 再按 `### ` 切分小节, 收集 `- ` 条目.
+pub async fn api_changelog() -> Json<serde_json::Value> {
+    Json(parse_changelog())
+}
+
+/// 读取用户已看过「更新亮点」的版本号（空字符串表示从未记录）。
+pub async fn api_seen_version_get() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "version": crate::seen_version::load_seen() }))
+}
+
+/// 写入已见版本号，标记当前版本更新日志已读。
+pub async fn api_seen_version_post(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let v = body
+        .get("version")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    crate::seen_version::save_seen(&v);
+    Json(serde_json::json!({ "ok": true, "version": v }))
+}
+
+/// 解析 `CHANGELOG.md` 为结构化 JSON: { versions: [{ version, date, sections:[{title,items}] }] }.
+fn parse_changelog() -> serde_json::Value {
+    let mut versions = Vec::new();
+    for raw in CHANGELOG.split("\n## [") {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        // 首行形如 "[0.3.0] - 2026-08-08"; 注意 split("\n## [") 已吞掉 "## [",
+        // 因此段首可能无 '[' 前缀 (如 "0.3.0] - 2026-08-08"), 统一用 find(']') 解析.
+        let nl = raw.find('\n').unwrap_or(raw.len());
+        let header = raw[..nl].strip_prefix('[').unwrap_or(&raw[..nl]);
+        let mut version = String::new();
+        let mut date = String::new();
+        if let Some(close) = header.find(']') {
+            version = header[..close].trim().to_string();
+            let after = &header[close + 1..];
+            if let Some(d) = after.strip_prefix(" - ") {
+                date = d.trim().to_string();
+            }
+        }
+        if version.is_empty() {
+            continue; // 跳过文件头等非版本块
+        }
+        let body = if nl < raw.len() { &raw[nl + 1..] } else { "" };
+        let mut sections = Vec::new();
+        let mut cur_title = String::new();
+        let mut cur_items: Vec<String> = Vec::new();
+        for line in body.lines() {
+            let line = line.trim_end();
+            if let Some(title) = line.strip_prefix("### ") {
+                if !cur_title.is_empty() || !cur_items.is_empty() {
+                    sections.push(serde_json::json!({ "title": cur_title, "items": cur_items }));
+                    cur_items = Vec::new();
+                }
+                cur_title = title.trim().to_string();
+            } else if let Some(item) = line.strip_prefix("- ") {
+                cur_items.push(item.trim().to_string());
+            }
+        }
+        if !cur_title.is_empty() || !cur_items.is_empty() {
+            sections.push(serde_json::json!({ "title": cur_title, "items": cur_items }));
+        }
+        versions.push(serde_json::json!({
+            "version": version,
+            "date": date,
+            "sections": sections
+        }));
+    }
+    serde_json::json!({ "versions": versions })
+}
+
+#[cfg(test)]
+mod changelog_tests {
+    use super::*;
+
+    /// 回归测试: 烤入的 CHANGELOG.md 必须能解析出全部版本块.
+    /// 曾因 split("\n## [") 吞掉 "## [" 前缀导致版本块全部被跳过 (versions 恒为空).
+    #[test]
+    fn parse_changelog_returns_all_versions() {
+        let json = parse_changelog();
+        let versions = json.get("versions").and_then(|v| v.as_array()).unwrap();
+        assert!(!versions.is_empty(), "versions 不应为空");
+        // 校验版本号格式与字段完整性
+        for v in versions {
+            let version = v.get("version").and_then(|x| x.as_str()).unwrap_or("");
+            assert!(version.starts_with('v') || version.chars().next().is_some_and(|c| c.is_ascii_digit()),
+                "版本号格式异常: {version}");
+            assert!(v.get("date").is_some(), "缺少 date");
+            assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
+        }
+        // 首个版本应为最新版 0.4.2
+        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.2"));
+    }
+}
+
+/// GET /admin/api/tooltip-config — 返回当前 tooltip 配置.
+pub async fn api_tooltip_config_get() -> Json<serde_json::Value> {
+    let config = tooltip::load_config();
+    Json(serde_json::to_value(config).unwrap_or_default())
+}
+
+/// POST /admin/api/tooltip-config — 保存 tooltip 配置.
+#[derive(serde::Deserialize)]
+pub struct TooltipConfigReq {
+    pub config: TooltipConfig,
+}
+
+pub async fn api_tooltip_config_set(
+    Json(payload): Json<TooltipConfigReq>,
+) -> Json<serde_json::Value> {
+    match tooltip::save_config(&payload.config) {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => Json(serde_json::json!({ "error": format!("保存失败: {}", e) })),
+    }
+}
+
+/// GET /admin/api/currency — 返回当前费用显示币种配置.
+pub async fn api_currency_get() -> Json<serde_json::Value> {
+    let config = crate::currency::load_config();
+    Json(serde_json::to_value(config).unwrap_or_default())
+}
+
+/// POST /admin/api/currency — 保存费用显示币种配置.
+#[derive(serde::Deserialize)]
+pub struct CurrencyConfigReq {
+    pub config: crate::currency::CurrencyConfig,
+}
+
+pub async fn api_currency_set(
+    Json(payload): Json<CurrencyConfigReq>,
+) -> Json<serde_json::Value> {
+    match crate::currency::save_config(&payload.config) {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => Json(serde_json::json!({ "error": format!("保存失败: {}", e) })),
+    }
+}
+
+/// GET /admin/api/balance — 返回各供应商余额信息 (API 查询 + 手动余额合并).
+pub async fn api_balance(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    // 手动余额文件与 data/ 目录同级 (config 目录下)
+    let manual_file = std::path::PathBuf::from("config").join("balance.json");
+    let balance_manager = BalanceManager::new(manual_file);
+    
+    let registry = state.registry.read().await;
+    let providers = registry.providers();
+    
+    // 构建供应商余额配置
+    let mut provider_configs = std::collections::HashMap::new();
+    for config in providers {
+        if let Some(balance_endpoint) = &config.balance_endpoint {
+            // 获取 API key
+            let api_key = state.key_store.get(&config.api_key_env).await
+                .or_else(|| config.api_key_default.clone())
+                .unwrap_or_default();
+            
+            provider_configs.insert(
+                config.name.clone(),
+                ProviderBalanceConfig {
+                    balance_endpoint: Some(balance_endpoint.clone()),
+                    api_key,
+                },
+            );
+        }
+    }
+    
+    // 查询余额
+    let balances = balance_manager.query_all_balances(&state.client, &provider_configs).await;
+    
+    Json(serde_json::json!({
+        "balances": balances,
+    }))
+}
+
+/// POST /admin/api/balance/manual — 设置或清除某供应商的手动余额.
+#[derive(serde::Deserialize)]
+pub struct ManualBalanceReq {
+    /// 供应商名称.
+    pub provider: String,
+    /// 余额 (元). 传 None 表示清除手动余额, 回退到 API 查询.
+    pub balance: Option<f64>,
+}
+
+pub async fn api_balance_manual_set(
+    Json(payload): Json<ManualBalanceReq>,
+) -> Json<serde_json::Value> {
+    let manual_file = std::path::PathBuf::from("config").join("balance.json");
+    let balance_manager = BalanceManager::new(manual_file);
+    
+    let result = if let Some(balance) = payload.balance {
+        balance_manager.set_manual_balance(&payload.provider, balance).await
+    } else {
+        balance_manager.clear_manual_balance(&payload.provider).await
+    };
+    
+    match result {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// GET /admin/api/realtime — 返回最近 10 秒的实时指标 (供任务栏 tooltip 展示).
+pub async fn api_realtime(
+    State(state): State<super::proxy::AppState>,
+) -> Json<RealtimeStats> {
+    // 就地聚合: 不克隆全量日志, 仅持锁遍历一次 (省去每秒一次 5000 条深拷贝).
+    Json(state.log_buffer.realtime_stats())
+}
+
+/// 计算实时统计 (同步版本, 供事件循环 tooltip 更新使用).
+pub fn compute_realtime_stats_sync(log_buffer: &LogBuffer) -> RealtimeStats {
+    log_buffer.realtime_stats()
+}
+
+/// 实时统计: 在 LogBuffer 内部持锁遍历一次完成聚合, 避免调用方先 drain_all 全量克隆.
+impl LogBuffer {
+    /// 就地聚合最近 N 秒 + 今日窗口指标, 单次遍历, 不分配全量 Vec.
+    pub fn realtime_stats(&self) -> RealtimeStats {
+        let now = now_ts();
+        let window = 10u64; // 最近 10 秒
+        let start = now.saturating_sub(window);
+        let today_start = ((now as i64 + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
+
+        let mut r_count: u64 = 0;
+        let mut r_latency_sum: u64 = 0;
+        let mut r_hit: u64 = 0;
+        let mut r_miss: u64 = 0;
+        let mut r_gen_ct: u64 = 0;
+        let mut r_gen_ms: u64 = 0;
+        let mut today_count: u64 = 0;
+
+        self.for_each_recent(0, |l| {
+            if l.timestamp >= today_start {
+                today_count += 1;
+            }
+            if l.timestamp < start {
+                return;
+            }
+            r_count += 1;
+            r_latency_sum += l.latency_ms;
+            r_hit += l.prompt_cache_hit_tokens as u64;
+            r_miss += l.prompt_cache_miss_tokens as u64;
+            if let Some(ft) = l.first_token_ms {
+                if ft < l.latency_ms && l.completion_tokens > 0 {
+                    r_gen_ct += l.completion_tokens as u64;
+                    r_gen_ms += l.latency_ms - ft;
+                }
+            }
+        });
+
+        let count = r_count as f64;
+        let requests_per_second = if window > 0 { count / window as f64 } else { 0.0 };
+        let avg_latency_ms = if count > 0.0 {
+            r_latency_sum as f64 / count
+        } else {
+            0.0
+        };
+        let cache_hit_rate = if r_hit + r_miss > 0 {
+            r_hit as f64 / (r_hit + r_miss) as f64
+        } else {
+            0.0
+        };
+        let gen_speed = if r_gen_ms > 0 {
+            r_gen_ct as f64 / r_gen_ms as f64 * 1000.0
+        } else {
+            0.0
+        };
+        RealtimeStats {
+            requests_per_second,
+            avg_latency_ms,
+            cache_hit_rate,
+            gen_speed,
+            today_requests: today_count as usize,
+            timestamp: now,
+        }
+    }
+}
+
 // ─── 响应缓存 (实验功能) ───
 
 /// 切换缓存开关的请求体.
@@ -767,7 +1278,83 @@ pub async fn api_cache_clear(
     Json(state.cache.stats())
 }
 
+// ─── 历史推理链瘦身开关 ───
+
+/// GET /admin/api/strip-reasoning — 返回当前是否剥离历史推理链.
+pub async fn api_strip_reasoning_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "enabled": state.strip_history_reasoning.load(std::sync::atomic::Ordering::Relaxed) }))
+}
+
+/// POST /admin/api/strip-reasoning — 运行时切换历史推理链剥离开关.
+#[derive(serde::Deserialize)]
+pub struct StripReasoningReq {
+    pub enabled: bool,
+}
+
+pub async fn api_strip_reasoning_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<StripReasoningReq>,
+) -> Json<serde_json::Value> {
+    state.strip_history_reasoning.store(payload.enabled, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "enabled": payload.enabled }))
+}
+
+// ─── 转发优化省量统计 ───
+
+/// GET /admin/api/forward-savings — 返回转发优化累计省量 (字符数).
+/// strip_chars = 剥离历史推理链省下的字符; trim_chars = 长会话历史裁剪省下的字符.
+pub async fn api_forward_savings_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let strip = state.strip_saved_chars.load(std::sync::atomic::Ordering::Relaxed);
+    let trim = state.trim_saved_chars.load(std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "strip_chars": strip, "trim_chars": trim }))
+}
+
+// ─── 长会话历史裁剪开关 ───
+
+/// GET /admin/api/max-history-turns — 返回当前保留的最近 user 轮数 (0 = 不裁剪).
+pub async fn api_max_history_turns_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "turns": state.max_history_turns.load(std::sync::atomic::Ordering::Relaxed) }))
+}
+
+/// POST /admin/api/max-history-turns — 运行时设置保留轮数 (0 = 关闭裁剪, 推荐 10~30).
+#[derive(serde::Deserialize)]
+pub struct MaxHistoryTurnsReq {
+    pub turns: usize,
+}
+
+pub async fn api_max_history_turns_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<MaxHistoryTurnsReq>,
+) -> Json<serde_json::Value> {
+    let turns = payload.turns;
+    state.max_history_turns.store(turns, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "turns": turns }))
+}
+
 // ─── 使用统计 ───
+
+/// 本轮 (进程启动以来) 累计统计 — 在 push 时原子累加, 不受日志 5000 条滚动窗口封顶影响.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SessionStats {
+    /// 本轮请求总数 (含错误/缓存命中).
+    pub requests: u64,
+    /// 本轮成功请求数 (status < 400).
+    pub success: u64,
+    /// 本轮输入 token 累计.
+    pub prompt_tokens: u64,
+    /// 本轮输出 token 累计.
+    pub completion_tokens: u64,
+    /// 本轮上游 KV Cache 命中 token 累计.
+    pub cache_hit_tokens: u64,
+    /// 本轮上游 KV Cache 未命中 token 累计.
+    pub cache_miss_tokens: u64,
+}
 
 /// 单个模型的聚合统计.
 #[derive(Debug, Clone, Serialize)]
@@ -785,6 +1372,18 @@ pub struct ModelStats {
     /// 纯生成吐字速度 (tok/s): 仅统计首 token 延迟已知的流式请求,
     /// = Σ输出token / Σ(总耗时-首token延迟) × 1000. 排除排队与 TTFT, 比 avg_latency 反推更准.
     pub gen_speed: f64,
+    /// 映射到本聚合项的中转 ID 集合 (去重). 因统计按"供应商/上游模型"聚合,
+    /// 多个中转 ID 可映射到同一上游模型, 此字段便于对照溯源.
+    pub aliases: Vec<String>,
+    /// 该模型累计费用 (元), 见 `crate::pricing`.
+    pub total_cost: f64,
+    /// 应用于本聚合项的单价（元/百万tokens）. 来自 providers.json 覆盖或内置表;
+    /// 取组内首条日志解析的结果作代表（同组内多中转 ID 映射到同一上游, 单价通常一致）.
+    /// `None` 表示未配置价格（费用记 0）.
+    pub price: Option<ModelPrice>,
+    /// 是否免费模型 (显式 free 标记或上游/中转模型名含 free/免费). 与路由配置页判定完全一致,
+    /// 由调用方从注册表预计算 free_ids 传入, 组内任一中转 ID 命中即标记.
+    pub free: bool,
 }
 
 /// 单个供应商的聚合统计.
@@ -802,12 +1401,19 @@ pub struct ProviderStats {
     pub total_cache_miss_tokens: u64,
     /// 纯生成吐字速度 (tok/s), 同 ModelStats.gen_speed.
     pub gen_speed: f64,
+    /// 该供应商累计费用 (元), 见 `crate::pricing`.
+    pub total_cost: f64,
+    /// 该供应商今日窗口费用 (元, 东八区日界). 前端据 total_cost/today_cost 是否 >0 决定
+    /// 是否展示该供应商费用卡片 (方案 A: 只显示有实际费用的供应商).
+    pub today_cost: f64,
 }
 
 /// 日趋势 (通用: 按小时/天/月聚合均使用此结构).
 #[derive(Debug, Clone, Serialize)]
 pub struct DailyTrend {
     pub date: String,
+    /// 该时间桶的起始时间戳(秒), 用于按真实时间排序(避免 MM/DD 字符串比较跨月错序).
+    pub ts: u64,
     pub requests: usize,
     pub errors: usize,
     pub avg_latency: f64,
@@ -817,6 +1423,8 @@ pub struct DailyTrend {
     pub total_completion_tokens: u64,
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
+    /// 该时间桶费用 (元).
+    pub total_cost: f64,
 }
 
 /// 使用统计聚合结果.
@@ -836,8 +1444,29 @@ pub struct UsageStats {
     /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
-    /// 命中率 = 命中 token / (命中 + 未命中) token.
+    /// 命中率 = 命中 token / 总输入 token.
     pub cache_hit_rate: f64,
+    /// 累计因 KV 缓存命中而节省的金额 (元): 命中 token × (input 价 − cache 读价).
+    /// 读价缺失（无缓存优惠）或价格未配置时记 0. 直观体现缓存的成本价值.
+    pub total_cache_saved: f64,
+    // ─── 今日窗口统计 (东八区日界, 不受日志 5000 条滚动窗口封顶影响) ───
+    pub today_requests: usize,
+    pub today_success: usize,
+    pub today_errors: usize,
+    pub today_avg_latency_ms: f64,
+    pub today_total_prompt_tokens: u32,
+    pub today_total_completion_tokens: u32,
+    pub today_total_cache_hit_tokens: u64,
+    pub today_total_cache_miss_tokens: u64,
+    /// 累计费用 (元), 价格缺失的模型按 0 计.
+    pub total_cost: f64,
+    /// 今日窗口费用 (元, 东八区日界).
+    pub today_total_cost: f64,
+    /// 是否有任意模型配置了价格 (providers.json 的 model.price).
+    /// 前端据此决定是否显示费用相关卡片/列, 避免无价格时显示 ¥0.00 误导.
+    pub has_price_config: bool,
+    /// 本轮 (进程启动以来) 累计统计 (原子计数, 不受日志滚动窗口封顶影响).
+    pub session: SessionStats,
 }
 
 /// GET /admin/api/stats?granularity={hour|day|month} — 返回使用统计.
@@ -845,10 +1474,62 @@ pub async fn api_stats(
     State(state): State<super::proxy::AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<UsageStats> {
-    let logs = state.log_buffer.drain_all().await;
     let granularity = params.get("granularity").map(|s| s.as_str()).unwrap_or("day");
-    let mut stats = compute_stats(&logs);
-    stats.trends = compute_trends(&logs, granularity);
+    // 缓存失效信号: 日志写入序列号 + providers.json 修改时间 (价格配置变化时失效).
+    let seq = state.log_buffer.seq();
+    let prov_mtime = std::fs::metadata("providers.json")
+        .and_then(|m| m.modified())
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0))
+        .unwrap_or(0);
+
+    // 命中缓存且数据未变更 → 直接返回, 避免每次刷新/轮询全量克隆 + 聚合 (5000 条).
+    {
+        let guard = state.stats_cache.lock().await;
+        if let Some(cached) = guard.as_ref() {
+            if cached.0 == seq && cached.1 == granularity && cached.2 == prov_mtime {
+                return Json(cached.3.clone());
+            }
+        }
+    }
+
+    let logs = state.log_buffer.drain_all().await;
+    // 价格覆盖表: 中转 model id → 价格 (来自 providers.json 的 model.price, 优先级最高).
+    let registry = state.registry.read().await;
+    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
+    // has_price_config 必须与实际计费口径一致: 不仅看 providers.json 显式 price 覆盖,
+    // 还要包含 resolve_price 回退到的内置 DeepSeek 表 / 官方 endpoint 自动套价
+    // (否则官方 DS 供应商靠内置表计费时, 会误判"未配置价格"而隐藏费用卡片).
+    let mut has_price_config = false;
+    // 免费中转 ID 集合: 与路由配置页 is_free 判定完全一致 (显式 free 优先, 否则回退命名识别).
+    let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for provider in registry.providers() {
+        for (model_id, mcfg) in provider.models {
+            if mcfg.is_free(model_id.as_str()) {
+                free_ids.insert(model_id.clone());
+            }
+            if let Some(price) = mcfg.price {
+                price_overrides.insert(model_id, price);
+                has_price_config = true;
+            } else if pricing::resolve_price(
+                None,
+                mcfg.upstream_model.as_deref(),
+                Some(provider.endpoint.as_str()),
+            )
+            .is_some()
+            {
+                has_price_config = true;
+            }
+        }
+    }
+    drop(registry);
+    let mut stats = compute_stats(&logs, &price_overrides, &free_ids);
+    stats.has_price_config = has_price_config;
+    stats.trends = compute_trends(&logs, granularity, &price_overrides);
+    // 本轮 (进程启动以来) 累计统计: 原子计数快照, 不依赖滚动窗口.
+    stats.session = state.log_buffer.session_stats();
+
+    // 写回缓存 (仅当数据确实变更).
+    *state.stats_cache.lock().await = Some((seq, granularity.to_string(), prov_mtime, stats.clone()));
     Json(stats)
 }
 
@@ -856,17 +1537,12 @@ pub async fn api_stats(
 /// 若需跟随系统时区可改为读取本地 UTC 偏移, 但固定东八区对国内用户更可预期.
 const TZ_OFFSET_SECS: i64 = 8 * 3600;
 
-/// 将 Unix 时间戳转成 MM/DD 日期字符串 (按东八区切日界, 避免 chrono 依赖).
-fn ts_to_date(ts: u64) -> String {
-    const SECS_PER_DAY: u64 = 86400;
-    // 先按本地时区偏移归到本地当天 0 点, 再取天数.
-    let local = (ts as i64) + TZ_OFFSET_SECS;
-    let local = if local < 0 { 0 } else { local as u64 };
-    let days = local / SECS_PER_DAY;
-
+/// 自 1970-01-01 起的累计天数 -> (年, 月, 日). 与 days_from_civil 互逆, 无 chrono 依赖.
+fn days_to_ymd(mut d: i64) -> (i64, i64, i64) {
+    if d < 0 {
+        d = 0;
+    }
     let mut y = 1970i64;
-    let mut d = days as i64;
-
     loop {
         let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
         let dim = if leap { 366 } else { 365 };
@@ -876,14 +1552,12 @@ fn ts_to_date(ts: u64) -> String {
         d -= dim;
         y += 1;
     }
-
     let leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
     let mdays: [i64; 12] = if leap {
         [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
         [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
-
     let mut m = 0usize;
     for (i, &md) in mdays.iter().enumerate() {
         if d < md {
@@ -895,15 +1569,73 @@ fn ts_to_date(ts: u64) -> String {
     if m == 0 {
         m = 12;
     }
+    (y, m as i64, d + 1)
+}
 
-    format!("{:02}/{:02}", m, d + 1)
+/// (年, 月, 日) -> 自 1970-01-01 起的累计天数 (Howard Hinnant 算法, 避免 chrono 依赖).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// 将 ts 对齐到指定粒度的桶起始秒 (本地时区). hour=整点, day=本地0点, month=本地月首0点.
+fn bucket_start(ts: u64, granularity: &str) -> u64 {
+    let local = (ts as i64) + TZ_OFFSET_SECS;
+    match granularity {
+        "hour" => {
+            let base = (local / 3600) * 3600;
+            (base - TZ_OFFSET_SECS) as u64
+        }
+        "month" => {
+            let days = local / 86400;
+            let (y, m, _) = days_to_ymd(days);
+            (days_from_civil(y, m, 1) * 86400 - TZ_OFFSET_SECS) as u64
+        }
+        _ => {
+            let base = (local / 86400) * 86400;
+            (base - TZ_OFFSET_SECS) as u64
+        }
+    }
+}
+
+/// 桶起始 ts 步进到下一个桶 (本地时区, 对齐粒度).
+fn next_bucket(ts: u64, granularity: &str) -> u64 {
+    match granularity {
+        "hour" => ts + 3600,
+        "month" => {
+            let local = (ts as i64) + TZ_OFFSET_SECS;
+            let days = local / 86400;
+            let (y, m, _) = days_to_ymd(days);
+            let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            (days_from_civil(ny, nm, 1) * 86400 - TZ_OFFSET_SECS) as u64
+        }
+        _ => ts + 86400,
+    }
+}
+
+/// 将 Unix 时间戳转成 MM/DD 日期字符串 (按东八区切日界, 避免 chrono 依赖).
+fn ts_to_date(ts: u64) -> String {
+    const SECS_PER_DAY: u64 = 86400;
+    // 先按本地时区偏移归到本地当天 0 点, 再取天数.
+    let local = (ts as i64) + TZ_OFFSET_SECS;
+    let days = if local < 0 { 0 } else { local / SECS_PER_DAY as i64 };
+    let (_y, m, d) = days_to_ymd(days);
+    format!("{:02}/{:02}", m, d)
 }
 
 fn ts_to_month(ts: u64) -> String {
     let date = ts_to_date(ts);
     let parts: Vec<&str> = date.split('/').collect();
     if parts.len() == 2 {
-        let y_days = ts / 86400;
+        // 年份须按本地时区天数推算 (与 ts_to_date 的本地切日一致),
+        // 否则跨年边界会出现 "2025/01" 实为 2026 年 1 月 的串年 bug.
+        let local = (ts as i64) + TZ_OFFSET_SECS;
+        let y_days = if local < 0 { 0 } else { local / 86400 };
         let mut y = 1970i64;
         let mut remaining = y_days as i64;
         loop {
@@ -928,8 +1660,87 @@ fn ts_to_hour(ts: u64) -> String {
     format!("{date} {hour:02}:00")
 }
 
+/// 价格解析结果记忆化键: (中转 model, endpoint). upstream_model 已并入 resolve_price 内部逻辑,
+/// 但同一 (model, endpoint) 组合的解析结果稳定, 可安全复用 (详见 `PriceMemo`).
+type PriceMemoKey = (String, String);
+
+/// 请求级价格解析记忆化表: 避免 5000 条日志各自重复调用 `resolve_price` (内含内置表/回退查找).
+/// 仅在单次 `compute_stats`/`compute_trends` 调用生命周期内有效, 不入全局.
+struct PriceMemo<'a> {
+    overrides: &'a HashMap<String, ModelPrice>,
+    cache: std::cell::RefCell<HashMap<PriceMemoKey, Option<ModelPrice>>>,
+}
+
+impl<'a> PriceMemo<'a> {
+    fn new(overrides: &'a HashMap<String, ModelPrice>) -> Self {
+        Self {
+            overrides,
+            cache: std::cell::RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// 解析单条日志的价格 (记忆化): 命中则直接返回缓存的 `Option<ModelPrice>`.
+    fn resolve(&self, log: &RequestLog) -> Option<ModelPrice> {
+        let key = (log.model.clone(), log.endpoint.clone());
+        if let Some(v) = self.cache.borrow().get(&key).copied() {
+            return v;
+        }
+        let p = pricing::resolve_price(
+            self.overrides.get(&log.model).copied(),
+            log.upstream_model.as_deref(),
+            Some(log.endpoint.as_str()),
+        );
+        self.cache.borrow_mut().insert(key, p);
+        p
+    }
+}
+
+/// 单条请求费用（元）. 价格缺失时按 0 计（不计入费用）.
+fn log_cost(memo: &PriceMemo, log: &RequestLog) -> f64 {
+    // 命中本地响应缓存的请求未真实消费上游 token, 不计费,
+    // 否则会与原请求重复计费, 导致费用虚高（高缓存命中率场景偏差极大）.
+    if log.cached {
+        return 0.0;
+    }
+    let p = memo.resolve(log);
+    pricing::compute_cost(
+        p,
+        log.prompt_tokens,
+        log.completion_tokens,
+        log.prompt_cache_hit_tokens,
+        log.prompt_cache_creation_tokens,
+    )
+    .unwrap_or(0.0)
+}
+
+/// 单条请求因 KV 缓存命中节省的金额（元）.
+///
+/// 节省 = 命中 token × (input 价 − cache 读价); 读价缺失（即无缓存优惠）或价格未配置时记 0.
+/// 与 `log_cost` 对称, 复用同一价格解析口径.
+fn log_cache_saved(memo: &PriceMemo, log: &RequestLog) -> f64 {
+    if log.cached {
+        return 0.0;
+    }
+    let p = memo.resolve(log);
+    let Some(p) = p else { return 0.0; };
+    // 读价缺失 → 无缓存优惠, 不省; 否则按 (input − 读价) 计节省（防止负价异常）.
+    let Some(read) = p.cache_read_per_m else { return 0.0; };
+    let saved_per_m = (p.input_per_m - read).max(0.0);
+    (log.prompt_cache_hit_tokens as f64) / 1e6 * saved_per_m
+}
+
 /// 从日志列表计算聚合统计.
-fn compute_stats(logs: &[RequestLog]) -> UsageStats {
+///
+/// `price_overrides`: 中转 model id → 价格, 来自 providers.json 的 model.price（优先级最高）,
+/// 缺失时回退内置默认价格表（见 `crate::pricing`）.
+/// `free_ids`: 免费中转 ID 集合（来自注册表 is_free 判定）, 组内任一中转 ID 命中即标记免费.
+fn compute_stats(
+    logs: &[RequestLog],
+    price_overrides: &HashMap<String, ModelPrice>,
+    free_ids: &std::collections::HashSet<String>,
+) -> UsageStats {
+    // 价格解析记忆化: 本次聚合生命周期内复用 resolve_price 结果 (避免 5000 条重复解析).
+    let memo = PriceMemo::new(price_overrides);
     let total = logs.len();
     let success_count = logs.iter().filter(|l| l.status < 400).count();
     let error_count = total - success_count;
@@ -943,16 +1754,45 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
     let total_completion_tokens: u32 = logs.iter().map(|l| l.completion_tokens).sum();
     let total_cache_hit_tokens: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
     let total_cache_miss_tokens: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
-    let cache_hit_rate = if total_cache_hit_tokens + total_cache_miss_tokens > 0 {
-        total_cache_hit_tokens as f64 / (total_cache_hit_tokens + total_cache_miss_tokens) as f64
+    let total_cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
+    let total_cache_saved: f64 = logs.iter().map(|l| log_cache_saved(&memo, l)).sum();
+    // 命中率口径: 命中 / 总输入 token (与 opencode-visual-cache 一致: 缓存读 / prompt_tokens).
+    // 分母用总输入而非 hit+miss: creation(首次写入) 已从 miss 拆出, hit+miss = prompt - creation 会偏小.
+    let cache_hit_rate = if total_prompt_tokens > 0 {
+        total_cache_hit_tokens as f64 / total_prompt_tokens as f64
     } else {
         0.0
     };
 
-    // 按模型分组
-    let mut model_map: HashMap<&str, Vec<&RequestLog>> = HashMap::new();
+    // ─── 今日窗口聚合 (东八区 0 点起) ───
+    // 日志文件有 5000 条滚动上限, "累计"口径会封顶失真; 今日口径不受影响, 用于概览小卡片.
+    let now = now_ts() as i64;
+    let today_start = ((now + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
+    let today_logs: Vec<&RequestLog> = logs.iter().filter(|l| l.timestamp >= today_start).collect();
+    let today_requests = today_logs.len();
+    let today_success = today_logs.iter().filter(|l| l.status < 400).count();
+    let today_errors = today_requests - today_success;
+    let today_avg_latency_ms = if today_requests > 0 {
+        today_logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / today_requests as f64
+    } else {
+        0.0
+    };
+    let today_total_prompt_tokens: u32 = today_logs.iter().map(|l| l.prompt_tokens).sum();
+    let today_total_completion_tokens: u32 = today_logs.iter().map(|l| l.completion_tokens).sum();
+    let today_total_cache_hit_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+    let today_total_cache_miss_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+    let today_total_cost: f64 = today_logs.iter().map(|l| log_cost(&memo, l)).sum();
+
+    // 按"供应商/上游模型"组合分组: 上游模型缺失时回退到中转 model, 避免按中转 ID 统计造成的混乱.
+    let mut model_map: HashMap<String, Vec<&RequestLog>> = HashMap::new();
     for log in logs {
-        model_map.entry(&log.model).or_default().push(log);
+        let effective = log
+            .upstream_model
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| log.model.clone());
+        let key = format!("{}/{}", log.provider, effective);
+        model_map.entry(key).or_default().push(log);
     }
     let mut per_model: Vec<ModelStats> = model_map
         .into_iter()
@@ -965,6 +1805,7 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+            let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
             // 纯生成吐字速度: 仅累计首 token 延迟已知的流式请求 (ft<总耗时 且 有输出 token),
             // gen_ms = 总耗时 - 首 token 延迟, 排除排队与 TTFT.
             let (gen_ct, gen_ms): (u64, u64) = logs
@@ -980,8 +1821,25 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             } else {
                 0.0
             };
+            // 中转 ID 集合 (去重, 排序) — 便于对照"该上游模型由哪些中转 ID 映射而来".
+            let mut aliases: Vec<String> = logs
+                .iter()
+                .map(|l| l.model.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            aliases.sort();
+
+            // 单价取组内首条日志解析的结果（覆盖优先, 仅官方 DS 供应商回退内置表）,
+            // 供前端单价列展示.
+            let price = pricing::resolve_price(
+                price_overrides.get(&logs[0].model).copied(),
+                logs[0].upstream_model.as_deref(),
+                Some(logs[0].endpoint.as_str()),
+            );
+
             ModelStats {
-                model: model.to_string(),
+                model,
                 requests: reqs,
                 errors: errs,
                 avg_latency_ms: avg,
@@ -991,6 +1849,10 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
                 gen_speed,
+                aliases,
+                total_cost: cost,
+                price,
+                free: logs.iter().any(|l| free_ids.contains(&l.model)),
             }
         })
         .collect();
@@ -1012,6 +1874,12 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
             let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+            let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
+            let today_cost: f64 = logs
+                .iter()
+                .filter(|l| l.timestamp >= today_start)
+                .map(|l| log_cost(&memo, l))
+                .sum();
             // 纯生成吐字速度, 同 per_model 口径.
             let (gen_ct, gen_ms): (u64, u64) = logs
                 .iter()
@@ -1037,13 +1905,15 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
                 gen_speed,
+                total_cost: cost,
+                today_cost,
             }
         })
         .collect();
     per_provider.sort_by(|a, b| b.requests.cmp(&a.requests));
 
     // 按天分组趋势 (默认)
-    let trends = compute_trends(logs, "day");
+    let trends = compute_trends(logs, "day", price_overrides);
 
     // Top 5 模型
     let top_models: Vec<ModelStats> = per_model.iter().take(5).cloned().collect();
@@ -1063,11 +1933,37 @@ fn compute_stats(logs: &[RequestLog]) -> UsageStats {
         total_cache_hit_tokens,
         total_cache_miss_tokens,
         cache_hit_rate,
+        today_requests,
+        today_success,
+        today_errors,
+        today_avg_latency_ms,
+        today_total_prompt_tokens,
+        today_total_completion_tokens,
+        today_total_cache_hit_tokens,
+        today_total_cache_miss_tokens,
+        total_cost,
+        total_cache_saved,
+        today_total_cost,
+        // has_price_config 在 api_stats 中按 price_overrides 是否非空注入.
+        has_price_config: false,
+        // 本轮 (进程级) 统计由 LogBuffer 原子计数提供, compute_stats 内无来源 → 默认空,
+        // api_stats 返回前会覆盖为 log_buffer.session_stats().
+        session: SessionStats::default(),
     }
 }
 
 /// 按指定粒度聚合趋势数据.
-fn compute_trends(logs: &[RequestLog], granularity: &str) -> Vec<DailyTrend> {
+///
+/// 关键: 聚合后按粒度补齐**固定窗口**的空桶 (hour=24 整点 / day=最近30天 / month=最近12个月),
+/// 使时间轴严格对齐且递增 —— 最新桶=当前粒度边界, 最旧桶=窗口起点 (含无请求空段),
+/// 避免"只显示有数据的桶导致段数不定、时间轴不连续/不对应"的问题.
+fn compute_trends(
+    logs: &[RequestLog],
+    granularity: &str,
+    price_overrides: &HashMap<String, ModelPrice>,
+) -> Vec<DailyTrend> {
+    // 趋势桶内每条日志仍走 log_cost, 复用记忆化避免重复解析价格.
+    let memo = PriceMemo::new(price_overrides);
     let key_fn: fn(u64) -> String = match granularity {
         "hour" => ts_to_hour,
         "month" => ts_to_month,
@@ -1079,18 +1975,24 @@ fn compute_trends(logs: &[RequestLog], granularity: &str) -> Vec<DailyTrend> {
         let key = key_fn(log.timestamp);
         map.entry(key).or_default().push(log);
     }
-    let mut trends: Vec<DailyTrend> = map
-        .into_iter()
-        .map(|(date, logs)| {
-            let reqs = logs.len();
-            let errs = logs.iter().filter(|l| l.status >= 400).count();
-            let avg_lat = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
-            let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
-            let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
-            let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
-            let ct: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
+    // 用 BTreeMap<桶起始ts, 趋势> 聚合 (按 ts 有序, 且桶起始保证同桶唯一).
+    let mut buckets: BTreeMap<u64, DailyTrend> = BTreeMap::new();
+    for (date, logs) in map {
+        let reqs = logs.len();
+        // 桶起始 ts: 取桶内首条日志对齐到粒度边界 (同一桶所有日志对齐后相同).
+        let ts = bucket_start(logs.first().map(|l| l.timestamp).unwrap_or(0), granularity);
+        let errs = logs.iter().filter(|l| l.status >= 400).count();
+        let avg_lat = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
+        let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
+        let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
+        let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
+        let ct: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
+        let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
+        buckets.insert(
+            ts,
             DailyTrend {
                 date,
+                ts,
                 requests: reqs,
                 errors: errs,
                 avg_latency: avg_lat,
@@ -1098,11 +2000,67 @@ fn compute_trends(logs: &[RequestLog], granularity: &str) -> Vec<DailyTrend> {
                 total_completion_tokens: ct,
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
-            }
-        })
-        .collect();
-    trends.sort_by(|a, b| a.date.cmp(&b.date));
-    trends
+                total_cost: cost,
+            },
+        );
+    }
+
+    // 补齐固定窗口空桶 (含无请求段), 保证时间轴对齐且递增.
+    let window: u64 = match granularity {
+        "hour" => 24,
+        "month" => 12,
+        _ => 30,
+    };
+    let now = now_ts();
+    let end = bucket_start(now, granularity);
+    // 窗口起点: 优先取「最近 N 个粒度」对齐边界; 但若真实数据更早, 则延伸到真实最早桶,
+    // 避免丢弃窗口外的历史数据 (同时保证正常情况即固定滑动窗口).
+    let mut now_start = end;
+    for _ in 1..window {
+        now_start = prev_bucket(now_start, granularity);
+    }
+    let real_min = buckets.keys().next().copied().unwrap_or(now_start);
+    let start = now_start.min(real_min);
+    let mut ts = start;
+    loop {
+        buckets.entry(ts).or_insert_with(|| DailyTrend {
+            date: key_fn(ts),
+            ts,
+            requests: 0,
+            errors: 0,
+            avg_latency: 0.0,
+            total_prompt_tokens: 0,
+            total_completion_tokens: 0,
+            total_cache_hit_tokens: 0,
+            total_cache_miss_tokens: 0,
+            total_cost: 0.0,
+        });
+        if ts == end {
+            break;
+        }
+        ts = next_bucket(ts, granularity);
+        if ts > end {
+            // 安全护栏: 步进越过 end (理论上不会发生) 则停止.
+            break;
+        }
+    }
+
+    buckets.into_values().collect()
+}
+
+/// 桶起始 ts 步进到上一个桶 (本地时区, 对齐粒度). 与 next_bucket 对称.
+fn prev_bucket(ts: u64, granularity: &str) -> u64 {
+    match granularity {
+        "hour" => ts.saturating_sub(3600),
+        "month" => {
+            let local = (ts as i64) + TZ_OFFSET_SECS;
+            let days = local / 86400;
+            let (y, m, _) = days_to_ymd(days);
+            let (py, pm) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
+            (days_from_civil(py, pm, 1) * 86400 - TZ_OFFSET_SECS) as u64
+        }
+        _ => ts.saturating_sub(86400),
+    }
 }
 
 #[cfg(test)]
@@ -1125,7 +2083,9 @@ mod tests {
             cached: false,
             prompt_cache_hit_tokens: hit,
             prompt_cache_miss_tokens: miss,
+            prompt_cache_creation_tokens: 0,
             first_token_ms: None,
+            upstream_model: None,
         }
     }
 
@@ -1137,13 +2097,13 @@ mod tests {
             mk("deepseek", "ds", 60, 40),
             mk("gpt", "oa", 0, 100),
         ];
-        let s = compute_stats(&logs);
+        let s = compute_stats(&logs, &HashMap::new(), &std::collections::HashSet::new());
         // 全局: 命中 80+60+0=140, 未命中 20+40+100=160
         assert_eq!(s.total_cache_hit_tokens, 140);
         assert_eq!(s.total_cache_miss_tokens, 160);
         assert!((s.cache_hit_rate - 140.0 / 300.0).abs() < 1e-9);
-        // 模型分组: deepseek 命中 140, 未命中 60
-        let ds = s.per_model.iter().find(|m| m.model == "deepseek").unwrap();
+        // 模型分组: 按"供应商/上游模型"组合 (upstream 缺失回退 model) => "ds/deepseek"
+        let ds = s.per_model.iter().find(|m| m.model == "ds/deepseek").unwrap();
         assert_eq!(ds.total_cache_hit_tokens, 140);
         assert_eq!(ds.total_cache_miss_tokens, 60);
         // 供应商分组: ds 命中 140, 未命中 60
@@ -1156,7 +2116,7 @@ mod tests {
     #[test]
     fn test_cache_hit_rate_zero() {
         let logs = vec![mk("m", "p", 0, 0)];
-        let s = compute_stats(&logs);
+        let s = compute_stats(&logs, &HashMap::new(), &std::collections::HashSet::new());
         assert_eq!(s.total_cache_hit_tokens, 0);
         assert_eq!(s.total_cache_miss_tokens, 0);
         assert_eq!(s.cache_hit_rate, 0.0);
@@ -1170,11 +2130,17 @@ mod tests {
         // 2026-08-02T01:00:00Z → 东八区 08-02 09:00, 仍属 08/02
         let t_next = 1_785_632_400;
         let logs = vec![mk_ts("m", "p", t_same_day), mk_ts("m", "p", t_next)];
-        let trends = compute_trends(&logs, "day");
-        // 两条都属于东八区 08/02, 应合并为一个桶.
-        assert_eq!(trends.len(), 1);
-        assert_eq!(trends[0].requests, 2);
-        assert_eq!(trends[0].date, "08/02");
+        let trends = compute_trends(&logs, "day", &HashMap::new());
+        // 补齐窗口后至少 30 个日桶 (含空桶); 两条日志都应归入东八区 08/02 同一桶.
+        assert!(trends.len() >= 30, "日粒度应补齐最近 30 天窗口");
+        let bucket = trends.iter().find(|d| d.date == "08/02").expect("应有 08/02 桶");
+        assert_eq!(bucket.requests, 2);
+        // 时间轴严格递增 (按 ts).
+        let mut prev = 0u64;
+        for d in &trends {
+            assert!(d.ts >= prev, "日桶必须按时间递增");
+            prev = d.ts;
+        }
     }
 
     /// 趋势: 跨多日/多月日志能正确聚合成多个桶 (验证统计基于全量而非内存截断).
@@ -1185,12 +2151,43 @@ mod tests {
         let logs: Vec<RequestLog> = (0..3)
             .map(|i| mk_ts("m", "p", base + i * 5 * 86400))
             .collect();
-        let trends = compute_trends(&logs, "day");
-        assert_eq!(trends.len(), 3, "跨多日应生成多个趋势桶");
-        // 按月聚合: 全部落在同一个月 (07 月), 仅 1 个桶.
-        let month = compute_trends(&logs, "month");
-        assert_eq!(month.len(), 1);
-        assert_eq!(month[0].date, "2026/07");
+        let trends = compute_trends(&logs, "day", &HashMap::new());
+        assert!(trends.len() >= 30, "日粒度至少补齐 30 天窗口");
+        // 非空桶应有 3 个 (跨 07-15 / 07-20 / 07-25), 其余为补齐的空桶.
+        let non_empty = trends.iter().filter(|d| d.requests > 0).count();
+        assert_eq!(non_empty, 3, "跨多日应生成 3 个非空趋势桶");
+        // 按月聚合: 全部落在同一个月 (07 月), 仅 1 个非空桶; 窗口补齐 12 个月.
+        let month = compute_trends(&logs, "month", &HashMap::new());
+        assert_eq!(month.len(), 12, "月粒度补齐 12 个月窗口");
+        let m_non_empty = month.iter().filter(|d| d.requests > 0).count();
+        assert_eq!(m_non_empty, 1);
+        assert!(month.iter().any(|d| d.date == "2026/07" && d.requests == 3));
+    }
+
+    /// 趋势: 小时粒度补齐最近 24 个整点桶 (最新=当前小时, 最旧=当前小时-23h),
+    /// 且时间轴严格递增 (回应用户反馈: 小时应显示 24 段、时间对应).
+    #[test]
+    fn test_trend_hour_window_24_segments() {
+        let now = now_ts();
+        // 往当前小时内塞一条日志, 验证它归入「当前小时」桶.
+        let logs = vec![mk_ts("m", "p", now)];
+        let trends = compute_trends(&logs, "hour", &HashMap::new());
+        assert_eq!(trends.len(), 24, "小时粒度应补齐最近 24 个整点");
+        // 时间轴严格递增.
+        let mut prev = 0u64;
+        for d in &trends {
+            assert!(d.ts >= prev, "小时桶必须按时间递增");
+            prev = d.ts;
+        }
+        // 最新桶 = 当前小时整点, 且其内有 1 条请求.
+        let last = trends.last().expect("应有最新桶");
+        assert_eq!(last.requests, 1, "当前小时桶应包含刚插入的日志");
+        // 最新桶时间 = 当前时间对齐到整点 (<= now).
+        assert!(last.ts <= now);
+        assert_eq!(last.ts % 3600, 0, "桶起始须为整点");
+        // 最旧桶 = 最新桶 - 23 小时.
+        let first = trends.first().expect("应有最旧桶");
+        assert_eq!(last.ts - first.ts, 23 * 3600);
     }
 
     /// 构造带指定时间戳的日志 (复用 mk 的其余默认值).
@@ -1198,5 +2195,54 @@ mod tests {
         let mut log = mk(model, provider, 0, 0);
         log.timestamp = ts;
         log
+    }
+
+    /// 回归: 跨年边界月桶年份必须正确 (ts_to_month 曾用 UTC 天数推年,
+    /// 导致本地 2026-01-01 被错标为 "2025/01"). 同时校验月桶序列严格按时间递增.
+    #[test]
+    fn test_trend_month_year_boundary() {
+        // 2026-01-01T00:30:00Z → 东八区 2026-01-01 08:30, 属 2026/01 (非 2025/01).
+        let ts = 1_768_185_000;
+        let logs = vec![mk_ts("m", "p", ts)];
+        let month = compute_trends(&logs, "month", &HashMap::new());
+        assert_eq!(month.len(), 12, "月粒度补齐 12 个月窗口");
+        // 必须存在 "2026/01" 桶 (而非 "2025/01"), 且含 1 条请求.
+        let jan = month
+            .iter()
+            .find(|d| d.date == "2026/01")
+            .expect("跨年边界应正确标记为 2026/01");
+        assert_eq!(jan.requests, 1);
+        assert!(!month.iter().any(|d| d.date == "2025/01"), "不得出现串年的 2025/01");
+        // 月桶序列按时间严格递增 (date 字符串不再因串年错序).
+        let mut prev = String::new();
+        for d in &month {
+            assert!(d.date >= prev, "月桶必须按时间递增: {} < {}", d.date, prev);
+            prev = d.date.clone();
+        }
+    }
+
+    /// 本轮 (进程级) 累计: push 时原子累加, 请求/成功/输入/输出/KV 命中均正确.
+    #[test]
+    fn session_stats_accumulates_on_push() {
+        let buf = LogBuffer::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut log = mk("m", "p", 80, 20);
+            buf.push(log.clone()).await; // 成功, hit=80 miss=20
+            log.prompt_cache_hit_tokens = 60;
+            log.prompt_cache_miss_tokens = 40;
+            buf.push(log.clone()).await; // 成功
+            log.status = 500;
+            log.prompt_cache_hit_tokens = 0;
+            log.prompt_cache_miss_tokens = 0;
+            buf.push(log).await; // 失败
+        });
+        let s = buf.session_stats();
+        assert_eq!(s.requests, 3);
+        assert_eq!(s.success, 2, "500 不算成功");
+        assert_eq!(s.prompt_tokens, 300, "3 条 × 100");
+        assert_eq!(s.completion_tokens, 150, "3 条 × 50");
+        assert_eq!(s.cache_hit_tokens, 140);
+        assert_eq!(s.cache_miss_tokens, 60);
     }
 }
