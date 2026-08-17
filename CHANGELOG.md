@@ -2,6 +2,24 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.3] - 2026-08-18
+
+### 优化
+- 响应缓存恢复「仅非流式」语义：本地响应缓存命中分支只服务于非流式请求，流式请求继续走上游实时流式转发（原误把流式也走命中缓存、返回冻结的首块而非实时流）。`cache.rs` / `proxy.rs` 调整命中判定与回退逻辑；启用说明与配置提示文案同步更新为「非流式」口径（中英文）。
+- 概览「优化省量」卡片移除全局加总的「今日省费用」数字，仅保留「今日省 Tokens」（不依赖价格、永远准确）；费用改由各供应商总览卡、供应商统计表、模型用量明细表各自展示（ds 等有价模型出钱、mimo 等无价模型自然显示无价状态），避免无价模型被静默归零成 ¥0.00 误导。对应 i18n 死字符串清理。
+- 供应商总览卡顺序稳定：主序改为有请求记录的全部供应商（`per_provider`，按请求数降序），余额数据仅作字段 merge；消除并发余额查询返回时序不定导致刷新时供应商卡片位置随机跳动的问题，并使无 `balance_endpoint` 的供应商（如 zen）也能出现并展示优化省量（余额显示「—」）。
+- 供应商总览卡新增「今日优化省量」信息：当某供应商今日有转发优化省量时，卡片内显示今日优化省量总 token 及剥离推理链 / 历史裁剪省量明细。后端 `ProviderStats` 新增 `today_opt_saved_tokens` / `today_strip_saved_tokens` / `today_trim_saved_tokens` / `today_resp_cache_saved_tokens` 四个字段，`compute_stats` 供应商分组循环按今日窗口（东八区日界，与 `today_cost` 同口径）求和。
+- 概览「优化省量」卡片右侧填充累计节省 Tokens（来自 `stats.total_opt_saved_tokens`），消除卡片右侧空白。
+
+### 修复
+- 供应商总览卡优化省量不显示：原 `today_opt_saved_tokens` 等字段仅存在于全局 `UsageStats`，`ProviderStats` 缺字段导致前端读取恒为 `undefined`、区块永不渲染；后端补齐供应商维度字段后解决。
+- 余额币种解析错误（美元供应商显示成人民币）：OpenAI/ofox 等兼容余额接口返回扁平字段（如 `{"currency":"usd","balance":6}`），但 `extract_balance_from_json` 的扁平路径只取余额数字、忽略 `currency` 字段且写死返回 `"CNY"`，导致 6 美元误显示为 6 元。修复：扁平路径改为调用 `extract_currency_from_json` 从响应提取币种；新增 `normalize_currency` 归一化 `usd`/`$`→`USD`、`cny`/`¥`→`CNY` 等常见写法，无法识别才回退 CNY；DeepSeek 路径币种同样走归一化。前端余额卡使用后端 `row.currency`，无需改动。
+- 供应商总览卡空供应商回归：`providerRows` 换 `per_provider` 主序时混入 `provider` 为空的脏记录（日志 provider 缺失生成空名条目），恢复以 `balanceData`（配置了 `balance_endpoint` 的供应商）为主序并加空名过滤；同时回退误将费用列 `x-show` 改为 `row.billing`（导致已正常显示的今日/累积费用被隐藏），恢复全局 `stats.has_price_config` 口径，并回退后端 `billing` 判定到 `free_ids` 原逻辑，避免波及其他功能。
+- 优化省量头条卡片布局：原「今日省 Tokens / 总优化省量」两栏 + 底部剥离/裁剪明细行改为「今日省 Tokens / 本月省 Tokens / 近30天 sparkline」三栏紧凑布局（本月窗口为东八区月首0点至今，替换累计口径；右侧30天柱状图由后端 `opt_saved_series` 按本地日界聚合近30天省量驱动，纯 div 实现无第三方库），今日/本月顶部对齐、消除中间留白。后端 `UsageStats` 新增 `month_opt_saved_tokens` 与 `opt_saved_series: Vec<u64>`。
+- 供应商总览卡布局收敛：余额 / 费用（今日+累计）/ 优化省量三块由 `grid-cols-[auto_1fr_auto]` 散开式改为 `flex` 紧凑分组——余额与费用作为左组紧挨、优化省量 `ml-auto` 贴右，消除卡片内横向留白。
+- 流式 token 在编程客户端（Cursor/Claude Code 等）不显示：mimo 等模型流式响应不把 usage 放在 `finish_reason:"stop"` 帧，而是发成 `choices:[]` 的独立 usage 帧，标准客户端在收到 `finish_reason:"stop"` 后只读一次 usage、忽略后续独立帧，导致面板能看到 token 而编程工具显示空白。修复：在 `[DONE]` 前**总是补发**一帧带 `usage` 的 `finish_reason:"stop"`（token 取自 AIGate 精确计算值 `final_tokens`，prompt/completion/total 齐全），确保客户端在 `finish_reason:"stop"` 帧即读到消耗。`TokenStream` 新增 `saw_usage` 标记流内是否出现过 usage，便于后续按需精确补发。
+- 健康检查页重复显示两个「正常」标签：熔断状态文案原返回 `"正常"`，与供应商「存活正常」语义重叠。修复：`circuit_state_cn` 的 closed 分支文案改为「运行正常」（与「正常」区分，前者指熔断器闭合=流量放行、后者指探测存活），消除概念重复。
+
 ## [0.4.2] - 2026-08-15
 
 ### 新增

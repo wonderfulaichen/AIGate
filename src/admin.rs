@@ -1138,8 +1138,8 @@ mod changelog_tests {
             assert!(v.get("date").is_some(), "缺少 date");
             assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
         }
-        // 首个版本应为最新版 0.4.2
-        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.2"));
+        // 首个版本应为最新版 0.4.3
+        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.3"));
     }
 }
 
@@ -1496,6 +1496,14 @@ pub struct ProviderStats {
     /// 在前端展示"已省"列; 免费/月套餐等不按量计费供应商 (如 opencode) 无费用基数,
     /// "已省"无实际意义, 前端以 "—" 占位而非误显示金额.
     pub billing: bool,
+    /// 今日窗口 (东八区日界): 转发优化省下的输入 token 总数 (剥离推理链 + 历史裁剪 + 响应缓存命中).
+    pub today_opt_saved_tokens: u64,
+    /// 今日窗口优化省量明细: 仅剥离推理链省下的输入 token.
+    pub today_strip_saved_tokens: u64,
+    /// 今日窗口优化省量明细: 仅历史裁剪省下的输入 token.
+    pub today_trim_saved_tokens: u64,
+    /// 今日窗口优化省量明细: 仅响应缓存命中省下的 token.
+    pub today_resp_cache_saved_tokens: u64,
 }
 
 /// 日趋势 (通用: 按小时/天/月聚合均使用此结构).
@@ -1549,6 +1557,10 @@ pub struct UsageStats {
     pub total_trim_saved_tokens: u64,
     /// 累计优化省量明细: 仅响应缓存命中省下的 token.
     pub total_resp_cache_saved_tokens: u64,
+    /// 本月窗口 (东八区月首0点起) 转发优化省下的输入 token 数 (剥离推理链 + 历史裁剪 + 响应缓存命中).
+    pub month_opt_saved_tokens: u64,
+    /// 近 30 天每日优化省量序列 (tokens, 按本地日界聚合, 末位=今日), 用于头条卡片 sparkline.
+    pub opt_saved_series: Vec<u64>,
     /// 累计费用 (元), 价格缺失的模型按 0 计.
     pub total_cost: f64,
     // ─── 今日窗口统计 (东八区日界, 不受日志 5000 条滚动窗口封顶影响) ───
@@ -1963,6 +1975,31 @@ fn compute_stats(
         .map(ts_to_date)
         .unwrap_or_default();
 
+    // 本月窗口聚合 (东八区月首0点起): 月优化省量 = 三者本月之和.
+    let month_start = bucket_start(now_ts(), "month");
+    let month_logs: Vec<&RequestLog> = logs.iter().filter(|l| l.timestamp >= month_start).collect();
+    let month_opt_saved_tokens: u64 = month_logs
+        .iter()
+        .map(|l| (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64)
+        .sum();
+
+    // 近 30 天每日优化省量序列 (末位=今日), 用于头条卡片 sparkline.
+    // 按本地日界分桶: 桶 key = 当日0点 ts; 遍历所有日志累加当日省量, 再按日界补齐最近30天空桶.
+    let mut day_buckets: BTreeMap<u64, u64> = BTreeMap::new();
+    for l in logs.iter() {
+        let day_start = bucket_start(l.timestamp, "day");
+        let saved = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64;
+        *day_buckets.entry(day_start).or_insert(0) += saved;
+    }
+    let mut opt_saved_series: Vec<u64> = Vec::with_capacity(30);
+    let mut ts = bucket_start(now_ts(), "day");
+    for _ in 0..30 {
+        opt_saved_series.push(*day_buckets.get(&ts).unwrap_or(&0));
+        // 向前推一天 (day 粒度)
+        ts = ts.saturating_sub(86400);
+    }
+    opt_saved_series.reverse(); // 末位=今日, 首位=30天前
+
     // 按"供应商/上游模型"组合分组: 上游模型缺失时回退到中转 model, 避免按中转 ID 统计造成的混乱.
     let mut model_map: HashMap<String, Vec<&RequestLog>> = HashMap::new();
     for log in logs {
@@ -2067,6 +2104,24 @@ fn compute_stats(
                 .filter(|l| l.timestamp >= today_start)
                 .map(|l| log_cost(&memo, l))
                 .sum();
+            // 今日窗口转发优化省量 (剥离推理链 + 历史裁剪 + 响应缓存命中), 与今日卡片同口径 (东八区日界).
+            let today_strip_saved_tokens: u64 = logs
+                .iter()
+                .filter(|l| l.timestamp >= today_start)
+                .map(|l| l.strip_saved_tokens as u64)
+                .sum();
+            let today_trim_saved_tokens: u64 = logs
+                .iter()
+                .filter(|l| l.timestamp >= today_start)
+                .map(|l| l.trim_saved_tokens as u64)
+                .sum();
+            let today_resp_cache_saved_tokens: u64 = logs
+                .iter()
+                .filter(|l| l.timestamp >= today_start)
+                .map(|l| l.resp_cache_saved_tokens as u64)
+                .sum();
+            let today_opt_saved_tokens =
+                today_strip_saved_tokens + today_trim_saved_tokens + today_resp_cache_saved_tokens;
             // 纯生成吐字速度, 同 per_model 口径.
             let (gen_ct, gen_ms): (u64, u64) = logs
                 .iter()
@@ -2096,6 +2151,10 @@ fn compute_stats(
                 today_cost,
                 cache_saved,
                 billing,
+                today_opt_saved_tokens,
+                today_strip_saved_tokens,
+                today_trim_saved_tokens,
+                today_resp_cache_saved_tokens,
             }
         })
         .collect();
@@ -2137,6 +2196,8 @@ fn compute_stats(
         total_strip_saved_tokens,
         total_trim_saved_tokens,
         total_resp_cache_saved_tokens,
+        month_opt_saved_tokens,
+        opt_saved_series,
         today_total_cost,
         today_opt_saved_tokens,
         today_opt_saved_fee,

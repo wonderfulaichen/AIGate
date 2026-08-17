@@ -252,21 +252,34 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
               <div class="text-xs font-bold uppercase tracking-wider" style="color:var(--c-indigo)" x-text="t('opt_saved_title')"></div>
               <div class="text-[10px]" style="color:var(--c-muted)" x-text="(stats.total_opt_saved_fee||0)>0 ? t('opt_saved_cumulative', fmtMoney(stats.total_opt_saved_fee), stats.opt_saved_since||'') : ''"></div>
             </div>
-            <div class="flex items-end gap-6 flex-wrap">
-              <div>
-                <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_today_tokens')"></div>
-                <div class="text-3xl font-bold mt-0.5" style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.today_opt_saved_tokens||0) + ' tok'"></div>
+            <div class="flex items-start gap-6">
+              <div class="flex items-start gap-5">
+                <div>
+                  <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_today_tokens')"></div>
+                  <div class="text-3xl font-bold mt-0.5" style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.today_opt_saved_tokens||0) + ' tok'"></div>
+                  <div class="flex gap-3 mt-1 text-[10px]" style="color:var(--c-muted)">
+                    <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_strip_saved_tokens>0) ? '≈ '+fmtT(stats.today_strip_saved_tokens) : t('session_opt_off')"></span></span>
+                    <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_trim_saved_tokens>0) ? '≈ '+fmtT(stats.today_trim_saved_tokens) : t('session_opt_off')"></span></span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_month_tokens')"></div>
+                  <div class="text-3xl font-bold mt-0.5" style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.month_opt_saved_tokens||0) + ' tok'"></div>
+                </div>
               </div>
-              <div>
-                <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_today_fee')"></div>
-                <div class="text-3xl font-bold mt-0.5 text-white" style="font-family:'JetBrains Mono',monospace" x-text="(stats.today_opt_saved_fee||0)>0 ? '≈ '+fmtMoney(stats.today_opt_saved_fee)+(currencyConfig&&currencyConfig.currency?currencyConfig.currency:'') : '—'"></div>
+              <div class="text-right ml-auto">
+                <div class="text-[10px] uppercase tracking-wider mb-1" style="color:var(--c-muted)" x-text="t('opt_saved_30d')"></div>
+                <template x-if="(stats.opt_saved_series||[]).some(v=>v>0)">
+                  <div class="flex items-end gap-[2px] h-12" style="align-items:flex-end">
+                    <template x-for="v in stats.opt_saved_series" :key="$index">
+                      <div class="rounded-sm" :style="`width:5px;height:${Math.max(2, Math.round(v / Math.max(...stats.opt_saved_series) * 46))}px;background:${v>0?'#6366f1':'rgba(99,102,241,.15)'}`"></div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="!(stats.opt_saved_series||[]).some(v=>v>0)">
+                  <div class="text-sm" style="color:var(--c-muted)" x-text="'—'"></div>
+                </template>
               </div>
-            </div>
-            <!-- 优化省量明细行: 未开启的优化项显示"未开启"状态而非 0 -->
-            <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 pt-3 border-t text-[11px]" style="border-color:var(--c-border);color:var(--c-muted)">
-              <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_strip_saved_tokens>0) ? '≈ '+fmtT(stats.today_strip_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
-              <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_trim_saved_tokens>0) ? '≈ '+fmtT(stats.today_trim_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
-              <span><span x-text="t('session_cache_opt')"></span>: <span style="color:#34d399" x-text="(stats&&stats.today_resp_cache_saved_tokens>0) ? '≈ '+fmtT(stats.today_resp_cache_saved_tokens)+' tok' : ((cache&&cache.enabled) ? t('cache_opt_pending') : t('session_opt_off'))"></span></span>
             </div>
           </div></div>
           <!-- 供应商总览: 余额 + 费用合并单卡片, 内联编辑 (不再跳转) -->
@@ -287,17 +300,32 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                       <span class="text-[10px] px-1.5 py-0.5 rounded ml-auto" :class="row.source==='manual'?'bg-[rgba(245,158,11,.15)] text-[#f59e0b]':'bg-[rgba(52,211,153,.15)] text-[#34d399]'" x-text="row.source==='manual'?t('balance_src_manual'):t('balance_src_api')" x-show="row.hasBalance"></span>
                       <button @click="balanceEditProvider=(balanceEditProvider===row.provider?null:row.provider)" class="btn-ghost text-[11px]" x-text="t('balance_edit')"></button>
                     </div>
-                    <div class="flex items-end justify-between mt-1.5">
-                      <div>
-                        <div class="text-[10px] font-semibold" style="color:var(--c-muted)" x-text="t('balance_amount')"></div>
-                        <template x-if="row.balance!==null"><div class="text-base font-bold" style="color:#34d399;font-family:'JetBrains Mono',monospace" x-text="row.balance.toFixed(2)+' '+row.currency"></div></template>
-                        <template x-if="row.balance===null"><div class="text-xs" style="color:#f87171" x-text="row.error||t('balance_error')"></div></template>
+                    <!-- 余额 / 费用 / 优化省量: 余额与费用紧凑左组, 省量靠右 -->
+                    <div class="flex items-end gap-4 mt-1.5">
+                      <div class="flex items-end gap-4">
+                        <div>
+                          <div class="text-[10px] font-semibold" style="color:var(--c-muted)" x-text="t('balance_amount')"></div>
+                          <template x-if="row.balance!==null"><div class="text-base font-bold leading-none" style="color:#34d399;font-family:'JetBrains Mono',monospace" x-text="row.balance.toFixed(2)+' '+row.currency"></div></template>
+                          <template x-if="row.balance===null"><div class="text-xs leading-none" style="color:#f87171" x-text="row.error||t('balance_error')"></div></template>
+                        </div>
+                        <div class="text-right" x-show="stats.has_price_config">
+                          <div class="text-[10px] font-semibold" style="color:var(--c-muted)" x-text="t('stat.today_cost')"></div>
+                          <div class="text-sm font-bold leading-none text-[#fbbf24]" style="font-family:'JetBrains Mono',monospace" x-text="fmtMoney(row.today_cost)"></div>
+                          <div class="text-[10px] font-semibold mt-0.5" style="color:var(--c-muted)" x-text="t('stat.total_cost')"></div>
+                          <div class="text-[11px] font-bold leading-none text-[#f59e0b]" style="font-family:'JetBrains Mono',monospace" x-text="fmtMoney(row.total_cost)"></div>
+                        </div>
                       </div>
-                      <div class="text-right" x-show="stats.has_price_config">
-                        <div class="text-[10px] font-semibold" style="color:var(--c-muted)" x-text="t('stat.today_cost')"></div>
-                        <div class="text-sm font-bold text-[#fbbf24]" style="font-family:'JetBrains Mono',monospace" x-text="fmtMoney(row.today_cost)"></div>
-                        <div class="text-[10px] font-semibold mt-0.5" style="color:var(--c-muted)" x-text="t('stat.total_cost')"></div>
-                        <div class="text-[11px] font-bold text-[#f59e0b]" style="font-family:'JetBrains Mono',monospace" x-text="fmtMoney(row.total_cost)"></div>
+                      <div class="text-right text-[10px] leading-tight ml-auto" style="color:var(--c-muted)">
+                        <div class="font-semibold" style="color:var(--c-indigo)" x-text="t('provider_opt_saved')"></div>
+                        <div style="font-family:'JetBrains Mono',monospace">
+                          <template x-if="row.today_opt_saved_tokens > 0"><span style="color:var(--c-indigo)" x-text="fmtT(row.today_opt_saved_tokens) + ' tok'"></span></template>
+                          <template x-if="row.today_opt_saved_tokens <= 0"><span x-text="'—'"></span></template>
+                        </div>
+                        <div class="mt-0.5">
+                          <span x-text="t('forward_saved_strip') + ' '"></span><template x-if="row.today_strip_saved_tokens > 0"><span style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="'≈' + fmtT(row.today_strip_saved_tokens)"></span></template><template x-if="row.today_strip_saved_tokens <= 0"><span x-text="'—'"></span></template>
+                          <span class="mx-1">·</span>
+                          <span x-text="t('forward_saved_trim') + ' '"></span><template x-if="row.today_trim_saved_tokens > 0"><span style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="'≈' + fmtT(row.today_trim_saved_tokens)"></span></template><template x-if="row.today_trim_saved_tokens <= 0"><span x-text="'—'"></span></template>
+                        </div>
                       </div>
                     </div>
                     <template x-if="balanceEditProvider===row.provider">
@@ -1171,7 +1199,7 @@ const I18N = {
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
     'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。',
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
-    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（非流式与流式请求均支持）',
+    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率极低，不参与缓存）',
     'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_desc': '条目写入后保留的秒数，过期自动失效；仅影响后续写入', 'cache_ttl_unit': '秒',
     'cache_max_entries_label': '缓存条目上限', 'cache_max_entries_desc': '内存最多保留的缓存条目数，超出后淘汰最早的一半', 'cache_max_entries_unit': '条',
     'cache_config_hint': '配置为运行时生效；开启状态与缓存条目均随进程落盘，重启后自动恢复。命中统计与省量见「概览」页。',
@@ -1198,10 +1226,10 @@ const I18N = {
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制',
     'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
-    'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史',
+    'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'provider_opt_saved': '今日优化省量',
     'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
     'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
-    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'cache_opt_pending': '已开启（待命中）', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_today_fee': '今日省费用', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
+    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
     'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
     'tooltip_config': '任务栏 Tooltip', 'tooltip_enabled': '启用 Tooltip', 'tooltip_metrics': '显示指标',
     'tooltip_requests_per_second': '请求速度 (req/s)', 'tooltip_avg_latency_ms': '平均延迟 (ms)',
@@ -1272,10 +1300,10 @@ const I18N = {
     'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
     'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.',
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
-    'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (both non-streaming and streaming)',
+    'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical non-stream request bodies are served from cache to save tokens (streaming IDE traffic is excluded)',
     'cache_ttl_label': 'Cache TTL', 'cache_ttl_desc': 'Seconds a cached entry lives before expiry; affects new writes only', 'cache_ttl_unit': 's',
     'cache_max_entries_label': 'Max entries', 'cache_max_entries_desc': 'Max cached entries kept in memory; oldest half evicted when exceeded', 'cache_max_entries_unit': 'entries',
-    'cache_config_hint': 'Settings apply at runtime. Cache is in-memory (no persistence); config resets to defaults on restart. Hit stats & savings are on the Overview page.',
+    'cache_config_hint': 'Settings apply at runtime. Enabled state and cache entries persist on disk and auto-restore after restart. Hit stats & savings are on the Overview page.',
     'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL', 'cache.saved_label': 'Tokens saved (since launch)', 'cache.saved_enabled_label': 'Since enabled', 'cache.saved_hint': 'Tokens skipped from upstream on each cache hit (resets on restart)',
     'cache.hit_rate_session': 'Runtime hit rate', 'cache.hit_rate_session_hint': 'Process lifetime (resets on restart)',
     'cache.hit_rate_enabled': 'Since enabled', 'cache.hit_rate_enabled_hint': 'Since last enable (resets on re-enable)',
@@ -1299,10 +1327,10 @@ const I18N = {
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied',
     'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
-    'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed',
+    'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'provider_opt_saved': 'Today Optimization Savings',
     'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
     'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
-    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'cache_opt_pending': 'on (awaiting hit)', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_today_fee': "Today's Fee Saved", 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
+    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
     'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
     'tooltip_config': 'Taskbar Tooltip', 'tooltip_enabled': 'Enable Tooltip', 'tooltip_metrics': 'Display Metrics',
     'tooltip_requests_per_second': 'Request Speed (req/s)', 'tooltip_avg_latency_ms': 'Avg Latency (ms)',
@@ -1498,24 +1526,42 @@ function dashboard() {
     // Polling
     pollTimer: null,
 
-    // 供应商总览: 仅显示"有余额能力"的供应商 (配置了 balance_endpoint 或手动设了余额),
-    // 并附带其费用列. 中转站(go/zen 等无 balance_endpoint 的网关)不进此卡, 费用明细见 analytics 页.
+    // 供应商总览: 以有请求记录的全部供应商为主序 (per_provider, 按请求数降序, 稳定不抖),
+    // 余额数据仅作补充字段 merge (配了 balance_endpoint 的显示余额, 未配的显示"—").
     get providerRows() {
+      // 供应商总览: 以余额查询结果 (balanceData) 为主序, 费用/优化省量数据按供应商名 merge.
       const costMap = {};
       (this.stats && this.stats.per_provider || []).forEach(p => {
-        costMap[p.provider] = { today_cost: p.today_cost || 0, total_cost: p.total_cost || 0 };
+        if (!p.provider || String(p.provider).trim().length === 0) return; // 跳过空名脏记录
+        costMap[p.provider] = {
+          today_cost: p.today_cost || 0,
+          total_cost: p.total_cost || 0,
+          today_opt_saved_tokens: p.today_opt_saved_tokens || 0,
+          today_strip_saved_tokens: p.today_strip_saved_tokens || 0,
+          today_trim_saved_tokens: p.today_trim_saved_tokens || 0,
+          today_resp_cache_saved_tokens: p.today_resp_cache_saved_tokens || 0,
+        };
       });
       const rows = [];
       const seen = {};
       (this.balanceData || []).forEach(b => {
+        if (!b.provider || String(b.provider).trim().length === 0) return; // 跳过空名供应商
         if (seen[b.provider]) return;
         seen[b.provider] = true;
-        const c = costMap[b.provider] || { today_cost: 0, total_cost: 0 };
+        const c = costMap[b.provider] || {
+          today_cost: 0, total_cost: 0,
+          today_opt_saved_tokens: 0, today_strip_saved_tokens: 0,
+          today_trim_saved_tokens: 0, today_resp_cache_saved_tokens: 0,
+        };
         rows.push({
           provider: b.provider,
           balance: b.balance, currency: b.currency, source: b.source, error: b.error,
           hasBalance: b.balance !== null && b.balance !== undefined,
           today_cost: c.today_cost, total_cost: c.total_cost,
+          today_opt_saved_tokens: c.today_opt_saved_tokens,
+          today_strip_saved_tokens: c.today_strip_saved_tokens,
+          today_trim_saved_tokens: c.today_trim_saved_tokens,
+          today_resp_cache_saved_tokens: c.today_resp_cache_saved_tokens,
         });
       });
       return rows;

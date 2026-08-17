@@ -262,14 +262,11 @@ impl ResponseCache {
 
     /// 由已注入参数的请求体计算缓存键.
     ///
-    /// 非流式与流式请求都参与缓存, 但用 `s:` 前缀做命名空间隔离:
-    /// 流式命中回放的是完整 SSE 文本 (`text/event-stream`), 与非流式 (回放 JSON) 语义不同,
-    /// 绝不能交叉命中 (否则把裸 SSE 当 JSON 解析 → 客户端报错).
+    /// 仅对非流式请求调用 (proxy 层已限制: 流式编程流量滚动上下文命中率恒为 0, 不参与缓存).
+    /// 规范化: 去掉不影响上游输出的字段, 让"实质相同请求"跨细微元数据差异也能命中缓存.
+    /// IDE/中间件常透传随机 user/id/metadata/stream_options, 若不剔除会导致缓存 miss.
+    /// 采用黑名单保留式: 仅移除已知无关字段, 新增的合理字段默认参与哈希, 避免误伤.
     pub fn make_key(body: &Value) -> Option<String> {
-        let is_stream = body.get("stream").and_then(|v| v.as_bool()) == Some(true);
-        // 规范化: 去掉不影响上游输出的字段, 让"实质相同请求"跨细微元数据差异也能命中缓存.
-        // IDE/中间件常透传随机 user/id/metadata/stream_options, 若不剔除会导致缓存 miss.
-        // 采用黑名单保留式: 仅移除已知无关字段, 新增的合理字段默认参与哈希, 避免误伤.
         let mut canonical = body.clone();
         if let Value::Object(ref mut obj) = canonical {
             obj.remove("stream");
@@ -291,11 +288,7 @@ impl ResponseCache {
         let text = serde_json::to_string(&canonical).ok()?;
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
-        let mut key = format!("{:x}", hasher.finish());
-        if is_stream {
-            key.insert_str(0, "s:");
-        }
-        Some(key)
+        Some(format!("{:x}", hasher.finish()))
     }
 
     /// 查询缓存; 命中返回 `(响应体字符串, 录制时精确 token 用量)` (并计数 hits),
@@ -457,19 +450,6 @@ impl ResponseCache {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn make_key_stream_prefix_isolation() {
-        let a = json!({"model":"x","messages":[{"role":"user","content":"hi"}],"stream":true});
-        let b = json!({"model":"x","messages":[{"role":"user","content":"hi"}],"stream":false});
-        let ka = ResponseCache::make_key(&a).expect("流式请求也应参与缓存");
-        let kb = ResponseCache::make_key(&b).expect("非流式请求参与缓存");
-        // 流式与非流式用 s: 前缀隔离命名空间, 避免交叉命中 (SSE 当 JSON 解析)
-        assert!(ka.starts_with("s:"), "流式 key 应加 s: 前缀");
-        assert!(!kb.starts_with("s:"), "非流式 key 不应加前缀");
-        // 去掉前缀后, 相同内容的流式/非流式其规范化体一致 → 同键
-        assert_eq!(&ka[2..], &kb[..]);
-    }
 
     #[test]
     fn make_key_normalizes_noise_fields() {

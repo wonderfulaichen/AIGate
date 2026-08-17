@@ -246,7 +246,7 @@ pub fn circuit_state_cn(s: &str) -> &'static str {
     match s {
         "open" => pick("熔断", "Open (tripped)"),
         "half-open" => pick("半开", "Half-open"),
-        _ => pick("正常", "Closed"), // closed 及未知取值
+        _ => pick("运行正常", "Closed"), // closed 及未知取值
     }
 }
 

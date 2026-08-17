@@ -361,11 +361,9 @@ fn extract_balance_from_json(json: &serde_json::Value) -> (Option<f64>, String) 
     // 格式 1: DeepSeek balance_infos
     if let Some(infos) = json.get("balance_infos").and_then(|v| v.as_array()) {
         if let Some(first) = infos.first() {
-            let currency = first
-                .get("currency")
-                .and_then(|c| c.as_str())
-                .unwrap_or("CNY")
-                .to_string();
+            let currency = normalize_currency(
+                first.get("currency").and_then(|c| c.as_str()).unwrap_or("CNY"),
+            );
             let balance = first
                 .get("total_balance")
                 .and_then(|b| b.as_str())
@@ -377,17 +375,13 @@ fn extract_balance_from_json(json: &serde_json::Value) -> (Option<f64>, String) 
         }
     }
 
-    // 格式 2: 常见扁平字段
+    // 格式 2: 常见扁平字段. 同时尝试从响应里提取币种 (如 OpenAI/ofox: {"currency":"usd","balance":6}).
     let fields = ["balance", "amount", "credits", "remaining", "quota", "remaining_quota"];
     for field in &fields {
         if let Some(value) = json.get(*field) {
-            if let Some(num) = value.as_f64() {
-                return (Some(num), "CNY".to_string());
-            }
-            if let Some(str_val) = value.as_str() {
-                if let Ok(num) = str_val.parse::<f64>() {
-                    return (Some(num), "CNY".to_string());
-                }
+            let num = value.as_f64().or_else(|| value.as_str().and_then(|s| s.parse::<f64>().ok()));
+            if let Some(num) = num {
+                return (Some(num), extract_currency_from_json(json));
             }
         }
     }
@@ -401,6 +395,40 @@ fn extract_balance_from_json(json: &serde_json::Value) -> (Option<f64>, String) 
     }
 
     (None, "CNY".to_string())
+}
+
+/// 从响应 JSON 中提取币种并归一化 (大写 ISO 码). 支持常见字段名与书写形式.
+fn extract_currency_from_json(json: &serde_json::Value) -> String {
+    let keys = ["currency", "unit", "cash_unit", "currency_type", "cash_currency"];
+    for key in &keys {
+        if let Some(v) = json.get(*key).and_then(|c| c.as_str()) {
+            let norm = normalize_currency(v);
+            if !norm.is_empty() {
+                return norm;
+            }
+        }
+    }
+    "CNY".to_string()
+}
+
+/// 币种归一化: 接受 "usd"/"USD"/"$" / "cny"/"¥" 等, 返回大写的 ISO 码; 无法识别返回空串.
+fn normalize_currency(raw: &str) -> String {
+    let s = raw.trim().to_uppercase();
+    if s.is_empty() {
+        return String::new();
+    }
+    // 直接匹配 ISO 码 (允许前后缀, 如 "USD"/"usd")
+    if s == "USD" || s == "CNY" || s == "EUR" || s == "JPY" || s == "GBP" || s == "HKD" {
+        return s;
+    }
+    // 符号或别名
+    match s.as_str() {
+        "$" | "DOLLAR" | "US$" => "USD".to_string(),
+        "¥" | "RMB" | "元" => "CNY".to_string(),
+        "€" => "EUR".to_string(),
+        "£" => "GBP".to_string(),
+        _ => String::new(),
+    }
 }
 
 #[cfg(test)]
