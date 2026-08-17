@@ -20,7 +20,9 @@ dist/
 # 工作记忆目录（CodeBuddy 本地记忆，非源码）
 .codebuddy/
 
-# 运行时生成（exe 同目录, 非源码）
-.aigate_initialized
-aigate.log
-aigate.log.old
+# 调试/临时遗留文件（排查问题时产生的脚本与笔记，不入库）
+*.bak
+check_js.js
+diag_*.ps1
+verify_*.ps1
+*_fix.txt

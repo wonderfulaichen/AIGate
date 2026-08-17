@@ -61,6 +61,7 @@ impl BalanceInfo {
 }
 
 /// 余额查询管理器.
+#[derive(Clone)]
 pub struct BalanceManager {
     /// API 查询结果缓存.
     api_cache: Arc<RwLock<HashMap<String, BalanceInfo>>>,
@@ -104,6 +105,15 @@ impl BalanceManager {
         std::fs::write(&self.manual_file, json).map_err(|e| format!("写入失败: {e}"))
     }
 
+    /// 清除某供应商的 API 余额缓存.
+    ///
+    /// 手动设置/清除余额后调用, 使该供应商回退到手动值或在下次刷新时重新查询上游,
+    /// 避免残留的「成功」缓存掩盖手动覆盖.
+    pub async fn clear_cache(&self, provider: &str) {
+        let mut cache = self.api_cache.write().await;
+        cache.remove(provider);
+    }
+
     /// 读取手动余额文件.
     fn load_manual_file(path: &PathBuf) -> ManualBalanceFile {
         std::fs::read_to_string(path)
@@ -113,6 +123,13 @@ impl BalanceManager {
     }
 
     /// 查询所有供应商的余额 (API 查询 + 手动余额合并).
+    ///
+    /// 设计要点 (修复「刷新时交替失败」):
+    /// 1. 成功结果写入 `api_cache` 并跨请求复用; 缓存随 `BalanceManager` 常驻于 `AppState`,
+    ///    不再每次请求重建 (旧实现每次 `new`, 缓存等于没用, 每次刷新都重新打上游).
+    /// 2. **失败结果绝不写入缓存**, 保证下次刷新必定重试; 已成功的供应商则一直命中缓存.
+    /// 3. 按 `(balance_endpoint, api_key)` 去重: 多个供应商若共用同一上游账号/密钥,
+    ///    本次刷新只打一次上游, 避免「第二个请求被限流」导致交替失败.
     pub async fn query_all_balances(
         &self,
         client: &reqwest::Client,
@@ -126,7 +143,14 @@ impl BalanceManager {
         let manual = Self::load_manual_file(&self.manual_file);
         let mut results: Vec<BalanceInfo> = Vec::new();
 
-        // 先处理配置了余额 API 的供应商
+        // 待查询队列: 排除手动覆盖与「成功」缓存命中的供应商.
+        struct ToQuery {
+            provider: String,
+            endpoint: String,
+            api_key: String,
+        }
+        let mut to_query: Vec<ToQuery> = Vec::new();
+
         for (provider_name, config) in provider_configs {
             // 手动余额优先 (用户手动设置的覆盖 API 查询结果)
             if let Some(manual_balance) = manual.balances.get(provider_name) {
@@ -139,23 +163,59 @@ impl BalanceManager {
                 continue;
             }
 
-            // 检查 API 缓存
+            // 仅命中「成功」缓存才复用; 失败不缓存, 故此处不会出现陈旧失败.
             let cache = self.api_cache.read().await;
             if let Some(cached) = cache.get(provider_name) {
-                if now - cached.last_updated < self.cache_ttl {
+                if cached.error.is_none() && now - cached.last_updated < self.cache_ttl {
                     results.push(cached.clone());
                     continue;
                 }
             }
             drop(cache);
 
-            // 查询余额
-            let balance = self.query_provider_balance(client, provider_name, config).await;
+            match &config.balance_endpoint {
+                Some(ep) => to_query.push(ToQuery {
+                    provider: provider_name.clone(),
+                    endpoint: ep.clone(),
+                    api_key: config.api_key.clone(),
+                }),
+                None => results.push(BalanceInfo::from_api(
+                    provider_name,
+                    None,
+                    "CNY".to_string(),
+                    now,
+                    Some("未配置余额查询 API".to_string()),
+                )),
+            }
+        }
 
-            // 更新缓存
-            let mut cache = self.api_cache.write().await;
-            cache.insert(provider_name.clone(), balance.clone());
-            results.push(balance);
+        // 按 (endpoint, api_key) 去重, 同一上游只查询一次.
+        let mut grouped: std::collections::BTreeMap<(String, String), Vec<String>> =
+            std::collections::BTreeMap::new();
+        for q in &to_query {
+            grouped
+                .entry((q.endpoint.clone(), q.api_key.clone()))
+                .or_default()
+                .push(q.provider.clone());
+        }
+
+        for ((endpoint, api_key), providers) in grouped {
+            let cfg = ProviderBalanceConfig {
+                balance_endpoint: Some(endpoint),
+                api_key,
+            };
+            // 仅以首个供应商名打日志; 结果会复制到同组所有供应商.
+            let balance = self.query_provider_balance(client, &providers[0], &cfg).await;
+            for p in &providers {
+                let mut b = balance.clone();
+                b.provider = p.clone();
+                // 仅缓存成功结果; 失败留待下次刷新重试.
+                if b.error.is_none() {
+                    let mut cache = self.api_cache.write().await;
+                    cache.insert(p.clone(), b.clone());
+                }
+                results.push(b);
+            }
         }
 
         // 处理只有手动余额的供应商 (未配置 API 但手动设置了)
@@ -235,23 +295,40 @@ impl BalanceManager {
                         let body = resp.text().await.unwrap_or_default();
                         let truncated = &body[..body.len().min(300)];
                         warn!(target: "balance", "provider='{}' 余额查询 HTTP {}: {}", provider_name, status, truncated);
+                        // 将技术性错误转换为用户友好的提示
+                        let user_friendly_msg = match status.as_u16() {
+                            401 => "API Key 无效或未配置".to_string(),
+                            403 => "API Key 无余额查询权限".to_string(),
+                            404 => "余额查询端点不存在".to_string(),
+                            429 => "请求过于频繁".to_string(),
+                            500..=599 => "服务端错误".to_string(),
+                            _ => format!("HTTP {}", status),
+                        };
                         BalanceInfo::from_api(
                             provider_name,
                             None,
                             "CNY".to_string(),
                             now,
-                            Some(format!("HTTP {}", status)),
+                            Some(user_friendly_msg),
                         )
                     }
                 }
                 Err(e) => {
                     warn!(target: "balance", "provider='{}' 请求失败: {}", provider_name, e);
+                    // 将网络错误转换为用户友好的提示
+                    let user_friendly_msg = if e.is_timeout() {
+                        "请求超时".to_string()
+                    } else if e.is_connect() {
+                        "连接失败".to_string()
+                    } else {
+                        format!("网络错误: {e}")
+                    };
                     BalanceInfo::from_api(
                         provider_name,
                         None,
                         "CNY".to_string(),
                         now,
-                        Some(format!("请求失败: {e}")),
+                        Some(user_friendly_msg),
                     )
                 }
             }

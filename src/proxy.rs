@@ -20,6 +20,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::admin::LogBuffer;
+use crate::balance::BalanceManager;
 use crate::keys::KeyStore;
 use crate::providers::ProviderRegistry;
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
@@ -41,6 +42,8 @@ pub struct AppState {
     pub stats_cache: Arc<tokio::sync::Mutex<Option<(u64, String, u64, crate::admin::UsageStats)>>>,
     /// API Key 存储.
     pub key_store: KeyStore,
+    /// 余额查询管理器 (常驻实例, 缓存跨请求复用, 避免每次刷新重新打上游导致限流).
+    pub balance_manager: BalanceManager,
     /// 管理面板 API 鉴权令牌 (None 表示不鉴权).
     pub admin_token: Option<String>,
     /// 熔断阈值配置 (用于热重载时按配置补齐新供应商的熔断器).
@@ -64,10 +67,6 @@ pub struct AppState {
     /// 默认 0 = 不裁剪. 作为 AtomicUsize 存储在 AppState, 与 strip_history_reasoning 一致,
     /// 便于未来运行时面板可调 (当前仅环境变量控制, 重启生效).
     pub max_history_turns: Arc<AtomicUsize>,
-    /// 转发优化省量统计: 累计剥离的推理链字符数 (供面板展示, 重启清零).
-    pub strip_saved_chars: Arc<AtomicUsize>,
-    /// 转发优化省量统计: 累计裁剪的历史字符数 (供面板展示, 重启清零).
-    pub trim_saved_chars: Arc<AtomicUsize>,
 }
 
 /// 熔断器表类型别名.
@@ -224,17 +223,10 @@ pub async fn chat_completions(
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
     );
-    // 转发优化省量统计 (供面板展示; 仅实际发生裁剪/剥离时累计).
-    if strip_saved > 0 {
-        state
-            .strip_saved_chars
-            .fetch_add(strip_saved, Ordering::Relaxed);
-    }
-    if trim_saved > 0 {
-        state
-            .trim_saved_chars
-            .fetch_add(trim_saved, Ordering::Relaxed);
-    }
+    // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
+    // 二者随请求日志落盘, 跨重启累计, 不再依赖运行时内存计数器 (避免重启清零导致与头条卡不一致).
+    let strip_saved_tokens = (strip_saved / 4) as u32;
+    let trim_saved_tokens = (trim_saved / 4) as u32;
     // 5.1 Anthropic /messages 模式: 请求体 OpenAI → Anthropic 格式转换.
     //     客户端侧始终是 OpenAI 兼容, 转换只在网关与上游之间进行.
     //     (anthropic_mode / endpoint 改写已在上方按模型级 api_format 完成)
@@ -282,7 +274,7 @@ pub async fn chat_completions(
             state.cache.record_hit_saved((pt + ct) as u64);
             crate::admin::record_request_with_tokens(
                 &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, cached.len(),
-                true, hit, miss, creation, None, None,
+                true, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, (pt + ct) as u32, None, None,
             ).await;
             return Ok(axum::Json(
                 serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
@@ -453,7 +445,7 @@ pub async fn chat_completions(
                 let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
                 crate::admin::record_request_with_tokens(
                     &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                    false, hit, miss, creation, None, None,
+                    false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
                 ).await;
                 return Ok(axum::Json(
                     serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -479,6 +471,7 @@ pub async fn chat_completions(
         state.loop_guard.clone(),
         state.stream_idle_timeout,
         anthropic_mode,
+        strip_saved_tokens, trim_saved_tokens,
     );
     Ok(resp)
 }
@@ -574,6 +567,8 @@ fn stream_response_with_tokens(
     loop_cfg: LoopGuardConfig,
     idle: Duration,
     anthropic: bool,
+    strip_saved_tokens: u32,
+    trim_saved_tokens: u32,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -617,6 +612,8 @@ fn stream_response_with_tokens(
                 upstream_model,
                 start,
                 req_body_len,
+                strip_saved_tokens,
+                trim_saved_tokens,
                 response_body_len: 0,
             }),
     };
@@ -642,6 +639,8 @@ struct TokenLogData {
     start: std::time::Instant,
     req_body_len: usize,
     response_body_len: usize,
+    strip_saved_tokens: u32,
+    trim_saved_tokens: u32,
 }
 
 /// 包装上游 SSE 字节流, 解析 `data: {...usage...}` 事件提取 token 数,
@@ -1064,8 +1063,8 @@ where
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                                    ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss, creation,
+                                    ld.start, pt, ct,                                     ld.response_body_len, false,
+                                    hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0,
                                     first_token_ms,
                                     err_for_log,
                                 ).await;

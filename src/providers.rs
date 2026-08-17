@@ -202,19 +202,25 @@ impl ProviderRegistry {
         self.routes.keys().map(|s| s.as_str()).collect()
     }
 
-    /// 获取供应商的 API key: 优先 key_store, 再回退默认值.
+    /// 获取供应商的 API key (Key 是 provider 的子资源, 按 provider.name 索引).
+    ///
+    /// 优先级: 面板设置值 (keys.json[provider.name]) → 环境变量 (api_key_env)
+    /// → providers.json 内置默认值 (api_key_default).
     pub async fn api_key(&self, provider: &ProviderConfig, key_store: &crate::keys::KeyStore) -> Result<String, String> {
-        if let Some(k) = key_store.get(&provider.api_key_env).await {
-            if !k.is_empty() {
-                return Ok(k);
+        if let Some(k) = key_store.get_for_provider(&provider.name).await {
+            return Ok(k);
+        }
+        if let Ok(v) = std::env::var(&provider.api_key_env) {
+            if !v.is_empty() {
+                return Ok(v);
             }
         }
         if let Some(default) = &provider.api_key_default {
             Ok(default.clone())
         } else {
             Err(format!(
-                "API key not set: env var {} is empty (provider: {})",
-                provider.api_key_env, provider.name
+                "API key not set: provider '{}' has no panel key, env {} is empty, and no default",
+                provider.name, provider.api_key_env
             ))
         }
     }

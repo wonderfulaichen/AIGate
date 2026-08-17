@@ -199,7 +199,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
       </template>
       <template x-if="stats && stats.total_requests>0">
         <div class="space-y-4">
-          <h1 class="text-lg font-bold" x-text="t('overview')"></h1>
+          <h1 class="text-lg font-bold mb-4" x-text="t('overview')"></h1>
           <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div class="card stat-card"><div class="card-body">
               <div class="flex items-start justify-between">
@@ -246,51 +246,29 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
               <template x-if="stats.today_total_cache_hit_tokens===0 && stats.today_total_cache_miss_tokens===0"><div class="text-[10px] mt-1" style="color:var(--text-muted)" x-text="t('no_cache_returned')"></div></template>
             </div></div>
           </div>
-          <!-- 本轮信息 (进程启动以来, 不受日志滚动窗口影响) -->
-          <div class="card"><div class="card-body">
-            <div class="flex items-center justify-between mb-3">
-              <div class="text-xs font-bold uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('session_info')"></div>
-              <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_hint')"></div>
+          <!-- 优化省量 (头条指标): 今日窗口与 6 卡片同口径; 累计标注时间起算点, 不再无意义地 forever 累计 -->
+          <div class="card" style="border:1px solid var(--c-indigo);box-shadow:0 0 0 1px rgba(99,102,241,.25)"><div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs font-bold uppercase tracking-wider" style="color:var(--c-indigo)" x-text="t('opt_saved_title')"></div>
+              <div class="text-[10px]" style="color:var(--c-muted)" x-text="(stats.total_opt_saved_fee||0)>0 ? t('opt_saved_cumulative', fmtMoney(stats.total_opt_saved_fee), stats.opt_saved_since||'') : ''"></div>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-              <div class="rounded-lg px-3 py-2.5" style="background:rgba(255,255,255,.03)">
-                <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_requests')"></div>
-                <div class="text-lg font-bold mt-0.5" style="font-family:'JetBrains Mono',monospace" x-text="stats.session.requests"></div>
+            <div class="flex items-end gap-6 flex-wrap">
+              <div>
+                <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_today_tokens')"></div>
+                <div class="text-3xl font-bold mt-0.5" style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.today_opt_saved_tokens||0) + ' tok'"></div>
               </div>
-              <div class="rounded-lg px-3 py-2.5" style="background:rgba(255,255,255,.03)">
-                <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_input_tokens')"></div>
-                <div class="text-lg font-bold mt-0.5 text-[#34d399]" style="font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.session.prompt_tokens)"></div>
-              </div>
-              <div class="rounded-lg px-3 py-2.5" style="background:rgba(255,255,255,.03)">
-                <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_output_tokens')"></div>
-                <div class="text-lg font-bold mt-0.5 text-[#a78bfa]" style="font-family:'JetBrains Mono',monospace" x-text="fmtT(stats.session.completion_tokens)"></div>
-              </div>
-              <div class="rounded-lg px-3 py-2.5" style="background:rgba(255,255,255,.03)">
-                <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_cache_hit')"></div>
-                <div class="text-lg font-bold mt-0.5 text-[#22d3ee]" style="font-family:'JetBrains Mono',monospace" x-text="stats.session.cache_hit_tokens+stats.session.cache_miss_tokens>0 ? ((stats.session.cache_hit_tokens/(stats.session.cache_hit_tokens+stats.session.cache_miss_tokens))*100).toFixed(1)+'%' : '--'"></div>
-                <div class="text-[10px] mt-0.5" style="color:var(--c-muted)" x-text="t('hit_count', fmtT(stats.session.cache_hit_tokens))"></div>
-              </div>
-              <!-- 总优化省量: 响应缓存精确 token + 转发优化估算 token, 统一单位 (明细拆分见下方) -->
-              <div class="rounded-lg px-3 py-2.5" style="background:rgba(255,255,255,.03)">
-                <div class="text-[10px]" style="color:var(--c-muted)" x-text="t('session_saved_tokens')"></div>
-                <div class="text-base font-bold mt-0.5" style="color:var(--c-indigo);font-family:'JetBrains Mono',monospace" x-text="fmtT((cache&&cache.saved_tokens?cache.saved_tokens:0) + estTok((forwardSavings?forwardSavings.strip_chars:0)+(forwardSavings?forwardSavings.trim_chars:0))) + ' tok'"></div>
-                <div class="text-[10px] mt-0.5" style="color:var(--c-muted)" x-text="t('session_saved_tokens_hint')"></div>
+              <div>
+                <div class="text-[10px] uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('opt_saved_today_fee')"></div>
+                <div class="text-3xl font-bold mt-0.5 text-white" style="font-family:'JetBrains Mono',monospace" x-text="(stats.today_opt_saved_fee||0)>0 ? '≈ '+fmtMoney(stats.today_opt_saved_fee)+(currencyConfig&&currencyConfig.currency?currencyConfig.currency:'') : '—'"></div>
               </div>
             </div>
             <!-- 优化省量明细行: 未开启的优化项显示"未开启"状态而非 0 -->
             <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 pt-3 border-t text-[11px]" style="border-color:var(--c-border);color:var(--c-muted)">
-              <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="stripReasoning ? '≈ '+fmtT(estTok(forwardSavings?forwardSavings.strip_chars:0))+' tok' : t('session_opt_off')"></span></span>
-              <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="maxHistoryTurns>0 ? '≈ '+fmtT(estTok(forwardSavings?forwardSavings.trim_chars:0))+' tok' : t('session_opt_off')"></span></span>
-              <span><span x-text="t('session_cache_opt')"></span>: <span style="color:#34d399" x-text="cache&&cache.enabled ? (cache.hits)+' 次 · '+fmtT(cache.saved_tokens)+' tok' : t('session_opt_off')"></span></span>
+              <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_strip_saved_tokens>0) ? '≈ '+fmtT(stats.today_strip_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
+              <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_trim_saved_tokens>0) ? '≈ '+fmtT(stats.today_trim_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
+              <span><span x-text="t('session_cache_opt')"></span>: <span style="color:#34d399" x-text="(stats&&stats.today_resp_cache_saved_tokens>0) ? '≈ '+fmtT(stats.today_resp_cache_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
             </div>
           </div></div>
-          <!-- 累计缓存节省: KV 缓存命中累计省下的金额, 仅在 >0 时展示 -->
-          <template x-if="stats && stats.total_cache_saved>0">
-            <div class="text-[11px] flex items-center gap-1.5" style="color:var(--c-muted)">
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span x-text="t('cache_saved', fmtMoney(stats.total_cache_saved))"></span>
-            </div>
-          </template>
           <!-- 供应商总览: 余额 + 费用合并单卡片, 内联编辑 (不再跳转) -->
           <div class="card"><div class="card-body">
             <div class="flex items-center justify-between mb-3">
@@ -464,7 +442,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
           <!-- 供应商统计 -->
           <div class="card"><div class="card-body">
             <div class="text-xs font-bold uppercase tracking-wider mb-3" style="color:var(--c-muted)" x-text="t('provider_stats')"></div>
-            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.provider')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th><th class="text-right" x-text="t('tbl.gen_speed')"></th><th class="text-right" x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:var(--c-ok)" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[var(--c-err)]':'text-[var(--c-muted)]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(p.total_cache_hit_tokens)+' / '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_prompt_tokens>0)?((p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100).toFixed(0)+'%'):'—'"></td><td class="text-right" x-text="(p.gen_speed>0)?p.gen_speed.toFixed(0)+' '+t('unit_tokps'):'—'"></td><td class="text-right" x-text="fmtMoney(p.total_cost)"></td></tr></template></tbody></table></div>
+            <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.provider')"></th><th class="text-right" x-text="t('tbl.requests')"></th><th class="text-right" x-text="t('tbl.success')"></th><th class="text-right" x-text="t('tbl.errors')"></th><th class="text-right" x-text="t('tbl.avg_latency')"></th><th class="text-right" x-text="t('tbl.input_tokens')"></th><th class="text-right" x-text="t('tbl.output_tokens')"></th><th class="text-right" x-text="t('tbl.cache_hit')"></th><th class="text-right" x-text="t('tbl.gen_speed')"></th><th class="text-right" x-text="t('tbl.cost')"></th><th class="text-right" x-text="t('tbl.cache_saved')"></th></tr></thead><tbody><template x-for="p in stats.per_provider" :key="p.provider"><tr><td class="font-medium" x-text="p.provider"></td><td class="text-right" x-text="p.requests"></td><td class="text-right" style="color:var(--c-ok)" x-text="p.requests-p.errors"></td><td class="text-right" :class="p.errors>0?'text-[var(--c-err)]':'text-[var(--c-muted)]'" x-text="p.errors"></td><td class="text-right" x-text="fmtMs(p.avg_latency_ms)"></td><td class="text-right" x-text="fmtT(p.total_prompt_tokens)"></td><td class="text-right" x-text="fmtT(p.total_completion_tokens)"></td><td class="text-right" :title="t('detail.kv_cache')+' '+fmtT(p.total_cache_hit_tokens)+' / '+fmtT(p.total_cache_miss_tokens)" x-text="(p.total_prompt_tokens>0)?((p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100).toFixed(0)+'%'):'—'"></td><td class="text-right" x-text="(p.gen_speed>0)?p.gen_speed.toFixed(0)+' '+t('unit_tokps'):'—'"></td><td class="text-right"><span x-show="p.billing" x-text="fmtMoney(p.total_cost)"></span><span x-show="!p.billing" style="color:var(--c-muted)">—</span></td><td class="text-right"><span x-show="p.billing" x-text="fmtMoney(p.cache_saved)"></span><span x-show="!p.billing" style="color:var(--c-muted)">—</span></td></tr></template></tbody></table></div>
           </div></div>
           <!-- 模型用量明细 -->
           <div class="card"><div class="card-body">
@@ -883,54 +861,9 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
           </div>
         </div></div>
 
-        <!-- Section: 凭据 -->
-        <div class="section-title text-xs font-bold uppercase tracking-wider pt-3" x-text="t('section.creds')"></div>
-        <!-- API Keys -->
-        <div class="card"><div class="card-body">
-          <div class="flex items-center justify-between mb-3">
-            <div class="text-xs font-bold uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('apikey_mgmt')"></div>
-            <button @click="fetchKeys()" class="btn-ghost text-xs" x-text="t('refresh')"></button>
-          </div>
-          <template x-if="!keysData.keys">
-            <div class="text-center py-4 text-sm" style="color:var(--c-muted)" x-text="t('loading')"></div>
-          </template>
-          <template x-if="keysData.keys">
-            <div class="space-y-2">
-              <template x-for="k in keysData.keys" :key="k.env_var">
-                <div>
-                  <div class="flex items-center justify-between px-3 py-2 rounded" style="background:rgba(255,255,255,.02)">
-                    <div class="flex items-center gap-3 min-w-0">
-                      <span class="text-xs font-mono shrink-0" style="color:var(--c-accent2)" x-text="k.env_var"></span>
-                      <template x-if="k.configured">
-                        <span class="text-xs font-mono" style="color:var(--c-muted)">****<span style="color:#34d399" x-text="k.suffix"></span></span>
-                      </template>
-                      <template x-if="!k.configured">
-                        <span class="badge badge-warning" x-text="t('not_configured')"></span>
-                      </template>
-                    </div>
-                    <div class="flex gap-2 shrink-0">
-                      <template x-if="editingKey !== k.env_var">
-                        <button @click="editKey(k.env_var)" class="btn-ghost text-xs" x-text="t('edit')"></button>
-                      </template>
-                      <template x-if="editingKey === k.env_var">
-                        <button @click="cancelEditKey()" class="btn-ghost text-xs" x-text="t('cancel')"></button>
-                      </template>
-                    </div>
-                  </div>
-                  <!-- Edit form -->
-                  <div x-show="editingKey === k.env_var" class="px-3 pb-2 pt-2">
-                    <div class="flex gap-2">
-                      <input type="password" x-model="keyEditValue" :placeholder="t('key_placeholder')" class="search-input flex-1" @keyup.enter="saveKey(k.env_var)" />
-                      <button @click="saveKey(k.env_var)" class="btn-primary text-xs" x-text="t('save')"></button>
-                      <button @click="keyEditValue=''; saveKey(k.env_var)" class="btn-ghost text-xs" style="color:#f87171" x-text="t('clear')"></button>
-                    </div>
-                    <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('key_save_hint')"></p>
-                    <p x-show="keyMsg" class="text-[10px] mt-1" style="color:#34d399" x-text="keyMsg"></p>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </template>
+        <!-- 凭据 (API Key) 已内嵌到各供应商卡片: 密钥是供应商的子资源, 编辑/删除供应商即管理其密钥, 不再有独立面板. -->
+        <div class="card"><div class="card-body text-xs leading-relaxed" style="color:var(--c-muted)">
+          密钥已内嵌到上方各供应商卡片中：密钥是供应商的子资源，编辑或删除供应商即同步管理其密钥（删除供应商并保存配置后，其密钥自动级联清除）。
         </div></div>
 
         <!-- Section: 监控 -->
@@ -1034,8 +967,9 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                        <template x-if="prov._fetching">
                          <span class="text-xs" style="color:var(--c-muted)" x-text="t('fetching')"></span>
                        </template>
+                       <button @click="deleteProvider(pi)" class="text-xs px-2 py-1 rounded transition" style="color:#f87171;border:1px solid #2a2d37" @mouseenter="$el.style.borderColor='#f87171'" @mouseleave="$el.style.borderColor='#2a2d37'" x-text="'删除'"></button>
                        <span class="text-xs" style="color:var(--c-muted)" x-text="prov.models.length+' '+t('unit_models')"></span>
-                     </div>
+                       </div>
                    </div>
                   <!-- Provider settings -->
                   <div x-show="prov._expanded" class="border-t" style="border-color:var(--c-border)">
@@ -1049,6 +983,23 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                           <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('balance_endpoint_label')"></label>
                           <input type="text" x-model="prov.balance_endpoint" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         </div>
+                      </div>
+                      <!-- 密钥 (包含关系: 密钥是该供应商的子资源) -->
+                      <div class="mb-3 p-2 rounded" style="background:rgba(255,255,255,.02);border:1px solid #2a2d37">
+                        <div class="flex items-center justify-between mb-1">
+                          <span class="text-[10px] font-bold uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('apikey_mgmt')"></span>
+                          <template x-if="keysByProvider[prov.name] && keysByProvider[prov.name].configured">
+                            <span class="text-[10px] font-mono" style="color:#34d399">已配置 ····<span x-text="keysByProvider[prov.name].suffix"></span></span>
+                          </template>
+                          <template x-if="!keysByProvider[prov.name] || !keysByProvider[prov.name].configured">
+                            <span class="badge badge-warning" x-text="t('not_configured')"></span>
+                          </template>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                          <input type="password" x-model="prov._keyDraft" :placeholder="t('key_placeholder')" class="search-input flex-1" />
+                          <button @click="clearProviderKey(pi)" class="btn-ghost text-xs" style="color:#f87171" x-text="t('clear')"></button>
+                        </div>
+                        <p class="text-[10px] mt-1" style="color:var(--c-muted)">输入后点击「保存配置」生效；留空则不修改；清空后保存即删除（回退到环境变量/默认值）。</p>
                       </div>
                       <div class="text-xs font-bold mb-2" style="color:var(--c-muted)" x-text="t('unit_models')"></div>
                       <table class="mb-2">
@@ -1106,8 +1057,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
             <div class="space-y-3 text-xs">
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.name')"></label><input type="text" x-model="addProvName" :placeholder="t('addprov.ph_name')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.endpoint')"></label><input type="text" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
-              <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.keyenv')"></label><input type="text" x-model="addProvKeyEnv" :placeholder="t('addprov.ph_keyenv')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
-              <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.keydefault')"></label><input type="text" x-model="addProvKeyDefault" :placeholder="t('addprov.ph_keydefault')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('addprov.keyhint')"></p>
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('balance_endpoint_label')"></label><input type="text" x-model="addProvBalanceEndpoint" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
             </div>
             <div class="flex justify-end gap-2 mt-4">
@@ -1198,7 +1148,7 @@ const I18N = {
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
     'model_usage_detail': '模型用量明细',
-    'tbl.model': '模型', 'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.unit_price': '单价(元/1M)',
+    'tbl.model': '模型', 'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.cache_saved': 'KV缓存省', 'tbl.unit_price': '单价(元/1M)',
     'req_token_trend': '请求 / Token 趋势',
     'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
     'btn.line': '线', 'btn.bar': '柱',
@@ -1222,7 +1172,7 @@ const I18N = {
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
     'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（仅非流式请求）',
     'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL',
-    'cache.hit_rate_session': '本轮命中率', 'cache.hit_rate_session_hint': '本次运行累计（重启清零）',
+    'cache.hit_rate_session': '运行命中率', 'cache.hit_rate_session_hint': '进程启动以来累计（重启清零）',
     'cache.hit_rate_enabled': '开启后命中率', 'cache.hit_rate_enabled_hint': '本次启用累计（重新开启清零）',
     'health_check_title': '健康检查', 'probe': '探测', 'click_probe_hint': '点击"探测"检查供应商连通性', 'reset_circuit': '重置熔断',
     'health_legend_title': '状态图例', 'legend_ok': '健康：供应商连通正常', 'legend_fault': '异常：探测失败或超时',
@@ -1245,9 +1195,9 @@ const I18N = {
     'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
     'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史',
-    'session_info': '本轮信息', 'session_hint': '本次运行累计（重启清零）',
-    'session_requests': '本轮请求', 'session_input_tokens': '本轮输入', 'session_output_tokens': '本轮输出',
-    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启',
+    'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
+    'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
+    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_today_fee': '今日省费用', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
     'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
     'tooltip_config': '任务栏 Tooltip', 'tooltip_enabled': '启用 Tooltip', 'tooltip_metrics': '显示指标',
     'tooltip_requests_per_second': '请求速度 (req/s)', 'tooltip_avg_latency_ms': '平均延迟 (ms)',
@@ -1260,8 +1210,8 @@ const I18N = {
     'eff.none': '- 无 -', 'eff.low': '低', 'eff.medium': '中', 'eff.high': '高', 'eff.max': '最高',
     'delete': '删除', 'add_model': '添加模型',
     'add_provider_title': '新增供应商',
-    'addprov.name': '供应商名称', 'addprov.endpoint': '端点 URL', 'addprov.keyenv': 'API Key 环境变量名', 'addprov.keydefault': '默认 API Key（可选）',
-    'addprov.ph_name': '如 my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions', 'addprov.ph_keyenv': '如 MY_API_KEY', 'addprov.ph_keydefault': '留空则使用环境变量',
+    'addprov.name': '供应商名称', 'addprov.endpoint': '端点 URL', 'addprov.keyhint': 'API Key 在添加后于供应商卡片内填写并保存',
+    'addprov.ph_name': '如 my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
     'data_mgmt': '数据管理', 'clear_all_records': '清空所有记录',
     'add_provider_hint': '已添加供应商，点击"保存配置"生效',
     'badge.free': '免费', 'tbl.vendor': '品牌', 'free_model': '免费模型',
@@ -1296,7 +1246,7 @@ const I18N = {
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
     'model_usage_detail': 'Model Details',
-    'tbl.model': 'Model', 'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.unit_price': 'Unit (CNY/1M)',
+    'tbl.model': 'Model', 'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.cache_saved': 'KV Cache', 'tbl.unit_price': 'Unit (CNY/1M)',
     'req_token_trend': 'Requests / Tokens Trend',
     'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
     'btn.line': 'Line', 'btn.bar': 'Bar',
@@ -1320,7 +1270,7 @@ const I18N = {
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
     'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (non-streaming only)',
     'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL',
-    'cache.hit_rate_session': 'Session hit rate', 'cache.hit_rate_session_hint': 'Since process start (resets on restart)',
+    'cache.hit_rate_session': 'Runtime hit rate', 'cache.hit_rate_session_hint': 'Process lifetime (resets on restart)',
     'cache.hit_rate_enabled': 'Since enabled', 'cache.hit_rate_enabled_hint': 'Since last enable (resets on re-enable)',
     'health_check_title': 'Health Check', 'probe': 'Probe', 'click_probe_hint': 'Click "Probe" to check provider connectivity', 'reset_circuit': 'Reset breaker',
     'health_legend_title': 'Status Legend', 'legend_ok': 'OK: provider is reachable', 'legend_fault': 'Fault: probe failed or timed out',
@@ -1343,9 +1293,9 @@ const I18N = {
     'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
     'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed',
-    'session_info': 'Session', 'session_hint': 'Since process start (resets on restart)',
-    'session_requests': 'Session requests', 'session_input_tokens': 'Session input', 'session_output_tokens': 'Session output',
-    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off',
+    'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
+    'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
+    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_today_fee': "Today's Fee Saved", 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
     'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
     'tooltip_config': 'Taskbar Tooltip', 'tooltip_enabled': 'Enable Tooltip', 'tooltip_metrics': 'Display Metrics',
     'tooltip_requests_per_second': 'Request Speed (req/s)', 'tooltip_avg_latency_ms': 'Avg Latency (ms)',
@@ -1358,8 +1308,8 @@ const I18N = {
     'eff.none': '- None -', 'eff.low': 'Low', 'eff.medium': 'Medium', 'eff.high': 'High', 'eff.max': 'Max',
     'delete': 'Delete', 'add_model': 'Add Model',
     'add_provider_title': 'Add Provider',
-    'addprov.name': 'Provider name', 'addprov.endpoint': 'Endpoint URL', 'addprov.keyenv': 'API Key env var name', 'addprov.keydefault': 'Default API Key (optional)',
-    'addprov.ph_name': 'e.g. my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions', 'addprov.ph_keyenv': 'e.g. MY_API_KEY', 'addprov.ph_keydefault': 'Blank to use env var',
+    'addprov.name': 'Provider name', 'addprov.endpoint': 'Endpoint URL', 'addprov.keyhint': 'API Key can be set in the provider card after adding',
+    'addprov.ph_name': 'e.g. my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
     'data_mgmt': 'Data Management', 'clear_all_records': 'Clear all records',
     'add_provider_hint': 'Provider added, click "Save Config" to apply',
     'badge.free': 'FREE', 'tbl.vendor': 'Brand', 'free_model': 'Free model',
@@ -1513,15 +1463,15 @@ function dashboard() {
     // 长会话历史裁剪: 保留最近 user 轮数 (0 = 关闭), 运行时可切换
     maxHistoryTurns: 0,
     // 转发优化省量统计: 推理链剥离 + 历史裁剪累计省下的字符数
-    forwardSavings: { strip_chars: 0, trim_chars: 0 },
+
     // 更新亮点弹窗：当前版本与已见版本不一致（含首次运行）时弹出。
     showWhatsNew: false,
     seenVersion: '',
 
     // Settings
-    keysData: {}, editingKey: null, keyEditValue: '', keyMsg: '',
+    keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false,
-    showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvKeyEnv: '', addProvKeyDefault: '', addProvBalanceEndpoint: '',
+    showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
     // 费用显示币种: 内部费用以 CNY 为基准, 仅展示层换算.
@@ -1620,10 +1570,10 @@ function dashboard() {
     switchTab(tabId) {
       this.activeTab = tabId;
       this.logPage = 0; this.expandedLog = -1;
-      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchForwardSavings(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); }
+      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
-      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchForwardSavings(); this.fetchCache(); }
+      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchCache(); }
       if (tabId==='routes') { if (this.health.length===0) this.fetchHealth(); }
     },
 
@@ -1707,9 +1657,6 @@ function dashboard() {
     },
     async fetchMaxHistoryTurns() {
       try { const r=await fetch('/admin/api/max-history-turns', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
-    },
-    async fetchForwardSavings() {
-      try { const r=await fetch('/admin/api/forward-savings', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.forwardSavings={strip_chars:d.strip_chars|0, trim_chars:d.trim_chars|0}; } } catch(e){}
     },
     async setMaxHistoryTurns(val) {
       const turns = Math.max(0, val|0);
@@ -1957,7 +1904,10 @@ function dashboard() {
         }
       } catch(e){ this.tooltipMsg=t('network_error'); toast(t('network_error'), 'error'); }
     },
-    async fetchKeys() { try { const r=await fetch('/admin/api/keys', {headers:authHeaders()}); if(r.ok) this.keysData=await r.json(); } catch(e){} },
+    async fetchKeys() {
+      try { const r=await fetch('/admin/api/keys', {headers:authHeaders()});
+        if(r.ok){ const d=await r.json(); const m={}; for(const v of (d.providers||[])) m[v.provider]=v; this.keysByProvider=m; } } catch(e){}
+    },
     // —— 费用显示币种 ——
     async fetchCurrencyConfig() {
       try {
@@ -2006,22 +1956,25 @@ function dashboard() {
       return sym[code] || (code + ' ');
     },
     async fetchProxyConfig() { try { const r=await fetch('/admin/api/proxy-config', {headers:authHeaders()}); if(r.ok) this.proxyStatus=await r.json(); } catch(e){} },
-    editKey(envVar) { this.editingKey=envVar; this.keyEditValue=''; this.keyMsg=''; },
-    cancelEditKey() { this.editingKey=null; this.keyEditValue=''; this.keyMsg=''; },
-    async saveKey(envVar) {
-      this.keyMsg='';
+    // 密钥是供应商的子资源: 按 provider 维度保存/清空.
+    async clearProviderKey(pi) {
+      const prov = this.providersFormData[pi];
+      prov._keyDraft='';
       try {
-        const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({env_var:envVar,value:this.keyEditValue})});
+        const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({provider:prov.name,value:''})});
         const d=await r.json();
-        if(r.ok) {
-          this.keyMsg=d.message||t('saved');
-          this.editingKey=null; this.keyEditValue='';
-          this.fetchKeys();
-          setTimeout(()=>this.keyMsg='',3000);
-        } else {
-          this.keyMsg=d.error||t('save_failed');
-        }
+        if(r.ok) { this.keyMsg='已清空 '+prov.name+' 的密钥'; this.fetchKeys(); setTimeout(()=>this.keyMsg='',3000); }
+        else this.keyMsg=d.error||t('save_failed');
       } catch(e){ this.keyMsg=t('network_error'); }
+    },
+    // 删除供应商 (仅从表单移除, 需点"保存配置"后生效; 后端级联清除其密钥).
+    async deleteProvider(pi) {
+      const prov = this.providersFormData[pi];
+      if (!confirm('确认删除供应商「'+prov.name+'」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。')) return;
+      this.providersFormData.splice(pi,1);
+      this.providersFormMsg = '已移除「'+prov.name+'」，点"保存配置"后生效';
+      this.providersFormOk = true;
+      setTimeout(()=>this.providersFormMsg='',4000);
     },
     async loadProvidersForm() {
        try {
@@ -2064,16 +2017,25 @@ function dashboard() {
        } catch(e){ prov._testResult = {success:false,status:t('network_error'),latency_ms:0}; }
        prov._testing = false;
      },
-     async fetchProviderModels(pi) {
+     // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
+    // 待用户点"保存配置"才持久化 —— 避免直接写盘冲掉表单里其它未保存改动.
+    async fetchProviderModels(pi) {
       const prov = this.providersFormData[pi];
       prov._fetching = true;
       try {
         const r = await fetch('/admin/api/providers/'+encodeURIComponent(prov.name)+'/fetch-models', {method:'POST', headers:authHeaders()});
         const d = await r.json();
         if (r.ok && d.success) {
+          // 去重: 基于 upstream_model (与后端 add_models 一致), 而非 model_id.
+          const existingUpstream = new Set(prov.models.map(m=>m.upstream_model||m.model_id));
+          for (const id of (d.models||[])) {
+            if (!existingUpstream.has(id)) {
+              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:'', free:this.autoFree(id,id), _freeTouched:false });
+              existingUpstream.add(id);
+            }
+          }
           this.providersFormOk = true;
           this.providersFormMsg = d.message;
-          await this.loadProvidersForm();
         } else {
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
@@ -2083,8 +2045,16 @@ function dashboard() {
       if (this.providersFormMsg) setTimeout(() => { this.providersFormMsg = ''; }, 4000);
     },
     async saveProvidersForm() {
-       this.providersFormMsg='';
-       try {
+      this.providersFormMsg='';
+      // 前端预校验: name 非空且唯一 (后端也会校验拦截).
+      const names = this.providersFormData.map(p=>(p.name||'').trim());
+      const seen = new Set();
+      for (const n of names) {
+        if (!n) { this.providersFormMsg='供应商 name 不能为空'; this.providersFormOk=false; return; }
+        if (seen.has(n)) { this.providersFormMsg='供应商 name 重复: '+n; this.providersFormOk=false; return; }
+        seen.add(n);
+      }
+      try {
          const providers = this.providersFormData.map(p => {
            const models = {};
            for (const m of p.models) {
@@ -2116,16 +2086,60 @@ function dashboard() {
          const d=await r.json();
          this.providersFormOk = !!d.message;
          this.providersFormMsg=d.message||d.error||t('save_failed');
-         if(d.message) { this.fetchRoutes(); setTimeout(()=>this.providersFormMsg='',3000); }
+         if(d.message) {
+           // 配置保存成功后, 同步保存所有有草稿的 key
+           await this.saveAllProviderKeys();
+           this.fetchRoutes();
+           setTimeout(()=>this.providersFormMsg='',3000);
+         }
        } catch(e){ this.providersFormMsg=t('network_error'); }
-     },
-     confirmAddProvider() {
+       },
+       async saveAllProviderKeys() {
+       // 遍历所有供应商, 保存有草稿的 key
+       const keysToSave = this.providersFormData
+         .filter(p => (p._keyDraft||'').trim() !== '')
+         .map(p => ({ provider: p.name, value: p._keyDraft.trim() }));
+       if (keysToSave.length === 0) return;
+       let saved = 0, failed = 0;
+       for (const { provider, value } of keysToSave) {
+         try {
+           const r = await fetch('/admin/api/keys', {
+             method: 'PUT',
+             headers: authHeaders(),
+             body: JSON.stringify({ provider, value })
+           });
+           const d = await r.json();
+           if (r.ok) {
+             // 找到对应供应商并清除草稿
+             const prov = this.providersFormData.find(p => p.name === provider);
+             if (prov) prov._keyDraft = '';
+             saved++;
+           } else {
+             console.error(`保存 ${provider} 的 key 失败:`, d.error);
+             failed++;
+           }
+         } catch (e) {
+           console.error(`保存 ${provider} 的 key 网络错误:`, e);
+           failed++;
+         }
+       }
+       if (saved > 0) {
+         this.keyMsg = `已保存 ${saved} 个供应商的密钥`;
+         this.fetchKeys();
+         setTimeout(() => this.keyMsg = '', 3000);
+       }
+       if (failed > 0) {
+         this.keyMsg = `${failed} 个供应商的密钥保存失败`;
+         setTimeout(() => this.keyMsg = '', 3000);
+       }
+       },
+       confirmAddProvider() {
        if (!this.addProvName || !this.addProvEndpoint) return;
        this.providersFormData.push({
          name: this.addProvName,
          endpoint: this.addProvEndpoint,
-         api_key_env: this.addProvKeyEnv || this.addProvName.toUpperCase().replace(/-/g,'_')+'_KEY',
-         api_key_default: this.addProvKeyDefault || null,
+         api_key_env: this.addProvName.toUpperCase().replace(/-/g,'_')+'_KEY',
+         api_key_default: null,
          balance_endpoint: this.addProvBalanceEndpoint || null,
          headers: null,
          _expanded: true,
@@ -2134,7 +2148,7 @@ function dashboard() {
          models: [],
        });
        this.showAddProvider = false;
-       this.addProvName = ''; this.addProvEndpoint = ''; this.addProvKeyEnv = ''; this.addProvKeyDefault = ''; this.addProvBalanceEndpoint = '';
+       this.addProvName = ''; this.addProvEndpoint = ''; this.addProvBalanceEndpoint = '';
        this.providersFormOk = true;
        this.providersFormMsg = t('add_provider_hint');
        setTimeout(()=>this.providersFormMsg='',3000);

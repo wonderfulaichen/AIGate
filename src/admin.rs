@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 use crate::store::LogStore;
 use crate::tooltip::{self, TooltipConfig};
-use crate::balance::{BalanceManager, ProviderBalanceConfig};
+use crate::balance::ProviderBalanceConfig;
 use crate::pricing::{self, ModelPrice};
 
 /// 面板「最近请求」实时展示保留的条数 (仅前端展示, 不影响全量统计/持久化).
@@ -86,6 +86,17 @@ pub struct RequestLog {
     /// 路由未查到/解析失败等未知场景为 None, 统计时回退到中转 model.
     #[serde(default)]
     pub upstream_model: Option<String>,
+    /// 转发优化省下的输入 token 数: 剥离历史推理链 (字符数/4 估算).
+    /// 这些 token 在发往上游客前已被移除, 不计入 prompt_tokens; 单独记账供"优化省量"展示.
+    #[serde(default)]
+    pub strip_saved_tokens: u32,
+    /// 转发优化省下的输入 token 数: 长会话历史裁剪 (字符数/4 估算).
+    #[serde(default)]
+    pub trim_saved_tokens: u32,
+    /// 本地响应缓存命中省下的 token 数 (命中时本应消耗/计费的 prompt+completion).
+    /// 仅 cached=true 时有值; 命中时 prompt_tokens 已是缓存体, 不与计费基数重复.
+    #[serde(default)]
+    pub resp_cache_saved_tokens: u32,
 }
 
 /// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
@@ -311,6 +322,9 @@ pub async fn record_request(
         prompt_cache_hit_tokens: 0,
         prompt_cache_miss_tokens: 0,
         prompt_cache_creation_tokens: 0,
+        strip_saved_tokens: 0,
+        trim_saved_tokens: 0,
+        resp_cache_saved_tokens: 0,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -334,6 +348,9 @@ pub async fn record_request_with_tokens(
     cache_hit_tokens: u32,
     cache_miss_tokens: u32,
     cache_creation_tokens: u32,
+    strip_saved_tokens: u32,
+    trim_saved_tokens: u32,
+    resp_cache_saved_tokens: u32,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
@@ -352,6 +369,9 @@ pub async fn record_request_with_tokens(
         prompt_cache_hit_tokens: cache_hit_tokens,
         prompt_cache_miss_tokens: cache_miss_tokens,
         prompt_cache_creation_tokens: cache_creation_tokens,
+        strip_saved_tokens,
+        trim_saved_tokens,
+        resp_cache_saved_tokens,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -556,11 +576,36 @@ pub async fn api_providers_save(
         Some(s) => s,
         None => return Json(serde_json::json!({ "error": crate::i18n::msg_missing_json_field() })),
     };
-    // 写入文件
-    if let Err(e) = std::fs::write("providers.json", json_str) {
+
+    // 1) 写前校验: 解析 + 结构化语义校验, 防止坏配置覆盖落盘 (包含 name 唯一/非空, endpoint 非空).
+    let new_names = match validate_providers_json(json_str) {
+        Ok(names) => names,
+        Err(e) => return Json(serde_json::json!({ "error": e })),
+    };
+
+    // 2) 备份当前文件 (覆盖写盘前保留上一版, 便于回滚).
+    let _ = std::fs::copy("providers.json", "providers.json.bak");
+
+    // 3) 取旧供应商名 (用于级联清理孤儿 key).
+    let old_names: Vec<String> = state
+        .registry
+        .read()
+        .await
+        .providers()
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+
+    // 4) 原子写盘: 临时文件 + rename, 避免写入中断留下半截文件.
+    let tmp = "providers.json.tmp";
+    if let Err(e) = std::fs::write(tmp, json_str) {
         return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
     }
-    // 热重载
+    if let Err(e) = std::fs::rename(tmp, "providers.json") {
+        return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
+    }
+
+    // 5) 热重载
     {
         let mut registry = state.registry.write().await;
         if let Err(e) = registry.reload("providers.json") {
@@ -568,7 +613,48 @@ pub async fn api_providers_save(
         }
     }
     sync_breakers_for(&state).await;
+
+    // 6) 级联清理: 删除已从配置中移除的供应商的密钥 (包含关系: key 随 provider 消失).
+    let removed: Vec<String> = old_names
+        .iter()
+        .filter(|n| !new_names.contains(n))
+        .cloned()
+        .collect();
+    if !removed.is_empty() {
+        let _ = state.key_store.remove_many(&removed).await;
+    }
+
     Json(serde_json::json!({ "message": crate::i18n::msg_config_saved() }))
+}
+
+/// 校验 providers.json 文本: 解析为 {providers:[...]}, 每个供应商 name 非空且唯一, endpoint 非空.
+/// 返回供应商名列表 (供调用方做孤儿 key 清理).
+fn validate_providers_json(json_str: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("JSON 解析失败: {e}"))?;
+    let arr = v
+        .get("providers")
+        .and_then(|p| p.as_array())
+        .ok_or_else(|| "providers.json 缺少顶层 providers 数组".to_string())?;
+    let mut names: Vec<String> = Vec::with_capacity(arr.len());
+    for (i, p) in arr.iter().enumerate() {
+        let name = p
+            .get("name")
+            .and_then(|n| n.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("第 {i} 个供应商 name 为空 (必填)"))?;
+        if names.iter().any(|n| n == name) {
+            return Err(format!("供应商 name 重复: '{name}'"));
+        }
+        let endpoint = p
+            .get("endpoint")
+            .and_then(|e| e.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("供应商 '{name}' 的 endpoint 为空 (必填)"))?;
+        let _ = endpoint;
+        names.push(name.to_string());
+    }
+    Ok(names)
 }
 
 /// 配置热重载后, 按当前熔断阈值同步熔断表 (新增供应商补齐, 删除的清理).
@@ -598,25 +684,22 @@ pub async fn api_providers_reload(
     Json(serde_json::json!({ "message": crate::i18n::msg_config_reloaded() }))
 }
 
-/// GET /admin/api/keys — 返回所有 API Key 的脱敏视图.
+/// GET /admin/api/keys — 返回所有供应商的密钥脱敏视图 (包含关系: 每行对应一个 provider).
 pub async fn api_keys_get(
     State(state): State<super::proxy::AppState>,
 ) -> Json<serde_json::Value> {
     let registry = state.registry.read().await;
-    let env_vars: Vec<String> = registry
-        .providers()
-        .iter()
-        .map(|p| p.api_key_env.clone())
-        .collect();
+    let providers = registry.providers();
+    let views = state.key_store.masked_view_for_providers(&providers).await;
     drop(registry);
-    let entries = state.key_store.masked_view(&env_vars).await;
-    Json(serde_json::json!({ "keys": entries }))
+    Json(serde_json::json!({ "providers": views }))
 }
 
-/// PUT /admin/api/keys — 更新 API Key.
+/// PUT /admin/api/keys — 更新某供应商的密钥 (Key 是 provider 的子资源).
 #[derive(serde::Deserialize)]
 pub struct KeyUpdate {
-    pub env_var: String,
+    /// 归属的供应商名.
+    pub provider: String,
     pub value: String,
 }
 
@@ -624,12 +707,16 @@ pub async fn api_keys_put(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<KeyUpdate>,
 ) -> Json<serde_json::Value> {
-    match state.key_store.set(&payload.env_var, &payload.value).await {
+    match state
+        .key_store
+        .set_for_provider(&payload.provider, &payload.value)
+        .await
+    {
         Ok(()) => {
             if payload.value.is_empty() {
-                Json(serde_json::json!({ "message": crate::i18n::msg_key_cleared(&payload.env_var) }))
+                Json(serde_json::json!({ "message": crate::i18n::msg_key_cleared(&payload.provider) }))
             } else {
-                Json(serde_json::json!({ "message": crate::i18n::msg_key_updated(&payload.env_var) }))
+                Json(serde_json::json!({ "message": crate::i18n::msg_key_updated(&payload.provider) }))
             }
         }
         Err(e) => Json(serde_json::json!({ "error": e })),
@@ -728,32 +815,14 @@ pub async fn api_providers_fetch_models(
         registry.add_models(&name, &ids)
     };
 
-    // 4) 持久化到 providers.json (含新增模型)
-    {
-        let registry = state.registry.read().await;
-        let json_str = match registry.to_json() {
-            Ok(s) => s,
-            Err(e) => return Json(serde_json::json!({ "error": e })),
-        };
-        drop(registry);
-        if let Err(e) = std::fs::write("providers.json", &json_str) {
-            return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
-        }
-    }
-
-    // 5) 热重载 (重建路由表, 使 /v1/models 立即包含新模型) + 同步熔断表
-    {
-        let mut registry = state.registry.write().await;
-        if let Err(e) = registry.reload("providers.json") {
-            return Json(serde_json::json!({ "error": e }));
-        }
-    }
-    sync_breakers_for(&state).await;
+    // 注: 不再直接写盘/重载. 拉取的模型仅写入内存注册表 (运行期即时生效),
+    // 并由前端合并进供应商表单, 待用户点 "保存配置" 才持久化.
+    // 这样不会冲掉用户在表单里尚未保存的其它改动 (包含关系: 保存由用户主导).
 
     Json(serde_json::json!({
         "success": true,
         "provider": name,
-        "fetched": ids.len(),
+        "models": ids,
         "added": added,
         "skipped": skipped,
         "message": crate::i18n::msg_models_fetched(ids.len(), added, skipped),
@@ -813,6 +882,9 @@ pub async fn api_mock(
             prompt_cache_hit_tokens: rng.gen_range(0, 400) as u32,
             prompt_cache_miss_tokens: rng.gen_range(0, 100) as u32,
             prompt_cache_creation_tokens: 0,
+            strip_saved_tokens: 0,
+            trim_saved_tokens: 0,
+            resp_cache_saved_tokens: 0,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -842,6 +914,9 @@ pub async fn api_mock(
             prompt_cache_hit_tokens: 0,
             prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0,
+            strip_saved_tokens: 0,
+            trim_saved_tokens: 0,
+            resp_cache_saved_tokens: 0,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1108,10 +1183,9 @@ pub async fn api_currency_set(
 pub async fn api_balance(
     State(state): State<super::proxy::AppState>,
 ) -> Json<serde_json::Value> {
-    // 手动余额文件与 data/ 目录同级 (config 目录下)
-    let manual_file = std::path::PathBuf::from("config").join("balance.json");
-    let balance_manager = BalanceManager::new(manual_file);
-    
+    // 余额管理器为 AppState 常驻实例 (缓存跨请求复用), 不再每次重建.
+    let balance_manager = &state.balance_manager;
+
     let registry = state.registry.read().await;
     let providers = registry.providers();
     
@@ -1119,8 +1193,9 @@ pub async fn api_balance(
     let mut provider_configs = std::collections::HashMap::new();
     for config in providers {
         if let Some(balance_endpoint) = &config.balance_endpoint {
-            // 获取 API key
-            let api_key = state.key_store.get(&config.api_key_env).await
+            // 获取 API key (面板值 > 环境变量 > 默认值)
+            let api_key = state.key_store.get_for_provider(&config.name).await
+                .or_else(|| std::env::var(&config.api_key_env).ok().filter(|s| !s.is_empty()))
                 .or_else(|| config.api_key_default.clone())
                 .unwrap_or_default();
             
@@ -1152,17 +1227,19 @@ pub struct ManualBalanceReq {
 }
 
 pub async fn api_balance_manual_set(
+    State(state): State<super::proxy::AppState>,
     Json(payload): Json<ManualBalanceReq>,
 ) -> Json<serde_json::Value> {
-    let manual_file = std::path::PathBuf::from("config").join("balance.json");
-    let balance_manager = BalanceManager::new(manual_file);
-    
+    let balance_manager = &state.balance_manager;
+
     let result = if let Some(balance) = payload.balance {
         balance_manager.set_manual_balance(&payload.provider, balance).await
     } else {
         balance_manager.clear_manual_balance(&payload.provider).await
     };
-    
+    // 手动设置/清除后, 清掉该供应商的 API 缓存, 使其回退或下次重查.
+    let _ = balance_manager.clear_cache(&payload.provider).await;
+
     match result {
         Ok(()) => Json(serde_json::json!({ "success": true })),
         Err(e) => Json(serde_json::json!({ "error": e })),
@@ -1301,18 +1378,6 @@ pub async fn api_strip_reasoning_set(
     Json(serde_json::json!({ "enabled": payload.enabled }))
 }
 
-// ─── 转发优化省量统计 ───
-
-/// GET /admin/api/forward-savings — 返回转发优化累计省量 (字符数).
-/// strip_chars = 剥离历史推理链省下的字符; trim_chars = 长会话历史裁剪省下的字符.
-pub async fn api_forward_savings_get(
-    State(state): State<super::proxy::AppState>,
-) -> Json<serde_json::Value> {
-    let strip = state.strip_saved_chars.load(std::sync::atomic::Ordering::Relaxed);
-    let trim = state.trim_saved_chars.load(std::sync::atomic::Ordering::Relaxed);
-    Json(serde_json::json!({ "strip_chars": strip, "trim_chars": trim }))
-}
-
 // ─── 长会话历史裁剪开关 ───
 
 /// GET /admin/api/max-history-turns — 返回当前保留的最近 user 轮数 (0 = 不裁剪).
@@ -1406,6 +1471,14 @@ pub struct ProviderStats {
     /// 该供应商今日窗口费用 (元, 东八区日界). 前端据 total_cost/today_cost 是否 >0 决定
     /// 是否展示该供应商费用卡片 (方案 A: 只显示有实际费用的供应商).
     pub today_cost: f64,
+    /// 该供应商 KV 缓存命中节省的金额 (元). 仅计费供应商有意义; 免费/月套餐等
+    /// 不按量计费模型在聚合层已被 `free_ids` 排除 (见 `compute_stats` 分组循环).
+    /// 全局合计无意义 (会混入不计费供应商), 故前端仅按供应商各自展示.
+    pub cache_saved: f64,
+    /// 该供应商是否按量计费 (组内任一中转 ID 不在 free_ids 即视为计费). 仅计费供应商
+    /// 在前端展示"已省"列; 免费/月套餐等不按量计费供应商 (如 opencode) 无费用基数,
+    /// "已省"无实际意义, 前端以 "—" 占位而非误显示金额.
+    pub billing: bool,
 }
 
 /// 日趋势 (通用: 按小时/天/月聚合均使用此结构).
@@ -1446,9 +1519,21 @@ pub struct UsageStats {
     pub total_cache_miss_tokens: u64,
     /// 命中率 = 命中 token / 总输入 token.
     pub cache_hit_rate: f64,
-    /// 累计因 KV 缓存命中而节省的金额 (元): 命中 token × (input 价 − cache 读价).
-    /// 读价缺失（无缓存优惠）或价格未配置时记 0. 直观体现缓存的成本价值.
+    /// 累计 KV 缓存**净**节省金额 (元): Σ(命中折扣 − 写入溢价, 见 `log_cache_saved`).
+    /// 仅概览参考口径 (含不计费供应商, 语义有限); 供应商表「KV缓存省」列才是按供应商计费的权威口径.
     pub total_cache_saved: f64,
+    /// 累计转发优化省下的输入 token 数: 剥离推理链 + 历史裁剪 + 响应缓存命中省下的 token (已持久化进日志, 跨重启累计).
+    pub total_opt_saved_tokens: u64,
+    /// 累计转发优化省下的费用 (元): 省下 token × 对应模型 input 单价. 仅计费供应商计入, 与 total_cost 同口径.
+    pub total_opt_saved_fee: f64,
+    /// 累计优化省量明细 (均来自日志, 跨重启累计): 仅剥离推理链省下的输入 token.
+    pub total_strip_saved_tokens: u64,
+    /// 累计优化省量明细: 仅历史裁剪省下的输入 token.
+    pub total_trim_saved_tokens: u64,
+    /// 累计优化省量明细: 仅响应缓存命中省下的 token.
+    pub total_resp_cache_saved_tokens: u64,
+    /// 累计费用 (元), 价格缺失的模型按 0 计.
+    pub total_cost: f64,
     // ─── 今日窗口统计 (东八区日界, 不受日志 5000 条滚动窗口封顶影响) ───
     pub today_requests: usize,
     pub today_success: usize,
@@ -1458,10 +1543,20 @@ pub struct UsageStats {
     pub today_total_completion_tokens: u32,
     pub today_total_cache_hit_tokens: u64,
     pub today_total_cache_miss_tokens: u64,
-    /// 累计费用 (元), 价格缺失的模型按 0 计.
-    pub total_cost: f64,
     /// 今日窗口费用 (元, 东八区日界).
     pub today_total_cost: f64,
+    /// 今日窗口: 转发优化省下的输入 token 数 (剥离推理链 + 历史裁剪 + 响应缓存命中). 向东八区日界对齐, 与今日 6 卡片同口径.
+    pub today_opt_saved_tokens: u64,
+    /// 今日窗口: 转发优化省下的费用 (元), 与 today_total_cost 同口径 (仅计费供应商计入).
+    pub today_opt_saved_fee: f64,
+    /// 今日窗口优化省量明细: 仅剥离推理链省下的输入 token.
+    pub today_strip_saved_tokens: u64,
+    /// 今日窗口优化省量明细: 仅历史裁剪省下的输入 token.
+    pub today_trim_saved_tokens: u64,
+    /// 今日窗口优化省量明细: 仅响应缓存命中省下的 token.
+    pub today_resp_cache_saved_tokens: u64,
+    /// 累计优化省量的最早记录日期 (MM/DD), 给"累计"标注时间起算点, 避免无意义地 forever 累计; 无优化记录时为空串.
+    pub opt_saved_since: String,
     /// 是否有任意模型配置了价格 (providers.json 的 model.price).
     /// 前端据此决定是否显示费用相关卡片/列, 避免无价格时显示 ¥0.00 误导.
     pub has_price_config: bool,
@@ -1513,7 +1608,6 @@ pub async fn api_stats(
             } else if pricing::resolve_price(
                 None,
                 mcfg.upstream_model.as_deref(),
-                Some(provider.endpoint.as_str()),
             )
             .is_some()
             {
@@ -1688,7 +1782,6 @@ impl<'a> PriceMemo<'a> {
         let p = pricing::resolve_price(
             self.overrides.get(&log.model).copied(),
             log.upstream_model.as_deref(),
-            Some(log.endpoint.as_str()),
         );
         self.cache.borrow_mut().insert(key, p);
         p
@@ -1708,25 +1801,43 @@ fn log_cost(memo: &PriceMemo, log: &RequestLog) -> f64 {
         log.prompt_tokens,
         log.completion_tokens,
         log.prompt_cache_hit_tokens,
-        log.prompt_cache_creation_tokens,
     )
     .unwrap_or(0.0)
 }
 
-/// 单条请求因 KV 缓存命中节省的金额（元）.
+/// 单条请求因 KV 缓存**净**节省的金额（元）.
 ///
-/// 节省 = 命中 token × (input 价 − cache 读价); 读价缺失（即无缓存优惠）或价格未配置时记 0.
-/// 与 `log_cost` 对称, 复用同一价格解析口径.
+/// 净省 = 命中折扣 − 写入溢价:
+///   - 命中折扣 = 命中 token × (input 价 − cache 读价)（读价缺失/无优惠则让差为 0）；
+///   - 写入溢价 = 首次写入 token × (cache_creation 价 − input 价)（写入价通常高于 input 价,
+///     如 DeepSeek 写入 1.25×）。该笔额外支出须从命中折扣扣除才是真实净省, 否则当 T2 历史
+///     裁剪平移 user 前缀 / 系统提示词改动 / 切模型导致缓存反复重建时, 「已省」会被高估.
+/// 输入价为 0 (未配置/月套餐) 或价格缺失 → 无计费基数, 净省记 0. 与 `log_cost` 复用同一价格
+/// 解析与钳制口径 (读价/写入价缺失时回退 input 价, 对应项让差为 0), 防上游脏数据越界.
 fn log_cache_saved(memo: &PriceMemo, log: &RequestLog) -> f64 {
     if log.cached {
         return 0.0;
     }
     let p = memo.resolve(log);
     let Some(p) = p else { return 0.0; };
-    // 读价缺失 → 无缓存优惠, 不省; 否则按 (input − 读价) 计节省（防止负价异常）.
-    let Some(read) = p.cache_read_per_m else { return 0.0; };
-    let saved_per_m = (p.input_per_m - read).max(0.0);
-    (log.prompt_cache_hit_tokens as f64) / 1e6 * saved_per_m
+    // 输入价为 0 (价格未配置/不按量计费, 如月套餐) → 无计费基数, 净省记 0 (兜底防误计).
+    if p.input_per_m == 0.0 {
+        return 0.0;
+    }
+    let prompt = log.prompt_tokens as f64;
+    // 与 compute_cost 一致拆分 hit / creation, 防上游脏数据导致负 fresh 或越界.
+    let hit = (log.prompt_cache_hit_tokens as f64).min(prompt);
+    let creation = (log.prompt_cache_creation_tokens as f64).min((prompt - hit).max(0.0));
+
+    // 命中折扣: 命中 token 按 (input − 读价) 省; 读价缺失回退 input → 让差为 0.
+    let read = p.cache_read_per_m.unwrap_or(p.input_per_m);
+    let read_saved = (p.input_per_m - read).max(0.0);
+    // 写入溢价: 首次写入按 cache_creation 价计 (通常高于 input); 缺失回退 input → 让差为 0.
+    let creation_price = p.cache_creation_per_m.unwrap_or(p.input_per_m);
+    let creation_penalty = (creation_price - p.input_per_m).max(0.0);
+
+    // 净省不钳制到 0: 单条纯写入请求可能为负贡献, 聚合后自然抵消, 方能反映真实成本.
+    hit / 1e6 * read_saved - creation / 1e6 * creation_penalty
 }
 
 /// 从日志列表计算聚合统计.
@@ -1756,6 +1867,27 @@ fn compute_stats(
     let total_cache_miss_tokens: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
     let total_cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
     let total_cache_saved: f64 = logs.iter().map(|l| log_cache_saved(&memo, l)).sum();
+    // 转发优化省量 (剥离推理链 + 历史裁剪 + 响应缓存命中): 累计 token 与折算费用 (按各模型 input 单价, 与 total_cost 同口径).
+    let total_strip_saved_tokens: u64 = logs.iter().map(|l| l.strip_saved_tokens as u64).sum();
+    let total_trim_saved_tokens: u64 = logs.iter().map(|l| l.trim_saved_tokens as u64).sum();
+    let total_resp_cache_saved_tokens: u64 = logs.iter().map(|l| l.resp_cache_saved_tokens as u64).sum();
+    // 累计优化省量 = 剥离推理链 + 历史裁剪 + 响应缓存命中 (三者均来自日志, 跨重启累计).
+    let total_opt_saved_tokens: u64 = total_strip_saved_tokens + total_trim_saved_tokens + total_resp_cache_saved_tokens;
+    let total_opt_saved_fee: f64 = logs
+        .iter()
+        .map(|l| {
+            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as f64;
+            if opt <= 0.0 {
+                return 0.0;
+            }
+            if let Some(p) = memo.resolve(l) {
+                if p.input_per_m > 0.0 {
+                    return opt / 1e6 * p.input_per_m;
+                }
+            }
+            0.0
+        })
+        .sum();
     // 命中率口径: 命中 / 总输入 token (与 opencode-visual-cache 一致: 缓存读 / prompt_tokens).
     // 分母用总输入而非 hit+miss: creation(首次写入) 已从 miss 拆出, hit+miss = prompt - creation 会偏小.
     let cache_hit_rate = if total_prompt_tokens > 0 {
@@ -1764,6 +1896,7 @@ fn compute_stats(
         0.0
     };
 
+    // ─── 概览窗口聚合 (随 range 切换: today=当日 / hour=近24h / day=近30天 / month=近12月) ───
     // ─── 今日窗口聚合 (东八区 0 点起) ───
     // 日志文件有 5000 条滚动上限, "累计"口径会封顶失真; 今日口径不受影响, 用于概览小卡片.
     let now = now_ts() as i64;
@@ -1782,6 +1915,36 @@ fn compute_stats(
     let today_total_cache_hit_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
     let today_total_cache_miss_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
     let today_total_cost: f64 = today_logs.iter().map(|l| log_cost(&memo, l)).sum();
+    // 今日窗口的转发优化省量 (剥离推理链 + 历史裁剪 + 响应缓存命中): token 与折算费用,
+    // 与 today_total_cost 同口径 (东八区日界), 供概览头条卡片展示, 不再永远累计.
+    let today_strip_saved_tokens: u64 = today_logs.iter().map(|l| l.strip_saved_tokens as u64).sum();
+    let today_trim_saved_tokens: u64 = today_logs.iter().map(|l| l.trim_saved_tokens as u64).sum();
+    let today_resp_cache_saved_tokens: u64 = today_logs.iter().map(|l| l.resp_cache_saved_tokens as u64).sum();
+    // 今日优化省量 = 三者今日窗口之和 (与今日 6 卡片同口径, 东八区日界).
+    let today_opt_saved_tokens: u64 = today_strip_saved_tokens + today_trim_saved_tokens + today_resp_cache_saved_tokens;
+    let today_opt_saved_fee: f64 = today_logs
+        .iter()
+        .map(|l| {
+            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as f64;
+            if opt <= 0.0 {
+                return 0.0;
+            }
+            if let Some(p) = memo.resolve(l) {
+                if p.input_per_m > 0.0 {
+                    return opt / 1e6 * p.input_per_m;
+                }
+            }
+            0.0
+        })
+        .sum();
+    // 累计优化省量的最早记录日期 (取有优化省量日志的最早时间戳), 用于给"累计"标注起算点.
+    let opt_saved_since = logs
+        .iter()
+        .filter(|l| (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) > 0)
+        .map(|l| l.timestamp)
+        .min()
+        .map(ts_to_date)
+        .unwrap_or_default();
 
     // 按"供应商/上游模型"组合分组: 上游模型缺失时回退到中转 model, 避免按中转 ID 统计造成的混乱.
     let mut model_map: HashMap<String, Vec<&RequestLog>> = HashMap::new();
@@ -1835,7 +1998,6 @@ fn compute_stats(
             let price = pricing::resolve_price(
                 price_overrides.get(&logs[0].model).copied(),
                 logs[0].upstream_model.as_deref(),
-                Some(logs[0].endpoint.as_str()),
             );
 
             ModelStats {
@@ -1875,6 +2037,14 @@ fn compute_stats(
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
+            // KV 缓存命中节省金额: 仅计费 (非免费/月套餐) 供应商计入, 排除不按量计费的模型.
+            let cache_saved: f64 = logs
+                .iter()
+                .filter(|l| !free_ids.contains(&l.model))
+                .map(|l| log_cache_saved(&memo, l))
+                .sum();
+            // 是否按量计费: 组内任一中转 ID 不在 free_ids (免费/月套餐) 即视为计费供应商.
+            let billing = logs.iter().any(|l| !free_ids.contains(&l.model));
             let today_cost: f64 = logs
                 .iter()
                 .filter(|l| l.timestamp >= today_start)
@@ -1907,6 +2077,8 @@ fn compute_stats(
                 gen_speed,
                 total_cost: cost,
                 today_cost,
+                cache_saved,
+                billing,
             }
         })
         .collect();
@@ -1943,7 +2115,18 @@ fn compute_stats(
         today_total_cache_miss_tokens,
         total_cost,
         total_cache_saved,
+        total_opt_saved_tokens,
+        total_opt_saved_fee,
+        total_strip_saved_tokens,
+        total_trim_saved_tokens,
+        total_resp_cache_saved_tokens,
         today_total_cost,
+        today_opt_saved_tokens,
+        today_opt_saved_fee,
+        today_strip_saved_tokens,
+        today_trim_saved_tokens,
+        today_resp_cache_saved_tokens,
+        opt_saved_since,
         // has_price_config 在 api_stats 中按 price_overrides 是否非空注入.
         has_price_config: false,
         // 本轮 (进程级) 统计由 LogBuffer 原子计数提供, compute_stats 内无来源 → 默认空,
@@ -2084,6 +2267,9 @@ mod tests {
             prompt_cache_hit_tokens: hit,
             prompt_cache_miss_tokens: miss,
             prompt_cache_creation_tokens: 0,
+            strip_saved_tokens: 0,
+            trim_saved_tokens: 0,
+            resp_cache_saved_tokens: 0,
             first_token_ms: None,
             upstream_model: None,
         }
@@ -2244,5 +2430,52 @@ mod tests {
         assert_eq!(s.completion_tokens, 150, "3 条 × 50");
         assert_eq!(s.cache_hit_tokens, 140);
         assert_eq!(s.cache_miss_tokens, 60);
+    }
+
+    /// 「已省」改为净省口径: 命中折扣 − 写入溢价, 与 `compute_cost` 输入拆分一致.
+    /// 锁定缓存被反复重建 (T2 裁剪平移前缀 / 改系统提示词 / 切模型) 时不再高估省钱.
+    #[test]
+    fn test_cache_saved_net_of_creation_premium() {
+        // DeepSeek 类价格 (元/百万 token): 输入 2, 读 0.2, 写入 2.5.
+        let price = ModelPrice {
+            input_per_m: 2.0,
+            output_per_m: 8.0,
+            cache_read_per_m: Some(0.2),
+            cache_creation_per_m: Some(2.5),
+        };
+        let mut ov = HashMap::new();
+        ov.insert("ds".to_string(), price);
+        let memo = PriceMemo::new(&ov);
+
+        // 1) 纯命中 1M token, 无写入 → 净省 = 1 × (2 − 0.2) = 1.8.
+        let mut log = mk("ds", "ds", 1_000_000, 0);
+        log.prompt_tokens = 1_000_000;
+        assert!((log_cache_saved(&memo, &log) - 1.8).abs() < 1e-9);
+
+        // 2) 纯写入 1M token (无命中) → 净省 = −1 × (2.5 − 2) = −0.5 (写入溢价抵消, 不钳到 0).
+        let mut log2 = mk("ds", "ds", 0, 0);
+        log2.prompt_tokens = 1_000_000;
+        log2.prompt_cache_creation_tokens = 1_000_000;
+        assert!((log_cache_saved(&memo, &log2) - (-0.5)).abs() < 1e-9);
+
+        // 3) 命中 1M + 写入 1M → 净省 = 1.8 − 0.5 = 1.3.
+        let mut log3 = mk("ds", "ds", 1_000_000, 0);
+        log3.prompt_tokens = 2_000_000;
+        log3.prompt_cache_creation_tokens = 1_000_000;
+        assert!((log_cache_saved(&memo, &log3) - 1.3).abs() < 1e-9);
+
+        // 4) 命中本地响应缓存 (log.cached) → 未真实消费上游, 省额记 0.
+        let mut log4 = mk("ds", "ds", 1_000_000, 0);
+        log4.cached = true;
+        assert_eq!(log_cache_saved(&memo, &log4), 0.0);
+
+        // 5) 输入价为 0 (月套餐/未配置) → 无计费基数, 净省记 0.
+        let free = ModelPrice { input_per_m: 0.0, output_per_m: 0.0, cache_read_per_m: None, cache_creation_per_m: None };
+        let mut ov2 = HashMap::new();
+        ov2.insert("opencode".to_string(), free);
+        let memo2 = PriceMemo::new(&ov2);
+        let mut log5 = mk("opencode", "oc", 1_000_000, 0);
+        log5.prompt_tokens = 1_000_000;
+        assert_eq!(log_cache_saved(&memo2, &log5), 0.0);
     }
 }

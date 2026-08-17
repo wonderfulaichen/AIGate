@@ -554,6 +554,8 @@ fn main() {
         }
     });
 
+    // KeyStore 初始化需要 providers 列表做旧版 (按 env_var 索引) → 按 provider 索引的无损迁移.
+    let providers_snapshot = registry.providers();
     let state = AppState {
         client,
         registry: Arc::new(RwLock::new(registry)),
@@ -567,14 +569,15 @@ fn main() {
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
         retry_max: config.retry_max,
         retry_backoff: Duration::from_millis(config.retry_backoff_ms),
-        key_store: keys::KeyStore::new("data"),
+        key_store: keys::KeyStore::new("data", &providers_snapshot),
+        balance_manager: crate::balance::BalanceManager::new(
+            std::path::PathBuf::from("config").join("balance.json"),
+        ),
         log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
         stats_cache: Arc::new(tokio::sync::Mutex::new(None)),
         loop_guard: config.loop_guard.clone(),
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
         max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
-        strip_saved_chars: Arc::new(AtomicUsize::new(0)),
-        trim_saved_chars: Arc::new(AtomicUsize::new(0)),
         breakers,
     };
 
@@ -595,7 +598,6 @@ fn main() {
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
         .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
-        .route("/admin/api/forward-savings", get(admin::api_forward_savings_get))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock))
         .route("/admin/api/lang", get(admin::api_lang).post(admin::api_lang_set))
