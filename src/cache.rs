@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 /// 单条缓存项.
 struct Entry {
     body: String,
-    /// 录制时回填的精确 token 用量 (prompt_tokens, completion_tokens); 命中回放优先用此值
-    /// 而非从缓存体重新解析 (SSE 流常缺 usage 或仅末帧发, extract_usage 准确率远低于录制时).
-    /// (0, 0) 表示无精确值, 回放时退回 extract_usage 兜底.
+    /// 写入时回填的精确 token 用量 (prompt_tokens, completion_tokens); 命中回放优先用此值
+    /// 而非从缓存体重新解析 (非流式 JSON 自带 usage, 精确; 回放时若缺失则退回 extract_usage 兜底).
+    /// (0, 0) 表示无精确值.
     usage: (u32, u32),
     expires_at: Instant,
 }
@@ -327,18 +327,7 @@ impl ResponseCache {
         self.insert(key.to_string(), body.to_string(), usage);
     }
 
-    /// 写入缓存 (原始字节, 流式 SSE 命中用). 非 UTF-8 的响应不缓存
-    /// (流式 SSE 恒为 UTF-8, 此分支实际不会触发). `usage` = 录制时精确 token.
-    pub fn put_bytes(&self, key: &str, body: &[u8], usage: (u32, u32)) {
-        if !self.is_enabled() {
-            return;
-        }
-        if let Ok(s) = String::from_utf8(body.to_vec()) {
-            self.insert(key.to_string(), s, usage);
-        }
-    }
-
-    /// 内部写入: 执行上限/TTL 淘汰后插入条目. `put` / `put_bytes` 共用.
+    /// 内部写入: 执行上限/TTL 淘汰后插入条目. `put` 调用.
     fn insert(&self, key: String, body: String, usage: (u32, u32)) {
         let mut map = self.map.lock().expect("cache lock poisoned");
         let max_entries = *self.max_entries.lock().expect("max_entries lock poisoned");

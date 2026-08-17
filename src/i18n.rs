@@ -449,7 +449,7 @@ mod tests {
         set_current_lang(Lang::Zh);
         assert_eq!(circuit_state_cn("open"), "熔断");
         assert_eq!(circuit_state_cn("half-open"), "半开");
-        assert_eq!(circuit_state_cn("closed"), "正常");
+        assert_eq!(circuit_state_cn("closed"), "运行正常");
         assert_eq!(health_level("open", true), "error");
         assert_eq!(health_level("closed", true), "ok");
         assert_eq!(health_level("closed", false), "error");
