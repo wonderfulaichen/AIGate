@@ -266,7 +266,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
             <div class="flex flex-wrap gap-x-5 gap-y-1 mt-3 pt-3 border-t text-[11px]" style="border-color:var(--c-border);color:var(--c-muted)">
               <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_strip_saved_tokens>0) ? '≈ '+fmtT(stats.today_strip_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
               <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_trim_saved_tokens>0) ? '≈ '+fmtT(stats.today_trim_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
-              <span><span x-text="t('session_cache_opt')"></span>: <span style="color:#34d399" x-text="(stats&&stats.today_resp_cache_saved_tokens>0) ? '≈ '+fmtT(stats.today_resp_cache_saved_tokens)+' tok' : t('session_opt_off')"></span></span>
+              <span><span x-text="t('session_cache_opt')"></span>: <span style="color:#34d399" x-text="(stats&&stats.today_resp_cache_saved_tokens>0) ? '≈ '+fmtT(stats.today_resp_cache_saved_tokens)+' tok' : ((cache&&cache.enabled) ? t('cache_opt_pending') : t('session_opt_off'))"></span></span>
             </div>
           </div></div>
           <!-- 供应商总览: 余额 + 费用合并单卡片, 内联编辑 (不再跳转) -->
@@ -742,7 +742,9 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
           </div>
           <template x-if="cache===null"><div class="text-center py-6 text-sm" style="color:var(--c-muted)" x-text="t('loading')"></div></template>
           <template x-if="cache!==null">
-            <div class="space-y-4">
+            <!-- 本区块只放配置项 (开关/参数), 运行时统计量 (省量/命中率/条目数) 见概览页与分析页, 不在此展示 -->
+            <div class="space-y-5">
+              <!-- 1. 启用开关 -->
               <div class="flex items-center justify-between">
                 <div>
                   <div class="text-sm font-medium" x-text="t('cache_enable_label')"></div>
@@ -752,37 +754,31 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                   <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :style="cache.enabled ? 'left:26px' : 'left:3px'"></span>
                 </button>
               </div>
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.entries')"></div>
-                  <div class="text-lg font-bold mt-1" x-text="cache.entries + ' / ' + cache.max_entries"></div>
+              <!-- 2. 缓存有效期 TTL -->
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <div class="text-sm font-medium" x-text="t('cache_ttl_label')"></div>
+                  <div class="text-xs mt-0.5" style="color:var(--c-muted)" x-text="t('cache_ttl_desc')"></div>
                 </div>
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hits')"></div>
-                  <div class="text-lg font-bold mt-1" style="color:#34d399" x-text="cache.hits"></div>
-                </div>
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.misses')"></div>
-                  <div class="text-lg font-bold mt-1" style="color:#f59e0b" x-text="cache.misses"></div>
-                </div>
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.ttl')"></div>
-                  <div class="text-lg font-bold mt-1" x-text="cache.ttl_secs + 's'"></div>
+                <div class="flex items-center gap-2">
+                  <input type="number" min="1" max="864000" :value="cache.ttl_secs" @change="setCacheConfig({ttl_secs: parseInt($event.target.value)||60})"
+                    class="w-24 px-2 py-1 rounded-md text-sm text-right" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+                  <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache_ttl_unit')"></span>
                 </div>
               </div>
-              <!-- 实际命中率: 本轮(进程累计) + 开启后(本次启用累计), 样本为 0 时显示 -- -->
-              <div class="grid grid-cols-2 gap-3">
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hit_rate_session')"></div>
-                  <div class="text-lg font-bold mt-1" style="color:var(--c-indigo)" x-text="cache.hits + cache.misses > 0 ? ((cache.hits/(cache.hits+cache.misses))*100).toFixed(1) + '%' : '--'"></div>
-                  <div class="text-[10px] mt-0.5" style="color:var(--c-muted)" x-text="t('cache.hit_rate_session_hint')"></div>
+              <!-- 3. 缓存条目上限 -->
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <div class="text-sm font-medium" x-text="t('cache_max_entries_label')"></div>
+                  <div class="text-xs mt-0.5" style="color:var(--c-muted)" x-text="t('cache_max_entries_desc')"></div>
                 </div>
-                <div class="rounded-lg px-4 py-3" style="background:rgba(255,255,255,.03)">
-                  <div class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hit_rate_enabled')"></div>
-                  <div class="text-lg font-bold mt-1" style="color:var(--c-indigo)" x-text="cache.enabled_hits + cache.enabled_misses > 0 ? ((cache.enabled_hits/(cache.enabled_hits+cache.enabled_misses))*100).toFixed(1) + '%' : '--'"></div>
-                  <div class="text-[10px] mt-0.5" style="color:var(--c-muted)" x-text="t('cache.hit_rate_enabled_hint')"></div>
+                <div class="flex items-center gap-2">
+                  <input type="number" min="1" max="100000" :value="cache.max_entries" @change="setCacheConfig({max_entries: parseInt($event.target.value)||100})"
+                    class="w-24 px-2 py-1 rounded-md text-sm text-right" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+                  <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache_max_entries_unit')"></span>
                 </div>
               </div>
+              <p class="text-[10px]" style="color:var(--text-muted)" x-text="t('cache_config_hint')"></p>
             </div>
           </template>
         </div></div>
@@ -1175,8 +1171,11 @@ const I18N = {
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
     'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。',
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
-    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（仅非流式请求）',
-    'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL',
+    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（非流式与流式请求均支持）',
+    'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_desc': '条目写入后保留的秒数，过期自动失效；仅影响后续写入', 'cache_ttl_unit': '秒',
+    'cache_max_entries_label': '缓存条目上限', 'cache_max_entries_desc': '内存最多保留的缓存条目数，超出后淘汰最早的一半', 'cache_max_entries_unit': '条',
+    'cache_config_hint': '配置为运行时生效；开启状态与缓存条目均随进程落盘，重启后自动恢复。命中统计与省量见「概览」页。',
+    'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL', 'cache.saved_label': '已省 Tokens（本轮累计）', 'cache.saved_enabled_label': '开启后', 'cache.saved_hint': '命中缓存即跳过上游，省下的 prompt+completion token 累计（重启清零）',
     'cache.hit_rate_session': '运行命中率', 'cache.hit_rate_session_hint': '进程启动以来累计（重启清零）',
     'cache.hit_rate_enabled': '开启后命中率', 'cache.hit_rate_enabled_hint': '本次启用累计（重新开启清零）',
     'health_check_title': '健康检查', 'probe': '探测', 'click_probe_hint': '点击"探测"检查供应商连通性', 'reset_circuit': '重置熔断',
@@ -1202,7 +1201,7 @@ const I18N = {
     'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史',
     'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
     'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
-    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_today_fee': '今日省费用', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
+    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'cache_opt_pending': '已开启（待命中）', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_today_fee': '今日省费用', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
     'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
     'tooltip_config': '任务栏 Tooltip', 'tooltip_enabled': '启用 Tooltip', 'tooltip_metrics': '显示指标',
     'tooltip_requests_per_second': '请求速度 (req/s)', 'tooltip_avg_latency_ms': '平均延迟 (ms)',
@@ -1273,8 +1272,11 @@ const I18N = {
     'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
     'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.',
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
-    'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (non-streaming only)',
-    'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL',
+    'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (both non-streaming and streaming)',
+    'cache_ttl_label': 'Cache TTL', 'cache_ttl_desc': 'Seconds a cached entry lives before expiry; affects new writes only', 'cache_ttl_unit': 's',
+    'cache_max_entries_label': 'Max entries', 'cache_max_entries_desc': 'Max cached entries kept in memory; oldest half evicted when exceeded', 'cache_max_entries_unit': 'entries',
+    'cache_config_hint': 'Settings apply at runtime. Cache is in-memory (no persistence); config resets to defaults on restart. Hit stats & savings are on the Overview page.',
+    'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL', 'cache.saved_label': 'Tokens saved (since launch)', 'cache.saved_enabled_label': 'Since enabled', 'cache.saved_hint': 'Tokens skipped from upstream on each cache hit (resets on restart)',
     'cache.hit_rate_session': 'Runtime hit rate', 'cache.hit_rate_session_hint': 'Process lifetime (resets on restart)',
     'cache.hit_rate_enabled': 'Since enabled', 'cache.hit_rate_enabled_hint': 'Since last enable (resets on re-enable)',
     'health_check_title': 'Health Check', 'probe': 'Probe', 'click_probe_hint': 'Click "Probe" to check provider connectivity', 'reset_circuit': 'Reset breaker',
@@ -1300,7 +1302,7 @@ const I18N = {
     'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed',
     'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
     'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
-    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_today_fee': "Today's Fee Saved", 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
+    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'cache_opt_pending': 'on (awaiting hit)', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_today_fee': "Today's Fee Saved", 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
     'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
     'tooltip_config': 'Taskbar Tooltip', 'tooltip_enabled': 'Enable Tooltip', 'tooltip_metrics': 'Display Metrics',
     'tooltip_requests_per_second': 'Request Speed (req/s)', 'tooltip_avg_latency_ms': 'Avg Latency (ms)',
@@ -1651,7 +1653,14 @@ function dashboard() {
       try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
     },
     async setCacheEnabled(val) {
-      try { const r=await fetch('/admin/api/cache',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})}); if(r.ok) this.cache=await r.json(); } catch(e){}
+      await this.setCacheConfig({enabled: val});
+    },
+    // 运行时更新缓存配置 (开关 / TTL / 条目上限), 仅发送提供的字段. 成功回写整份 stats.
+    async setCacheConfig(cfg) {
+      try {
+        const r = await fetch('/admin/api/cache', {method:'POST', headers:authHeaders(), body:JSON.stringify(cfg)});
+        if (r.ok) this.cache = await r.json();
+      } catch(e) {}
     },
     async clearCache() {
       try { const r=await fetch('/admin/api/cache/clear',{method:'POST',headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}

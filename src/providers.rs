@@ -340,10 +340,9 @@ pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'stati
             }
         }
         "zen" => {
-            // claude-* 与 qwen3*-plus/max 走 /messages; minimax-m2.x / deepseek / glm / kimi 回落 openai
-            if id.starts_with("minimax")
-                || (id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")))
-            {
+            // qwen3*-plus/max 走 /messages; claude-* 由上方通用规则处理;
+            // minimax-m2.x / deepseek / glm / kimi 回落 openai (见 line 620 注释期望)
+            if id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")) {
                 Some("anthropic")
             } else {
                 None
@@ -639,6 +638,8 @@ mod tests {
             headers: None,
             api_format: Some("openai".into()),
             prompt_cache: None,
+            endpoint_anthropic: None,
+            openai_cache_control: None,
             models: HashMap::new(),
         };
         // 供应商 openai + 模型未标注 → openai

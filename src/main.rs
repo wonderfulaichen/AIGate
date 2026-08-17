@@ -565,6 +565,7 @@ fn main() {
             config.cache_enabled,
             Duration::from_secs(config.cache_ttl_secs),
             config.cache_max_entries,
+            config.cache_persist_path.clone(),
         )),
         inflight: Arc::new(crate::cache::InflightCache::new()),
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
@@ -706,8 +707,9 @@ fn main() {
                 toggle_console(!hidden);
                 handles.console_item.set_checked(!hidden);
             } else if id == handles.quit_item.id().0 {
-                // 退出程序: 先同步刷新日志到磁盘, 避免异步尾写丢失.
+                // 退出程序: 先同步刷新日志/缓存到磁盘, 避免异步尾写 / 缓存丢失.
                 state_for_shutdown.log_buffer.flush_blocking();
+                state_for_shutdown.cache.flush_blocking();
                 elwt.exit();
             }
         }
@@ -776,8 +778,9 @@ fn main() {
                 _ => {}
             },
             Event::LoopExiting => {
-                // 兜底: 事件循环退出前再同步刷新一次日志 (覆盖非菜单退出路径).
+                // 兜底: 事件循环退出前再同步刷新一次日志与缓存 (覆盖非菜单退出路径).
                 state_for_shutdown.log_buffer.flush_blocking();
+                state_for_shutdown.cache.flush_blocking();
                 toggle_console(true); // 退出前显示控制台, 让用户看到最后日志
             }
             _ => {}

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures::Stream;
@@ -277,7 +277,12 @@ pub async fn chat_completions(
     };
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
-    // 5.5 响应缓存查询: 缓存开启且为非流式请求时, 命中直接返回 (省 token + 延迟).
+    // 5.5 响应缓存查询: 缓存开启时, 流式与非流式都生成 key (流式带 s: 前缀隔离命名空间).
+    // is_stream 仅用于命中回放时决定响应类型 (流式→text/event-stream, 非流式→JSON).
+    let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
+        == Some(true);
     let cache_key: Option<String> = if state.cache.is_enabled() {
         serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
@@ -290,44 +295,44 @@ pub async fn chat_completions(
     //       只打一次上游, 其余请求等待领导者写完缓存后直接命中返回. 完全无损.
     //       仅在缓存开启 (cache_key 为 Some) 时生效; 领导者持 InflightGuard,
     //       无论成功/失败/提前返回都会由 Drop 释放并唤醒等待者.
-    let inflight_guard: Option<InflightGuard> = if let Some(key) = &cache_key {
-        match state.inflight.join_or_claim(key) {
-            // 等待者: 等领导者完成, 再查缓存 (领导者已写入).
-            Some(notify) => {
-                notify.notified().await;
-                if let Some(cached) = state.cache.get(key) {
-                    let (pt, ct, hit, miss, creation) = extract_usage(&cached);
-                    state.cache.record_hit_saved((pt + ct) as u64);
-                    crate::admin::record_request_with_tokens(
-                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, cached.len(),
-                        true, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, (pt + ct) as u32, None, None,
-                    ).await;
-                    return Ok(axum::Json(
-                        serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
-                    ).into_response());
+    //       ⚠️ 流式请求不参与去重: 流式响应是惰性流, 领导者要等客户端消费完整流才 Drop,
+    //       等待者会在 notify.notified().await 干等整段流 → 高并发下请求堆积. 且流式合并
+    //       收益低 (命中回放另有路径), 故仅对非流式 (!is_stream) 启用去重.
+    let _inflight_guard: Option<InflightGuard> = if let Some(key) = &cache_key {
+        if !is_stream {
+            match state.inflight.join_or_claim(key) {
+                // 等待者: 等领导者完成, 再查缓存 (领导者已写入); 命中则回放 (流式/非流式自动分流).
+                Some(notify) => {
+                    notify.notified().await;
+                    if let Some(resp) = try_replay_cache(
+                        &state, key, is_stream,
+                        &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
+                        start, strip_saved_tokens, trim_saved_tokens,
+                    ).await {
+                        return Ok(resp);
+                    }
+                    // 领导者未写入缓存 (上游失败/异常): 本请求降级为独立上游调用, 不持 guard.
+                    None
                 }
-                // 领导者未写入缓存 (上游失败/异常): 本请求降级为独立上游调用, 不持 guard.
-                None
+                // 领导者: 持 guard, 函数返回/提前退出时 Drop 自动释放.
+                None => Some(InflightGuard::new(&state.inflight, key.clone())),
             }
-            // 领导者: 持 guard, 函数返回/提前退出时 Drop 自动释放.
-            None => Some(InflightGuard::new(&state.inflight, key.clone())),
+        } else {
+            // 流式请求不参与去重: 直接当独立上游调用 (命中回放仍由下方 try_replay_cache 处理).
+            None
         }
     } else {
         None
     };
 
+    // 命中缓存 → 直接回放 (流式回放 SSE 文本 text/event-stream, 非流式回放 JSON), 不命中则继续上游.
     if let Some(key) = &cache_key {
-        if let Some(cached) = state.cache.get(key) {
-            let (pt, ct, hit, miss, creation) = extract_usage(&cached);
-            // 命中缓存 = 完全没打上游, 本应消耗的 prompt+completion token 全部省下 (供面板"优化成果"展示).
-            state.cache.record_hit_saved((pt + ct) as u64);
-            crate::admin::record_request_with_tokens(
-                &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, cached.len(),
-                true, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, (pt + ct) as u32, None, None,
-            ).await;
-            return Ok(axum::Json(
-                serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
-            ).into_response());
+        if let Some(resp) = try_replay_cache(
+            &state, key, is_stream,
+            &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
+            start, strip_saved_tokens, trim_saved_tokens,
+        ).await {
+            return Ok(resp);
         }
     }
 
@@ -476,38 +481,53 @@ pub async fn chat_completions(
     report_breaker(&state.breakers, &provider_name, true);
     // 非流式且缓存开启 → 读全量响应体存入缓存后直接返回 (响应 JSON 自带 usage, 精确记 token).
     // 注意: text() 按值消费 upstream, 故此分支必须 return, 不可再进入下方流式透传.
+    // 关键约束 !is_stream: 流式请求 (cache_key 带 s: 前缀) 必须走下方 stream_response_with_tokens
+    // 录制/透传, 绝不能在此用 text() 把 SSE 当 JSON 读, 否则客户端收到 application/json 而非
+    // text/event-stream → "未返回任何内容". 这正是"开启缓存即报错"的根因.
     if let Some(key) = &cache_key {
-        match upstream.text().await {
-            Ok(body_text) => {
-                // Anthropic 非流式响应体 → OpenAI 格式 (usage 提取/客户端展示均需 OpenAI 结构)
-                let body_text = if anthropic_mode {
-                    match serde_json::from_str::<serde_json::Value>(&body_text) {
-                        Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
-                        Err(_) => body_text,
-                    }
-                } else {
-                    body_text
-                };
-                // 入缓存存 OpenAI 格式: 命中分支 (make_key 命中后) 直接把缓存体返回给客户端,
-                // 若在此存上游原始体, anthropic 模式下命中返回的是 Anthropic 结构 → 客户端解析错误.
-                state.cache.put(key, &body_text);
-                let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
-                crate::admin::record_request_with_tokens(
-                    &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                    false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
-                ).await;
-                return Ok(axum::Json(
-                    serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
-                ).into_response());
-            }
-            Err(e) => {
-                return Err(error_response(
-                    StatusCode::BAD_GATEWAY,
-                    &format!("failed to read upstream response body: {e}"),
-                ));
+        if !is_stream {
+            match upstream.text().await {
+                Ok(body_text) => {
+                    // Anthropic 非流式响应体 → OpenAI 格式 (usage 提取/客户端展示均需 OpenAI 结构)
+                    let body_text = if anthropic_mode {
+                        match serde_json::from_str::<serde_json::Value>(&body_text) {
+                            Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
+                            Err(_) => body_text,
+                        }
+                    } else {
+                        body_text
+                    };
+                    // 入缓存存 OpenAI 格式: 命中分支 (make_key 命中后) 直接把缓存体返回给客户端,
+                    // 若在此存上游原始体, anthropic 模式下命中返回的是 Anthropic 结构 → 客户端解析错误.
+                    let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
+                    // 把精确 usage 一并存入缓存, 命中回放时优先用此值 (避免重解析 SSE 失真).
+                    state.cache.put(key, &body_text, (pt, ct));
+                    crate::admin::record_request_with_tokens(
+                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
+                    ).await;
+                    return Ok(axum::Json(
+                        serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
+                    ).into_response());
+                }
+                Err(e) => {
+                    return Err(error_response(
+                        StatusCode::BAD_GATEWAY,
+                        &format!("failed to read upstream response body: {e}"),
+                    ));
+                }
             }
         }
     }
+    // 流式缓存录制条件: 缓存已开启 且 本次为流式请求 (cache_key 带 s: 前缀).
+    // 命中缓存不走到这; 走到这说明确实要打上游, 边透传边录制 (流完整结束才入库).
+    let cache_rec = if state.cache.is_enabled()
+        && cache_key.as_ref().map(|k| k.starts_with("s:")).unwrap_or(false)
+    {
+        Some((state.cache.clone(), cache_key.clone().unwrap()))
+    } else {
+        None
+    };
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
@@ -521,6 +541,7 @@ pub async fn chat_completions(
         state.stream_idle_timeout,
         anthropic_mode,
         strip_saved_tokens, trim_saved_tokens,
+        cache_rec,
     );
     Ok(resp)
 }
@@ -618,6 +639,8 @@ fn stream_response_with_tokens(
     anthropic: bool,
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
+    // 流式缓存录制: Some((cache, key)) 时边透传边录制归一化 SSE, 流以 [DONE] 收尾才落缓存.
+    cache_rec: Option<(Arc<ResponseCache>, String)>,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -644,6 +667,7 @@ fn stream_response_with_tokens(
         pending_error_sse: None,
         finish_reason: None,
         clean_finish: false,
+        cache_eligible: true,
         errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
@@ -665,9 +689,22 @@ fn stream_response_with_tokens(
                 trim_saved_tokens,
                 response_body_len: 0,
             }),
+            recorded_usage: (0, 0),
     };
 
-    let body = Body::from_stream(tracked);
+    // 缓存录制: 仅当该流式请求命中录制条件 (缓存开启 + 流式) 时, 透传同时录制归一化 SSE,
+    // 流以 [DONE] 完整收尾才写入缓存; 非录制场景直接透传 (行为与改动前一致).
+    let body = if let Some((cache, key)) = cache_rec {
+        Body::from_stream(RecordingStream {
+            inner: tracked,
+            cache,
+            key,
+            recording: Vec::new(),
+            done: false,
+        })
+    } else {
+        Body::from_stream(tracked)
+    };
     let mut resp = Response::builder().status(status).body(body).unwrap();
     for (name, value) in headers.iter() {
         let name_str = name.as_str();
@@ -676,6 +713,161 @@ fn stream_response_with_tokens(
         }
     }
     resp
+}
+
+// ===== 缓存回放与流式录制 (无损) =====
+
+/// 命中缓存回放: 流式返回 `text/event-stream` (SSE 文本原样), 非流式返回 JSON.
+/// 命中统计由调用方 (try_replay_cache) 在调用前完成.
+fn serve_cached(body: &str, is_stream: bool) -> Response {
+    if is_stream {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header(header::CONNECTION, "keep-alive")
+            .body(Body::from(body.as_bytes().to_vec()))
+            .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "stream cache replay failed"))
+    } else {
+        match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(v) => axum::Json(v).into_response(),
+            Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "bad cached json body"),
+        }
+    }
+}
+
+/// 命中缓存回放 (统一入口): 查缓存 → 统计省量 + 写日志 → 构造回放 Response.
+/// 命中返回 Some(resp) (调用方直接 return); 未命中返回 None (继续走上游).
+/// 供「主命中分支」与「in-flight 等待者分支」共用, 消除重复逻辑.
+async fn try_replay_cache(
+    state: &AppState,
+    key: &str,
+    is_stream: bool,
+    model: &str,
+    provider: &str,
+    endpoint: &str,
+    upstream_model: Option<&str>,
+    start: std::time::Instant,
+    strip_saved: u32,
+    trim_saved: u32,
+) -> Option<Response> {
+    let (cached, stored_usage) = state.cache.get(key)?;
+    // 命中回放的 token 统计优先用录制时回填的精确 usage (流常缺 usage / 仅末帧发,
+    // extract_usage 准确率远低于录制时 final_tokens); 无精确值时退回从缓存体解析.
+    let (pt, mut ct, hit, miss, creation) = if stored_usage != (0, 0) {
+        let (p, c) = stored_usage;
+        (p, c, 0u32, 0u32, 0u32)
+    } else {
+        extract_usage(&cached)
+    };
+    // 命中缓存 = 完全没打上游, 本应消耗的 prompt+completion token 全部省下 (供面板"优化成果"展示).
+    // 当精确 usage 缺失 (多见于流式 SSE: 录制未回填 / 体为纯文本无法解析) 时,
+    // 按缓存体字节数估算 (4 字节 ≈ 1 token), 避免省量恒为 0 导致面板误显"未开启".
+    if pt == 0 && ct == 0 {
+        let est = (cached.len() as u64 / 4) as u32;
+        ct = est; // 估算值整体记到 completion 侧, 仅用于省量展示口径
+    }
+    let saved = (pt + ct) as u64;
+    state.cache.record_hit_saved(saved);
+    crate::admin::record_request_with_tokens(
+        &state.log_buffer,
+        model,
+        provider,
+        endpoint,
+        upstream_model,
+        start,
+        pt,
+        ct,
+        cached.len(),
+        true,
+        hit,
+        miss,
+        creation,
+        strip_saved,
+        trim_saved,
+        saved as u32,
+        None,
+        None,
+    )
+    .await;
+    Some(serve_cached(&cached, is_stream))
+}
+
+/// 读取内层流"是否可用于缓存"的抽象: 让泛型 RecordingStream 能感知具体 TokenStream
+/// 的 cache_eligible 状态, 而不暴露 TokenStream 的全部泛型参数.
+trait CacheEligible {
+    fn is_cache_eligible(&self) -> bool;
+    /// 流结束时回填的精确 (prompt, completion) token; (0,0) 表示无精确值.
+    fn recorded_usage(&self) -> (u32, u32);
+}
+
+impl<S> CacheEligible for TokenStream<S> {
+    fn is_cache_eligible(&self) -> bool {
+        self.cache_eligible
+    }
+    fn recorded_usage(&self) -> (u32, u32) {
+        self.recorded_usage
+    }
+}
+
+/// 流式响应录制器 — 透传上游 SSE 帧的同时累积字节, 流以 `data: [DONE]` 完整收尾后写入缓存.
+///
+/// 仅用于"流式 + 缓存已开启"请求: 命中缓存时后续相同流式请求直接回放这批 SSE 文本
+/// (`text/event-stream`), 用户无感知, 但省下上游生成 token. 客户端中途断开 (流未以 [DONE] 结束)
+/// 产生的残缺 SSE 不入库; 上游 SSE error / 断连 / finish_reason=="error" 的**错误响应**同样不入库,
+/// 避免污染后续命中导致"未返回任何内容" (无损 token 优化引入的坑, 见 cache_eligible).
+struct RecordingStream<S> {
+    inner: S,
+    cache: Arc<ResponseCache>,
+    key: String,
+    recording: Vec<u8>,
+    done: bool,
+}
+
+impl<S, E> Stream for RecordingStream<S>
+where
+    S: CacheEligible + Stream<Item = Result<Bytes, E>> + Unpin,
+{
+    type Item = Result<Bytes, E>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        match Pin::new(&mut this.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                this.recording.extend_from_slice(&chunk);
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => {
+                if !this.done {
+                    this.done = true;
+                    // 入库条件 (全部满足才落缓存):
+                    //  1) 流以 `data: [DONE]` (或裸 `[DONE]`) 完整收尾;
+                    //  2) 流可用 (is_cache_eligible): 非上游 SSE error / 断连 / finish_reason=="error".
+                    // 缺任一则不入库, 避免残缺或错误响应污染后续命中.
+                    let buf = std::mem::take(&mut this.recording);
+                    if stream_ends_with_done(&buf) && this.inner.is_cache_eligible() {
+                        let key = std::mem::take(&mut this.key);
+                        // 把录制时回填的精确 token 一并入库; 命中回放优先用此值 (SSE 常缺 usage).
+                        let usage = this.inner.recorded_usage();
+                        this.cache.put_bytes(&key, &buf, usage);
+                    }
+                }
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// 判断归一化 SSE 是否以终止帧收尾 (去掉末尾空白后形如 `data: [DONE]` 或 `[DONE]`).
+fn stream_ends_with_done(buf: &[u8]) -> bool {
+    let mut end = buf.len();
+    while end > 0 && matches!(buf[end - 1], b'\n' | b'\r' | b' ' | b'\t') {
+        end -= 1;
+    }
+    let trimmed = &buf[..end];
+    trimmed.ends_with(b"data: [DONE]") || trimmed.ends_with(b"[DONE]")
 }
 
 /// 用于记录 token 用量的日志数据.
@@ -728,6 +920,10 @@ struct TokenStream<S> {
     /// finish_reason/[DONE], 说明响应被截断 (典型如 10014 的 mid-object split 丢尾帧),
     /// 此前会被记成 200 成功 → 记录页不显示报错. 见 poll_next None 分支.
     clean_finish: bool,
+    /// 本次流是否可用于缓存回放: 仅当流干净结束且未携带错误/异常时为 true.
+    /// 上游 SSE error 事件 / 上游断连兜底 / finish_reason=="error" 时置 false,
+    /// 防止错误/空响应被 RecordingStream 录进缓存污染后续命中 (无损 token 优化引入的坑).
+    cache_eligible: bool,
     /// 上游 SSE error 事件改写后的中文错误信息 (供完成时写错误日志).
     errored_msg: Option<String>,
     /// 归一化后的 SSE 输出缓冲: 把上游 payload (data: 前缀 / 裸 JSON / 裸 [DONE]) 统一封装为
@@ -743,6 +939,9 @@ struct TokenStream<S> {
     /// 翻译为 OpenAI 格式 payload 再走统一处理 (usage/loop_guard/归一化发射全部复用).
     anthropic_conv: Option<crate::anthropic::AnthropicStreamConv>,
     log_buffer: Option<TokenLogData>,
+    /// 流结束时由 final_tokens 回填的精确 (prompt, completion) token; 默认 (0,0).
+    /// 命中回放时 RecordingStream 取出存入缓存, 供回放用精确值而非重解析 SSE.
+    recorded_usage: (u32, u32),
 }
 
 impl<S> TokenStream<S> {
@@ -842,6 +1041,7 @@ impl<S> TokenStream<S> {
                 self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
             );
             self.stream_errored = true;
+            self.cache_eligible = false;
             self.errored_msg = Some(format!("{msg} [{etype}]"));
             let ev = serde_json::json!({ "error": { "message": msg, "type": etype } });
             self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
@@ -918,6 +1118,8 @@ impl<S> TokenStream<S> {
                             self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
                         );
                         self.finish_reason = Some(fr.to_string());
+                        // finish_reason=="error": 上游明确以错误终止, 响应不可用, 禁止缓存.
+                        self.cache_eligible = false;
                     }
                 }
             }
@@ -1023,6 +1225,10 @@ where
                             // 置 clean_finish: 流由网关主动干净收尾 (发了合法终止帧+[DONE]),
                             // 不属于"上游连接意外结束"; 记录页报错由 loop_aborted 分支单独判定.
                             this.clean_finish = true;
+                            // 截断的残缺流禁止入库: 虽已发 [DONE] 收尾 (stream_ends_with_done 会判真),
+                            // 但正文被 loop_guard 砍断不完整, 命中回放会返回残缺答案 → 污染后续请求.
+                            // cache_eligible 置 false 与上游 error / 断连同口径, 由 RecordingStream 入库条件拦截.
+                            this.cache_eligible = false;
                             let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                         data: [DONE]\n\n";
                             return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
@@ -1054,6 +1260,8 @@ where
                     warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
                     this.done = true;
                     this.error_closed = true;
+                    // 上游断连 / 空闲超时兜底: 响应多半不完整, 禁止缓存, 避免残缺流污染后续命中.
+                    this.cache_eligible = false;
                     if let Some(mut ld) = this.log_buffer.take() {
                         ld.response_body_len = this.response_bytes;
                         // 先把错误信息格式化为 String (Send) 再进入 spawn, 否则 E 不 Send 会让 future 无法跨线程.
@@ -1090,6 +1298,8 @@ where
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
                         let (pt, ct, hit, miss, creation) = this.final_tokens(req_body_len);
+                        // 回填精确 token, 供 RecordingStream 入库时存入缓存 (命中回放优先用此值).
+                        this.recorded_usage = (pt, ct);
                         // 完成日志的 error 判定:
                         //  - 死循环检测截断 (loop_aborted): 用专属文案, 避免误显示为上游截断.
                         //  - 流从未干净结束 (clean_finish==false): 上游连接关了却没发 finish_reason/[DONE],
@@ -1218,24 +1428,42 @@ pub(crate) fn usage_cache(usage: &serde_json::Value) -> (u32, u32, u32) {
 /// 后三者来自上游 `usage` 的 KV Cache 统计 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema),
 /// 未提供时为 0.
 fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0, 0, 0, 0);
-    };
     let mut pt = 0u32;
     let mut ct = 0u32;
     let mut hit = 0u32;
     let mut miss = 0u32;
     let mut creation = 0u32;
-    if let Some(u) = v.get("usage") {
-        pt = u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-        ct = u
-            .get("completion_tokens")
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0) as u32;
-        let (h, m, c) = usage_cache(u);
-        hit = h;
-        miss = m;
-        creation = c;
+    // 兼容两种缓存体:
+    //  - 非流式命中/实时响应: 单个 JSON 对象.
+    //  - 流式命中: 归一化 SSE 文本 (`data: {...}\n\n…data: [DONE]\n\n`), 第②轮新增.
+    // 逐行剥离 `data:` 前缀后解析, 仅取以 `{` 开头的 JSON 对象, 跳过 `[DONE]` 与空行.
+    // 取最后一个含 usage 的事件 (流式最终事件携带全量累计 usage), 与领导者 TokenStream 记账口径一致.
+    for raw in text.lines() {
+        let line = raw.trim_start_matches("data:").trim();
+        if line.is_empty() || line == "[DONE]" || !line.starts_with('{') {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(u) = v.get("usage") {
+            if let Some(p) = u.get("prompt_tokens").and_then(|x| x.as_u64()) {
+                pt = p as u32;
+            }
+            if let Some(c) = u.get("completion_tokens").and_then(|x| x.as_u64()) {
+                ct = c as u32;
+            }
+            let (h, m, c) = usage_cache(u);
+            if h > 0 {
+                hit = h;
+            }
+            if m > 0 {
+                miss = m;
+            }
+            if c > 0 {
+                creation = c;
+            }
+        }
     }
     (pt, ct, hit, miss, creation)
 }
@@ -1882,6 +2110,24 @@ mod tests {
         assert_eq!(extract_usage("not json"), (0, 0, 0, 0, 0));
     }
 
+    /// 流式缓存命中体为归一化 SSE 文本 (多个 `data: {...}` 事件 + `data: [DONE]`),
+    /// 第②轮此前误用 serde_json::from_str 解析单对象导致全程返回 (0,0,0,0,0).
+    #[test]
+    fn test_extract_usage_sse() {
+        // 仅最终事件携带全量累计 usage (流式行为), 中间事件无 usage.
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
+            "data: {\"usage\":{\"prompt_tokens\":150,\"completion_tokens\":12,\"prompt_cache_hit_tokens\":140,\"prompt_cache_miss_tokens\":10}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        assert_eq!(extract_usage(sse), (150, 12, 140, 10, 0));
+
+        // data: 前缀缺失/空行/纯 [DONE] 仍不影响解析 (容错).
+        let sse2 = "data: [DONE]\n\n\n   \ndata: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}";
+        assert_eq!(extract_usage(sse2), (3, 1, 0, 0, 0));
+    }
+
     /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
     #[test]
     fn test_parse_sse_chunk_cache_fields() {
@@ -1902,12 +2148,14 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
+            cache_eligible: true,
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
             anthropic_conv: None,
             log_buffer: None,
+            recorded_usage: (0, 0),
         };
         // SSE 外层 usage
         ts.parse_sse_chunk(
@@ -1993,12 +2241,14 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
+            cache_eligible: true,
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
             anthropic_conv: None,
             log_buffer: None,
+            recorded_usage: (0, 0),
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
         let first = futures::executor::block_on(ts.next()).unwrap().unwrap();
@@ -2009,6 +2259,46 @@ mod tests {
         // 第二次 poll: 流已干净终止
         let second = futures::executor::block_on(ts.next());
         assert!(second.is_none());
+        // 错误流不可缓存: 防止错误响应被 RecordingStream 入库污染后续命中.
+        assert!(!ts.cache_eligible, "SSE error 事件流必须 cache_eligible=false");
+    }
+
+    /// 正常流 (以 [DONE] 干净收尾) 应保持 cache_eligible=true, 可被 RecordingStream 安全入库.
+    #[test]
+    fn test_token_stream_cache_eligible_normal() {
+        use futures::stream;
+        use futures::StreamExt;
+        let mut ts = TokenStream {
+            inner: stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                 data: [DONE]\n\n",
+            ))]),
+            done: false,
+            tokens_pt: 0,
+            tokens_ct: 0,
+            tokens_cache_hit: 0,
+            tokens_cache_miss: 0,
+            tokens_cache_creation: 0,
+            response_bytes: 0,
+            loop_guard: None,
+            loop_aborted: false,
+            error_closed: false,
+            stream_errored: false,
+            pending_error_sse: None,
+            finish_reason: None,
+            clean_finish: false,
+            cache_eligible: true,
+            errored_msg: None,
+            out_buf: Vec::new(),
+            line_buf: Vec::new(),
+            first_token_at: None,
+            anthropic_conv: None,
+            log_buffer: None,
+            recorded_usage: (0, 0),
+        };
+        while futures::executor::block_on(ts.next()).is_some() {}
+        assert!(ts.cache_eligible, "正常流应 cache_eligible=true");
     }
 }
 

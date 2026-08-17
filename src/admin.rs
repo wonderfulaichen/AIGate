@@ -1331,10 +1331,12 @@ impl LogBuffer {
 
 // ─── 响应缓存 (实验功能) ───
 
-/// 切换缓存开关的请求体.
+/// 缓存配置请求体 (运行时可调): 开关 / TTL / 条目上限. 字段均可选, 仅更新提供项.
 #[derive(serde::Deserialize)]
-pub struct CacheToggleReq {
-    pub enabled: bool,
+pub struct CacheConfigReq {
+    pub enabled: Option<bool>,
+    pub ttl_secs: Option<u64>,
+    pub max_entries: Option<usize>,
 }
 
 /// GET /admin/api/cache — 返回缓存当前状态与统计 (命中/未命中/条目数).
@@ -1344,12 +1346,21 @@ pub async fn api_cache_get(
     Json(state.cache.stats())
 }
 
-/// POST /admin/api/cache — 运行时切换缓存开关 (面板"实验功能"开关).
+/// POST /admin/api/cache — 运行时更新缓存配置 (面板"性能与优化"设置页).
+/// 开关 / TTL / 条目上限独立可选; 仅更新请求中提供的字段, 其余保持原值.
 pub async fn api_cache_set(
     State(state): State<super::proxy::AppState>,
-    Json(payload): Json<CacheToggleReq>,
+    Json(payload): Json<CacheConfigReq>,
 ) -> Json<crate::cache::CacheStats> {
-    state.cache.set_enabled(payload.enabled);
+    if let Some(enabled) = payload.enabled {
+        state.cache.set_enabled(enabled);
+    }
+    if let Some(ttl_secs) = payload.ttl_secs {
+        state.cache.set_ttl(ttl_secs);
+    }
+    if let Some(max_entries) = payload.max_entries {
+        state.cache.set_max_entries(max_entries);
+    }
     Json(state.cache.stats())
 }
 

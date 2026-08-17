@@ -4,6 +4,7 @@
 //! API key 由 providers.json 中的 api_key_env 字段指定, 从对应环境变量读取.
 
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::circuit_breaker::CircuitBreakerConfig;
@@ -33,6 +34,11 @@ pub struct Config {
     pub cache_ttl_secs: u64,
     /// 缓存最大条目数.
     pub cache_max_entries: usize,
+    /// 响应缓存持久化路径 (实验功能, 默认 None = 不落盘, 纯内存).
+    /// 非空则缓存落盘, 正常退出→重启自动加载 (冷启动预热).
+    /// 设 `1`/`true`/`yes` → 默认 `data/response_cache.json`; 设具体路径 → 使用该路径.
+    /// ⚠️ 隐私: 落盘体含对话 messages 明文. 启用即接受本地落盘风险.
+    pub cache_persist_path: Option<PathBuf>,
     /// 模型死循环检测配置 (可经环境变量覆盖, 默认开启).
     pub loop_guard: LoopGuardConfig,
     /// 转发上游前是否剥离历史 assistant 消息中的推理链 (reasoning_content/reasoning).
@@ -60,6 +66,9 @@ impl Config {
     /// - `CACHE_ENABLED`: 响应缓存开关 (实验功能), 默认 0 (关).
     /// - `CACHE_TTL_SECS`: 缓存条目 TTL 秒数, 默认 300.
     /// - `CACHE_MAX_ENTRIES`: 缓存最大条目数, 默认 1024.
+    /// - `CACHE_PERSIST`: 响应缓存持久化路径 (实验功能, 默认不落盘).
+    ///   设 `1`/`true` → 默认 `data/response_cache.json`; 设具体路径 → 使用该路径; 默认/空/`0` 不落盘.
+    ///   启用后正常退出自动加载历史缓存 (冷启动预热). 注意: 落盘含对话明文, 接受本地落盘风险再启用.
     pub fn from_env() -> Self {
         load_dotenv();
         Self {
@@ -83,6 +92,7 @@ impl Config {
             cache_enabled: env_bool("CACHE_ENABLED", false),
             cache_ttl_secs: env_u64("CACHE_TTL_SECS", 300),
             cache_max_entries: env_u64("CACHE_MAX_ENTRIES", 1024) as usize,
+            cache_persist_path: parse_cache_persist_path(),
             loop_guard: LoopGuardConfig {
                 enabled: env_bool("LOOP_GUARD_ENABLED", true),
                 window: env_usize("LOOP_GUARD_WINDOW", 384),
@@ -141,6 +151,23 @@ fn env_bool(key: &str, default: bool) -> bool {
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => true,
         Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => false,
         _ => default,
+    }
+}
+
+/// 解析 `CACHE_PERSIST` 环境变量为落盘路径.
+///
+/// - `1`/`true`/`yes` → 默认 `data/response_cache.json`;
+/// - 其他非空字符串 → 当作具体路径;
+/// - 缺失/空/`0`/`false`/`no` → `None` (不落盘).
+fn parse_cache_persist_path() -> Option<PathBuf> {
+    let raw = env::var("CACHE_PERSIST").ok()?.trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    match raw.to_ascii_lowercase().as_str() {
+        "0" | "false" | "no" | "none" => None,
+        "1" | "true" | "yes" => Some(PathBuf::from("data/response_cache.json")),
+        _ => Some(PathBuf::from(raw)),
     }
 }
 

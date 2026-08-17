@@ -13,13 +13,38 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 /// 单条缓存项.
 struct Entry {
     body: String,
+    /// 录制时回填的精确 token 用量 (prompt_tokens, completion_tokens); 命中回放优先用此值
+    /// 而非从缓存体重新解析 (SSE 流常缺 usage 或仅末帧发, extract_usage 准确率远低于录制时).
+    /// (0, 0) 表示无精确值, 回放时退回 extract_usage 兜底.
+    usage: (u32, u32),
     expires_at: Instant,
+}
+
+/// 持久化结构: 落盘为 `{ "entries": [ {key, body, ttl_left, usage} ] }`.
+/// `ttl_left` = 剩余有效期秒数 (重启后据此恢复 expires_at); 不含 `Instant` (不可序列化).
+#[derive(Serialize, Deserialize)]
+struct PersistEntry {
+    key: String,
+    body: String,
+    ttl_left: u64,
+    /// 录制时回填的精确 token 用量 (prompt, completion); 落盘以便重启后命中回放仍用精确值.
+    #[serde(default)]
+    usage: (u32, u32),
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersistPayload {
+    entries: Vec<PersistEntry>,
+    /// 开关状态一并落盘: 用户开启缓存后即使重启进程也不丢失 (旧格式文件缺此字段 → 默认 false, 由 serde default 兼容).
+    #[serde(default)]
+    enabled: bool,
 }
 
 /// 并发去重 (in-flight coalescing) 运行态.
@@ -113,8 +138,15 @@ pub struct CacheStats {
 /// 响应缓存: 受条目上限 + TTL 约束的内存缓存.
 pub struct ResponseCache {
     enabled: AtomicBool,
-    ttl: Duration,
-    max_entries: usize,
+    /// TTL 受 Mutex 保护: 支持面板运行时调整 (set_ttl), 仅影响后续写入条目.
+    ttl: Mutex<Duration>,
+    /// 条目上限受 Mutex 保护: 支持面板运行时调整 (set_max_entries).
+    max_entries: Mutex<usize>,
+    /// 持久化落盘路径 (None = 不落盘). 配置后启动加载历史缓存, 正常退出时 flush_blocking.
+    persist_path: Option<PathBuf>,
+    /// 开关状态 flag 文件路径 (始终持久化, 与 persist_path 解耦):
+    /// 用户面板开启缓存后即使进程重启也不应复位为关闭. 默认落在 data/cache_enabled.flag.
+    enabled_flag: PathBuf,
     map: Mutex<std::collections::HashMap<String, Entry>>,
     /// 本轮 (进程启动以来) 命中计数, 重启清零.
     hits: AtomicU64,
@@ -131,11 +163,35 @@ pub struct ResponseCache {
 }
 
 impl ResponseCache {
-    pub fn new(enabled: bool, ttl: Duration, max_entries: usize) -> Self {
-        Self {
+    pub fn new(
+        enabled: bool,
+        ttl: Duration,
+        max_entries: usize,
+        persist_path: Option<PathBuf>,
+    ) -> Self {
+        // 开关状态 flag 文件路径: 优先复用 persist_path 的父目录, 否则落在 data/ 下.
+        // 该 flag 始终持久化 (与 persist_path 解耦), 确保用户开启后重启不复位.
+        let enabled_flag = match &persist_path {
+            Some(p) => p
+                .parent()
+                .map(|d| d.join("cache_enabled.flag"))
+                .unwrap_or_else(|| PathBuf::from("data/cache_enabled.flag")),
+            None => PathBuf::from("data/cache_enabled.flag"),
+        };
+        // flag 文件若存在, 以其为准覆盖环境变量/默认值 (用户上次面板设置优先).
+        let enabled = if enabled_flag.exists() {
+            std::fs::read_to_string(&enabled_flag)
+                .map(|s| s.trim() == "1")
+                .unwrap_or(enabled)
+        } else {
+            enabled
+        };
+        let c = Self {
             enabled: AtomicBool::new(enabled),
-            ttl,
-            max_entries: max_entries.max(1),
+            ttl: Mutex::new(ttl),
+            max_entries: Mutex::new(max_entries.max(1)),
+            persist_path: persist_path.clone(),
+            enabled_flag,
             map: Mutex::new(std::collections::HashMap::new()),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
@@ -143,7 +199,12 @@ impl ResponseCache {
             enabled_misses: AtomicU64::new(0),
             saved_tokens: AtomicU64::new(0),
             enabled_saved_tokens: AtomicU64::new(0),
+        };
+        // 持久化: 配置了落盘路径则启动加载历史缓存 (过滤 TTL 过期) → 冷启动预热.
+        if let Some(p) = persist_path {
+            c.load_from(&p);
         }
+        c
     }
 
     /// 运行时开关 (面板"实验功能"切换).
@@ -155,10 +216,29 @@ impl ResponseCache {
             self.enabled_saved_tokens.store(0, Ordering::SeqCst);
         }
         self.enabled.store(on, Ordering::SeqCst);
+        // 开关状态持久化: 用户面板开启后即使进程重启也不复位.
+        // 写失败静默忽略 (flag 非关键路径, 仅影响重启后是否自动恢复开启).
+        let content = if on { "1" } else { "0" };
+        if let Some(parent) = self.enabled_flag.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&self.enabled_flag, content);
     }
 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
+    }
+
+    /// 运行时调整 TTL (面板配置项). 仅影响后续写入条目的有效期, 已存在的条目不变.
+    pub fn set_ttl(&self, ttl_secs: u64) {
+        let mut g = self.ttl.lock().expect("ttl lock poisoned");
+        *g = Duration::from_secs(ttl_secs.max(1));
+    }
+
+    /// 运行时调整条目上限 (面板配置项). 若新上限小于当前条目数, 下次写入/查询时自然淘汰.
+    pub fn set_max_entries(&self, max_entries: usize) {
+        let mut g = self.max_entries.lock().expect("max_entries lock poisoned");
+        *g = max_entries.max(1);
     }
 
     /// 记录一次命中省下的 token 量 (调用方由命中响应体 usage 的 prompt+completion 算出,
@@ -180,12 +260,13 @@ impl ResponseCache {
         self.enabled_saved_tokens.store(0, Ordering::SeqCst);
     }
 
-    /// 由已注入参数的请求体计算缓存键; 流式请求返回 None (不缓存).
+    /// 由已注入参数的请求体计算缓存键.
+    ///
+    /// 非流式与流式请求都参与缓存, 但用 `s:` 前缀做命名空间隔离:
+    /// 流式命中回放的是完整 SSE 文本 (`text/event-stream`), 与非流式 (回放 JSON) 语义不同,
+    /// 绝不能交叉命中 (否则把裸 SSE 当 JSON 解析 → 客户端报错).
     pub fn make_key(body: &Value) -> Option<String> {
-        // 仅缓存非流式请求.
-        if body.get("stream").and_then(|v| v.as_bool()) == Some(true) {
-            return None;
-        }
+        let is_stream = body.get("stream").and_then(|v| v.as_bool()) == Some(true);
         // 规范化: 去掉不影响上游输出的字段, 让"实质相同请求"跨细微元数据差异也能命中缓存.
         // IDE/中间件常透传随机 user/id/metadata/stream_options, 若不剔除会导致缓存 miss.
         // 采用黑名单保留式: 仅移除已知无关字段, 新增的合理字段默认参与哈希, 避免误伤.
@@ -210,12 +291,16 @@ impl ResponseCache {
         let text = serde_json::to_string(&canonical).ok()?;
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
-        Some(format!("{:x}", hasher.finish()))
+        let mut key = format!("{:x}", hasher.finish());
+        if is_stream {
+            key.insert_str(0, "s:");
+        }
+        Some(key)
     }
 
-    /// 查询缓存; 命中返回响应体字符串 (并计数 hits), 未命中/过期返回 None (计数 misses).
-    /// 本轮与"本次开启以来"两组计数同步累加 (后者供面板展示开启后的实际命中率).
-    pub fn get(&self, key: &str) -> Option<String> {
+    /// 查询缓存; 命中返回 `(响应体字符串, 录制时精确 token 用量)` (并计数 hits),
+    /// 未命中/过期返回 None (计数 misses). 本轮与"本次开启以来"两组计数同步累加.
+    pub fn get(&self, key: &str) -> Option<(String, (u32, u32))> {
         if !self.is_enabled() {
             return None;
         }
@@ -224,7 +309,7 @@ impl ResponseCache {
             Some(e) if e.expires_at > Instant::now() => {
                 self.hits.fetch_add(1, Ordering::SeqCst);
                 self.enabled_hits.fetch_add(1, Ordering::SeqCst);
-                Some(e.body.clone())
+                Some((e.body.clone(), e.usage))
             }
             Some(_) => {
                 map.remove(key); // 过期项顺手清理
@@ -240,16 +325,34 @@ impl ResponseCache {
         }
     }
 
-    /// 写入缓存; 超上限时先清过期项, 仍满则淘汰最早的一半.
-    pub fn put(&self, key: &str, body: &str) {
+    /// 写入缓存 (JSON 字符串, 非流式命中用); 超上限时先清过期项, 仍满则淘汰最早的一半.
+    /// `usage` = 响应体 usage 解析出的 (prompt, completion); 命中回放优先用此精确值.
+    pub fn put(&self, key: &str, body: &str, usage: (u32, u32)) {
         if !self.is_enabled() {
             return;
         }
+        self.insert(key.to_string(), body.to_string(), usage);
+    }
+
+    /// 写入缓存 (原始字节, 流式 SSE 命中用). 非 UTF-8 的响应不缓存
+    /// (流式 SSE 恒为 UTF-8, 此分支实际不会触发). `usage` = 录制时精确 token.
+    pub fn put_bytes(&self, key: &str, body: &[u8], usage: (u32, u32)) {
+        if !self.is_enabled() {
+            return;
+        }
+        if let Ok(s) = String::from_utf8(body.to_vec()) {
+            self.insert(key.to_string(), s, usage);
+        }
+    }
+
+    /// 内部写入: 执行上限/TTL 淘汰后插入条目. `put` / `put_bytes` 共用.
+    fn insert(&self, key: String, body: String, usage: (u32, u32)) {
         let mut map = self.map.lock().expect("cache lock poisoned");
-        if map.len() >= self.max_entries {
+        let max_entries = *self.max_entries.lock().expect("max_entries lock poisoned");
+        if map.len() >= max_entries {
             let now = Instant::now();
             map.retain(|_, e| e.expires_at > now);
-            if map.len() >= self.max_entries {
+            if map.len() >= max_entries {
                 let drop = map.len() / 2;
                 let keys: Vec<String> = map.keys().take(drop).cloned().collect();
                 for k in keys {
@@ -258,10 +361,11 @@ impl ResponseCache {
             }
         }
         map.insert(
-            key.to_string(),
+            key,
             Entry {
-                body: body.to_string(),
-                expires_at: Instant::now() + self.ttl,
+                body,
+                usage,
+                expires_at: Instant::now() + *self.ttl.lock().expect("ttl lock poisoned"),
             },
         );
     }
@@ -273,8 +377,8 @@ impl ResponseCache {
         let live = map.iter().filter(|(_, e)| e.expires_at > now).count();
         CacheStats {
             enabled: self.is_enabled(),
-            ttl_secs: self.ttl.as_secs(),
-            max_entries: self.max_entries,
+            ttl_secs: self.ttl.lock().expect("ttl lock poisoned").as_secs(),
+            max_entries: *self.max_entries.lock().expect("max_entries lock poisoned"),
             entries: live,
             hits: self.hits.load(Ordering::SeqCst),
             misses: self.misses.load(Ordering::SeqCst),
@@ -282,6 +386,69 @@ impl ResponseCache {
             enabled_misses: self.enabled_misses.load(Ordering::SeqCst),
             saved_tokens: self.saved_tokens.load(Ordering::SeqCst),
             enabled_saved_tokens: self.enabled_saved_tokens.load(Ordering::SeqCst),
+        }
+    }
+
+    /// 同步落盘当前缓存 (仅未过期条目) — 原子写: 先写 .tmp 再 rename, 避免半写文件.
+    /// 正常退出时调用; 异常 kill 不落盘 (缓存非权威数据, 可接受). 未配置 persist_path 则空操作.
+    pub fn flush_blocking(&self) {
+        let Some(path) = &self.persist_path else {
+            return;
+        };
+        let entries: Vec<PersistEntry> = {
+            let map = self.map.lock().expect("cache lock poisoned");
+            let now = Instant::now();
+            map.iter()
+                .filter(|(_, e)| e.expires_at > now)
+                .map(|(k, e)| PersistEntry {
+                    key: k.clone(),
+                    body: e.body.clone(),
+                    ttl_left: (e.expires_at - now).as_secs(),
+                    usage: e.usage,
+                })
+                .collect()
+        };
+        if let Ok(s) = serde_json::to_string(&PersistPayload {
+            entries,
+            enabled: self.is_enabled(),
+        }) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let tmp = path.with_extension("tmp");
+            if std::fs::write(&tmp, &s).is_ok() {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        }
+    }
+
+    /// 启动加载历史缓存: 读盘并过滤 TTL 过期项, 未过期者插入内存 → 冷启动预热.
+    /// 读取/解析失败静默忽略 (缺失或旧格式文件不影响启动).
+    fn load_from(&self, path: &Path) {
+        let Ok(s) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(payload) = serde_json::from_str::<PersistPayload>(&s) else {
+            return;
+        };
+        // 开关状态随缓存文件恢复: 用户开启缓存后即使进程重启也不应复位为关闭.
+        // (仅当文件确实携带 enabled=true 时覆盖; 旧格式无此字段 → default=false 不强行开启.)
+        if payload.enabled {
+            self.set_enabled(true);
+        }
+        let now = Instant::now();
+        let mut map = self.map.lock().expect("cache lock poisoned");
+        for e in payload.entries {
+            if e.ttl_left > 0 {
+                map.insert(
+                    e.key,
+                    Entry {
+                        body: e.body,
+                        usage: e.usage,
+                        expires_at: now + Duration::from_secs(e.ttl_left),
+                    },
+                );
+            }
         }
     }
 }
@@ -292,14 +459,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn make_key_ignores_stream() {
+    fn make_key_stream_prefix_isolation() {
         let a = json!({"model":"x","messages":[{"role":"user","content":"hi"}],"stream":true});
         let b = json!({"model":"x","messages":[{"role":"user","content":"hi"}],"stream":false});
-        // stream=true 一律不缓存
-        assert!(ResponseCache::make_key(&a).is_none());
-        // 去掉 stream 后两者同键
-        let c = json!({"model":"x","messages":[{"role":"user","content":"hi"}]});
-        assert_eq!(ResponseCache::make_key(&b), ResponseCache::make_key(&c));
+        let ka = ResponseCache::make_key(&a).expect("流式请求也应参与缓存");
+        let kb = ResponseCache::make_key(&b).expect("非流式请求参与缓存");
+        // 流式与非流式用 s: 前缀隔离命名空间, 避免交叉命中 (SSE 当 JSON 解析)
+        assert!(ka.starts_with("s:"), "流式 key 应加 s: 前缀");
+        assert!(!kb.starts_with("s:"), "非流式 key 不应加前缀");
+        // 去掉前缀后, 相同内容的流式/非流式其规范化体一致 → 同键
+        assert_eq!(&ka[2..], &kb[..]);
     }
 
     #[test]
@@ -327,13 +496,13 @@ mod tests {
     /// 双口径命中率: 本轮累计 vs 本次开启以来 (重新开启清零 enabled 口径).
     #[test]
     fn session_vs_enabled_hit_rates() {
-        let c = ResponseCache::new(true, Duration::from_secs(60), 100);
+        let c = ResponseCache::new(true, Duration::from_secs(60), 100, None);
         // 命中 2 次, 未命中 1 次 → 本轮 66.7%, 开启后 66.7%
         let key = "k";
-        c.put(key, "b1");
-        assert_eq!(c.get(key), Some("b1".to_string()));
-        c.put(key, "b2");
-        assert_eq!(c.get(key), Some("b2".to_string()));
+        c.put(key, "b1", (10, 20));
+        assert_eq!(c.get(key), Some(("b1".to_string(), (10, 20))));
+        c.put(key, "b2", (30, 40));
+        assert_eq!(c.get(key), Some(("b2".to_string(), (30, 40))));
         assert!(c.get("missing").is_none());
         let s = c.stats();
         assert_eq!(s.hits, 2);
@@ -356,7 +525,7 @@ mod tests {
     /// 省量统计: record_hit_saved 双口径累计, 重新开启清零 enabled 口径.
     #[test]
     fn saved_tokens_dual_tracking() {
-        let c = ResponseCache::new(true, Duration::from_secs(60), 100);
+        let c = ResponseCache::new(true, Duration::from_secs(60), 100, None);
         c.record_hit_saved(500);
         c.record_hit_saved(1500);
         let s = c.stats();
