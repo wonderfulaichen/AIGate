@@ -984,6 +984,11 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                           <input type="text" x-model="prov.balance_endpoint" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         </div>
                       </div>
+                      <div class="mb-3">
+                        <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('anthropic_endpoint_label')"></label>
+                        <input type="text" x-model="prov.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                        <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('anthropic_endpoint_hint')"></p>
+                      </div>
                       <!-- 密钥 (包含关系: 密钥是该供应商的子资源) -->
                       <div class="mb-3 p-2 rounded" style="background:rgba(255,255,255,.02);border:1px solid #2a2d37">
                         <div class="flex items-center justify-between mb-1">
@@ -1003,14 +1008,14 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                       </div>
                       <div class="text-xs font-bold mb-2" style="color:var(--c-muted)" x-text="t('unit_models')"></div>
                       <table class="mb-2">
-                        <thead><tr><th style="width:12%" x-text="t('tbl.vendor')"></th><th style="width:19%" x-text="t('tbl.model_id')"></th><th style="width:19%" x-text="t('tbl.upstream_model')"></th><th style="width:13%" x-text="t('tbl.reasoning')"></th><th style="width:12%" x-text="t('tbl.protocol')"></th><th style="width:11%" x-text="t('badge.free')"></th><th style="width:14%"></th></tr></thead>
+                        <thead><tr><th style="width:11%" x-text="t('tbl.vendor')"></th><th style="width:16%" x-text="t('tbl.model_id')"></th><th style="width:16%" x-text="t('tbl.upstream_model')"></th><th style="width:12%" x-text="t('tbl.reasoning')"></th><th style="width:11%" x-text="t('tbl.protocol')"></th><th style="width:10%" x-text="t('badge.free')"></th><th style="width:12%"></th></tr></thead>
                         <tbody>
                           <template x-for="(m, mi) in prov.models" :key="mi">
                             <tr>
                               <td>
                                 <span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold" :style="{background:brandFor(m.upstream_model,prov.name).color+'22',color:brandFor(m.upstream_model,prov.name).color,border:'1px solid '+brandFor(m.upstream_model,prov.name).color+'55'}" x-text="brandFor(m.upstream_model,prov.name).label"></span>
                               </td>
-                              <td><input type="text" x-model="m.model_id" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
+                              <td><input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id)" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
                               <td><input type="text" x-model="m.upstream_model" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" :placeholder="t('upstream_placeholder')" /></td>
                               <td>
                                 <select x-model="m.reasoning_effort" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
@@ -1028,7 +1033,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                                 </label>
                               </td>
                               <td>
-                                <select x-model="m.api_format" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
+                                <select x-model="m.api_format" @change="m._fmtTouched = true" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('fmt.openai')"></option>
                                   <option value="anthropic" x-text="t('fmt.anthropic')"></option>
                                 </select>
@@ -1168,7 +1173,7 @@ const I18N = {
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
-    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A',
+    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。',
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
     'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同请求体命中缓存时直接返回，省 token（仅非流式请求）',
     'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL',
@@ -1266,7 +1271,7 @@ const I18N = {
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
     'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
-    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A',
+    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.',
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
     'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical request bodies are served from cache to save tokens (non-streaming only)',
     'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL',
@@ -1626,6 +1631,13 @@ function dashboard() {
     autoFree(modelId, upstream) {
       const s = (upstream || modelId || '').toLowerCase();
       return s.includes('free') || s.includes('免费');
+    },
+    // 与后端 default_api_format 规则保持一致: 模型名含 claude 自动走 Anthropic 协议,
+    // 其余回落 OpenAI (返回 '' 表示不显式标注, 由后端按默认 openai 处理).
+    defaultApiFormat(modelId) {
+      const s = (modelId || '').toLowerCase();
+      if (s.includes('claude')) return 'anthropic';
+      return '';
     },
     circuitClass(c) {
       if (c === 'open') return 'text-[#ef4444] bg-[rgba(239,68,68,.15)]';
@@ -1994,6 +2006,7 @@ function dashboard() {
                  api_format: cfg.api_format||'',
                  free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
                  _freeTouched: false,
+                 _fmtTouched: false,
                  }))
              }));
            }
@@ -2001,8 +2014,8 @@ function dashboard() {
        } catch(e){}
      },
      addModel(pi) {
-      this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,_freeTouched:false});
-    },
+      this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,_freeTouched:false,_fmtTouched:false});
+     },
     deleteModel(pi, mi) {
        this.providersFormData[pi].models.splice(mi,1);
      },
@@ -2030,7 +2043,7 @@ function dashboard() {
           const existingUpstream = new Set(prov.models.map(m=>m.upstream_model||m.model_id));
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
-              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:'', free:this.autoFree(id,id), _freeTouched:false });
+              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
             }
           }

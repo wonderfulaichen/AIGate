@@ -107,6 +107,14 @@ pub struct ProviderConfig {
     /// (OpenCode Go 网关的 MiniMax/Qwen 系列走 /messages, 见官方 go.mdx.)
     #[serde(default)]
     pub api_format: Option<String>,
+    /// Anthropic /messages 协议的独立端点 URL (可选).
+    ///
+    /// 当模型走 Anthropic 协议 (`api_format: "anthropic"` 或自动推断为 anthropic) 时,
+    /// 若本字段有值则使用此端点, 否则回落把供应商 `endpoint` 中的 `/chat/completions`
+    /// 改写为 `/messages` (OpenCode 同域名不同路径场景, 如 DeepSeek / api.deepseek.com).
+    /// 这样同一供应商可同时暴露 OpenAI 与 Anthropic 两种协议端点 (参考 DeepSeek 官方设计).
+    #[serde(default)]
+    pub endpoint_anthropic: Option<String>,
     /// 供应商级 prompt caching 开关 (仅 Anthropic /messages 协议生效).
     /// 默认 true: 在 system 末块 + 最后一条 user 消息注入 cache_control, 使上游第二轮起
     /// 命中 prompt cache (input 按 0.1x 计 + 一次性写入费). 个别网关不支持/会改写 client
@@ -304,6 +312,13 @@ impl ProviderRegistry {
 pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'static str> {
     let id = model_id.to_lowercase();
     let provider = provider_name.to_lowercase();
+
+    // 通用规则: 任意供应商下, 模型名含 "claude" 一律走 Anthropic /messages.
+    // (用户诉求: claude 模型自动切到适配它的协议, 不依赖供应商手动标注.)
+    if id.contains("claude") {
+        return Some("anthropic");
+    }
+
     match provider.as_str() {
         "go" => {
             // minimax-* 与 qwen3.*-plus/max 走 /messages
@@ -317,7 +332,7 @@ pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'stati
         }
         "zen" => {
             // claude-* 与 qwen3*-plus/max 走 /messages; minimax-m2.x / deepseek / glm / kimi 回落 openai
-            if id.starts_with("claude")
+            if id.starts_with("minimax")
                 || (id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")))
             {
                 Some("anthropic")

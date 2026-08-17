@@ -529,8 +529,14 @@ pub async fn api_routes(
             // 且供应商端点仍是 /chat/completions 时, 改写为 /messages.
             let mut endpoint = entry.provider.endpoint.clone();
             let anthropic_mode = entry.model.is_anthropic(&entry.provider);
-            if anthropic_mode && endpoint.ends_with("/chat/completions") {
-                endpoint = endpoint.replace("/chat/completions", "/messages");
+            if anthropic_mode {
+                if let Some(ep) = &entry.provider.endpoint_anthropic {
+                    if !ep.trim().is_empty() {
+                        endpoint = ep.clone();
+                    }
+                } else if endpoint.ends_with("/chat/completions") {
+                    endpoint = endpoint.replace("/chat/completions", "/messages");
+                }
             }
             let api_format = if anthropic_mode { "anthropic" } else { "openai" }.to_string();
             Some(RouteInfo {

@@ -171,18 +171,27 @@ pub async fn chat_completions(
         }
     };
     let provider_name = route.provider.name.clone();
-    let mut endpoint = route.provider.endpoint.clone();
     let model_cfg = route.model.clone();
     let provider = route.provider.clone(); // 保存 provider 用于后续 headers 和 api_key
     drop(route); // 释放读锁
 
+    // 端点取值 (供应商级): 缺省用供应商 endpoint.
+    let mut endpoint = provider.endpoint.clone();
+
     // 模型级 Anthropic 判定: 优先模型 api_format, 回落供应商级 api_format.
     let anthropic_mode = model_cfg.is_anthropic(&provider);
-    // 该模型走 Anthropic /messages, 但供应商端点仍是 OpenAI chat/completions 时,
-    // 自动改写端点路径 (如 opencode go 网关 /zen/go/v1/chat/completions → /messages).
-    // 若供应商端点本身已是 /messages (如原 go-anthropic), 则不改动.
-    if anthropic_mode && endpoint.ends_with("/chat/completions") {
-        endpoint = endpoint.replace("/chat/completions", "/messages");
+    if anthropic_mode {
+        // 走 Anthropic /messages 协议时, 端点优先级:
+        //   1) 供应商独立 endpoint_anthropic (不同协议用完全不同的上游地址, 参考 DeepSeek 设计)
+        //   2) 回落把供应商 endpoint 的 /chat/completions 改写为 /messages
+        //      (同域名不同路径场景, 如 api.deepseek.com/v1/chat/completions → /v1/messages)
+        if let Some(ep) = &provider.endpoint_anthropic {
+            if !ep.trim().is_empty() {
+                endpoint = ep.clone();
+            }
+        } else if endpoint.ends_with("/chat/completions") {
+            endpoint = endpoint.replace("/chat/completions", "/messages");
+        }
     }
 
     // 2.5 熔断检查: 供应商处于 Open / 探测名额占用时快速失败 (503),
