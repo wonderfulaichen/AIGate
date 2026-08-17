@@ -10,7 +10,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -20,6 +20,73 @@ use serde_json::Value;
 struct Entry {
     body: String,
     expires_at: Instant,
+}
+
+/// 并发去重 (in-flight coalescing) 运行态.
+///
+/// 同一时刻字节级相同的非流式请求, 只打一次上游, 其余请求等待领导者完成后
+/// 直接读响应缓存返回. 完全无损 —— 与响应缓存共用同一缓存键.
+///
+/// 实现: 以缓存键为索引, 记录正在进行的请求对应的 [`tokio::sync::Notify`]. 领导者注册,
+/// 等待者克隆该 Notify 并 await; 领导者完成 (成功/失败/提前返回) 时由 [`InflightGuard`]
+/// 的 Drop 移除条目并 `notify_waiters`, 唤醒所有等待者. 等待者被唤醒后重新查缓存,
+/// 命中即得响应, 未命中 (领导者异常) 则降级为本请求独立上游调用.
+pub struct InflightCache {
+    map: Mutex<std::collections::HashMap<String, Arc<tokio::sync::Notify>>>,
+}
+
+impl InflightCache {
+    pub fn new() -> Self {
+        Self {
+            map: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// 尝试加入相同键的"正在进行"请求.
+    /// - 返回 `Some(notify)`: 本请求是等待者, 应 `notify.notified().await` 后查缓存.
+    /// - 返回 `None`: 本请求是领导者, 需在完成后由 [`InflightGuard`] 释放.
+    pub fn join_or_claim(&self, key: &str) -> Option<Arc<tokio::sync::Notify>> {
+        let mut g = self.map.lock().expect("inflight lock poisoned");
+        if let Some(n) = g.get(key) {
+            return Some(n.clone());
+        }
+        g.insert(key.to_string(), Arc::new(tokio::sync::Notify::new()));
+        None
+    }
+
+    /// 领导者完成: 移除条目并唤醒所有等待者. 幂等, 重复调用安全.
+    pub fn release(&self, key: &str) {
+        if let Ok(mut g) = self.map.lock() {
+            if let Some(n) = g.remove(key) {
+                n.notify_waiters();
+            }
+        }
+    }
+}
+
+impl Default for InflightCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 领导者析构守卫: 函数正常返回或任何提前返回/panic 时, 析构都会释放 in-flight 条目,
+/// 确保等待者不会因领导者异常而永久挂起 (避免请求堆积/连接耗尽).
+pub struct InflightGuard<'a> {
+    cache: &'a InflightCache,
+    key: String,
+}
+
+impl<'a> InflightGuard<'a> {
+    pub fn new(cache: &'a InflightCache, key: String) -> Self {
+        Self { cache, key }
+    }
+}
+
+impl<'a> Drop for InflightGuard<'a> {
+    fn drop(&mut self) {
+        self.cache.release(&self.key);
+    }
 }
 
 /// 响应缓存运行时统计 (供面板展示).

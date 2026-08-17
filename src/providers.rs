@@ -121,6 +121,15 @@ pub struct ProviderConfig {
     /// cache_control 时报错, 可设 false 关闭. 仅对走 /messages 的模型生效.
     #[serde(default)]
     pub prompt_cache: Option<bool>,
+    /// OpenAI 兼容协议 (含 DeepSeek) 的显式前缀缓存打标开关.
+    ///
+    /// 开启后, 非流式请求的 messages 会在 system 与最后一条 user 消息上注入
+    /// `cache_control: {type: ephemeral}`, 显式标记前缀缓存断点, 让 OpenAI/DeepSeek 等
+    /// 支持该字段的上游按此前缀缓存 KV (命中后 input 大幅降费). 与 Anthropic 路径的
+    /// cache_control 注入对称. 默认关闭 (依赖各上游自动前缀缓存, 不主动注入,
+    /// 避免不被支持的网关因未知字段报错); 显式开启即表示上游支持该字段. 仅对走 OpenAI 协议的模型生效.
+    #[serde(default)]
+    pub openai_cache_control: Option<bool>,
     /// 该供应商支持的模型, key 是 model id.
     pub models: HashMap<String, ModelConfig>,
 }

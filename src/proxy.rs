@@ -24,7 +24,7 @@ use crate::balance::BalanceManager;
 use crate::keys::KeyStore;
 use crate::providers::ProviderRegistry;
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use crate::cache::ResponseCache;
+use crate::cache::{InflightGuard, ResponseCache};
 use crate::loop_guard::LoopDetector;
 use crate::config::LoopGuardConfig;
 
@@ -50,6 +50,8 @@ pub struct AppState {
     pub breaker: CircuitBreakerConfig,
     /// 响应缓存 (实验功能, 默认关闭, 面板可开启).
     pub cache: std::sync::Arc<ResponseCache>,
+    /// 并发去重运行态: 同一时刻字节级相同的非流式请求只打一次上游 (无损).
+    pub inflight: Arc<crate::cache::InflightCache>,
     /// 流式响应空闲超时.
     pub stream_idle_timeout: Duration,
     /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式前 5xx 重试).
@@ -264,7 +266,14 @@ pub async fn chat_completions(
             }
         }
     } else {
-        bytes
+        // OpenAI 兼容: 透传 inject_model_params 已填好的 model/messages.
+        // 显式前缀缓存打标: openai_cache_control=true 时在 system + 最后一条 user 消息注入
+        // cache_control 断点, 让 OpenAI/DeepSeek 等上游按此前缀缓存 KV (无损).
+        let mut bval = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
+        if provider.openai_cache_control == Some(true) {
+            inject_openai_cache_control(&mut bval);
+        }
+        serde_json::to_vec(&bval).unwrap_or_else(|_| bytes.to_vec()).into()
     };
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
@@ -276,6 +285,37 @@ pub async fn chat_completions(
     } else {
         None
     };
+
+    // 5.5.1 并发去重 (in-flight coalescing): 同一时刻字节级相同的非流式请求,
+    //       只打一次上游, 其余请求等待领导者写完缓存后直接命中返回. 完全无损.
+    //       仅在缓存开启 (cache_key 为 Some) 时生效; 领导者持 InflightGuard,
+    //       无论成功/失败/提前返回都会由 Drop 释放并唤醒等待者.
+    let inflight_guard: Option<InflightGuard> = if let Some(key) = &cache_key {
+        match state.inflight.join_or_claim(key) {
+            // 等待者: 等领导者完成, 再查缓存 (领导者已写入).
+            Some(notify) => {
+                notify.notified().await;
+                if let Some(cached) = state.cache.get(key) {
+                    let (pt, ct, hit, miss, creation) = extract_usage(&cached);
+                    state.cache.record_hit_saved((pt + ct) as u64);
+                    crate::admin::record_request_with_tokens(
+                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, cached.len(),
+                        true, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, (pt + ct) as u32, None, None,
+                    ).await;
+                    return Ok(axum::Json(
+                        serde_json::from_str::<serde_json::Value>(&cached).unwrap_or(serde_json::Value::Null),
+                    ).into_response());
+                }
+                // 领导者未写入缓存 (上游失败/异常): 本请求降级为独立上游调用, 不持 guard.
+                None
+            }
+            // 领导者: 持 guard, 函数返回/提前退出时 Drop 自动释放.
+            None => Some(InflightGuard::new(&state.inflight, key.clone())),
+        }
+    } else {
+        None
+    };
+
     if let Some(key) = &cache_key {
         if let Some(cached) = state.cache.get(key) {
             let (pt, ct, hit, miss, creation) = extract_usage(&cached);
@@ -1317,6 +1357,43 @@ fn trim_history_turns(body: &mut serde_json::Value, n: usize) -> usize {
 /// - extra_body: 逐字段注入, 不覆盖已有字段.
 /// 返回 (序列化后的 bytes, 是否有注入, 剥离推理链省量字符数, 历史裁剪省量字符数).
 /// 后两者供面板"转发优化省量"统计展示.
+
+/// 为 OpenAI 兼容请求体注入显式前缀缓存断点 (`cache_control: {type: ephemeral}`).
+///
+/// 在 system 消息与最后一条 user 消息上打标, 让支持该字段的上游 (OpenAI/DeepSeek 等)
+/// 按此前缀缓存 KV, 命中后 input token 大幅降费. 与 Anthropic 路径的 cache_control 注入对称,
+/// 但仅当供应商 `openai_cache_control=true` 时启用 (避免不被支持的网关因未知字段报错).
+fn inject_openai_cache_control(body: &mut serde_json::Value) {
+    let Some(msgs) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    // system 消息打标: 前缀起点.
+    if let Some(sys) = msgs
+        .iter_mut()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+    {
+        if let Some(o) = sys.as_object_mut() {
+            o.insert(
+                "cache_control".to_string(),
+                serde_json::json!({"type": "ephemeral"}),
+            );
+        }
+    }
+    // 最后一条 user 消息打标: 前缀终点. 下一轮在末尾追加新消息时此前缀不变 → 缓存命中.
+    if let Some(last_user) = msgs
+        .iter_mut()
+        .rev()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+    {
+        if let Some(o) = last_user.as_object_mut() {
+            o.insert(
+                "cache_control".to_string(),
+                serde_json::json!({"type": "ephemeral"}),
+            );
+        }
+    }
+}
+
 fn inject_model_params(
     bytes: bytes::Bytes,
     model_cfg: &crate::providers::ModelConfig,

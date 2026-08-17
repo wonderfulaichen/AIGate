@@ -1,6 +1,7 @@
 {
   "_说明": "model 键是客户端使用的【模型中转ID】, 可任取符合用途的名称; upstream_model 才是上游真实模型 ID。endpoint 请替换为你的实际上游 API 地址, 以下仅为示例配置。注意：OpenCode 等网关同一供应商下不同模型可能走不同端点（如 go 网关的 glm/kimi 走 /chat/completions，minimax / qwen3-*-plus·max 走 /messages）。AIGate 支持【模型级 api_format 覆盖】：在模型条目加 \"api_format\": \"anthropic\" 即可让该模型走 /messages，无需为同一供应商拆分多个配置块；未设置则回落供应商级 api_format（缺省 openai）。点「获取模型」拉取上游时会按官方清单自动标注 api_format。",
   "_多协议端点": "同一供应商可同时暴露 OpenAI 与 Anthropic 两种协议端点（参考 DeepSeek 官方设计：api.deepseek.com 与 api.deepseek.com/anthropic 同域名不同路径）。新增供应商级可选字段 \"endpoint_anthropic\"：当某模型走 Anthropic 协议时（模型 api_format=anthropic 或自动推断为 anthropic，如模型名含 claude），优先使用 endpoint_anthropic 作为上游地址；若留空则自动把 endpoint 的 /chat/completions 改写为 /messages。这样在模型下拉切到对应协议即自动对接对应端点链接，无需逐模型填 URL。",
+  "_前缀缓存": "无损省 token 的两道开关（均供应商级可选，缺省不注入，避免不被支持的网关报错）：① \"prompt_cache\"（默认 true）仅对走 Anthropic /messages 的模型生效，在 system 末块 + 最后一条 user 消息注入 cache_control，使上游按前缀缓存 KV（input 按 ~0.1x 计）。② \"openai_cache_control\"（默认 false）仅对走 OpenAI 兼容协议的模型生效，开启后在 system + 最后一条 user 消息注入 cache_control 断点，让 OpenAI/DeepSeek 等支持该字段的上游按前缀缓存 KV；显式开启即表示上游支持该字段。两者均无损：命中后输出完全一致，仅 input 成本下降。另有「并发去重」：同一瞬间字节级相同的非流式请求只打一次上游，其余等待者直接命中响应缓存返回（自动生效，无需配置）。",
   "providers": [
     {
       "name": "zen",

@@ -566,6 +566,7 @@ fn main() {
             Duration::from_secs(config.cache_ttl_secs),
             config.cache_max_entries,
         )),
+        inflight: Arc::new(crate::cache::InflightCache::new()),
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
         retry_max: config.retry_max,
         retry_backoff: Duration::from_millis(config.retry_backoff_ms),
