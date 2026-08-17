@@ -283,11 +283,7 @@ pub async fn chat_completions(
         .ok()
         .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
         == Some(true);
-    // 响应缓存仅参与非流式请求: 流式编程流量 (滚动上下文) 每次 messages 都不同,
-    // 按完整请求体哈希永远 miss, 入库既占内存又让面板"待命中"误导用户 (本质不适用).
-    // 回归原始设计语义 (cache.rs 模块文档: 仅缓存 stream:false). 流式请求 cache_key=None
-    // → 不查/不写/不参与去重, 命中计数只统计真正能命中的非流式重复请求.
-    let cache_key: Option<String> = if state.cache.is_enabled() && !is_stream {
+    let cache_key: Option<String> = if state.cache.is_enabled() {
         serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|v| ResponseCache::make_key(&v))
@@ -671,7 +667,6 @@ fn stream_response_with_tokens(
         pending_error_sse: None,
         finish_reason: None,
         clean_finish: false,
-        saw_usage: false,
         cache_eligible: true,
         errored_msg: None,
             out_buf: Vec::new(),
@@ -925,10 +920,6 @@ struct TokenStream<S> {
     /// finish_reason/[DONE], 说明响应被截断 (典型如 10014 的 mid-object split 丢尾帧),
     /// 此前会被记成 200 成功 → 记录页不显示报错. 见 poll_next None 分支.
     clean_finish: bool,
-    /// 流内是否出现过 usage 事件 (顶层 usage 或 choices[].usage). 用于精准补发:
-    /// 仅当上游全程未发 usage (如 mimo 等模型流式不返回 usage) 时, 才在 [DONE] 前
-    /// 用 AIGate 计算的精确 token 补发一帧, 让编程客户端 (Cursor/Claude Code 等) 也能显示 token.
-    saw_usage: bool,
     /// 本次流是否可用于缓存回放: 仅当流干净结束且未携带错误/异常时为 true.
     /// 上游 SSE error 事件 / 上游断连兜底 / finish_reason=="error" 时置 false,
     /// 防止错误/空响应被 RecordingStream 录进缓存污染后续命中 (无损 token 优化引入的坑).
@@ -1025,25 +1016,6 @@ impl<S> TokenStream<S> {
         if json_str == "[DONE]" {
             // 上游显式发送终止帧: 标记流为干净结束 (否则 None 分支会误判为截断).
             self.clean_finish = true;
-            // 补发带 usage 的 finish_reason: "stop" 帧: 让编程客户端 (Cursor/Claude Code 等)
-            // 在收到 finish_reason: "stop" 时就能读到 usage (标准客户端在此帧读 usage,
-            // 忽略后续独立 usage 帧). 无论上游是否已发独立 usage 帧, 均补发一次,
-            // 确保客户端一定能读到 token 消耗 (mimo 等模型的独立 usage 帧常被客户端忽略).
-            let req_body_len = self.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
-            let (pt, ct, _hit, _miss, _creation) = self.final_tokens(req_body_len);
-            if pt > 0 || ct > 0 {
-                let frame = serde_json::json!({
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    "usage": {
-                        "prompt_tokens": pt,
-                        "completion_tokens": ct,
-                        "total_tokens": pt + ct,
-                    }
-                });
-                self.out_buf.extend_from_slice(b"data: ");
-                self.out_buf.extend_from_slice(frame.to_string().as_bytes());
-                self.out_buf.extend_from_slice(b"\n\n");
-            }
             // 归一化发射结束帧 (兼容裸 [DONE] 与 data: [DONE] 两种形式).
             self.out_buf.extend_from_slice(b"data: [DONE]\n\n");
             return;
@@ -1077,8 +1049,6 @@ impl<S> TokenStream<S> {
         }
         // 从 usage 事件提取精确 token 数
         if let Some(usage) = val.get("usage") {
-            // 上游在流内发过 usage, 标记以免结束前重复补发.
-            self.saw_usage = true;
             if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
                 self.tokens_pt = pt as u32;
             }
@@ -1098,11 +1068,9 @@ impl<S> TokenStream<S> {
         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
                 if let Some(inner_usage) = choice.get("usage") {
-                    // 上游在流内发过 choices[].usage, 标记以免结束前重复补发.
-                    self.saw_usage = true;
-                if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                    self.tokens_pt = pt as u32;
-                }
+                    if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+                        self.tokens_pt = pt as u32;
+                    }
                     if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                         self.tokens_ct = ct as u32;
                     }
