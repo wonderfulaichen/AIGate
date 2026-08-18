@@ -260,6 +260,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                   <div class="flex gap-3 mt-1 text-[10px]" style="color:var(--c-muted)">
                     <span><span x-text="t('forward_saved_strip')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_strip_saved_tokens>0) ? '≈ '+fmtT(stats.today_strip_saved_tokens) : t('session_opt_off')"></span></span>
                     <span><span x-text="t('forward_saved_trim')"></span>: <span style="color:var(--c-indigo)" x-text="(stats&&stats.today_trim_saved_tokens>0) ? '≈ '+fmtT(stats.today_trim_saved_tokens) : t('session_opt_off')"></span></span>
+                    <template x-if="stats&&stats.today_resp_cache_saved_tokens>0"><span><span x-text="t('forward_saved_resp_cache')"></span>: <span style="color:var(--c-indigo)" x-text="'≈ '+fmtT(stats.today_resp_cache_saved_tokens)"></span></span></template>
                   </div>
                 </div>
                 <div>
@@ -807,6 +808,35 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                 </div>
               </div>
               <p class="text-[10px]" style="color:var(--text-muted)" x-text="t('cache_config_hint')"></p>
+              <!-- 运行统计: 命中率 / 已省 tokens / 流式命中 (验证流式缓存是否生效) -->
+              <div class="pt-4 mt-4 border-t" style="border-color:var(--border)">
+                <div class="grid grid-cols-2 gap-x-6 gap-y-3">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.entries')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-ink)" x-text="cache.entries"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hits')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-ink)" x-text="cache.hits + ' / ' + cache.misses"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hit_rate_session')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-indigo)" x-text="(cache.hits+cache.misses>0 ? (cache.hits/(cache.hits+cache.misses)*100).toFixed(1) : '0.0') + '%'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.hit_rate_enabled')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-indigo)" x-text="(cache.enabled_hits+cache.enabled_misses>0 ? (cache.enabled_hits/(cache.enabled_hits+cache.enabled_misses)*100).toFixed(1) : '0.0') + '%'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.saved_label')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-ink)" x-text="'≈ ' + fmtT(cache.saved_tokens) + ' tok'"></span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs" style="color:var(--c-muted)" x-text="t('cache.saved_enabled_label')"></span>
+                    <span class="text-sm font-mono" style="color:var(--c-ink)" x-text="'≈ ' + fmtT(cache.enabled_saved_tokens) + ' tok'"></span>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
         </div></div>
@@ -1172,7 +1202,7 @@ const I18N = {
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'expand_all': '展开全部', 'collapse': '收起',
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
@@ -1199,7 +1229,7 @@ const I18N = {
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
     'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。',
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
-    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率极低，不参与缓存）',
+    'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率恒为 0，不参与缓存）',
     'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_desc': '条目写入后保留的秒数，过期自动失效；仅影响后续写入', 'cache_ttl_unit': '秒',
     'cache_max_entries_label': '缓存条目上限', 'cache_max_entries_desc': '内存最多保留的缓存条目数，超出后淘汰最早的一半', 'cache_max_entries_unit': '条',
     'cache_config_hint': '配置为运行时生效；开启状态与缓存条目均随进程落盘，重启后自动恢复。命中统计与省量见「概览」页。',
@@ -1226,7 +1256,7 @@ const I18N = {
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制',
     'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
-    'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'provider_opt_saved': '今日优化省量',
+    'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'forward_saved_resp_cache': '响应缓存命中', 'provider_opt_saved': '今日优化省量',
     'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
     'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
     'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
@@ -1273,7 +1303,7 @@ const I18N = {
     'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'expand_all': 'Expand all', 'collapse': 'Collapse',
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
@@ -1327,7 +1357,7 @@ const I18N = {
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied',
     'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
-    'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'provider_opt_saved': 'Today Optimization Savings',
+    'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'forward_saved_resp_cache': 'Response cache hit', 'provider_opt_saved': 'Today Optimization Savings',
     'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
     'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
     'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
@@ -1532,7 +1562,7 @@ function dashboard() {
       // 供应商总览: 以余额查询结果 (balanceData) 为主序, 费用/优化省量数据按供应商名 merge.
       const costMap = {};
       (this.stats && this.stats.per_provider || []).forEach(p => {
-        if (!p.provider || String(p.provider).trim().length === 0) return; // 跳过空名脏记录
+        if (!p.provider || String(p.provider).trim().length === 0 || p.provider === '-') return; // 跳过空名/"-" 占位符
         costMap[p.provider] = {
           today_cost: p.today_cost || 0,
           total_cost: p.total_cost || 0,
@@ -2297,12 +2327,18 @@ function dashboard() {
       return sym + this.convertCny(v).toFixed(2);
     },
     // 单价格式化: 输入/输出 (缓存价), 未配置显示「未配置」. p 来自 ModelStats.price (可能为 null).
+    // 若配置了空闲时段价, 一并展示「高峰/空闲」两档, 反映 DeepSeek 等分时段计费.
     fmtPrice(p) {
       if (!p) return t('price_not_set');
       const sym = this.moneySymbol(this.currencyConfig.currency);
       const c = x => this.convertCny(x);
       let s = sym + c(p.input_per_m) + '/' + sym + c(p.output_per_m);
       if (p.cache_read_per_m != null) s += ' · ' + t('cache_label') + sym + c(p.cache_read_per_m);
+      // 空闲价: 任一 offpeak 字段 > 0 即视为分时段计费, 追加「空闲」档.
+      if (p.input_per_m_offpeak > 0 || p.output_per_m_offpeak > 0 || p.cache_read_per_m_offpeak > 0) {
+        s += '  ' + t('offpeak_label') + ' ' + sym + c(p.input_per_m_offpeak) + '/' + sym + c(p.output_per_m_offpeak);
+        if (p.cache_read_per_m_offpeak > 0) s += ' · ' + t('cache_label') + sym + c(p.cache_read_per_m_offpeak);
+      }
       return s;
     },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).

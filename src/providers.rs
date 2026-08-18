@@ -132,6 +132,10 @@ pub struct ProviderConfig {
     pub openai_cache_control: Option<bool>,
     /// 该供应商支持的模型, key 是 model id.
     pub models: HashMap<String, ModelConfig>,
+    /// 上游请求体大小上限 (字节, 可选). 超过则网关在转发前直接返回 413 中文提示,
+    /// 避免盲目打到上游被裸拒 (如 opencode.ai/zen/go 限制约 1MB). 默认不限制.
+    #[serde(default)]
+    pub max_request_body_bytes: Option<usize>,
 }
 
 impl ProviderConfig {
@@ -640,6 +644,7 @@ mod tests {
             prompt_cache: None,
             endpoint_anthropic: None,
             openai_cache_control: None,
+            max_request_body_bytes: None,
             models: HashMap::new(),
         };
         // 供应商 openai + 模型未标注 → openai

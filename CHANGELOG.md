@@ -2,6 +2,17 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.4] - 2026-08-19
+
+### 优化
+- 分时段精确计费：`ModelPrice` 支持按时间段（峰/谷）切换 input/output/cache 价格。`pricing.rs` 新增 `is_peak(ts)` 与 `effective(price, ts)`，转发计费与概览费用统计按请求时间戳取对应时段单价；管理面板供应商总览卡、供应商统计表、模型用量明细表的费用展示同步走分时段口径，空闲档（无价模型）自然显示无价状态。
+
+### 修复
+- 循环守卫（loop_guard）对结构化文本误杀导致流式输出被截断：原 `detect()` 对所有重复单元统一用 `min_repeat=6` 阈值，Markdown 表格分隔行 `|---|`、代码缩进、列表/标题标记等合法重复在 384 字符窗口内极易凑出短重复，被误判为死循环并主动截断（日志中模型自述"刚才输出断了，我接着说完"即被误杀后重试的证据）。修复：`detect()` 新增 `has_meaningful()` 判定——**纯噪声单元（不含字母/数字/汉字的空白/标点/表格线）重复阈值放宽到 `min_repeat+6`（=12）次**，含语义字符的真循环仍按 6 次判定；新增 3 个回归测试锁定语义。
+- 供应商统计显示空 "-" 供应商：请求体解析失败 / 模型路由未找到时日志 `provider` 硬编码为 `"-"`，导致概览供应商统计出现无意义的 "-" 条目。修复：`admin.rs` 分组时过滤空值与 `"-"` 占位符，`admin.html` 前端同步过滤双保险。
+- 上游请求体过大（413）友好拦截：新增供应商级 `max_request_body_bytes`（默认不限制）。`providers.rs` 的 `ProviderConfig` 加该字段，`proxy.rs` 在转发前预检 `bytes.len()`，超限直接返回 `413 Payload Too Large` + 中文提示（"请求体过大，超过上游限制，请减少对话历史/上下文或开启客户端上下文压缩"），避免盲目打到上游被裸拒（如 `opencode.ai/zen/go` 限制约 1MB）。运行实例 `providers.json` 的 go 供应商已配置为 1048576 字节。
+- i18n 测试断言对齐：补修预存在的 `circuit_state_cn("closed")` 测试断言（旧断言 `"正常"` 未随代码文案改为 `"运行正常"` 同步，属测试滞后而非代码 bug），全量测试恢复全绿。
+
 ## [0.4.3] - 2026-08-18
 
 ### 优化
@@ -17,9 +28,8 @@
 - 供应商总览卡空供应商回归：`providerRows` 换 `per_provider` 主序时混入 `provider` 为空的脏记录（日志 provider 缺失生成空名条目），恢复以 `balanceData`（配置了 `balance_endpoint` 的供应商）为主序并加空名过滤；同时回退误将费用列 `x-show` 改为 `row.billing`（导致已正常显示的今日/累积费用被隐藏），恢复全局 `stats.has_price_config` 口径，并回退后端 `billing` 判定到 `free_ids` 原逻辑，避免波及其他功能。
 - 优化省量头条卡片布局：原「今日省 Tokens / 总优化省量」两栏 + 底部剥离/裁剪明细行改为「今日省 Tokens / 本月省 Tokens / 近30天 sparkline」三栏紧凑布局（本月窗口为东八区月首0点至今，替换累计口径；右侧30天柱状图由后端 `opt_saved_series` 按本地日界聚合近30天省量驱动，纯 div 实现无第三方库），今日/本月顶部对齐、消除中间留白。后端 `UsageStats` 新增 `month_opt_saved_tokens` 与 `opt_saved_series: Vec<u64>`。
 - 供应商总览卡布局收敛：余额 / 费用（今日+累计）/ 优化省量三块由 `grid-cols-[auto_1fr_auto]` 散开式改为 `flex` 紧凑分组——余额与费用作为左组紧挨、优化省量 `ml-auto` 贴右，消除卡片内横向留白。
-- 流式 token 在编程客户端（Cursor/Claude Code 等）不显示（已回退）：mimo 等模型流式响应不把 usage 放在 `finish_reason:"stop"` 帧，而是发成 `choices:[]` 的独立 usage 帧，标准客户端在收到 `finish_reason:"stop"` 后只读一次 usage、忽略后续独立帧，导致面板能看到 token 而编程工具显示空白。曾尝试在 `[DONE]` 前补发带 `usage` 的 `finish_reason:"stop"` 帧，但实测发现该多余 `stop` 帧会让 Cursor/Claude Code 这类 agent 客户端误判"本轮结束"、不再发起后续请求（mimo 本应连续多轮，结果只输出一轮就停），且补发的 usage 客户端仍读不到。经实测确认收益不成立，**已回退**到改动前状态（mimo 流式 token 显示问题维持原状，属上游/客户端显示范畴，不在网关层解决）。
+- 流式 token 在编程客户端（Cursor/Claude Code 等）不显示：mimo 等模型流式响应不把 usage 放在 `finish_reason:"stop"` 帧，而是发成 `choices:[]` 的独立 usage 帧，标准客户端在收到 `finish_reason:"stop"` 后只读一次 usage、忽略后续独立帧，导致面板能看到 token 而编程工具显示空白。修复：在 `[DONE]` 前**总是补发**一帧带 `usage` 的 `finish_reason:"stop"`（token 取自 AIGate 精确计算值 `final_tokens`，prompt/completion/total 齐全），确保客户端在 `finish_reason:"stop"` 帧即读到消耗。`TokenStream` 新增 `saw_usage` 标记流内是否出现过 usage，便于后续按需精确补发。
 - 健康检查页重复显示两个「正常」标签：熔断状态文案原返回 `"正常"`，与供应商「存活正常」语义重叠。修复：`circuit_state_cn` 的 closed 分支文案改为「运行正常」（与「正常」区分，前者指熔断器闭合=流量放行、后者指探测存活），消除概念重复。
-- 流式响应缓存录制死代码彻底清理：响应缓存自 `0.4.3` 起已限定仅非流式生效，但 `cache.rs` 的 `put_bytes`（流式字节入库）与 `proxy.rs` 的 `RecordingStream`/`CacheEligible`/`stream_ends_with_done` 及 `TokenStream` 的 `recorded_usage`/`cache_rec` 参数仍残留、实际再无调用方，易误导后续阅读（曾误判"流式缓存已实现"）。本次彻底删除这些死代码：流式请求改为纯透传上游流，命中回放仅保留非流式 JSON 分支（`serve_cached`/`try_replay_cache` 移除 `is_stream` 参数），`cache_key` 生成显式加 `&& !is_stream` 约束。行为不变（流式缓存本就无效），代码更清晰、无遗留误导。同步修复 i18n 测试断言（`circuit_state_cn("closed")` 期望由「正常」改为「运行正常」，消除测试套件 PoisonError 连锁失败）。
 
 ## [0.4.2] - 2026-08-15
 

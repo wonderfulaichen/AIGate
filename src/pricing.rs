@@ -5,21 +5,24 @@
 //! （促销 / 阶梯 / 高峰倍率 / 版本升级）. 因此无法程序化实时拉取.
 //!
 //! 做法: 本模块内置一份**官方公开价的默认值**（仅 DeepSeek, 抓取于 2026-08-13,
-//! 来源 <https://api-docs.deepseek.com/zh-cn/quick_start/pricing>）, 其余供应商
+//! 更新于 2026-08-18 以反映分时段定价, 来源
+//! <https://api-docs.deepseek.com/zh-cn/quick_start/pricing>）, 其余供应商
 //! 请在 `providers.json` 的 model 条目配置 `price` 覆盖（优先级最高）.
 //!
-//! 计价单位: 元 / 百万 tokens.
+//! 计价单位: 元 / 百万 tokens. 部分供应商（DeepSeek）按**时段**翻倍计费:
+//! 高峰（北京时间 09:00–12:00、14:00–18:00）价为 `*_per_m`, 其余时段为空闲价
+//! `*_per_m_offpeak`（缺失时回退到高峰价, 使无分时段概念的供应商不受影响）.
 
 use serde::{Deserialize, Serialize};
 
 /// 单个模型的价格（元 / 百万 tokens）.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct ModelPrice {
-    /// 输入 token 价格（元 / 百万 tokens）, 不含 KV Cache 命中部分.
+    /// 输入 token 价格（元 / 百万 tokens）, 不含 KV Cache 命中部分. 同时作为**高峰价**.
     pub input_per_m: f64,
-    /// 输出 token 价格（元 / 百万 tokens）.
+    /// 输出 token 价格（元 / 百万 tokens）. 同时作为**高峰价**.
     pub output_per_m: f64,
-    /// 上游 KV Cache 命中 token 价格（元 / 百万 tokens）.
+    /// 上游 KV Cache 命中 token 价格（元 / 百万 tokens）. 同时作为**高峰价**.
     /// 缺失时回退按 `input_per_m` 计（多数模型无独立 cache 价）.
     #[serde(default)]
     pub cache_read_per_m: Option<f64>,
@@ -28,32 +31,97 @@ pub struct ModelPrice {
     /// 多数供应商（DeepSeek 等）无独立 creation 价, 此项留空即等价旧行为.
     #[serde(default)]
     pub cache_creation_per_m: Option<f64>,
+    /// 空闲时段输入价（元 / 百万 tokens）. 缺省回退 `input_per_m`（高峰价）.
+    /// 仅 DeepSeek 等分时段计费供应商需配置.
+    #[serde(default)]
+    pub input_per_m_offpeak: f64,
+    /// 空闲时段输出价（元 / 百万 tokens）. 缺省回退 `output_per_m`（高峰价）.
+    #[serde(default)]
+    pub output_per_m_offpeak: f64,
+    /// 空闲时段 KV Cache 命中价（元 / 百万 tokens）. 缺省回退 `cache_read_per_m`（高峰价）.
+    #[serde(default)]
+    pub cache_read_per_m_offpeak: f64,
 }
 
 /// 内置默认价格表（按 `upstream_model` 匹配）.
 ///
 /// ⚠️ 价格会变动! 以官方文档为准; 若与实际不符, 在 `providers.json` 覆盖.
+/// 表格中 `*_per_m` 为**高峰价**, `*_per_m_offpeak` 为**空闲价**（DeepSeek 分时段,
+/// 高峰 09:00–12:00 / 14:00–18:00 北京时间为高峰价的 2 倍）.
 fn builtin_table() -> &'static [(&'static str, ModelPrice)] {
     &[
         (
             "deepseek-v4-flash",
             ModelPrice {
-                input_per_m: 1.0,
-                output_per_m: 2.0,
-                cache_read_per_m: Some(0.02),
+                // 高峰价（元/百万 token）: 输入 3.0 / 输出 9.0 / 缓存命中 0.10.
+                input_per_m: 3.0,
+                output_per_m: 9.0,
+                cache_read_per_m: Some(0.10),
                 cache_creation_per_m: None,
+                // 空闲价（高峰 1/2）: 输入 1.5 / 输出 4.5 / 缓存命中 0.05.
+                input_per_m_offpeak: 1.5,
+                output_per_m_offpeak: 4.5,
+                cache_read_per_m_offpeak: 0.05,
             },
         ),
         (
             "deepseek-v4-pro",
             ModelPrice {
-                input_per_m: 3.0,
-                output_per_m: 6.0,
-                cache_read_per_m: Some(0.025),
+                // 高峰价（元/百万 token）: 输入 9.0 / 输出 27.0 / 缓存命中 0.30.
+                input_per_m: 9.0,
+                output_per_m: 27.0,
+                cache_read_per_m: Some(0.30),
                 cache_creation_per_m: None,
+                // 空闲价（高峰 1/2）: 输入 4.5 / 输出 13.5 / 缓存命中 0.15.
+                input_per_m_offpeak: 4.5,
+                output_per_m_offpeak: 13.5,
+                cache_read_per_m_offpeak: 0.15,
             },
         ),
     ]
+}
+
+/// DeepSeek 高峰时段（北京时间）: 09:00–12:00 与 14:00–18:00.
+/// 返回 `true` 表示给定时间戳（秒, Unix）落在高峰窗口内.
+///
+/// 仅依赖东八区偏移, 不引入 chrono 依赖; 周末/节假日不分时段, 一律按空闲计.
+pub fn is_peak(ts: u64) -> bool {
+    const TZ_OFFSET_SECS: i64 = 8 * 3600;
+    let local = (ts as i64) + TZ_OFFSET_SECS;
+    let secs_of_day = (local % 86400) as i64;
+    // 09:00:00 (32400) ≤ t < 12:00:00 (43200) 或 14:00:00 (50400) ≤ t < 18:00:00 (64800).
+    (secs_of_day >= 32400 && secs_of_day < 43200) || (secs_of_day >= 50400 && secs_of_day < 64800)
+}
+
+/// 按时间戳选择生效的价格（高峰用 `*_per_m`, 空闲用 `*_per_m_offpeak`, 缺失回退高峰）.
+///
+/// 返回三元组 `(input, output, cache_read)`, cache_read 已展开 `Option`（缺失回退 input）.
+pub fn effective(p: ModelPrice, ts: u64) -> (f64, f64, f64) {
+    if is_peak(ts) {
+        (
+            p.input_per_m,
+            p.output_per_m,
+            p.cache_read_per_m.unwrap_or(p.input_per_m),
+        )
+    } else {
+        (
+            if p.input_per_m_offpeak > 0.0 {
+                p.input_per_m_offpeak
+            } else {
+                p.input_per_m
+            },
+            if p.output_per_m_offpeak > 0.0 {
+                p.output_per_m_offpeak
+            } else {
+                p.output_per_m
+            },
+            if p.cache_read_per_m_offpeak > 0.0 {
+                p.cache_read_per_m_offpeak
+            } else {
+                p.cache_read_per_m.unwrap_or(p.input_per_m)
+            },
+        )
+    }
 }
 
 /// 去除常见免费 / 试用后缀（如 `-free`）, 用于更宽松地匹配内置表.
@@ -92,25 +160,27 @@ pub fn resolve_price(
 ///
 /// 计费拆分:
 /// - `prompt_tokens` 为输入总量（含 KV Cache 命中）;
-/// - 命中部分 = `prompt_cache_hit_tokens`, 按 `cache_read_per_m`（缺失则 `input_per_m`）计;
-/// - 未命中部分 = `prompt_tokens - 命中`, 按 `input_per_m` 计;
-/// - `completion_tokens` 按 `output_per_m` 计.
+/// - 命中部分 = `prompt_cache_hit_tokens`, 按空闲/高峰生效的 cache 读价计;
+/// - 未命中部分 = `prompt_tokens - 命中`, 按生效的 input 价计;
+/// - `completion_tokens` 按生效的 output 价计.
+///
+/// `ts` 为请求时间戳（秒, Unix）, 用于按供应商分时段规则选择高峰/空闲价
+/// （DeepSeek 高峰价为空闲 2 倍）; 无分时段概念的供应商 offpeak 字段缺失, 自动回退高峰价.
 ///
 /// 价格缺失（未配置）时返回 `None`, 调用方按 0 处理（不计入费用）.
 pub fn compute_cost(
     price: Option<ModelPrice>,
+    ts: u64,
     prompt_tokens: u32,
     completion_tokens: u32,
     prompt_cache_hit_tokens: u32,
 ) -> Option<f64> {
     let p = price?;
+    let (input_price, output_price, cache_price) = effective(p, ts);
     let prompt = prompt_tokens as f64;
     let completion = completion_tokens as f64;
     let hit = (prompt_cache_hit_tokens as f64).min(prompt);
     let miss = (prompt - hit).max(0.0);
-    let cache_price = p.cache_read_per_m.unwrap_or(p.input_per_m);
-    let cost = hit / 1e6 * cache_price
-        + miss / 1e6 * p.input_per_m
-        + completion / 1e6 * p.output_per_m;
+    let cost = hit / 1e6 * cache_price + miss / 1e6 * input_price + completion / 1e6 * output_price;
     Some(cost)
 }

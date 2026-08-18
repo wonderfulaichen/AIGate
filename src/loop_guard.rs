@@ -79,6 +79,22 @@ impl LoopDetector {
         }
     }
 
+    /// 单元是否含"有意义字符"（字母/数字/汉字等），用于区分结构化噪声与真循环。
+    ///
+    /// 纯空白/标点/表格线（空格、换行、`|`、`-`、`#`、`。，；：` 等）在代码块、Markdown
+    /// 表格、列表里天然高重复，若与正文用同一阈值会被误杀（实机 go 端点反复截断长技术文档）。
+    /// 仅当重复单元含至少一个有意义字符时，才用 [`LoopGuardConfig::min_repeat`] 原阈值；
+    /// 纯噪声单元需更高阈值（见 [`Self::noise_repeat`]）。
+    fn has_meaningful(c: char) -> bool {
+        c.is_alphanumeric() || c.is_alphabetic() // ASCII/Unicode 字母与数字 (含汉字)
+    }
+
+    /// 噪声单元（纯空白/标点/表格线）需要达到的重复次数：比 `min_repeat` 更宽松，
+    /// 避免结构化输出被误杀。取 `min_repeat + 6` 与 12 的较大者。
+    fn noise_repeat(&self) -> usize {
+        (self.min_repeat + 6).max(12)
+    }
+
     /// 在窗口尾部检测子串连续重复。
     fn detect(&self) -> bool {
         let chars: Vec<char> = self.buf.chars().collect();
@@ -96,16 +112,31 @@ impl LoopDetector {
             }
         }
         // 多字符片段连续重复：枚举重复单元长度 L（2..=max_l）。
+        // 判据：仅当重复单元「含语义字符」(字母/数字/汉字) 时用 `min_repeat` 原阈值；
+        // 纯噪声单元（短单元 l<=4 且全为空白/标点/表格线，如缩进空格、`|---|`、列表标记）
+        // 用更宽松的 `noise_repeat()`，避免代码块/Markdown 表格的合法重复被误杀。
         let max_l = (win / self.min_repeat).max(1);
         for l in 2..=max_l {
-            let need = l * self.min_repeat;
+            // 取尾部 l 字符作为候选重复单元（退化循环必在输出末尾）。
+            if l > n {
+                continue;
+            }
+            let unit = &chars[n - l..];
+            // 纯噪声单元（全为空白/标点/表格线，不含字母/数字/汉字）用更宽松阈值，
+            // 避免代码块/Markdown 表格的合法重复被误杀；含语义字符按原阈值判真循环。
+            let is_noise = !unit.iter().any(|&c| Self::has_meaningful(c));
+            let required = if is_noise {
+                self.noise_repeat()
+            } else {
+                self.min_repeat
+            };
+            let need = l * required;
             if need > win {
                 continue;
             }
             let tail_start = n - need;
-            let unit = &chars[tail_start..tail_start + l];
             let mut ok = true;
-            for k in 1..self.min_repeat {
+            for k in 1..required {
                 let seg = &chars[tail_start + k * l..tail_start + k * l + l];
                 if seg != unit {
                     ok = false;
@@ -209,5 +240,43 @@ mod tests {
         // 新实现: 取最后 1 个字符, 即末尾的 '中'.
         let sample = d.recent_text();
         assert_eq!(sample, "中", "应返回最后 1 个字符 (UTF-8 字符边界)");
+    }
+
+    /// 回归: 结构化文本里的合法重复不应被误杀 (实机 go 端点反复截断长技术文档的根因)。
+    /// Markdown 表格分隔行 `|---|---|`、代码缩进、列表/标题标记在 384 字符窗口内
+    /// 极易凑出短单元 (l<=4) 的 6 次重复, 旧实现会误判为死循环并截断。
+    /// 修复后: 纯噪声短单元需达到 `noise_repeat()`(=min_repeat+6=12) 次才判。
+    #[test]
+    fn noise_unit_not_false_positive_at_six() {
+        let mut d = LoopDetector::new(384, 6, 4096);
+        // 模拟表格分隔行重复 6 次 (纯 `|`/`-` 噪声, 无语义字符)。
+        let mut hit = false;
+        for _ in 0..6 {
+            hit = d.feed("|---|---|");
+        }
+        assert!(!hit, "纯噪声短单元重复 6 次不应误判 (需达 12 次)");
+    }
+
+    /// 回归: 纯噪声短单元重复达到 `noise_repeat()`(12) 次仍应判为循环
+    /// (既放宽误杀, 又不丢失对极端噪声的保护)。
+    #[test]
+    fn noise_unit_triggers_at_twelve() {
+        let mut d = LoopDetector::new(384, 6, 4096);
+        let mut hit = false;
+        for _ in 0..12 {
+            hit = d.feed("| ");
+        }
+        assert!(hit, "纯噪声短单元重复 12 次应判为循环");
+    }
+
+    /// 回归: 含语义字符的真循环 (代码标识符/中文片段) 仍按 `min_repeat`(6) 判定, 不受放宽影响。
+    #[test]
+    fn semantic_loop_still_detected() {
+        let mut d = LoopDetector::new(384, 6, 4096);
+        let mut hit = false;
+        for _ in 0..6 {
+            hit = d.feed("fn main() ");
+        }
+        assert!(hit, "含语义字符的重复片段应仍按原阈值判为循环");
     }
 }

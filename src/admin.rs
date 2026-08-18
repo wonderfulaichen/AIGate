@@ -1827,6 +1827,7 @@ fn log_cost(memo: &PriceMemo, log: &RequestLog) -> f64 {
     let p = memo.resolve(log);
     pricing::compute_cost(
         p,
+        log.timestamp,
         log.prompt_tokens,
         log.completion_tokens,
         log.prompt_cache_hit_tokens,
@@ -1849,8 +1850,10 @@ fn log_cache_saved(memo: &PriceMemo, log: &RequestLog) -> f64 {
     }
     let p = memo.resolve(log);
     let Some(p) = p else { return 0.0; };
+    // 按请求时段选择生效价（高峰/空闲）; 与 compute_cost 同口径.
+    let (input_price, _, cache_read) = pricing::effective(p, log.timestamp);
     // 输入价为 0 (价格未配置/不按量计费, 如月套餐) → 无计费基数, 净省记 0 (兜底防误计).
-    if p.input_per_m == 0.0 {
+    if input_price == 0.0 {
         return 0.0;
     }
     let prompt = log.prompt_tokens as f64;
@@ -1859,11 +1862,10 @@ fn log_cache_saved(memo: &PriceMemo, log: &RequestLog) -> f64 {
     let creation = (log.prompt_cache_creation_tokens as f64).min((prompt - hit).max(0.0));
 
     // 命中折扣: 命中 token 按 (input − 读价) 省; 读价缺失回退 input → 让差为 0.
-    let read = p.cache_read_per_m.unwrap_or(p.input_per_m);
-    let read_saved = (p.input_per_m - read).max(0.0);
+    let read_saved = (input_price - cache_read).max(0.0);
     // 写入溢价: 首次写入按 cache_creation 价计 (通常高于 input); 缺失回退 input → 让差为 0.
-    let creation_price = p.cache_creation_per_m.unwrap_or(p.input_per_m);
-    let creation_penalty = (creation_price - p.input_per_m).max(0.0);
+    let creation_price = p.cache_creation_per_m.unwrap_or(input_price);
+    let creation_penalty = (creation_price - input_price).max(0.0);
 
     // 净省不钳制到 0: 单条纯写入请求可能为负贡献, 聚合后自然抵消, 方能反映真实成本.
     hit / 1e6 * read_saved - creation / 1e6 * creation_penalty
@@ -1910,8 +1912,10 @@ fn compute_stats(
                 return 0.0;
             }
             if let Some(p) = memo.resolve(l) {
-                if p.input_per_m > 0.0 {
-                    return opt / 1e6 * p.input_per_m;
+                // 按请求时段选择生效 input 价（高峰/空闲）, 与 log_cost 同口径.
+                let (input_price, _, _) = pricing::effective(p, l.timestamp);
+                if input_price > 0.0 {
+                    return opt / 1e6 * input_price;
                 }
             }
             0.0
@@ -1959,8 +1963,10 @@ fn compute_stats(
                 return 0.0;
             }
             if let Some(p) = memo.resolve(l) {
-                if p.input_per_m > 0.0 {
-                    return opt / 1e6 * p.input_per_m;
+                // 按请求时段选择生效 input 价（高峰/空闲）, 与 log_cost 同口径.
+                let (input_price, _, _) = pricing::effective(p, l.timestamp);
+                if input_price > 0.0 {
+                    return opt / 1e6 * input_price;
                 }
             }
             0.0
@@ -2074,10 +2080,15 @@ fn compute_stats(
         .collect();
     per_model.sort_by(|a, b| b.requests.cmp(&a.requests));
 
-    // 按供应商分组
+    // 按供应商分组 (过滤空值和 "-" 占位符: 请求体解析失败/模型路由未找到时 provider 硬编码为 "-").
     let mut prov_map: HashMap<&str, Vec<&RequestLog>> = HashMap::new();
     for log in logs {
-        prov_map.entry(&log.provider).or_default().push(log);
+        let provider = if log.provider.is_empty() || log.provider == "-" {
+            continue;
+        } else {
+            &log.provider
+        };
+        prov_map.entry(provider).or_default().push(log);
     }
     let mut per_provider: Vec<ProviderStats> = prov_map
         .into_iter()
@@ -2520,6 +2531,9 @@ mod tests {
             output_per_m: 8.0,
             cache_read_per_m: Some(0.2),
             cache_creation_per_m: Some(2.5),
+            input_per_m_offpeak: 0.0,
+            output_per_m_offpeak: 0.0,
+            cache_read_per_m_offpeak: 0.0,
         };
         let mut ov = HashMap::new();
         ov.insert("ds".to_string(), price);
@@ -2548,7 +2562,7 @@ mod tests {
         assert_eq!(log_cache_saved(&memo, &log4), 0.0);
 
         // 5) 输入价为 0 (月套餐/未配置) → 无计费基数, 净省记 0.
-        let free = ModelPrice { input_per_m: 0.0, output_per_m: 0.0, cache_read_per_m: None, cache_creation_per_m: None };
+        let free = ModelPrice { input_per_m: 0.0, output_per_m: 0.0, cache_read_per_m: None, cache_creation_per_m: None, input_per_m_offpeak: 0.0, output_per_m_offpeak: 0.0, cache_read_per_m_offpeak: 0.0 };
         let mut ov2 = HashMap::new();
         ov2.insert("opencode".to_string(), free);
         let memo2 = PriceMemo::new(&ov2);

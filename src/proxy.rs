@@ -277,14 +277,29 @@ pub async fn chat_completions(
     };
     let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
 
-    // 5.5 响应缓存查询: is_stream 用于判断请求是否为流式 (决定 cache_key 是否生成 + 去重是否参与).
+    // 5.4 上游请求体大小预检: 供应商可配置 max_request_body_bytes,
+    //     超限直接返回 413 中文提示, 避免盲目打到上游被裸拒 (如 zen/go 限制约 1MB).
+    if let Some(limit) = provider.max_request_body_bytes {
+        if bytes.len() > limit {
+            let msg = format!(
+                "请求体过大 ({} 字节), 超过上游 '{}' 限制 ({} 字节). 请减少对话历史/上下文, 或开启客户端上下文压缩后重试.",
+                bytes.len(), provider.name, limit
+            );
+            warn!("proxy: request body {}B exceeds provider '{}' limit {}B, rejecting 413",
+                bytes.len(), provider.name, limit);
+            crate::admin::record_request(
+                &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
+                413, start, bytes.len(), Some(msg.clone()),
+            ).await;
+            return Err(error_response(StatusCode::PAYLOAD_TOO_LARGE, &msg));
+        }
+    }
+
+    // 5.5 响应缓存查询: 仅对非流式请求生成 key (流式编程流量滚动上下文命中率恒为 0, 不参与缓存).
     let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
         .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
         == Some(true);
-    // 流式请求不参与响应缓存: agent 类客户端 (Cursor/Claude Code 等) 每轮 messages 都不同,
-    // 按完整请求体哈希永远 miss, 入库既占内存又让面板"待命中"误导用户 (本质不适用).
-    // 故 cache_key 仅对非流式 (!is_stream) 生成; 流式请求恒为 None → 不查/不写/不参与去重.
     let cache_key: Option<String> = if state.cache.is_enabled() && !is_stream {
         serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
@@ -298,12 +313,12 @@ pub async fn chat_completions(
     //       仅在缓存开启 (cache_key 为 Some) 时生效; 领导者持 InflightGuard,
     //       无论成功/失败/提前返回都会由 Drop 释放并唤醒等待者.
     //       ⚠️ 流式请求不参与去重: 流式响应是惰性流, 领导者要等客户端消费完整流才 Drop,
-    //       等待者会在 notify.notified().await 干等整段流 → 高并发下请求堆积. 且流式合并
-    //       收益低 (命中回放另有路径), 故仅对非流式 (!is_stream) 启用去重.
+    //       等待者会在 notify.notified().await 干等整段流 → 高并发下请求堆积. 且流式缓存已去除
+    //       (命中率恒为 0), 故仅对非流式 (!is_stream) 启用去重.
     let _inflight_guard: Option<InflightGuard> = if let Some(key) = &cache_key {
         if !is_stream {
             match state.inflight.join_or_claim(key) {
-                // 等待者: 等领导者完成, 再查缓存 (领导者已写入); 命中则回放 (非流式 JSON).
+                // 等待者: 等领导者完成, 再查缓存 (领导者已写入); 命中则回放 (流式/非流式自动分流).
                 Some(notify) => {
                     notify.notified().await;
                     if let Some(resp) = try_replay_cache(
@@ -327,7 +342,7 @@ pub async fn chat_completions(
         None
     };
 
-    // 命中缓存 → 直接回放 (非流式 JSON), 不命中则继续上游.
+    // 命中缓存 → 直接回放 JSON 响应, 不命中则继续上游.
     if let Some(key) = &cache_key {
         if let Some(resp) = try_replay_cache(
             &state, key,
@@ -483,9 +498,8 @@ pub async fn chat_completions(
     report_breaker(&state.breakers, &provider_name, true);
     // 非流式且缓存开启 → 读全量响应体存入缓存后直接返回 (响应 JSON 自带 usage, 精确记 token).
     // 注意: text() 按值消费 upstream, 故此分支必须 return, 不可再进入下方流式透传.
-    // 关键约束 !is_stream: 流式请求 (cache_key 为 None) 走下方 stream_response_with_tokens 直接
-    // 透传, 绝不能用 text() 把 SSE 当 JSON 读, 否则客户端收到 application/json 而非
-    // text/event-stream → "未返回任何内容". 这正是"开启缓存即报错"的根因.
+    // 关键约束 !is_stream: 仅非流式请求在此用 text() 读取全量响应体缓存 (流式已不参与缓存,
+    // cache_key 为 None, 不会进入此分支). 下方 try_replay_cache 命中回放同样只服务非流式.
     if let Some(key) = &cache_key {
         if !is_stream {
             match upstream.text().await {
@@ -521,9 +535,6 @@ pub async fn chat_completions(
             }
         }
     }
-    // 流式缓存录制条件: 缓存已开启 且 本次为流式请求 (cache_key 带 s: 前缀).
-    // 命中缓存不走到这; 走到这说明确实要打上游. 流式请求不参与响应缓存
-    // (agent 每轮 messages 必变, 命中率恒为 0, 入库占内存且误导面板), 故直接透传上游流.
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
@@ -660,7 +671,6 @@ fn stream_response_with_tokens(
         pending_error_sse: None,
         finish_reason: None,
         clean_finish: false,
-        cache_eligible: true,
         errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
@@ -684,7 +694,6 @@ fn stream_response_with_tokens(
             }),
     };
 
-    // 流式请求直接透传上游流 (不参与响应缓存, 见 cache_rec 说明).
     let body = Body::from_stream(tracked);
     let mut resp = Response::builder().status(status).body(body).unwrap();
     for (name, value) in headers.iter() {
@@ -696,10 +705,9 @@ fn stream_response_with_tokens(
     resp
 }
 
-// ===== 缓存回放与流式录制 (无损) =====
+// ===== 缓存回放 (无损) =====
 
-/// 命中缓存回放: 响应缓存仅覆盖非流式请求, 故回放恒为 JSON.
-/// 命中统计由调用方 (try_replay_cache) 在调用前完成.
+/// 命中缓存回放: 返回缓存的 JSON 响应体. 命中统计由调用方 (try_replay_cache) 完成.
 fn serve_cached(body: &str) -> Response {
     match serde_json::from_str::<serde_json::Value>(body) {
         Ok(v) => axum::Json(v).into_response(),
@@ -710,7 +718,6 @@ fn serve_cached(body: &str) -> Response {
 /// 命中缓存回放 (统一入口): 查缓存 → 统计省量 + 写日志 → 构造回放 Response.
 /// 命中返回 Some(resp) (调用方直接 return); 未命中返回 None (继续走上游).
 /// 供「主命中分支」与「in-flight 等待者分支」共用, 消除重复逻辑.
-/// 响应缓存仅覆盖非流式请求, 故回放恒为 JSON (is_stream 分支已随流式缓存去除而移除).
 async fn try_replay_cache(
     state: &AppState,
     key: &str,
@@ -723,8 +730,7 @@ async fn try_replay_cache(
     trim_saved: u32,
 ) -> Option<Response> {
     let (cached, stored_usage) = state.cache.get(key)?;
-    // 命中回放的 token 统计优先用录制时回填的精确 usage (非流式 JSON 自带 usage, 精确);
-    // 无精确值时退回从缓存体解析.
+    // 命中回放的 token 统计优先用缓存时回填的精确 usage; 无精确值时退回从缓存体解析.
     let (pt, mut ct, hit, miss, creation) = if stored_usage != (0, 0) {
         let (p, c) = stored_usage;
         (p, c, 0u32, 0u32, 0u32)
@@ -732,7 +738,7 @@ async fn try_replay_cache(
         extract_usage(&cached)
     };
     // 命中缓存 = 完全没打上游, 本应消耗的 prompt+completion token 全部省下 (供面板"优化成果"展示).
-    // 当精确 usage 缺失时按缓存体字节数估算 (4 字节 ≈ 1 token), 避免省量恒为 0 导致面板误显"未开启".
+    // 当精确 usage 缺失时, 按缓存体字节数估算 (4 字节 ≈ 1 token), 避免省量恒为 0 导致面板误显"未开启".
     if pt == 0 && ct == 0 {
         let est = (cached.len() as u64 / 4) as u32;
         ct = est; // 估算值整体记到 completion 侧, 仅用于省量展示口径
@@ -813,10 +819,6 @@ struct TokenStream<S> {
     /// finish_reason/[DONE], 说明响应被截断 (典型如 10014 的 mid-object split 丢尾帧),
     /// 此前会被记成 200 成功 → 记录页不显示报错. 见 poll_next None 分支.
     clean_finish: bool,
-    /// 本次流是否"健康可记录": 上游 SSE error 事件 / 上游断连兜底 / finish_reason=="error"
-    /// 时置 false, 用于标记错误流 (供完成日志判定). 原为缓存录制拦截条件, 录制逻辑移除后
-    /// 保留作流健康标记.
-    cache_eligible: bool,
     /// 上游 SSE error 事件改写后的中文错误信息 (供完成时写错误日志).
     errored_msg: Option<String>,
     /// 归一化后的 SSE 输出缓冲: 把上游 payload (data: 前缀 / 裸 JSON / 裸 [DONE]) 统一封装为
@@ -931,7 +933,6 @@ impl<S> TokenStream<S> {
                 self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
             );
             self.stream_errored = true;
-            self.cache_eligible = false;
             self.errored_msg = Some(format!("{msg} [{etype}]"));
             let ev = serde_json::json!({ "error": { "message": msg, "type": etype } });
             self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
@@ -1008,8 +1009,6 @@ impl<S> TokenStream<S> {
                             self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
                         );
                         self.finish_reason = Some(fr.to_string());
-                        // finish_reason=="error": 上游明确以错误终止, 响应不可用, 禁止缓存.
-                        self.cache_eligible = false;
                     }
                 }
             }
@@ -1115,11 +1114,8 @@ where
                             // 置 clean_finish: 流由网关主动干净收尾 (发了合法终止帧+[DONE]),
                             // 不属于"上游连接意外结束"; 记录页报错由 loop_aborted 分支单独判定.
                             this.clean_finish = true;
-                            // 截断的残缺流禁止入库: 虽已发 [DONE] 收尾 (stream_ends_with_done 会判真),
+                            // 截断的残缺流禁止入库: 虽已发 [DONE] 收尾,
                             // 但正文被 loop_guard 砍断不完整, 命中回放会返回残缺答案 → 污染后续请求.
-                            // cache_eligible 置 false 与上游 error / 断连同口径 (历史录制逻辑已移除,
-                            // cache_eligible 现仅作流健康标记, 语义保留).
-                            this.cache_eligible = false;
                             let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                         data: [DONE]\n\n";
                             return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
@@ -1151,8 +1147,7 @@ where
                     warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
                     this.done = true;
                     this.error_closed = true;
-                    // 上游断连 / 空闲超时兜底: 响应多半不完整, 禁止缓存, 避免残缺流污染后续命中.
-                    this.cache_eligible = false;
+                    // 上游断连 / 空闲超时兜底: 响应多半不完整 (本就不参与缓存, 仅记录错误).
                     if let Some(mut ld) = this.log_buffer.take() {
                         ld.response_body_len = this.response_bytes;
                         // 先把错误信息格式化为 String (Send) 再进入 spawn, 否则 E 不 Send 会让 future 无法跨线程.
@@ -2037,7 +2032,6 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
-            cache_eligible: true,
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
@@ -2129,7 +2123,6 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
-            cache_eligible: true,
             errored_msg: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
@@ -2146,45 +2139,6 @@ mod tests {
         // 第二次 poll: 流已干净终止
         let second = futures::executor::block_on(ts.next());
         assert!(second.is_none());
-        // 错误流应标记 cache_eligible=false (流健康标记, 原用于缓存录制拦截).
-        assert!(!ts.cache_eligible, "SSE error 事件流必须 cache_eligible=false");
-    }
-
-    /// 正常流 (以 [DONE] 干净收尾) 应保持 cache_eligible=true (流健康标记).
-    #[test]
-    fn test_token_stream_cache_eligible_normal() {
-        use futures::stream;
-        use futures::StreamExt;
-        let mut ts = TokenStream {
-            inner: stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from(
-                "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n\
-                 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
-                 data: [DONE]\n\n",
-            ))]),
-            done: false,
-            tokens_pt: 0,
-            tokens_ct: 0,
-            tokens_cache_hit: 0,
-            tokens_cache_miss: 0,
-            tokens_cache_creation: 0,
-            response_bytes: 0,
-            loop_guard: None,
-            loop_aborted: false,
-            error_closed: false,
-            stream_errored: false,
-            pending_error_sse: None,
-            finish_reason: None,
-            clean_finish: false,
-            cache_eligible: true,
-            errored_msg: None,
-            out_buf: Vec::new(),
-            line_buf: Vec::new(),
-            first_token_at: None,
-            anthropic_conv: None,
-            log_buffer: None,
-        };
-        while futures::executor::block_on(ts.next()).is_some() {}
-        assert!(ts.cache_eligible, "正常流应 cache_eligible=true");
     }
 }
 

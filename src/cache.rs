@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 /// 单条缓存项.
 struct Entry {
     body: String,
-    /// 写入时回填的精确 token 用量 (prompt_tokens, completion_tokens); 命中回放优先用此值
-    /// 而非从缓存体重新解析 (非流式 JSON 自带 usage, 精确; 回放时若缺失则退回 extract_usage 兜底).
-    /// (0, 0) 表示无精确值.
+    /// 录制时回填的精确 token 用量 (prompt_tokens, completion_tokens); 命中回放优先用此值
+    /// 而非从缓存体重新解析 (SSE 流常缺 usage 或仅末帧发, extract_usage 准确率远低于录制时).
+    /// (0, 0) 表示无精确值, 回放时退回 extract_usage 兜底.
     usage: (u32, u32),
     expires_at: Instant,
 }
@@ -262,7 +262,7 @@ impl ResponseCache {
 
     /// 由已注入参数的请求体计算缓存键.
     ///
-    /// 仅对非流式请求调用 (proxy 层已限制: 流式编程流量滚动上下文命中率恒为 0, 不参与缓存).
+    /// 仅用于非流式请求 (proxy 层已限制: 流式请求 cache_key=None, 不参与缓存).
     /// 规范化: 去掉不影响上游输出的字段, 让"实质相同请求"跨细微元数据差异也能命中缓存.
     /// IDE/中间件常透传随机 user/id/metadata/stream_options, 若不剔除会导致缓存 miss.
     /// 采用黑名单保留式: 仅移除已知无关字段, 新增的合理字段默认参与哈希, 避免误伤.
