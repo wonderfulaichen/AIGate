@@ -317,6 +317,14 @@
         "muse-spark-1.2": {
           "upstream_model": "muse-spark-1.2",
           "api_format": "responses"
+        },
+        "go-muse": {
+          "upstream_model": "muse-spark-1.2-contributor",
+          "api_format": "responses"
+        },
+        "go-muse-spark-1.2-contributor": {
+          "upstream_model": "muse-spark-1.2-contributor",
+          "api_format": "responses"
         }
       }
     },

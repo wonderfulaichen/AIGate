@@ -2,6 +2,12 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.8] - 2026-08-20
+
+### 修复
+- **思考强度全模型可配置（`unknown parameter reasoning_effort`）**：`muse-spark-1.2-contributor/go/responses` 报 400，`thinking.rs` 支持 `reasoningEffort`/`reasoning.effort`/`budgetTokens` 归一与 `muse-spark max→high` 钳制，`responses.rs` 将顶层 `reasoning_effort` 映射为 `reasoning: {effort, summary:"auto"}` 并剔除原字段，`anthropic` 保持 `thinking.budgetTokens`，`chat/completions` 保持透传，`muse-spark` 三档 `low/medium/high` 与 `Go` 全模型可配验证通过。
+- **模型用量明细幽灵 `-/` 与历史丢失**：`admin.rs:2020` 同步过滤 `provider="-"`，`main.rs` 启动回落到 `AI中转/data` 恢复 5000 条历史，卡片自适应 `max-width 1200→1600/1800/92%` 修复宽屏留白。
+
 ## [0.4.7] - 2026-08-20
 
 ### 修复

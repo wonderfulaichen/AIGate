@@ -1148,8 +1148,8 @@ mod changelog_tests {
             assert!(v.get("date").is_some(), "缺少 date");
             assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
         }
-        // 首个版本应为最新版 0.4.7
-        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.7"));
+        // 首个版本应为最新版 0.4.8
+        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.8"));
     }
 }
 

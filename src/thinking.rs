@@ -26,6 +26,20 @@ fn normalize_effort(v: &str) -> String {
     }
 }
 
+/// 对 `muse-spark` 等仅支持 low/medium/high 的模型钳制档位 (max/xhigh→high).
+fn clamp_effort_for_model(effort: String, model: &crate::providers::ModelConfig) -> String {
+    let id = model
+        .upstream_model
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_muse = id.contains("muse-spark");
+    if is_muse && effort == "max" {
+        return "high".to_string();
+    }
+    effort
+}
+
 /// 规范化请求体中的思考参数. 原地修改 `body`, 返回客户端是否**显式关闭**了思考.
 ///
 /// 返回值语义 (供 `inject_model_params` 决定是否用配置档兜底):
@@ -67,6 +81,7 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
                     .reasoning_effort
                     .clone()
                     .unwrap_or_else(|| "high".to_string());
+                let effort = clamp_effort_for_model(normalize_effort(&effort), model);
                 obj.entry("reasoning_effort".to_string())
                     .or_insert_with(|| Value::String(effort));
             }
@@ -79,8 +94,24 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
                     .get("effort")
                     .and_then(|v| v.as_str())
                     .map(|s| normalize_effort(s))
-                    .or_else(|| model.reasoning_effort.clone())
+                    .or_else(|| {
+                        // Anthropic 风格 budgetTokens → 档位近似
+                        map.get("budgetTokens")
+                            .or_else(|| map.get("budget_tokens"))
+                            .and_then(|v| v.as_u64())
+                            .map(|n| {
+                                if n >= 12000 {
+                                    "high".to_string()
+                                } else if n >= 6000 {
+                                    "medium".to_string()
+                                } else {
+                                    "low".to_string()
+                                }
+                            })
+                    })
+                    .or_else(|| model.reasoning_effort.clone().map(|e| normalize_effort(&e)))
                     .unwrap_or_else(|| "high".to_string());
+                let effort = clamp_effort_for_model(effort, model);
                 obj.entry("reasoning_effort".to_string())
                     .or_insert_with(|| Value::String(effort));
             }
@@ -88,10 +119,28 @@ pub fn normalize_thinking(body: &mut Value, model: &crate::providers::ModelConfi
         }
     }
 
-    // 2. 归一化 reasoning_effort 别名 (避免借用冲突: 先算出结果再写回)
+    // 1b. 处理 reasoningEffort 驼峰与 reasoning 对象 (opencode/Responses 风格)
+    if let Some(v) = obj.remove("reasoningEffort") {
+        let s = match &v {
+            Value::String(s) => normalize_effort(s),
+            _ => v.as_str().map(|s| normalize_effort(s)).unwrap_or_else(|| "high".to_string()),
+        };
+        let s = clamp_effort_for_model(s, model);
+        obj.entry("reasoning_effort".to_string())
+            .or_insert_with(|| Value::String(s));
+    }
+    if let Some(Value::Object(r)) = obj.get("reasoning").cloned() {
+        if let Some(eff) = r.get("effort").and_then(|v| v.as_str()).map(|s| normalize_effort(s)) {
+            let eff = clamp_effort_for_model(eff, model);
+            obj.entry("reasoning_effort".to_string())
+                .or_insert_with(|| Value::String(eff));
+        }
+    }
+
+    // 2. 归一化 reasoning_effort 别名并按模型钳制 (避免借用冲突: 先算出结果再写回)
     let need_fix = match obj.get("reasoning_effort") {
         Some(Value::String(s)) => {
-            let n = normalize_effort(s);
+            let n = clamp_effort_for_model(normalize_effort(s), model);
             if n != *s {
                 Some(n)
             } else {

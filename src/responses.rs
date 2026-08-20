@@ -271,12 +271,45 @@ pub fn openai_to_responses(body: &Value) -> Value {
         out.insert("stop".to_string(), stop.clone());
     }
 
-    // reasoning_effort: 透传 (Responses API 同样支持)
-    if let Some(re) = body.get("reasoning") {
-        out.insert("reasoning".to_string(), re.clone());
+    // reasoning: Responses API 要求 reasoning: {effort, summary}, 顶层 reasoning_effort 会被 go 网关判 unknown parameter
+    // 统一将 reasoning_effort / reasoningEffort / reasoning.effort 映射为 reasoning 对象，保留可配置档位
+    let model_id = body.get("model").and_then(|m| m.as_str()).unwrap_or("").to_ascii_lowercase();
+    let is_muse = model_id.contains("muse-spark");
+    let mut mapped_reasoning: Option<Value> = None;
+    if let Some(r) = body.get("reasoning") {
+        if r.is_object() {
+            mapped_reasoning = Some(r.clone());
+        } else if let Some(s) = r.as_str() {
+            let lower = s.to_ascii_lowercase();
+            let eff = match lower.as_str() {
+                "minimal" | "low" => "low".to_string(),
+                "medium" => "medium".to_string(),
+                "high" | "xhigh" => "high".to_string(),
+                "max" | "maximum" => "max".to_string(),
+                other => other.to_string(),
+            };
+            let eff = if is_muse && eff == "max" { "high".to_string() } else { eff };
+            mapped_reasoning = Some(json!({"effort": eff, "summary": "auto"}));
+        }
     }
-    if let Some(re) = body.get("reasoning_effort") {
-        out.insert("reasoning_effort".to_string(), re.clone());
+    if mapped_reasoning.is_none() {
+        if let Some(eff_val) = body.get("reasoning_effort").or_else(|| body.get("reasoningEffort")) {
+            if let Some(s) = eff_val.as_str() {
+                let lower = s.to_ascii_lowercase();
+                let eff = match lower.as_str() {
+                    "minimal" | "low" => "low".to_string(),
+                    "medium" => "medium".to_string(),
+                    "high" | "xhigh" => "high".to_string(),
+                    "max" | "maximum" => "max".to_string(),
+                    other => other.to_string(),
+                };
+                let eff = if is_muse && eff == "max" { "high".to_string() } else { eff };
+                mapped_reasoning = Some(json!({"effort": eff, "summary": "auto"}));
+            }
+        }
+    }
+    if let Some(r) = mapped_reasoning {
+        out.insert("reasoning".to_string(), r);
     }
 
     Value::Object(out)
