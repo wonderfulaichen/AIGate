@@ -31,11 +31,12 @@ pub struct ModelConfig {
     /// 额外注入到请求 body 的字段 (任意 JSON 键值对).
     #[serde(default)]
     pub extra_body: Option<serde_json::Value>,
-    /// 模型级 API 格式覆盖: 可选 "openai" / "anthropic".
+    /// 模型级 API 格式覆盖: 可选 "openai" / "anthropic" / "responses".
     ///
     /// 不设置时回落到供应商级 [`ProviderConfig::api_format`].
     /// 用途: 同供应商(如 opencode go / zen 网关)下, 不同模型可能走不同端点
-    /// (glm/kimi → /chat/completions, minimax / qwen3-plus·max → /messages),
+    /// (glm/kimi → /chat/completions, minimax / qwen3-plus·max → /messages,
+    ///  grok / gpt-5.6-luna / muse-spark → /responses),
     /// 仅靠供应商级 `api_format` 无法区分, 需在此逐个标注.
     /// 点「获取」拉取上游模型时, 见 [`default_api_format`] 自动打标.
     #[serde(default)]
@@ -82,6 +83,39 @@ impl ModelConfig {
             None => provider.is_anthropic(),
         }
     }
+
+    /// 判定该模型是否走 OpenAI Responses API (/v1/responses) 协议.
+    ///
+    /// 优先级同 `is_anthropic`: 模型级 `api_format` 覆盖 > 供应商级.
+    pub fn is_responses(&self, provider: &ProviderConfig) -> bool {
+        match &self.api_format {
+            Some(f) => f == "responses",
+            None => provider.is_responses(),
+        }
+    }
+
+    /// 三层回落解析模型的实际 API 格式:
+    ///   1) 模型级 `api_format` 显式配置
+    ///   2) 供应商级 `api_format` 显式配置
+    ///   3) [`default_api_format`] 按模型名前缀自动推断
+    ///
+    /// 返回值: `"anthropic"` / `"responses"` / `"openai"` (或 `None` 等同 openai).
+    pub fn resolve_api_format(&self, provider: &ProviderConfig, model_id: &str) -> Option<String> {
+        // 1) 模型级显式配置
+        if let Some(ref f) = self.api_format {
+            return Some(f.clone());
+        }
+        // 2) 供应商级显式配置
+        if let Some(ref f) = provider.api_format {
+            return Some(f.clone());
+        }
+        // 3) 按模型名自动推断 (grok-*→responses, claude-*→anthropic, 等)
+        // 兼容中转别名 (如 go-muse) 与上游真名 (muse-spark-1.2-contributor) 双口径
+        let upstream_id = self.upstream_model.as_deref().unwrap_or(model_id);
+        default_api_format(&provider.name, model_id)
+            .or_else(|| default_api_format(&provider.name, upstream_id))
+            .map(|s| s.to_string())
+    }
 }
 
 /// 单个供应商的配置.
@@ -102,9 +136,11 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
     /// 上游 API 格式: 缺省 "openai" (chat/completions);
-    /// 设为 "anthropic" 时, 代理把 OpenAI 请求体转换为 Anthropic /messages 格式,
-    /// 并把 Anthropic 流式/非流式响应逆转换为 OpenAI 格式返回客户端.
-    /// (OpenCode Go 网关的 MiniMax/Qwen 系列走 /messages, 见官方 go.mdx.)
+    /// 模型级 API 格式覆盖: `"openai"` (默认/可省略), `"anthropic"`, 或 `"responses"`.
+    /// - `"openai"`: 走 `/v1/chat/completions` (默认)
+    /// - `"anthropic"`: 走 `/v1/messages` (网关自动做 OpenAI↔Anthropic 双向转换)
+    /// - `"responses"`: 走 `/v1/responses` (OpenAI Responses API, 网关自动转换为 chat/completions 格式)
+    /// 覆盖 `default_api_format` 的自动推断, 仅对本供应商生效.
     #[serde(default)]
     pub api_format: Option<String>,
     /// Anthropic /messages 协议的独立端点 URL (可选).
@@ -115,6 +151,13 @@ pub struct ProviderConfig {
     /// 这样同一供应商可同时暴露 OpenAI 与 Anthropic 两种协议端点 (参考 DeepSeek 官方设计).
     #[serde(default)]
     pub endpoint_anthropic: Option<String>,
+    /// Responses /v1/responses 协议的独立端点 URL (可选).
+    ///
+    /// 当模型走 Responses 协议 (`api_format: "responses"` 或自动推断为 responses) 时,
+    /// 若本字段有值则使用此端点, 否则回落把供应商 `endpoint` 中的 `/chat/completions`
+    /// 改写为 `/responses` (如 opencode go 网关).
+    #[serde(default)]
+    pub endpoint_responses: Option<String>,
     /// 供应商级 prompt caching 开关 (仅 Anthropic /messages 协议生效).
     /// 默认 true: 在 system 末块 + 最后一条 user 消息注入 cache_control, 使上游第二轮起
     /// 命中 prompt cache (input 按 0.1x 计 + 一次性写入费). 个别网关不支持/会改写 client
@@ -142,6 +185,10 @@ impl ProviderConfig {
     /// 是否使用 Anthropic /messages 协议.
     pub fn is_anthropic(&self) -> bool {
         self.api_format.as_deref() == Some("anthropic")
+    }
+    /// 是否使用 OpenAI Responses API (/v1/responses) 协议.
+    pub fn is_responses(&self) -> bool {
+        self.api_format.as_deref() == Some("responses")
     }
 }
 
@@ -308,28 +355,31 @@ impl ProviderRegistry {
     }
 }
 
-/// 按官方网关清单, 为「供应商 + 模型 ID」推断默认 API 格式 (OpenAI / Anthropic).
+/// 按官方网关清单, 为「供应商 + 模型 ID」推断默认 API 格式 (OpenAI / Anthropic / Responses).
 ///
 /// 数据来源: opencode 官方文档 `go.mdx` / `zen.mdx` (已对照源码核实):
 ///
 /// - **go 网关** (`/zen/go/v1`):
 ///   - `glm` / `kimi` / `deepseek` / `mimo` → `/chat/completions` (OpenAI)
 ///   - `minimax-*`、`qwen3.*-plus/max` (含 m2.5) → `/messages` (Anthropic)
+///   - `grok-*` / `gpt-5.6-luna` / `muse-spark-*` → `/responses` (OpenAI Responses API)
 /// - **zen 网关** (`/zen/v1`):
 ///   - `minimax-m2.5/m2.7`、`deepseek`、`glm`、`kimi` → `/chat/completions` (OpenAI)
 ///   - `claude-*`、`qwen3.5/3.6/3.7-plus/max` → `/messages` (Anthropic)
-///   - `gpt-*` → `/responses` (AIGate 暂不支持, 不标注, 留待部署方手动处理)
+///   - `gpt-*` / `grok-*` → `/responses` (OpenAI Responses API)
 ///
-/// 返回 `Some("anthropic")` 表示需走 Anthropic /messages; 返回 `None` 表示
-/// 回落 OpenAI (即不写 `api_format` 字段). 仅匹配已知前缀, 未知供应商一律 `None`.
+/// 返回 `Some("anthropic")` / `Some("responses")` / `None` (回落 OpenAI, 即不写 `api_format`).
 pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'static str> {
     let id = model_id.to_lowercase();
     let provider = provider_name.to_lowercase();
 
     // 通用规则: 任意供应商下, 模型名含 "claude" 一律走 Anthropic /messages.
-    // (用户诉求: claude 模型自动切到适配它的协议, 不依赖供应商手动标注.)
     if id.contains("claude") {
         return Some("anthropic");
+    }
+    // 通用规则: 任意供应商下, 模型名含 "grok" 一律走 Responses API.
+    if id.contains("grok") {
+        return Some("responses");
     }
 
     match provider.as_str() {
@@ -339,15 +389,22 @@ pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'stati
                 || (id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")))
             {
                 Some("anthropic")
+            }
+            // gpt-5.6-luna / muse-spark-* 走 /responses
+            else if id.starts_with("gpt-5") || id.starts_with("muse-spark") {
+                Some("responses")
             } else {
                 None
             }
         }
         "zen" => {
             // qwen3*-plus/max 走 /messages; claude-* 由上方通用规则处理;
-            // minimax-m2.x / deepseek / glm / kimi 回落 openai (见 line 620 注释期望)
             if id.starts_with("qwen3") && (id.contains("-plus") || id.contains("-max")) {
                 Some("anthropic")
+            }
+            // gpt-* 走 /responses (gpt-* 由上方 grok 通用规则不覆盖, 此处兜底)
+            else if id.starts_with("gpt-") {
+                Some("responses")
             } else {
                 None
             }
@@ -643,6 +700,7 @@ mod tests {
             api_format: Some("openai".into()),
             prompt_cache: None,
             endpoint_anthropic: None,
+            endpoint_responses: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
             models: HashMap::new(),

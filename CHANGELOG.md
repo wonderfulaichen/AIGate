@@ -2,6 +2,25 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.7] - 2026-08-20
+
+### 修复
+- **模型用量明细出现 `-/` 幽灵条目**：模型未找到/请求体解析失败时日志 `provider` 记为 `"-"`，`admin.rs:2093` 供应商统计已过滤该占位但 `per_model` 未过滤，导致明细表出现 `-/muse-spark-1.2-contributor`、`-/go-muse` 等 404 占位行（截图红框）。`compute_stats` 的 `model_map` 同步过滤 `provider.is_empty() || provider=="-"`，与供应商统计口径一致；存量 `logs.jsonl` 中的历史占位条目不再计入明细（总量仍保留以反映真实错误率）。
+
+## [0.4.6] - 2026-08-20
+
+### 修复
+- **CodeBuddy `muse-spark-1.2-contributor` 工具调用 `10014 Expected 'function' type.`**：Responses 流式 `tool_calls` 增量缺 `type:"function"` 导致 IDE 严格校验失败。`responses.rs` 流式转换补 `type`，`response.output_item.added` 预发 `role` + `tool_calls` 首帧并落盘累积器，后续 `function_call_arguments.delta` 非空回填 `call_id/name` 并累积 `arguments`，`response.completed` 含工具时 `finish_reason` 矫正为 `tool_calls`。
+- **非流式空响应**：`proxy.rs` 仅缓存开启时走 `upstream.text()`，缓存关闭的非流式被误入 `stream_response_with_tokens` 按 SSE 解析导致空体。改为 `!is_stream` 双分支（带缓存仅 `put`、不带缓存直接转换返回），Responses/Anthropic 非流 `output`→`message` 均修正。
+- **上游 `tool_choice: required/none` 400**：Go 网关仅支持 `auto`，`required/none/指定函数` 均报 `only "auto" is supported`。`openai_to_responses` 统一钳制有工具时 `tool_choice` 为 `auto`，规避 400。
+- **历史回放“执行历史命令时遇到格式问题”循环**：`assistant.tool_calls.arguments`/`tool` 结果 `output` 兼容 `string/object/array` 三态，`call_id` 追加 `id` 回落、`output` 多部件拼接，避免 `function_call` 与 `function_call_output` 不成对导致模型重试 `git log --oneline -8`。
+- **部署目录双写不一致**：二进制以 `exe_dir` 为 `base`，但真实 `providers.json`/`​.env` 在 `AI中转/`。`config.rs` 的 `load_dotenv` 与 `main.rs` 的 `ProviderRegistry::load` 增加对 `AI中转/` 的回落，启动双向同步 `providers.json`/`​.env`/`AIGate.exe` 到 `target/release/`，Eliminate `OPENCODE_GO_KEY` 缺失导致的 500。
+
+## [0.4.5] - 2026-08-19
+
+### 新增
+- 支持 OpenAI Responses API (`/v1/responses`) 协议：新增 `src/responses.rs` 双向转换层（请求 `messages`→`input`、`max_tokens`→`max_output_tokens`、`system`→`instructions`；流式 `response.output_text.delta`→`choices[0].delta.content`；非流 `output` 数组→`choices` 数组）。`providers.rs` 新增 `is_responses()` 方法，`default_api_format` 自动为 `grok-*` / `gpt-5.6-luna` / `muse-spark-*` 标注 `responses`；`proxy.rs` 新增 `responses_mode` 分支（端点改写 + 请求/响应体转换 + `TokenStream::responses_conv`），对客户端完全透明（始终为 OpenAI 兼容）。
+
 ## [0.4.4] - 2026-08-19
 
 ### 优化
@@ -10,7 +29,7 @@
 ### 修复
 - 循环守卫（loop_guard）对结构化文本误杀导致流式输出被截断：原 `detect()` 对所有重复单元统一用 `min_repeat=6` 阈值，Markdown 表格分隔行 `|---|`、代码缩进、列表/标题标记等合法重复在 384 字符窗口内极易凑出短重复，被误判为死循环并主动截断（日志中模型自述"刚才输出断了，我接着说完"即被误杀后重试的证据）。修复：`detect()` 新增 `has_meaningful()` 判定——**纯噪声单元（不含字母/数字/汉字的空白/标点/表格线）重复阈值放宽到 `min_repeat+6`（=12）次**，含语义字符的真循环仍按 6 次判定；新增 3 个回归测试锁定语义。
 - 供应商统计显示空 "-" 供应商：请求体解析失败 / 模型路由未找到时日志 `provider` 硬编码为 `"-"`，导致概览供应商统计出现无意义的 "-" 条目。修复：`admin.rs` 分组时过滤空值与 `"-"` 占位符，`admin.html` 前端同步过滤双保险。
-- 上游请求体过大（413）友好拦截：新增供应商级 `max_request_body_bytes`（默认不限制）。`providers.rs` 的 `ProviderConfig` 加该字段，`proxy.rs` 在转发前预检 `bytes.len()`，超限直接返回 `413 Payload Too Large` + 中文提示（"请求体过大，超过上游限制，请减少对话历史/上下文或开启客户端上下文压缩"），避免盲目打到上游被裸拒（如 `opencode.ai/zen/go` 限制约 1MB）。运行实例 `providers.json` 的 go 供应商已配置为 1048576 字节。
+- 上游请求体过大（413）预检：新增供应商级 `max_request_body_bytes`（默认不限制）。`providers.rs` 的 `ProviderConfig` 加该字段，`proxy.rs` 在转发前预检 `bytes.len()`，超限直接返回中文 413 提示。该字段为可选 opt-in，仅在供应商有明确 body 上限且需提前拦截时按需配置（如某些网关有严格上传大小限制），**不影响默认行为**。go 供应商上游限制约 1.06MB 且非精确值，不宜设置此字段——超限由上游返回自身 413 即可。
 - i18n 测试断言对齐：补修预存在的 `circuit_state_cn("closed")` 测试断言（旧断言 `"正常"` 未随代码文案改为 `"运行正常"` 同步，属测试滞后而非代码 bug），全量测试恢复全绿。
 
 ## [0.4.3] - 2026-08-18

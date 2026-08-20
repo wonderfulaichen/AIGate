@@ -33,6 +33,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 mod admin;
 mod anthropic;
+mod responses;
 mod cache;
 mod i18n;
 mod lang;
@@ -485,7 +486,9 @@ fn main() {
     let config = Config::from_env();
     let port = config.port;
 
-    let registry = match providers::ProviderRegistry::load("providers.json") {
+    let registry = match providers::ProviderRegistry::load("providers.json")
+        .or_else(|_| providers::ProviderRegistry::load("D:\\Office software\\Development Project\\AI中转\\providers.json"))
+    {
         Ok(r) => r,
         Err(e) => {
             show_error(&format!("{}: {e}", crate::i18n::startup_error("config")));
@@ -556,6 +559,21 @@ fn main() {
 
     // KeyStore 初始化需要 providers 列表做旧版 (按 env_var 索引) → 按 provider 索引的无损迁移.
     let providers_snapshot = registry.providers();
+    // 部署目录与构建目录 data 分裂导致历史丢失：若 AI中转/data 存在且当前 data 为空/极小，则回落到部署目录
+    let resolved_data_dir: String = {
+        let deploy = std::path::Path::new(r"D:\Office software\Development Project\AI中转\data");
+        if deploy.join("logs.jsonl").exists() {
+            let local_len = std::fs::metadata("data/logs.jsonl").map(|m| m.len()).unwrap_or(0);
+            let deploy_len = std::fs::metadata(deploy.join("logs.jsonl")).map(|m| m.len()).unwrap_or(0);
+            if deploy_len > local_len + 1024 {
+                deploy.to_string_lossy().to_string()
+            } else {
+                "data".to_string()
+            }
+        } else {
+            "data".to_string()
+        }
+    };
     let state = AppState {
         client,
         registry: Arc::new(RwLock::new(registry)),
@@ -571,11 +589,13 @@ fn main() {
         stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
         retry_max: config.retry_max,
         retry_backoff: Duration::from_millis(config.retry_backoff_ms),
-        key_store: keys::KeyStore::new("data", &providers_snapshot),
+        key_store: keys::KeyStore::new(&resolved_data_dir, &providers_snapshot),
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
         ),
-        log_buffer: LogBuffer::new().with_store(store::LogStore::new("data")),
+        log_buffer: LogBuffer::new().with_store({
+            store::LogStore::new(&resolved_data_dir)
+        }),
         stats_cache: Arc::new(tokio::sync::Mutex::new(None)),
         loop_guard: config.loop_guard.clone(),
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),

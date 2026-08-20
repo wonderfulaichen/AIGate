@@ -624,7 +624,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
         <div class="text-xs font-bold uppercase tracking-wider mb-4" style="color:var(--c-muted)"><span x-text="t('routes_config')"></span> <span style="font-weight:400" x-show="routes.model_count!==undefined" x-text="t('routes_count', routes.model_count, routes.providers.length)"></span></div>
         <template x-if="routes.model_count===undefined"><div class="text-center py-8 text-sm" style="color:var(--c-muted)" x-text="t('loading')"></div></template>
         <template x-if="routes.model_count!==undefined">
-          <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model_id')"></th><th x-text="t('tbl.provider')"></th><th x-text="t('tbl.endpoint')"></th><th x-text="t('tbl.upstream_model')"></th><th x-text="t('tbl.reasoning')"></th></tr></thead><tbody><template x-for="r in routes.routes" :key="r.model_id"><tr><td><div class="flex items-center gap-1.5 min-w-0"><span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" :style="{background:brandFor(r.upstream_model,r.provider).color+'22',color:brandFor(r.upstream_model,r.provider).color,border:'1px solid '+brandFor(r.upstream_model,r.provider).color+'55'}" x-text="brandFor(r.upstream_model,r.provider).label"></span><span class="font-mono truncate" style="color:var(--c-indigo)" x-text="r.model_id"></span><template x-if="r.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></div></td><td x-text="r.provider"></td><td class="text-xs font-mono truncate max-w-[220px]" style="color:var(--c-muted)"><span x-text="r.endpoint.replace(/^https?:\/\//,'')"></span><template x-if="r.api_format==='anthropic'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold ml-1" style="background:rgba(244,114,182,.15);color:#f472b6;border:1px solid rgba(244,114,182,.35)" x-text="t('fmt.anthropic_short')"></span></template></td><td><template x-if="r.upstream_model"><span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background:rgba(255,255,255,.04);color:#6b7280" x-text="r.upstream_model"></span></template><template x-if="!r.upstream_model"><span style="color:var(--c-muted)">-</span></template></td><td><template x-if="r.reasoning_effort"><span class="badge badge-primary" x-text="r.reasoning_effort"></span></template><template x-if="!r.reasoning_effort"><span style="color:var(--c-muted)">-</span></template></td></tr></template></tbody></table></div>
+          <div class="overflow-x-auto"><table><thead><tr><th x-text="t('tbl.model_id')"></th><th x-text="t('tbl.provider')"></th><th x-text="t('tbl.endpoint')"></th><th x-text="t('tbl.upstream_model')"></th><th x-text="t('tbl.reasoning')"></th></tr></thead><tbody><template x-for="r in routes.routes" :key="r.model_id"><tr><td><div class="flex items-center gap-1.5 min-w-0"><span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" :style="{background:brandFor(r.upstream_model,r.provider).color+'22',color:brandFor(r.upstream_model,r.provider).color,border:'1px solid '+brandFor(r.upstream_model,r.provider).color+'55'}" x-text="brandFor(r.upstream_model,r.provider).label"></span><span class="font-mono truncate" style="color:var(--c-indigo)" x-text="r.model_id"></span><template x-if="r.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></div></td><td x-text="r.provider"></td><td class="text-xs font-mono truncate max-w-[220px]" style="color:var(--c-muted)"><span x-text="r.endpoint.replace(/^https?:\/\//,'')"></span><template x-if="r.api_format==='anthropic'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold ml-1" style="background:rgba(244,114,182,.15);color:#f472b6;border:1px solid rgba(244,114,182,.35)" x-text="t('fmt.anthropic_short')"></span></template><template x-if="r.api_format==='responses'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold ml-1" style="background:rgba(96,165,250,.15);color:#60a5fa;border:1px solid rgba(96,165,250,.35)" x-text="t('fmt.responses_short')"></span></template></td><td><template x-if="r.upstream_model"><span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background:rgba(255,255,255,.04);color:#6b7280" x-text="r.upstream_model"></span></template><template x-if="!r.upstream_model"><span style="color:var(--c-muted)">-</span></template></td><td><template x-if="r.reasoning_effort"><span class="badge badge-primary" x-text="r.reasoning_effort"></span></template><template x-if="!r.reasoning_effort"><span style="color:var(--c-muted)">-</span></template></td></tr></template></tbody></table></div>
         </template>
       </div></div>
     </div>
@@ -1043,6 +1043,11 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                         <input type="text" x-model="prov.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('anthropic_endpoint_hint')"></p>
                       </div>
+                      <div class="mb-3">
+                        <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('responses_endpoint_label')"></label>
+                        <input type="text" x-model="prov.endpoint_responses" :placeholder="t('responses_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                        <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('responses_endpoint_hint')"></p>
+                      </div>
                       <!-- 密钥 (包含关系: 密钥是该供应商的子资源) -->
                       <div class="mb-3 p-2 rounded" style="background:rgba(255,255,255,.02);border:1px solid #2a2d37">
                         <div class="flex items-center justify-between mb-1">
@@ -1090,6 +1095,7 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                                 <select x-model="m.api_format" @change="m._fmtTouched = true" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('fmt.openai')"></option>
                                   <option value="anthropic" x-text="t('fmt.anthropic')"></option>
+                                  <option value="responses" x-text="t('fmt.responses')"></option>
                                 </select>
                               </td>
                               <td class="text-right">
@@ -1117,6 +1123,8 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.name')"></label><input type="text" x-model="addProvName" :placeholder="t('addprov.ph_name')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('addprov.endpoint')"></label><input type="text" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
               <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('addprov.keyhint')"></p>
+              <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('anthropic_endpoint_label')"></label><input type="text" x-model="addProvAnthropicEndpoint" :placeholder="t('anthropic_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
+              <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('responses_endpoint_label')"></label><input type="text" x-model="addProvResponsesEndpoint" :placeholder="t('responses_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
               <div><label style="color:var(--c-muted)" class="block mb-1" x-text="t('balance_endpoint_label')"></label><input type="text" x-model="addProvBalanceEndpoint" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-3 py-2 font-mono focus:border-[#6366f1] outline-none" /></div>
             </div>
             <div class="flex justify-end gap-2 mt-4">
@@ -1227,7 +1235,7 @@ const I18N = {
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
     'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
-    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。',
+    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'fmt.responses': 'Responses', 'fmt.responses_short': 'R', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。', 'responses_endpoint_label': 'Responses 端点', 'responses_endpoint_ph': '如 https://api.openai.com/v1/responses', 'responses_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /responses；填了则 Responses 协议模型走此独立地址。',
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
     'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率恒为 0，不参与缓存）',
     'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_desc': '条目写入后保留的秒数，过期自动失效；仅影响后续写入', 'cache_ttl_unit': '秒',
@@ -1328,7 +1336,7 @@ const I18N = {
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
     'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
-    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.',
+    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'fmt.responses': 'Responses', 'fmt.responses_short': 'R', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.', 'responses_endpoint_label': 'Responses Endpoint', 'responses_endpoint_ph': 'e.g. https://api.openai.com/v1/responses', 'responses_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /responses; if set, Responses models use this independent URL.',
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
     'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical non-stream request bodies are served from cache to save tokens (streaming IDE traffic is excluded)',
     'cache_ttl_label': 'Cache TTL', 'cache_ttl_desc': 'Seconds a cached entry lives before expiry; affects new writes only', 'cache_ttl_unit': 's',
@@ -1536,7 +1544,7 @@ function dashboard() {
     // Settings
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false,
-    showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvBalanceEndpoint: '',
+    showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
     // 费用显示币种: 内部费用以 CNY 为基准, 仅展示层换算.
@@ -1710,11 +1718,12 @@ function dashboard() {
       const s = (upstream || modelId || '').toLowerCase();
       return s.includes('free') || s.includes('免费');
     },
-    // 与后端 default_api_format 规则保持一致: 模型名含 claude 自动走 Anthropic 协议,
-    // 其余回落 OpenAI (返回 '' 表示不显式标注, 由后端按默认 openai 处理).
+    // 与后端 default_api_format 规则保持一致: claude→anthropic, grok/gpt-5*/muse-spark→responses
     defaultApiFormat(modelId) {
       const s = (modelId || '').toLowerCase();
       if (s.includes('claude')) return 'anthropic';
+      if (s.includes('grok')) return 'responses';
+      if (s.startsWith('gpt-5') || s.startsWith('muse-spark')) return 'responses';
       return '';
     },
     circuitClass(c) {
@@ -2169,15 +2178,21 @@ function dashboard() {
              else if (!m.free && autoFree && m._freeTouched) cfg.free = false;
              models[m.model_id] = Object.keys(cfg).length ? cfg : {};
            }
-           return {
-             name: p.name,
-             endpoint: p.endpoint,
-             api_key_env: p.api_key_env,
-             api_key_default: p.api_key_default||undefined,
-             balance_endpoint: p.balance_endpoint||undefined,
-             headers: p.headers||undefined,
-             models: models,
-           };
+            return {
+              name: p.name,
+              endpoint: p.endpoint,
+              endpoint_anthropic: p.endpoint_anthropic||undefined,
+              endpoint_responses: p.endpoint_responses||undefined,
+              api_key_env: p.api_key_env,
+              api_key_default: p.api_key_default||undefined,
+              balance_endpoint: p.balance_endpoint||undefined,
+              api_format: p.api_format||undefined,
+              prompt_cache: p.prompt_cache,
+              openai_cache_control: p.openai_cache_control,
+              max_request_body_bytes: p.max_request_body_bytes,
+              headers: p.headers||undefined,
+              models: models,
+            };
          });
          const json = JSON.stringify({providers:providers}, null, 2);
          const r=await fetch('/admin/api/providers/save',{method:'POST',headers:authHeaders(),body:JSON.stringify({json:json})});
@@ -2231,22 +2246,24 @@ function dashboard() {
          setTimeout(() => this.keyMsg = '', 3000);
        }
        },
-       confirmAddProvider() {
-       if (!this.addProvName || !this.addProvEndpoint) return;
-       this.providersFormData.push({
-         name: this.addProvName,
-         endpoint: this.addProvEndpoint,
-         api_key_env: this.addProvName.toUpperCase().replace(/-/g,'_')+'_KEY',
-         api_key_default: null,
-         balance_endpoint: this.addProvBalanceEndpoint || null,
-         headers: null,
-         _expanded: true,
-         _testing: false,
-         _testResult: null,
-         models: [],
-       });
-       this.showAddProvider = false;
-       this.addProvName = ''; this.addProvEndpoint = ''; this.addProvBalanceEndpoint = '';
+        confirmAddProvider() {
+        if (!this.addProvName || !this.addProvEndpoint) return;
+        this.providersFormData.push({
+          name: this.addProvName,
+          endpoint: this.addProvEndpoint,
+          endpoint_anthropic: this.addProvAnthropicEndpoint||null,
+          endpoint_responses: this.addProvResponsesEndpoint||null,
+          api_key_env: this.addProvName.toUpperCase().replace(/-/g,'_')+'_KEY',
+          api_key_default: null,
+          balance_endpoint: this.addProvBalanceEndpoint || null,
+          headers: null,
+          _expanded: true,
+          _testing: false,
+          _testResult: null,
+          models: [],
+        });
+        this.showAddProvider = false;
+        this.addProvName = ''; this.addProvEndpoint = ''; this.addProvBalanceEndpoint = ''; this.addProvAnthropicEndpoint=''; this.addProvResponsesEndpoint='';
        this.providersFormOk = true;
        this.providersFormMsg = t('add_provider_hint');
        setTimeout(()=>this.providersFormMsg='',3000);

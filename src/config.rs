@@ -100,7 +100,7 @@ impl Config {
                 max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 4096),
             },
             strip_history_reasoning: env_bool("STRIP_HISTORY_REASONING", true), // 默认开启
-            max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪
+            max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪 (保持上下文完整性, 旧版行为); 超限时由 proxy 紧急瘦身兜底
         }
     }
 }
@@ -175,8 +175,27 @@ fn parse_cache_persist_path() -> Option<PathBuf> {
 ///
 /// 简单解析: KEY=VALUE, 忽略注释 (#) 和空行, 去除值两端引号.
 /// 不覆盖已有环境变量 (让命令行 / 系统环境变量优先).
+/// 兼容多部署目录: 优先 exe 同目录, 其次尝试常见部署目录 AI中转.
 fn load_dotenv() {
-    let Ok(content) = std::fs::read_to_string(".env") else {
+    let content = std::fs::read_to_string(".env")
+        .or_else(|_| {
+            // 回落: AI中转 部署目录 (与源码同级)
+            let fallback = std::path::Path::new("D:\\Office software\\Development Project\\AI中转\\.env");
+            std::fs::read_to_string(fallback)
+        })
+        .or_else(|_| {
+            // 再回落: exe 上一级的 AI中转
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent().and_then(|p| p.parent()) {
+                    let p2 = parent.join("AI中转").join(".env");
+                    if let Ok(c) = std::fs::read_to_string(&p2) {
+                        return Ok(c);
+                    }
+                }
+            }
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no .env"))
+        });
+    let Ok(content) = content else {
         return; // .env 不存在也没关系, 用环境变量或默认值
     };
     for line in content.lines() {

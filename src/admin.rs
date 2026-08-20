@@ -23,7 +23,8 @@ use crate::balance::ProviderBalanceConfig;
 use crate::pricing::{self, ModelPrice};
 
 /// 面板「最近请求」实时展示保留的条数 (仅前端展示, 不影响全量统计/持久化).
-const LOG_CAPACITY: usize = 100;
+/// 默认 1000, 可覆盖日均 ~500 请求约 2 天的窗口.
+const LOG_CAPACITY: usize = 1000;
 
 /// 面板「错误」独立保留条数 (按"错误"维度, 与最近请求窗口完全分离).
 /// 正常请求再多也不会挤掉错误展示——错误从全量 inner 按错误维度过滤返回.
@@ -526,9 +527,10 @@ pub async fn api_routes(
         .filter_map(|id| {
             let entry = registry.lookup(id)?;
             // 复刻 proxy.rs 运行时的端点改写逻辑: 模型级 api_format=anthropic
-            // 且供应商端点仍是 /chat/completions 时, 改写为 /messages.
+            // 且供应商端点仍是 /chat/completions 时, 改写为 /messages 或 /responses.
             let mut endpoint = entry.provider.endpoint.clone();
             let anthropic_mode = entry.model.is_anthropic(&entry.provider);
+            let responses_mode = entry.model.is_responses(&entry.provider);
             if anthropic_mode {
                 if let Some(ep) = &entry.provider.endpoint_anthropic {
                     if !ep.trim().is_empty() {
@@ -537,8 +539,16 @@ pub async fn api_routes(
                 } else if endpoint.ends_with("/chat/completions") {
                     endpoint = endpoint.replace("/chat/completions", "/messages");
                 }
+            } else if responses_mode {
+                if let Some(ep) = &entry.provider.endpoint_responses {
+                    if !ep.trim().is_empty() {
+                        endpoint = ep.clone();
+                    }
+                } else if endpoint.ends_with("/chat/completions") {
+                    endpoint = endpoint.replace("/chat/completions", "/responses");
+                }
             }
-            let api_format = if anthropic_mode { "anthropic" } else { "openai" }.to_string();
+            let api_format = if anthropic_mode { "anthropic" } else if responses_mode { "responses" } else { "openai" }.to_string();
             Some(RouteInfo {
                 model_id: id.to_string(),
                 provider: entry.provider.name.clone(),
@@ -1138,8 +1148,8 @@ mod changelog_tests {
             assert!(v.get("date").is_some(), "缺少 date");
             assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
         }
-        // 首个版本应为最新版 0.4.3
-        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.3"));
+        // 首个版本应为最新版 0.4.7
+        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.7"));
     }
 }
 
@@ -2007,8 +2017,12 @@ fn compute_stats(
     opt_saved_series.reverse(); // 末位=今日, 首位=30天前
 
     // 按"供应商/上游模型"组合分组: 上游模型缺失时回退到中转 model, 避免按中转 ID 统计造成的混乱.
+    // 过滤 provider 为空或 "-" 的占位日志 (模型未找到/解析失败时的 404 占位), 避免模型明细出现 "-/xxx" 幽灵条目.
     let mut model_map: HashMap<String, Vec<&RequestLog>> = HashMap::new();
     for log in logs {
+        if log.provider.is_empty() || log.provider == "-" {
+            continue;
+        }
         let effective = log
             .upstream_model
             .clone()

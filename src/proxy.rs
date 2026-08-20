@@ -120,10 +120,11 @@ pub fn sync_breakers(breakers: &BreakerMap, provider_names: &[String], cfg: &Cir
 /// 视为**可达**; 仅当连接层错误 (DNS 失败 / 连接被拒 / 超时) 才视为**不可达**.
 /// `/models` 仅返回模型列表元数据, 不消耗生成 token, 成本可忽略.
 pub async fn precheck_provider(client: &Client, endpoint: &str, timeout: Duration) -> bool {
-    // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
+    // /models 端点推导: 兼容 OpenAI (/chat/completions), Anthropic (/messages), Responses (/responses) 三类端点.
     let models_url = endpoint
         .replace("/chat/completions", "/models")
-        .replace("/messages", "/models");
+        .replace("/messages", "/models")
+        .replace("/responses", "/models");
     match client.get(&models_url).timeout(timeout).send().await {
         // 任何 HTTP 响应 = TCP/TLS 已建连 = 可达.
         Ok(_) => true,
@@ -180,8 +181,11 @@ pub async fn chat_completions(
     // 端点取值 (供应商级): 缺省用供应商 endpoint.
     let mut endpoint = provider.endpoint.clone();
 
-    // 模型级 Anthropic 判定: 优先模型 api_format, 回落供应商级 api_format.
-    let anthropic_mode = model_cfg.is_anthropic(&provider);
+    // 三层回落解析 API 格式: 模型级显式 → 供应商级显式 → 模型名自动推断.
+    let resolved_format = model_cfg.resolve_api_format(&provider, &model)
+        .unwrap_or_else(|| "openai".to_string());
+    let anthropic_mode = resolved_format == "anthropic";
+    let responses_mode = resolved_format == "responses";
     if anthropic_mode {
         // 走 Anthropic /messages 协议时, 端点优先级:
         //   1) 供应商独立 endpoint_anthropic (不同协议用完全不同的上游地址, 参考 DeepSeek 设计)
@@ -193,6 +197,17 @@ pub async fn chat_completions(
             }
         } else if endpoint.ends_with("/chat/completions") {
             endpoint = endpoint.replace("/chat/completions", "/messages");
+        }
+    } else if responses_mode {
+        // 走 Responses API (/responses) 时, 端点优先级同 anthropic:
+        //   1) 供应商独立 endpoint_responses 非空则优先
+        //   2) 否则改写 /chat/completions → /responses
+        if let Some(ep) = &provider.endpoint_responses {
+            if !ep.trim().is_empty() {
+                endpoint = ep.clone();
+            }
+        } else if endpoint.ends_with("/chat/completions") {
+            endpoint = endpoint.replace("/chat/completions", "/responses");
         }
     }
 
@@ -228,12 +243,14 @@ pub async fn chat_completions(
 
     // 5. 注入模型级参数 (reasoning_effort / extra_body): 固定按 providers.json 配置档注入,
     //    不做自适应探测/降级 —— 思考强度完全由配置档决定 (客户端显式关闭/自带档位时尊重客户端).
+    let orig_body_len = bytes.len(); // 注入前原始请求体大小 (诊断用)
     let (bytes, _injected, strip_saved, trim_saved) = inject_model_params(
         bytes,
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
     );
+    let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
     // 二者随请求日志落盘, 跨重启累计, 不再依赖运行时内存计数器 (避免重启清零导致与头条卡不一致).
     let strip_saved_tokens = (strip_saved / 4) as u32;
@@ -241,13 +258,73 @@ pub async fn chat_completions(
     // 5.1 Anthropic /messages 模式: 请求体 OpenAI → Anthropic 格式转换.
     //     客户端侧始终是 OpenAI 兼容, 转换只在网关与上游之间进行.
     //     (anthropic_mode / endpoint 改写已在上方按模型级 api_format 完成)
-    let bytes = if anthropic_mode {
+    let mut bytes = if anthropic_mode {
         match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(v) => {
                 // prompt cache 开关: 供应商级默认开 (go 网关 minimax/qwen 已证实支持);
                 // 个别网关改写/不支持 client cache_control 时报错时, 由 providers.json 设为 false.
                 let prompt_cache = provider.prompt_cache.unwrap_or(true);
                 let converted = crate::anthropic::openai_to_anthropic(&v, prompt_cache);
+                match serde_json::to_vec(&converted) {
+                    Ok(b) => bytes::Bytes::from(b),
+                    Err(e) => {
+                        crate::admin::record_request(
+                            &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.to_string()),
+                        ).await;
+                        return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
+                    }
+                }
+            }
+            Err(e) => {
+                crate::admin::record_request(
+                    &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 400, start, bytes.len(), Some(e.to_string()),
+                ).await;
+                return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
+            }
+        }
+    } else if responses_mode {
+        // Responses API 模式: 请求体 OpenAI chat/completions → Responses API 格式转换.
+        // messages→input, system→instructions, max_tokens→max_output_tokens.
+        // content type: text→input_text, image_url→input_image.
+        match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(v) => {
+                let converted = crate::responses::openai_to_responses(&v);
+                // 诊断: 打印转换后请求体结构 (仅字段列表+input长度, 不打 content 避免日志膨胀).
+                // 增强: 打印首个 tool 及 tool_choice 形态, 定位 Expected 'function' type 的剩余分支
+                let input_count = converted.get("input").and_then(|i| i.as_array()).map(|a| a.len()).unwrap_or(0);
+                let has_instructions = converted.get("instructions").is_some();
+                let has_tools = converted.get("tools").is_some();
+                let tools_len = converted.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0);
+                let tool0_preview = converted.get("tools").and_then(|t| t.as_array()).and_then(|a| a.first())
+                    .map(|t| {
+                        let t_type = t.get("type").and_then(|v| v.as_str()).unwrap_or("MISSING");
+                        let t_name = t.get("name").and_then(|v| v.as_str()).unwrap_or("MISSING");
+                        let s = serde_json::to_string(t).unwrap_or_default();
+                        let short: String = s.chars().take(800).collect();
+                        format!("type={} name={} json={}", t_type, t_name, short)
+                    }).unwrap_or_else(|| "none".to_string());
+                let tc_before = v.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
+                let tc_before_trim: String = tc_before.chars().take(300).collect();
+                let tc_after = converted.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
+                let tc_after_trim: String = tc_after.chars().take(300).collect();
+                let input_preview = converted.get("input").and_then(|a| a.as_array()).map(|arr| {
+                    arr.iter().take(3).map(|it| {
+                        let it_type = it.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+                        let role = it.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+                        format!("{}/{}", it_type, role)
+                    }).collect::<Vec<_>>().join(",")
+                }).unwrap_or_else(|| "none".to_string());
+                info!("proxy: responses mode: input_count={}, has_instructions={}, has_tools={} (len={}), fields=[{}], tool0={}, tc_before={}, tc_after={}, input_head=[{}]",
+                    input_count, has_instructions, has_tools, tools_len,
+                    converted.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
+                    tool0_preview, tc_before_trim, tc_after_trim, input_preview);
+                // 调试: 落盘最近一次 responses 转换的完整请求体, 供手动 curl 复现对比 flat vs nested
+                if has_tools {
+                    let _ = std::fs::write(
+                        "C:\\Users\\qq274\\AppData\\Local\\Temp\\opencode\\last_responses_converted.json",
+                        serde_json::to_string_pretty(&converted).unwrap_or_default()
+                    );
+                }
                 match serde_json::to_vec(&converted) {
                     Ok(b) => bytes::Bytes::from(b),
                     Err(e) => {
@@ -275,10 +352,37 @@ pub async fn chat_completions(
         }
         serde_json::to_vec(&bval).unwrap_or_else(|_| bytes.to_vec()).into()
     };
-    let body_len_val = bytes.len(); // 在 bytes 被 move 前保存
+    let mut body_len_val = bytes.len(); // 在 bytes 被 move 前保存
+    // 诊断: 请求体大小变化链路 (原始→注入后→最终), 用于排查 "工具显示150KB但中转显示1.5MB" 类问题.
+    // 大请求体 (>500KB) 或有裁剪时始终打印; 小请求仅在有裁剪时打印 (减少噪声).
+    if orig_body_len > 500_000 || orig_body_len != body_len_val || strip_saved > 0 || trim_saved > 0 {
+        info!("proxy: body_size diag: orig={}B → inject={}B → final={}B (strip_saved={}B, trim_saved={}B, mode={})",
+            orig_body_len, after_inject_len, body_len_val, strip_saved, trim_saved,
+            if anthropic_mode { "anthropic" } else if responses_mode { "responses" } else { "openai" });
+    }
 
-    // 5.4 上游请求体大小预检: 供应商可配置 max_request_body_bytes,
-    //     超限直接返回 413 中文提示, 避免盲目打到上游被裸拒 (如 zen/go 限制约 1MB).
+    // 5.4 上游请求体大小预检 + 紧急自动瘦身: 仅当供应商配置 max_request_body_bytes 时生效.
+    //     保持 0.4.2 行为 (默认不裁剪, 不限流) 以保真; 超限时先截断 tool 输出 + 裁剪历史
+    //     自动降至 90% 目标再判定, 避免直接 413 导致客户端重试循环.
+    if let Some(limit) = provider.max_request_body_bytes {
+        if bytes.len() > limit {
+            if let Ok(mut bval) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let target = (limit as f64 * 0.9) as usize;
+                let emergency_saved = emergency_shrink_body(&mut bval, target);
+                if emergency_saved > 0 {
+                    if let Ok(new_bytes) = serde_json::to_vec(&bval) {
+                        let new_len = new_bytes.len();
+                        info!("proxy: emergency shrink: {}B → {}B (saved {}B, target {}B, mode={})",
+                            body_len_val, new_len, emergency_saved, target,
+                            if anthropic_mode { "anthropic" } else if responses_mode { "responses" } else { "openai" });
+                        bytes = bytes::Bytes::from(new_bytes);
+                        body_len_val = new_len;
+                    }
+                }
+            }
+        }
+    }
+    // 仍超限才返回 413 (瘦身后可能已达标).
     if let Some(limit) = provider.max_request_body_bytes {
         if bytes.len() > limit {
             let msg = format!(
@@ -465,10 +569,15 @@ pub async fn chat_completions(
             err = &err_body[..err_body.len().min(500)]
         );
         // Anthropic 错误体格式 {"type":"error","error":{...}} → OpenAI {"error":{...}},
+        // Responses 错误体格式与 OpenAI 一致, 也做转换以防格式不一致.
         // 使 format_upstream_error 的中文解析 (读 error.message/type) 正常工作.
         let err_body = if anthropic_mode {
             serde_json::from_str::<serde_json::Value>(&err_body)
                 .map(|v| crate::anthropic::anthropic_error_to_openai(&v).to_string())
+                .unwrap_or(err_body)
+        } else if responses_mode {
+            serde_json::from_str::<serde_json::Value>(&err_body)
+                .map(|v| crate::responses::responses_error_to_openai(&v).to_string())
                 .unwrap_or(err_body)
         } else {
             err_body
@@ -496,28 +605,62 @@ pub async fn chat_completions(
     // 10. 流式透传 — 通过 TokenTracker 记录 token 用量
     // 上游返回 2xx → 供应商健康, 记成功 (可能关闭熔断).
     report_breaker(&state.breakers, &provider_name, true);
-    // 非流式且缓存开启 → 读全量响应体存入缓存后直接返回 (响应 JSON 自带 usage, 精确记 token).
+    // 非流式请求: 读取全量 JSON 响应体, 做 Responses/Anthropic→OpenAI 转换后返回.
     // 注意: text() 按值消费 upstream, 故此分支必须 return, 不可再进入下方流式透传.
-    // 关键约束 !is_stream: 仅非流式请求在此用 text() 读取全量响应体缓存 (流式已不参与缓存,
-    // cache_key 为 None, 不会进入此分支). 下方 try_replay_cache 命中回放同样只服务非流式.
-    if let Some(key) = &cache_key {
-        if !is_stream {
+    // 覆盖两种情况: 缓存开启 (需 put) 与缓存关闭 (直接返回), 避免 !is_stream 且 cache 未命中时
+    // 误入下方 stream_response_with_tokens (会把 JSON 当 SSE 解析导致空响应).
+    if !is_stream {
+        if let Some(key) = &cache_key {
             match upstream.text().await {
                 Ok(body_text) => {
-                    // Anthropic 非流式响应体 → OpenAI 格式 (usage 提取/客户端展示均需 OpenAI 结构)
                     let body_text = if anthropic_mode {
                         match serde_json::from_str::<serde_json::Value>(&body_text) {
                             Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
                             Err(_) => body_text,
                         }
+                    } else if responses_mode {
+                        match serde_json::from_str::<serde_json::Value>(&body_text) {
+                            Ok(v) => crate::responses::responses_to_openai_nonstream(&v).to_string(),
+                            Err(_) => body_text,
+                        }
                     } else {
                         body_text
                     };
-                    // 入缓存存 OpenAI 格式: 命中分支 (make_key 命中后) 直接把缓存体返回给客户端,
-                    // 若在此存上游原始体, anthropic 模式下命中返回的是 Anthropic 结构 → 客户端解析错误.
                     let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
-                    // 把精确 usage 一并存入缓存, 命中回放时优先用此值 (避免重解析 SSE 失真).
                     state.cache.put(key, &body_text, (pt, ct));
+                    crate::admin::record_request_with_tokens(
+                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
+                    ).await;
+                    return Ok(axum::Json(
+                        serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
+                    ).into_response());
+                }
+                Err(e) => {
+                    return Err(error_response(
+                        StatusCode::BAD_GATEWAY,
+                        &format!("failed to read upstream response body: {e}"),
+                    ));
+                }
+            }
+        } else {
+            // 缓存未开启的非流式路径: 同样需要完整读取并转换, 不能走 SSE 流.
+            match upstream.text().await {
+                Ok(body_text) => {
+                    let body_text = if anthropic_mode {
+                        match serde_json::from_str::<serde_json::Value>(&body_text) {
+                            Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
+                            Err(_) => body_text,
+                        }
+                    } else if responses_mode {
+                        match serde_json::from_str::<serde_json::Value>(&body_text) {
+                            Ok(v) => crate::responses::responses_to_openai_nonstream(&v).to_string(),
+                            Err(_) => body_text,
+                        }
+                    } else {
+                        body_text
+                    };
+                    let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
@@ -547,6 +690,7 @@ pub async fn chat_completions(
         state.loop_guard.clone(),
         state.stream_idle_timeout,
         anthropic_mode,
+        responses_mode,
         strip_saved_tokens, trim_saved_tokens,
     );
     Ok(resp)
@@ -643,6 +787,7 @@ fn stream_response_with_tokens(
     loop_cfg: LoopGuardConfig,
     idle: Duration,
     anthropic: bool,
+    responses: bool,
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
 ) -> Response {
@@ -675,8 +820,13 @@ fn stream_response_with_tokens(
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
-            anthropic_conv: if anthropic {
+            anthropic_conv: if anthropic && !responses {
                 Some(crate::anthropic::AnthropicStreamConv::new())
+            } else {
+                None
+            },
+            responses_conv: if responses && !anthropic {
+                Some(crate::responses::ResponsesStreamConv::new())
             } else {
                 None
             },
@@ -833,6 +983,9 @@ struct TokenStream<S> {
     /// Anthropic /messages 模式: 非 None 时, 上游 SSE (event:/data: 行) 经此转换器
     /// 翻译为 OpenAI 格式 payload 再走统一处理 (usage/loop_guard/归一化发射全部复用).
     anthropic_conv: Option<crate::anthropic::AnthropicStreamConv>,
+    /// Responses API 模式: 非 None 时, 上游 SSE (data: 行) 经此转换器
+    /// 翻译为 OpenAI chat/completions 格式 payload.
+    responses_conv: Option<crate::responses::ResponsesStreamConv>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -877,6 +1030,13 @@ impl<S> TokenStream<S> {
         }
         // Anthropic /messages 模式: event:/data: 行经转换器翻译为 OpenAI payload, 再走统一处理.
         if let Some(conv) = &mut self.anthropic_conv {
+            for payload in conv.feed_line(line) {
+                self.handle_payload(&payload);
+            }
+            return;
+        }
+        // Responses API 模式: data: 行经转换器翻译为 OpenAI chat/completions payload.
+        if let Some(conv) = &mut self.responses_conv {
             for payload in conv.feed_line(line) {
                 self.handle_payload(&payload);
             }
@@ -1192,6 +1352,10 @@ where
                         // 必须在 async 块外计算 (this 是 &mut, 不能跨线程), 仅捕获拥有的 String 进 spawn.
                         let err_for_log: Option<String> = if this.loop_aborted {
                             Some("model loop detected, stream truncated by AIGate".to_string())
+                        } else if let Some(err) = this.responses_conv.as_ref().and_then(|c| c.last_error.as_ref()) {
+                            // Responses API 上游返回了明确错误 (如 "Expected 'function' type."),
+                            // 直接使用上游错误消息, 避免被笼统的 10014 截断掩盖.
+                            Some(format!("responses upstream error: {err}"))
                         } else if !this.clean_finish {
                             Some(crate::i18n::msg_stream_truncated().to_string())
                         } else {
@@ -1459,6 +1623,106 @@ fn trim_history_turns(body: &mut serde_json::Value, n: usize) -> usize {
     }
     *messages = retained;
     saved_chars
+}
+
+/// 紧急瘦身: 当请求体过大时, 截断超长 tool 输出并按需裁剪历史, 避免 413.
+///
+/// CodeBuddy 等 IDE 会在 tool 结果中塞入整文件内容 (单条 tool 消息可达 500KB+),
+/// 即使 `MAX_HISTORY_TURNS` 未开启也会导致 body 瞬间从几十 KB 暴涨到 1.5MB+.
+/// 本函数优先截断单条 tool 内容到 `max_per_tool` (默认 32KB), 再按 20/10/5 轮
+/// 递进裁剪历史, 直到 body 降至 `target_bytes` 以下. 返回总节省字符数.
+fn emergency_shrink_body(body: &mut serde_json::Value, target_bytes: usize) -> usize {
+    let mut saved = 0usize;
+    // 1) 截断超长 tool 输出: 每条 tool 消息 content 超 32KB 则截断并追加提示.
+    const MAX_PER_TOOL: usize = 32 * 1024;
+    saved += truncate_tool_outputs(body, MAX_PER_TOOL);
+    if serde_json::to_vec(body).map(|v| v.len()).unwrap_or(usize::MAX) <= target_bytes {
+        return saved;
+    }
+    // 2) 递进历史裁剪: 20 → 10 → 5 轮, 直到达标.
+    for n in [20, 10, 5] {
+        let before = serde_json::to_vec(body).map(|v| v.len()).unwrap_or(usize::MAX);
+        if before <= target_bytes {
+            break;
+        }
+        // 在当前 body 上再裁剪一次 (幂等, 多次调用会进一步丢弃更早历史).
+        let mut tmp = body.clone();
+        let trimmed = trim_history_turns(&mut tmp, n);
+        if trimmed == 0 {
+            break;
+        }
+        let after = serde_json::to_vec(&tmp).map(|v| v.len()).unwrap_or(usize::MAX);
+        if after < before {
+            *body = tmp;
+            saved += trimmed;
+            // 截断后再次检查是否已达标, 若达标提前退出.
+            if after <= target_bytes {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    saved
+}
+
+/// 截断 tool 消息中的超长 content, 防止单条大文件读取结果撑爆请求体.
+///
+/// 仅处理 role == "tool" 的消息, 若 content 为字符串且超过 `max_bytes`,
+/// 截断为 `前 max_bytes 字符 + "\n...[truncated X bytes]..."`.
+/// 返回总节省字符数.
+fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usize {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return 0;
+    };
+    let mut saved = 0usize;
+    for msg in messages.iter_mut() {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "tool" {
+            continue;
+        }
+        let Some(content_val) = msg.get_mut("content") else {
+            continue;
+        };
+        let content_str = match content_val {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => {
+                // tool 消息 content 可能是数组 (多段), 仅处理单字符串场景.
+                // 若为数组, 尝试拼接文本长度估算.
+                let mut combined = String::new();
+                for part in arr.iter() {
+                    if let Some(t) = part.get("text").and_then(|x| x.as_str()) {
+                        combined.push_str(t);
+                        combined.push('\n');
+                    } else if let Some(t) = part.as_str() {
+                        combined.push_str(t);
+                    }
+                }
+                if combined.len() <= max_bytes {
+                    continue;
+                }
+                // 截断数组形式: 简化为单字符串截断.
+                let orig_len = combined.len();
+                combined.truncate(max_bytes);
+                combined.push_str(&format!("\n...[truncated {} bytes]...", orig_len - max_bytes));
+                *content_val = serde_json::Value::String(combined);
+                // 估算节省: 原数组序列化长度 - 新字符串长度.
+                saved += orig_len.saturating_sub(max_bytes);
+                continue;
+            }
+            _ => continue,
+        };
+        if content_str.len() <= max_bytes {
+            continue;
+        }
+        let orig_len = content_str.len();
+        let mut truncated = content_str;
+        truncated.truncate(max_bytes);
+        truncated.push_str(&format!("\n...[truncated {} bytes, total {} -> {}]...", orig_len - max_bytes, orig_len, max_bytes));
+        *content_val = serde_json::Value::String(truncated);
+        saved += orig_len.saturating_sub(max_bytes);
+    }
+    saved
 }
 
 /// 注入模型级参数到请求 body.
@@ -2037,6 +2301,7 @@ mod tests {
             line_buf: Vec::new(),
             first_token_at: None,
             anthropic_conv: None,
+            responses_conv: None,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -2128,6 +2393,7 @@ mod tests {
             line_buf: Vec::new(),
             first_token_at: None,
             anthropic_conv: None,
+            responses_conv: None,
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
