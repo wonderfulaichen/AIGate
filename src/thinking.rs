@@ -178,6 +178,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         }
     }
 
@@ -189,6 +191,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         }
     }
 

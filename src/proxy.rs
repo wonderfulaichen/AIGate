@@ -688,6 +688,7 @@ pub async fn chat_completions(
         start,
         body_len_val,
         state.loop_guard.clone(),
+        model_cfg.loop_guard,
         state.stream_idle_timeout,
         anthropic_mode,
         responses_mode,
@@ -785,6 +786,7 @@ fn stream_response_with_tokens(
     start: std::time::Instant,
     req_body_len: usize,
     loop_cfg: LoopGuardConfig,
+    model_loop_guard: Option<bool>,
     idle: Duration,
     anthropic: bool,
     responses: bool,
@@ -805,10 +807,18 @@ fn stream_response_with_tokens(
         tokens_cache_miss: 0,
         tokens_cache_creation: 0,
         response_bytes: 0,
-        loop_guard: if loop_cfg.enabled {
-            Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
-        } else {
-            None
+        loop_guard: {
+            if !loop_cfg.enabled {
+                None
+            } else if let Some(v) = model_loop_guard {
+                if v { Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer)) } else { None }
+            } else if model.to_ascii_lowercase().contains("muse-spark")
+                || upstream_model.as_deref().map(|s| s.to_ascii_lowercase().contains("muse-spark")).unwrap_or(false) {
+                // muse-spark 长推理含表格/代码围栏易误触，默认关闭，仍可通过模型档 loop_guard: true 显式开启
+                None
+            } else {
+                Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
+            }
         },
         loop_aborted: false,
         error_closed: false,
@@ -2045,6 +2055,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         }
     }
 
@@ -2056,6 +2068,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         }
     }
 

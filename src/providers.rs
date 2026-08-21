@@ -50,6 +50,12 @@ pub struct ModelConfig {
     /// `cache_read_per_m` 可选（KV Cache 命中价, 缺失则按输入价计）.
     #[serde(default)]
     pub price: Option<ModelPrice>,
+    /// 模型来源：manual（手写）或 fetched（拉取），用于 UI 区分（可选，缺省视为 fetched 兼容旧配置）。
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// 模型级循环守卫开关：Some(false) 关闭该模型的死循环检测，None 回落全局配置。
+    #[serde(default)]
+    pub loop_guard: Option<bool>,
 }
 
 impl ModelConfig {
@@ -346,6 +352,8 @@ impl ProviderRegistry {
                         extra_body: None,
                         api_format: default_api_format(&provider.name, id).map(|s| s.to_string()),
                         price: None,
+                        origin: Some("fetched".to_string()),
+                        loop_guard: None,
                     },
                 );
                 added += 1;
@@ -523,6 +531,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         };
         // 显式 free: true 优先
         assert!(base(Some("gpt-4o"), Some(true)).is_free("gpt-4o"));
@@ -583,6 +593,8 @@ mod tests {
                     extra_body: None,
                     api_format: None,
                     price: None,
+                    origin: None,
+                    loop_guard: None,
                 },
             );
         }
@@ -713,6 +725,8 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            origin: None,
+            loop_guard: None,
         };
         assert!(!m_default.is_anthropic(&openai_provider));
         // 供应商 openai + 模型标注 anthropic → anthropic
@@ -723,6 +737,8 @@ mod tests {
             extra_body: None,
             api_format: Some("anthropic".into()),
             price: None,
+            origin: None,
+            loop_guard: None,
         };
         assert!(m_override.is_anthropic(&openai_provider));
         // 供应商 anthropic + 模型回落 → anthropic

@@ -825,10 +825,18 @@ pub async fn api_providers_fetch_models(
         Err(e) => return Json(serde_json::json!({ "error": e })),
     };
 
-    // 3) 合并进内存注册表 (新增未存在的, 跳过已有)
-    let (added, skipped) = {
+    // 3) 合并进内存注册表 (新增未存在的, 跳过已有) + 计算已下架
+    let (added, skipped, removed) = {
         let mut registry = state.registry.write().await;
-        registry.add_models(&name, &ids)
+        let existing: Vec<String> = registry
+            .providers()
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.models.keys().cloned().collect())
+            .unwrap_or_default();
+        let removed: Vec<String> = existing.iter().filter(|id| !ids.contains(id)).cloned().collect();
+        let (added, skipped) = registry.add_models(&name, &ids);
+        (added, skipped, removed)
     };
 
     // 注: 不再直接写盘/重载. 拉取的模型仅写入内存注册表 (运行期即时生效),
@@ -841,6 +849,8 @@ pub async fn api_providers_fetch_models(
         "models": ids,
         "added": added,
         "skipped": skipped,
+        "removed": removed.clone(),
+        "removed_count": removed.len(),
         "message": crate::i18n::msg_models_fetched(ids.len(), added, skipped),
     }))
 }
@@ -1148,8 +1158,8 @@ mod changelog_tests {
             assert!(v.get("date").is_some(), "缺少 date");
             assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
         }
-        // 首个版本应为最新版 0.4.8
-        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.8"));
+        // 首个版本应为最新版 0.4.9
+        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.9"));
     }
 }
 

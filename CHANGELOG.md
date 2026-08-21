@@ -2,6 +2,12 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.9] - 2026-08-21
+
+### 修复
+- **工具大输出中文截断闪退 `is_char_boundary`（`src/proxy.rs:1720`）**：`truncate_tool_outputs` 按字节截断在 UTF-8 多字节字符中间触发断言，`389KB` 中文 `tool` 结果直接 panic。新增 `floor_char_boundary` 按字符边界回退，两处截断均取边界安全点，非 `MAX_PER_TOOL` 刘海。
+- **死循环误报（`muse-spark` 1.2M 2.9K 场景）**：`loop_guard` 全局阈值 `384/6/4096 → 512/8/8192` 降低误击，`providers.rs` 新增模型级 `loop_guard` 开关，`proxy.rs` 对 `muse-spark` 默认关闭守卫（可通过 `providers.json: loop_guard: true` 显式开启），截图 `可能被截断` 的 `muse-spark:go 19:53/19:45` 将不再误判为循环。
+
 ## [0.4.8] - 2026-08-20
 
 ### 修复

@@ -60,8 +60,7 @@
           "upstream_model": "deepseek-v4-flash"
         },
         "deepseek-v4-flash-free": {
-          "upstream_model": "deepseek-v4-flash-free",
-          "reasoning_effort": "max"
+          "upstream_model": "deepseek-v4-flash-free"
         },
         "deepseek-v4-pro": {
           "upstream_model": "deepseek-v4-pro"
@@ -94,77 +93,99 @@
           "upstream_model": "glm-5.2"
         },
         "gpt-5": {
-          "upstream_model": "gpt-5"
+          "upstream_model": "gpt-5",
+          "api_format": "responses"
         },
         "gpt-5-codex": {
-          "upstream_model": "gpt-5-codex"
+          "upstream_model": "gpt-5-codex",
+          "api_format": "responses"
         },
         "gpt-5-nano": {
-          "upstream_model": "gpt-5-nano"
+          "upstream_model": "gpt-5-nano",
+          "api_format": "responses"
         },
         "gpt-5.1": {
-          "upstream_model": "gpt-5.1"
+          "upstream_model": "gpt-5.1",
+          "api_format": "responses"
         },
         "gpt-5.1-codex": {
-          "upstream_model": "gpt-5.1-codex"
+          "upstream_model": "gpt-5.1-codex",
+          "api_format": "responses"
         },
         "gpt-5.1-codex-max": {
-          "upstream_model": "gpt-5.1-codex-max"
+          "upstream_model": "gpt-5.1-codex-max",
+          "api_format": "responses"
         },
         "gpt-5.1-codex-mini": {
-          "upstream_model": "gpt-5.1-codex-mini"
+          "upstream_model": "gpt-5.1-codex-mini",
+          "api_format": "responses"
         },
         "gpt-5.2": {
-          "upstream_model": "gpt-5.2"
+          "upstream_model": "gpt-5.2",
+          "api_format": "responses"
         },
         "gpt-5.2-codex": {
-          "upstream_model": "gpt-5.2-codex"
+          "upstream_model": "gpt-5.2-codex",
+          "api_format": "responses"
         },
         "gpt-5.3-codex": {
-          "upstream_model": "gpt-5.3-codex"
+          "upstream_model": "gpt-5.3-codex",
+          "api_format": "responses"
         },
         "gpt-5.3-codex-spark": {
-          "upstream_model": "gpt-5.3-codex-spark"
+          "upstream_model": "gpt-5.3-codex-spark",
+          "api_format": "responses"
         },
         "gpt-5.4": {
-          "upstream_model": "gpt-5.4"
+          "upstream_model": "gpt-5.4",
+          "api_format": "responses"
         },
         "gpt-5.4-mini": {
-          "upstream_model": "gpt-5.4-mini"
+          "upstream_model": "gpt-5.4-mini",
+          "api_format": "responses"
         },
         "gpt-5.4-nano": {
-          "upstream_model": "gpt-5.4-nano"
+          "upstream_model": "gpt-5.4-nano",
+          "api_format": "responses"
         },
         "gpt-5.4-pro": {
-          "upstream_model": "gpt-5.4-pro"
+          "upstream_model": "gpt-5.4-pro",
+          "api_format": "responses"
         },
         "gpt-5.5": {
-          "upstream_model": "gpt-5.5"
+          "upstream_model": "gpt-5.5",
+          "api_format": "responses"
         },
         "gpt-5.5-pro": {
-          "upstream_model": "gpt-5.5-pro"
+          "upstream_model": "gpt-5.5-pro",
+          "api_format": "responses"
         },
         "gpt-5.6-luna": {
-          "upstream_model": "gpt-5.6-luna"
+          "upstream_model": "gpt-5.6-luna",
+          "api_format": "responses"
         },
         "gpt-5.6-sol": {
-          "upstream_model": "gpt-5.6-sol"
+          "upstream_model": "gpt-5.6-sol",
+          "api_format": "responses"
         },
         "gpt-5.6-terra": {
-          "upstream_model": "gpt-5.6-terra"
+          "upstream_model": "gpt-5.6-terra",
+          "api_format": "responses"
         },
         "grok-4.5": {
-          "upstream_model": "grok-4.5"
+          "upstream_model": "grok-4.5",
+          "api_format": "responses"
         },
         "grok-4.6": {
-          "upstream_model": "grok-4.6"
+          "upstream_model": "grok-4.6",
+          "api_format": "responses"
         },
         "grok-build-0.1": {
-          "upstream_model": "grok-build-0.1"
+          "upstream_model": "grok-build-0.1",
+          "api_format": "responses"
         },
         "hy3-free": {
-          "upstream_model": "hy3-free",
-          "reasoning_effort": "high"
+          "upstream_model": "hy3-free"
         },
         "kimi-k2.5": {
           "upstream_model": "kimi-k2.5"
@@ -181,18 +202,8 @@
         "laguna-s-2.1-free": {
           "upstream_model": "laguna-s-2.1-free"
         },
-        "ling-3.0-flash-free": {
-          "upstream_model": "ling-3.0-flash-free"
-        },
-        "ling-3.0-tiny-free": {
-          "upstream_model": "ling-3.0-tiny-free"
-        },
-        "longcat-2.0-free": {
-          "upstream_model": "longcat-2.0-free"
-        },
         "mimo-v2.5-free": {
-          "upstream_model": "mimo-v2.5-free",
-          "reasoning_effort": "high"
+          "upstream_model": "mimo-v2.5-free"
         },
         "minimax-m2.5": {
           "upstream_model": "minimax-m2.5"
@@ -204,7 +215,12 @@
           "upstream_model": "minimax-m3"
         },
         "muse-spark-1.2": {
-          "upstream_model": "muse-spark-1.2"
+          "upstream_model": "muse-spark-1.2",
+          "api_format": "responses"
+        },
+        "muse-spark-1.2-contributor-free": {
+          "upstream_model": "muse-spark-1.2-contributor-free",
+          "api_format": "responses"
         },
         "nemotron-3-ultra-free": {
           "upstream_model": "nemotron-3-ultra-free"
@@ -212,16 +228,14 @@
         "nemotron-3.5-lightning-free": {
           "upstream_model": "nemotron-3.5-lightning-free"
         },
-        "north-mini-code-free": {
-          "upstream_model": "north-mini-code-free"
-        },
         "qwen3.5-plus": {
-          "upstream_model": "qwen3.5-plus",
-          "api_format": "anthropic"
+          "upstream_model": "qwen3.5-plus"
         },
         "qwen3.6-plus": {
-          "upstream_model": "qwen3.6-plus",
-          "api_format": "anthropic"
+          "upstream_model": "qwen3.6-plus"
+        },
+        "x-preview-f-free": {
+          "upstream_model": "x-preview-f-free"
         }
       }
     },
@@ -234,10 +248,12 @@
       "max_request_body_bytes": null,
       "models": {
         "deepseek-v4-flash": {
-          "upstream_model": "deepseek-v4-flash"
+          "upstream_model": "deepseek-v4-flash",
+          "reasoning_effort": "max"
         },
         "deepseek-v4-pro": {
-          "upstream_model": "deepseek-v4-pro"
+          "upstream_model": "deepseek-v4-pro",
+          "reasoning_effort": "high"
         },
         "glm-5": {
           "upstream_model": "glm-5"
@@ -252,13 +268,16 @@
           "upstream_model": "glm-5.3"
         },
         "gpt-5.6-luna": {
-          "upstream_model": "gpt-5.6-luna"
+          "upstream_model": "gpt-5.6-luna",
+          "api_format": "responses"
         },
         "grok-4.5": {
-          "upstream_model": "grok-4.5"
+          "upstream_model": "grok-4.5",
+          "api_format": "responses"
         },
-        "hy3": {
-          "upstream_model": "hy3"
+        "hy3-GO": {
+          "upstream_model": "hy3",
+          "reasoning_effort": "high"
         },
         "hy3-preview": {
           "upstream_model": "hy3-preview"
@@ -282,10 +301,12 @@
           "upstream_model": "mimo-v2-pro"
         },
         "mimo-v2.5": {
-          "upstream_model": "mimo-v2.5"
+          "upstream_model": "mimo-v2.5",
+          "reasoning_effort": "high"
         },
         "mimo-v2.5-pro": {
-          "upstream_model": "mimo-v2.5-pro"
+          "upstream_model": "mimo-v2.5-pro",
+          "reasoning_effort": "max"
         },
         "minimax-m2.5": {
           "upstream_model": "minimax-m2.5"
@@ -297,7 +318,13 @@
           "upstream_model": "minimax-m3"
         },
         "muse-spark-1.2-contributor": {
-          "upstream_model": "muse-spark-1.2-contributor"
+          "upstream_model": "muse-spark-1.2-contributor",
+          "reasoning_effort": "max",
+          "api_format": "responses"
+        },
+        "ox-alpha-free": {
+          "upstream_model": "ox-alpha-free",
+          "reasoning_effort": "high"
         },
         "qwen3.5-plus": {
           "upstream_model": "qwen3.5-plus"
@@ -313,18 +340,6 @@
         },
         "qwen3.8-max": {
           "upstream_model": "qwen3.8-max"
-        },
-        "muse-spark-1.2": {
-          "upstream_model": "muse-spark-1.2",
-          "api_format": "responses"
-        },
-        "go-muse": {
-          "upstream_model": "muse-spark-1.2-contributor",
-          "api_format": "responses"
-        },
-        "go-muse-spark-1.2-contributor": {
-          "upstream_model": "muse-spark-1.2-contributor",
-          "api_format": "responses"
         }
       }
     },
@@ -339,6 +354,9 @@
       "models": {
         "deepseek-v4-flash-DS": {
           "upstream_model": "deepseek-v4-flash"
+        },
+        "deepseek-v4-flash-vision-exp": {
+          "upstream_model": "deepseek-v4-flash-vision-exp"
         },
         "deepseek-v4-pro-DS": {
           "upstream_model": "deepseek-v4-pro"
@@ -365,6 +383,10 @@
         },
         "alibaba/wan-2.7": {
           "upstream_model": "alibaba/wan-2.7"
+        },
+        "anthropic/claude-fable-5": {
+          "upstream_model": "anthropic/claude-fable-5",
+          "api_format": "anthropic"
         },
         "anthropic/claude-haiku-4.5": {
           "upstream_model": "anthropic/claude-haiku-4.5",
@@ -492,12 +514,6 @@
         "deepseek/deepseek-v3.2": {
           "upstream_model": "deepseek/deepseek-v3.2"
         },
-        "deepseek/deepseek-v4-flash": {
-          "upstream_model": "deepseek/deepseek-v4-flash"
-        },
-        "deepseek/deepseek-v4-pro": {
-          "upstream_model": "deepseek/deepseek-v4-pro"
-        },
         "deepseek/deepseek-v4-pro-0813": {
           "upstream_model": "deepseek/deepseek-v4-pro-0813"
         },
@@ -539,6 +555,9 @@
         },
         "google/gemini-3.6-flash": {
           "upstream_model": "google/gemini-3.6-flash"
+        },
+        "google/gemini-3.7-flash": {
+          "upstream_model": "google/gemini-3.7-flash"
         },
         "microsoft/mai-image-2.5": {
           "upstream_model": "microsoft/mai-image-2.5"
@@ -729,6 +748,14 @@
         "x-ai/grok-4.3": {
           "upstream_model": "x-ai/grok-4.3"
         },
+        "x-ai/grok-4.5": {
+          "upstream_model": "x-ai/grok-4.5",
+          "api_format": "responses"
+        },
+        "x-ai/grok-4.6": {
+          "upstream_model": "x-ai/grok-4.6",
+          "api_format": "responses"
+        },
         "z-ai/glm-4.6": {
           "upstream_model": "z-ai/glm-4.6"
         },
@@ -750,26 +777,31 @@
         "z-ai/glm-5.2": {
           "upstream_model": "z-ai/glm-5.2"
         },
+        "z-ai/glm-5.3": {
+          "upstream_model": "z-ai/glm-5.3"
+        },
         "z-ai/glm-5v-turbo": {
           "upstream_model": "z-ai/glm-5v-turbo"
         },
-        "anthropic/claude-fable-5": {
-          "upstream_model": "anthropic/claude-fable-5",
-          "api_format": "anthropic"
+        "bailian/qwen3.8-27b": {
+          "upstream_model": "bailian/qwen3.8-27b",
+          "origin": "fetched"
         },
-        "google/gemini-3.7-flash": {
-          "upstream_model": "google/gemini-3.7-flash"
+        "deepseek/deepseek-v4-flash-0423": {
+          "upstream_model": "deepseek/deepseek-v4-flash-0423",
+          "origin": "fetched"
         },
-        "x-ai/grok-4.5": {
-          "upstream_model": "x-ai/grok-4.5",
-          "api_format": "responses"
+        "deepseek/deepseek-v4-flash-0731": {
+          "upstream_model": "deepseek/deepseek-v4-flash-0731",
+          "origin": "fetched"
         },
-        "x-ai/grok-4.6": {
-          "upstream_model": "x-ai/grok-4.6",
-          "api_format": "responses"
+        "deepseek/deepseek-v4-flash-vision-exp": {
+          "upstream_model": "deepseek/deepseek-v4-flash-vision-exp",
+          "origin": "fetched"
         },
-        "z-ai/glm-5.3": {
-          "upstream_model": "z-ai/glm-5.3"
+        "deepseek/deepseek-v4-pro-0423": {
+          "upstream_model": "deepseek/deepseek-v4-pro-0423",
+          "origin": "fetched"
         }
       }
     }

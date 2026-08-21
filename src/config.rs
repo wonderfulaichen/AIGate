@@ -95,9 +95,9 @@ impl Config {
             cache_persist_path: parse_cache_persist_path(),
             loop_guard: LoopGuardConfig {
                 enabled: env_bool("LOOP_GUARD_ENABLED", true),
-                window: env_usize("LOOP_GUARD_WINDOW", 384),
-                min_repeat: env_usize("LOOP_GUARD_MIN_REPEAT", 6),
-                max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 4096),
+                window: env_usize("LOOP_GUARD_WINDOW", 512),
+                min_repeat: env_usize("LOOP_GUARD_MIN_REPEAT", 8),
+                max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 8192),
             },
             strip_history_reasoning: env_bool("STRIP_HISTORY_REASONING", true), // 默认开启
             max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪 (保持上下文完整性, 旧版行为); 超限时由 proxy 紧急瘦身兜底
