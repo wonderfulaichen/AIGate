@@ -1666,6 +1666,18 @@ fn emergency_shrink_body(body: &mut serde_json::Value, target_bytes: usize) -> u
     saved
 }
 
+/// 取字符边界安全的截断点，避免在 UTF-8 多字节字符中间截断导致 panic。
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    let mut i = idx;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// 截断 tool 消息中的超长 content, 防止单条大文件读取结果撑爆请求体.
 ///
 /// 仅处理 role == "tool" 的消息, 若 content 为字符串且超过 `max_bytes`,
@@ -1703,11 +1715,12 @@ fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usiz
                 }
                 // 截断数组形式: 简化为单字符串截断.
                 let orig_len = combined.len();
-                combined.truncate(max_bytes);
-                combined.push_str(&format!("\n...[truncated {} bytes]...", orig_len - max_bytes));
+                let cut = floor_char_boundary(&combined, max_bytes);
+                combined.truncate(cut);
+                combined.push_str(&format!("\n...[truncated {} bytes]...", orig_len - cut));
                 *content_val = serde_json::Value::String(combined);
                 // 估算节省: 原数组序列化长度 - 新字符串长度.
-                saved += orig_len.saturating_sub(max_bytes);
+                saved += orig_len.saturating_sub(cut);
                 continue;
             }
             _ => continue,
@@ -1717,10 +1730,11 @@ fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usiz
         }
         let orig_len = content_str.len();
         let mut truncated = content_str;
-        truncated.truncate(max_bytes);
-        truncated.push_str(&format!("\n...[truncated {} bytes, total {} -> {}]...", orig_len - max_bytes, orig_len, max_bytes));
+        let cut = floor_char_boundary(&truncated, max_bytes);
+        truncated.truncate(cut);
+        truncated.push_str(&format!("\n...[truncated {} bytes, total {} -> {}]...", orig_len - cut, orig_len, cut));
         *content_val = serde_json::Value::String(truncated);
-        saved += orig_len.saturating_sub(max_bytes);
+        saved += orig_len.saturating_sub(cut);
     }
     saved
 }

@@ -977,10 +977,11 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
         <div class="card"><div class="card-body">
           <div class="flex items-center justify-between mb-3">
               <div class="text-xs font-bold uppercase tracking-wider" style="color:var(--c-muted)" x-text="t('provider_config')"></div>
-              <div class="flex gap-2">
+              <div class="flex items-center gap-2">
+                <span x-show="isDirty" class="text-xs px-2 py-1 rounded font-medium" style="background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.3)">● 未保存</span>
                 <button @click="showAddProvider=true" class="btn-ghost text-xs" x-text="t('add')"></button>
                 <button @click="loadProvidersForm()" class="btn-ghost text-xs" x-text="t('refresh')"></button>
-                <button @click="saveProvidersForm()" class="btn-primary text-xs" x-text="t('save_config')"></button>
+                <button @click="saveProvidersForm()" class="btn-primary text-xs" :class="isDirty ? 'animate-pulse' : ''" x-text="t('save_config')"></button>
               </div>
             </div>
           <template x-if="!providersFormData">
@@ -1028,21 +1029,21 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                       <div class="grid grid-cols-2 gap-2 mb-3">
                         <div>
                           <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('tbl.endpoint')"></label>
-                          <input type="text" x-model="prov.endpoint" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                          <input type="text" x-model="prov.endpoint" @input="markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         </div>
                         <div>
                           <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('balance_endpoint_label')"></label>
-                          <input type="text" x-model="prov.balance_endpoint" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                          <input type="text" x-model="prov.balance_endpoint" @input="markDirty()" :placeholder="t('balance_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         </div>
                       </div>
                       <div class="mb-3">
                         <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('anthropic_endpoint_label')"></label>
-                        <input type="text" x-model="prov.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                        <input type="text" x-model="prov.endpoint_anthropic" @input="markDirty()" :placeholder="t('anthropic_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('anthropic_endpoint_hint')"></p>
                       </div>
                       <div class="mb-3">
                         <label class="block text-[10px] mb-1" style="color:var(--c-muted)" x-text="t('responses_endpoint_label')"></label>
-                        <input type="text" x-model="prov.endpoint_responses" :placeholder="t('responses_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                        <input type="text" x-model="prov.endpoint_responses" @input="markDirty()" :placeholder="t('responses_endpoint_ph')" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
                         <p class="text-[10px] mt-1" style="color:var(--c-muted)" x-text="t('responses_endpoint_hint')"></p>
                       </div>
                       <!-- 密钥 (包含关系: 密钥是该供应商的子资源) -->
@@ -1057,24 +1058,45 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                           </template>
                         </div>
                         <div class="flex gap-2 items-center">
-                          <input type="password" x-model="prov._keyDraft" :placeholder="t('key_placeholder')" class="search-input flex-1" />
+                          <input type="password" x-model="prov._keyDraft" @input="markDirty()" :placeholder="t('key_placeholder')" class="search-input flex-1" />
                           <button @click="clearProviderKey(pi)" class="btn-ghost text-xs" style="color:#f87171" x-text="t('clear')"></button>
                         </div>
                         <p class="text-[10px] mt-1" style="color:var(--c-muted)">输入后点击「保存配置」生效；留空则不修改；清空后保存即删除（回退到环境变量/默认值）。</p>
                       </div>
-                      <div class="text-xs font-bold mb-2" style="color:var(--c-muted)" x-text="t('unit_models')"></div>
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="text-xs font-bold" style="color:var(--c-muted)" x-text="t('unit_models') + ' (' + prov.models.length + ')'"></div>
+                        <div class="flex items-center gap-2">
+                          <input type="text" x-model="prov._filter" placeholder="搜索模型 / 上游" class="search-input !w-40 !py-1 text-xs" />
+                          <span class="text-[11px]" style="color:var(--c-muted)" x-text="(prov._filter ? prov.models.filter(m=> (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())).length : prov.models.length) + '/' + prov.models.length"></span>
+                        </div>
+                      </div>
+                      <!-- 批量操作栏 -->
+                      <div x-show="selectedCount(prov)>0" class="flex flex-wrap items-center gap-2 mb-2 p-2 rounded" style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.15)">
+                        <span class="text-xs font-medium" style="color:var(--c-indigo)" x-text="selectedCount(prov)+' 已选'"></span>
+                        <select x-model="prov._bulkEffort" class="bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs" style="color:var(--c-ink)"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select>
+                        <button @click="applyBulkEffort(pi)" class="btn-ghost text-xs" x-text="'应用强度'"></button>
+                        <select x-model="prov._bulkFmt" class="bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs" style="color:var(--c-ink)"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic">Anthropic</option><option value="responses">Responses</option></select>
+                        <button @click="applyBulkFmt(pi)" class="btn-ghost text-xs" x-text="'应用协议'"></button>
+                        <label class="flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" x-model="prov._bulkFree" class="w-3 h-3"/> <span x-text="t('badge.free')"></span></label>
+                        <button @click="applyBulkFree(pi, true)" class="btn-ghost text-xs" x-text="'设为免费'"></button>
+                        <button @click="applyBulkFree(pi, false)" class="btn-ghost text-xs" x-text="'取消免费'"></button>
+                        <button @click="deleteSelected(pi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="'删除所选'"></button>
+                        <button @click="clearSelection(prov)" class="btn-ghost text-xs" x-text="'清空选择'"></button>
+                      </div>
+                      <div class="overflow-x-auto">
                       <table class="mb-2">
-                        <thead><tr><th style="width:11%" x-text="t('tbl.vendor')"></th><th style="width:16%" x-text="t('tbl.model_id')"></th><th style="width:16%" x-text="t('tbl.upstream_model')"></th><th style="width:12%" x-text="t('tbl.reasoning')"></th><th style="width:11%" x-text="t('tbl.protocol')"></th><th style="width:10%" x-text="t('badge.free')"></th><th style="width:12%"></th></tr></thead>
+                        <thead><tr><th style="width:5%"><input type="checkbox" :checked="isAllSelected(prov)" @change="toggleAll(prov, $event.target.checked)" class="w-3.5 h-3.5"/></th><th style="width:10%" x-text="t('tbl.vendor')"></th><th style="width:15%" x-text="t('tbl.model_id')"></th><th style="width:15%" x-text="t('tbl.upstream_model')"></th><th style="width:11%" x-text="t('tbl.reasoning')"></th><th style="width:10%" x-text="t('tbl.protocol')"></th><th style="width:9%" x-text="t('badge.free')"></th><th style="width:10%"></th></tr></thead>
                         <tbody>
                           <template x-for="(m, mi) in prov.models" :key="mi">
-                            <tr>
+                            <tr x-show="!prov._filter || (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())" :class="prov._selected && prov._selected[mi] ? 'bg-[rgba(99,102,241,.06)]' : ''">
+                              <td><input type="checkbox" :checked="!!(prov._selected && prov._selected[mi])" @change="prov._selected = prov._selected||{}; prov._selected[mi]=$event.target.checked; markDirty()" class="w-3.5 h-3.5"/></td>
                               <td>
                                 <span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold" :style="{background:brandFor(m.upstream_model,prov.name).color+'22',color:brandFor(m.upstream_model,prov.name).color,border:'1px solid '+brandFor(m.upstream_model,prov.name).color+'55'}" x-text="brandFor(m.upstream_model,prov.name).label"></span>
                               </td>
-                              <td><input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id)" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
-                              <td><input type="text" x-model="m.upstream_model" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" :placeholder="t('upstream_placeholder')" /></td>
+                              <td><input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id); markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
+                              <td><input type="text" x-model="m.upstream_model" @input="markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" :placeholder="t('upstream_placeholder')" /></td>
                               <td>
-                                <select x-model="m.reasoning_effort" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
+                                <select x-model="m.reasoning_effort" @change="markDirty()" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('eff.none')"></option>
                                   <option value="low" x-text="t('eff.low')"></option>
                                   <option value="medium" x-text="t('eff.medium')"></option>
@@ -1084,25 +1106,31 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                               </td>
                               <td>
                                 <label class="flex items-center gap-1.5 cursor-pointer select-none">
-                                  <input type="checkbox" x-model="m.free" @change="m._freeTouched = true" class="w-3.5 h-3.5 accent-[#10b981]" />
+                                  <input type="checkbox" x-model="m.free" @change="m._freeTouched = true; markDirty()" class="w-3.5 h-3.5 accent-[#10b981]" />
                                   <span class="text-xs" :class="m.free ? 'text-[#34d399] font-semibold' : 'text-[#6b7280]'" x-text="t('free_model')"></span>
                                 </label>
                               </td>
                               <td>
-                                <select x-model="m.api_format" @change="m._fmtTouched = true" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
+                                <select x-model="m.api_format" @change="m._fmtTouched = true; markDirty()" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('fmt.openai')"></option>
                                   <option value="anthropic" x-text="t('fmt.anthropic')"></option>
                                   <option value="responses" x-text="t('fmt.responses')"></option>
                                 </select>
                               </td>
                               <td class="text-right">
-                                <button @click="deleteModel(pi, mi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="t('delete')"></button>
+                                <button @click="deleteModel(pi, mi); markDirty()" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="t('delete')"></button>
                               </td>
                             </tr>
                           </template>
                         </tbody>
                       </table>
-                      <button @click="addModel(pi)" class="btn-ghost text-xs" x-text="t('add_model')"></button>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button @click="addModel(pi); markDirty()" class="btn-ghost text-xs" x-text="t('add_model')"></button>
+                        <button @click="addModel(pi); addModel(pi); addModel(pi)" class="btn-ghost text-xs" x-text="'添加 3 个'"></button>
+                        <label class="btn-ghost text-xs cursor-pointer"><input type="file" class="hidden" @change="importModels(pi, $event)"/> 批量导入 CSV</label>
+                        <button @click="exportModels(pi)" class="btn-ghost text-xs" x-text="'导出选中'"></button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1540,7 +1568,7 @@ function dashboard() {
 
     // Settings
     keysByProvider: {}, keyMsg: '',
-    providersFormData: null, providersFormMsg: '', providersFormOk: false,
+    providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false,
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
@@ -1616,6 +1644,12 @@ function dashboard() {
         this.showWhatsNew = true;
       }
       this.startPoll();
+      window.addEventListener('beforeunload', (e)=>{
+        if(this.isDirty){
+          e.preventDefault();
+          e.returnValue='';
+        }
+      });
     },
 
     // 切换界面语言并持久化 (写入 lang.json + 更新运行态由后端处理)
@@ -1656,12 +1690,18 @@ function dashboard() {
     },
 
     switchTab(tabId) {
+      if(this.isDirty && tabId!==this.activeTab){
+        if(!confirm(t('unsaved_confirm')||'有未保存的供应商配置，切换将丢失改动，是否继续？')){
+          return;
+        }
+        this.isDirty=false;
+      }
       this.activeTab = tabId;
       this.logPage = 0; this.expandedLog = -1;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
-      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchCache(); }
+      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchCache(); }
       if (tabId==='routes') { if (this.health.length===0) this.fetchHealth(); }
     },
 
@@ -2083,6 +2123,7 @@ function dashboard() {
       this.providersFormData.splice(pi,1);
       this.providersFormMsg = '已移除「'+prov.name+'」，点"保存配置"后生效';
       this.providersFormOk = true;
+      this.markDirty();
       setTimeout(()=>this.providersFormMsg='',4000);
     },
     async loadProvidersForm() {
@@ -2091,32 +2132,132 @@ function dashboard() {
          if(r.ok) {
            const d=await r.json();
            if(d.parsed&&d.parsed.providers) {
-             this.providersFormData = d.parsed.providers.map(p => ({
-               ...p,
-               _expanded: false,
-               _testing: false,
-               _testResult: null,
-               models: Object.entries(p.models||{}).map(([id, cfg]) => ({
-                 model_id: id,
-                 upstream_model: cfg.upstream_model||'',
-                 reasoning_effort: cfg.reasoning_effort||'',
-                 api_format: cfg.api_format||'',
-                 free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
-                 _freeTouched: false,
-                 _fmtTouched: false,
-                 }))
-             }));
-           }
-         }
-       } catch(e){}
-     },
+              this.providersFormData = d.parsed.providers.map(p => ({
+                ...p,
+                _expanded: false,
+                _testing: false,
+                _testResult: null,
+                _filter: '',
+                _selected: {},
+                _bulkEffort: '',
+                _bulkFmt: '',
+                _bulkFree: false,
+                models: Object.entries(p.models||{}).map(([id, cfg]) => ({
+                  model_id: id,
+                  upstream_model: cfg.upstream_model||'',
+                  reasoning_effort: cfg.reasoning_effort||'',
+                  api_format: cfg.api_format||'',
+                  free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
+                  _freeTouched: false,
+                  _fmtTouched: false,
+                  }))
+              }));
+              this.isDirty = false;
+            }
+          }
+        } catch(e){}
+      },
      addModel(pi) {
       this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,_freeTouched:false,_fmtTouched:false});
      },
-    deleteModel(pi, mi) {
-       this.providersFormData[pi].models.splice(mi,1);
-     },
-     async testProvider(pi) {
+     deleteModel(pi, mi) {
+        this.providersFormData[pi].models.splice(mi,1);
+        this.markDirty();
+      },
+      markDirty(){ this.isDirty = true; },
+      isAllSelected(prov){
+        if(!prov.models.length) return false;
+        const q=(prov._filter||'').toLowerCase();
+        const idxs=prov.models.map((m,i)=>i).filter(i=> !q || (prov.models[i].model_id||'').toLowerCase().includes(q) || (prov.models[i].upstream_model||'').toLowerCase().includes(q));
+        return idxs.length>0 && idxs.every(i=> prov._selected && prov._selected[i]);
+      },
+      toggleAll(prov, checked){
+        const q=(prov._filter||'').toLowerCase();
+        prov._selected = prov._selected||{};
+        prov.models.forEach((m,i)=>{
+          if(!q || (m.model_id||'').toLowerCase().includes(q) || (m.upstream_model||'').toLowerCase().includes(q)){
+            prov._selected[i]=checked;
+          }
+        });
+        this.markDirty();
+      },
+      selectedCount(prov){
+        if(!prov._selected) return 0;
+        return Object.values(prov._selected).filter(Boolean).length;
+      },
+      clearSelection(prov){ prov._selected={}; },
+      applyBulkEffort(pi){
+        const prov=this.providersFormData[pi];
+        const v=prov._bulkEffort;
+        if(v===undefined) return;
+        (prov._selected||{});
+        Object.keys(prov._selected||{}).forEach(k=>{
+          if(prov._selected[k]){ prov.models[k].reasoning_effort=v; }
+        });
+        this.markDirty();
+      },
+      applyBulkFmt(pi){
+        const prov=this.providersFormData[pi];
+        const v=prov._bulkFmt;
+        if(v===undefined) return;
+        Object.keys(prov._selected||{}).forEach(k=>{
+          if(prov._selected[k]){ prov.models[k].api_format=v; prov.models[k]._fmtTouched=true; }
+        });
+        this.markDirty();
+      },
+      applyBulkFree(pi, val){
+        const prov=this.providersFormData[pi];
+        Object.keys(prov._selected||{}).forEach(k=>{
+          if(prov._selected[k]){ prov.models[k].free=val; prov.models[k]._freeTouched=true; }
+        });
+        this.markDirty();
+      },
+      deleteSelected(pi){
+        const prov=this.providersFormData[pi];
+        const idxs=Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(Number).sort((a,b)=>b-a);
+        if(!idxs.length) return;
+        if(!confirm('确认删除选中的 '+idxs.length+' 个模型？')) return;
+        idxs.forEach(i=> prov.models.splice(i,1));
+        prov._selected={};
+        this.markDirty();
+      },
+      importModels(pi, event){
+        const prov=this.providersFormData[pi];
+        const file=event.target.files[0];
+        if(!file) return;
+        const reader=new FileReader();
+        reader.onload=()=>{
+          const text=reader.result||'';
+          const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+          let added=0;
+          for(const line of lines){
+            if(line.startsWith('#')) continue;
+            const parts=line.split(/[,;\t|]/).map(s=>s.trim()).filter(Boolean);
+            if(!parts.length) continue;
+            const model_id=parts[0];
+            const upstream=parts[1]||model_id;
+            const effort=parts[2]||'';
+            const fmt=parts[3]||'';
+            if(prov.models.some(m=>m.model_id===model_id)) continue;
+            prov.models.push({model_id, upstream_model:upstream, reasoning_effort:effort, api_format:fmt, free:this.autoFree(model_id, upstream), _freeTouched:false, _fmtTouched:!!fmt});
+            added++;
+          }
+          this.markDirty();
+          toast('已导入 '+added+' 个模型', 'success');
+        };
+        reader.readAsText(file);
+        event.target.value='';
+      },
+      exportModels(pi){
+        const prov=this.providersFormData[pi];
+        const selected=Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(k=>prov.models[k]).filter(Boolean);
+        const list = selected.length? selected : prov.models;
+        const csv=list.map(m=> [m.model_id, m.upstream_model||'', m.reasoning_effort||'', m.api_format||''].join(',')).join('\n');
+        const blob=new Blob([csv],{type:'text/csv'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a'); a.href=url; a.download=prov.name+'-models.csv'; a.click(); URL.revokeObjectURL(url);
+      },
+      async testProvider(pi) {
        const prov = this.providersFormData[pi];
        prov._testing = true;
        prov._testResult = null;
@@ -2138,12 +2279,15 @@ function dashboard() {
         if (r.ok && d.success) {
           // 去重: 基于 upstream_model (与后端 add_models 一致), 而非 model_id.
           const existingUpstream = new Set(prov.models.map(m=>m.upstream_model||m.model_id));
+          let added=0;
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
               prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
+              added++;
             }
           }
+          if(added>0) this.markDirty();
           this.providersFormOk = true;
           this.providersFormMsg = d.message;
         } else {
@@ -2202,12 +2346,13 @@ function dashboard() {
          const d=await r.json();
          this.providersFormOk = !!d.message;
          this.providersFormMsg=d.message||d.error||t('save_failed');
-         if(d.message) {
-           // 配置保存成功后, 同步保存所有有草稿的 key
-           await this.saveAllProviderKeys();
-           this.fetchRoutes();
-           setTimeout(()=>this.providersFormMsg='',3000);
-         }
+          if(d.message) {
+            // 配置保存成功后, 同步保存所有有草稿的 key
+            await this.saveAllProviderKeys();
+            this.fetchRoutes();
+            this.isDirty=false;
+            setTimeout(()=>this.providersFormMsg='',3000);
+          }
        } catch(e){ this.providersFormMsg=t('network_error'); }
        },
        async saveAllProviderKeys() {
@@ -2269,6 +2414,7 @@ function dashboard() {
         this.addProvName = ''; this.addProvEndpoint = ''; this.addProvBalanceEndpoint = ''; this.addProvAnthropicEndpoint=''; this.addProvResponsesEndpoint='';
        this.providersFormOk = true;
        this.providersFormMsg = t('add_provider_hint');
+       this.markDirty();
        setTimeout(()=>this.providersFormMsg='',3000);
      },
 
