@@ -1081,20 +1081,27 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                         <button @click="applyBulkFree(pi, true)" class="btn-ghost text-xs" x-text="'设为免费'"></button>
                         <button @click="applyBulkFree(pi, false)" class="btn-ghost text-xs" x-text="'取消免费'"></button>
                         <button @click="deleteSelected(pi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="'删除所选'"></button>
+                        <button @click="clearRemoved(pi)" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-show="prov.models.some(m=>m._removed)" x-text="'清理下架'"></button>
                         <button @click="clearSelection(prov)" class="btn-ghost text-xs" x-text="'清空选择'"></button>
                       </div>
                       <div class="overflow-x-auto">
                       <table class="mb-2">
-                        <thead><tr><th style="width:5%"><input type="checkbox" :checked="isAllSelected(prov)" @change="toggleAll(prov, $event.target.checked)" class="w-3.5 h-3.5"/></th><th style="width:10%" x-text="t('tbl.vendor')"></th><th style="width:15%" x-text="t('tbl.model_id')"></th><th style="width:15%" x-text="t('tbl.upstream_model')"></th><th style="width:11%" x-text="t('tbl.reasoning')"></th><th style="width:10%" x-text="t('tbl.protocol')"></th><th style="width:9%" x-text="t('badge.free')"></th><th style="width:10%"></th></tr></thead>
+                        <thead><tr><th style="width:5%"><input type="checkbox" :checked="isAllSelected(prov)" @change="toggleAll(prov, $event.target.checked)" class="w-3.5 h-3.5"/></th><th style="width:10%" x-text="t('tbl.vendor')"></th><th style="width:15%" x-text="t('tbl.model_id')"></th><th style="width:15%" x-text="t('tbl.upstream_model')"></th><th style="width:11%" x-text="t('tbl.reasoning')"></th><th style="width:9%" x-text="t('badge.free')"></th><th style="width:10%" x-text="t('tbl.protocol')"></th><th style="width:10%"></th></tr></thead>
                         <tbody>
                           <template x-for="(m, mi) in prov.models" :key="mi">
-                            <tr x-show="!prov._filter || (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())" :class="prov._selected && prov._selected[mi] ? 'bg-[rgba(99,102,241,.06)]' : ''">
+                            <tr x-show="!prov._filter || (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())" :class="(m._removed ? 'opacity-60 ' : '') + (m._isNew ? 'bg-[rgba(52,211,153,.06)] ' : '') + (prov._selected && prov._selected[mi] ? 'bg-[rgba(99,102,241,.06)]' : '')">
                               <td><input type="checkbox" :checked="!!(prov._selected && prov._selected[mi])" @change="prov._selected = prov._selected||{}; prov._selected[mi]=$event.target.checked; markDirty()" class="w-3.5 h-3.5"/></td>
                               <td>
-                                <span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold" :style="{background:brandFor(m.upstream_model,prov.name).color+'22',color:brandFor(m.upstream_model,prov.name).color,border:'1px solid '+brandFor(m.upstream_model,prov.name).color+'55'}" x-text="brandFor(m.upstream_model,prov.name).label"></span>
+                                <div class="flex items-center gap-1 flex-wrap">
+                                  <span class="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold" :style="{background:brandFor(m.upstream_model,prov.name).color+'22',color:brandFor(m.upstream_model,prov.name).color,border:'1px solid '+brandFor(m.upstream_model,prov.name).color+'55'}" x-text="brandFor(m.upstream_model,prov.name).label"></span>
+                                  <template x-if="m._isNew"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)">NEW</span></template>
+                                  <template x-if="m._removed"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)">下架</span></template>
+                                  <template x-if="m.origin==='manual'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)">手动</span></template>
+                                  <template x-if="!m.origin || m.origin==='fetched'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.25)">获取</span></template>
+                                </div>
                               </td>
                               <td><input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id); markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
-                              <td><input type="text" x-model="m.upstream_model" @input="markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" :placeholder="t('upstream_placeholder')" /></td>
+                              <td><input type="text" x-model="m.upstream_model" readonly title="上游主键（只读，改别名请改左侧中转ID）" class="w-full bg-[rgba(255,255,255,.02)] border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none cursor-not-allowed opacity-80" :placeholder="t('upstream_placeholder')" /></td>
                               <td>
                                 <select x-model="m.reasoning_effort" @change="markDirty()" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('eff.none')"></option>
@@ -2147,7 +2154,10 @@ function dashboard() {
                   upstream_model: cfg.upstream_model||'',
                   reasoning_effort: cfg.reasoning_effort||'',
                   api_format: cfg.api_format||'',
+                  origin: cfg.origin||'',
                   free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
+                  _isNew: false,
+                  _removed: false,
                   _freeTouched: false,
                   _fmtTouched: false,
                   }))
@@ -2157,9 +2167,10 @@ function dashboard() {
           }
         } catch(e){}
       },
-     addModel(pi) {
-      this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,_freeTouched:false,_fmtTouched:false});
-     },
+      addModel(pi) {
+       this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,origin:'manual',_isNew:false,_removed:false,_freeTouched:false,_fmtTouched:false});
+        this.markDirty();
+      },
      deleteModel(pi, mi) {
         this.providersFormData[pi].models.splice(mi,1);
         this.markDirty();
@@ -2220,6 +2231,15 @@ function dashboard() {
         idxs.forEach(i=> prov.models.splice(i,1));
         prov._selected={};
         this.markDirty();
+      },
+      clearRemoved(pi){
+        const prov=this.providersFormData[pi];
+        const idxs=prov.models.map((m,i)=> m._removed ? i : -1).filter(i=>i>=0).sort((a,b)=>b-a);
+        if(!idxs.length) return;
+        if(!confirm('确认清理 '+idxs.length+' 个已下架模型？')) return;
+        idxs.forEach(i=> prov.models.splice(i,1));
+        this.markDirty();
+        toast('已清理 '+idxs.length+' 个下架模型', 'success');
       },
       importModels(pi, event){
         const prov=this.providersFormData[pi];
@@ -2282,14 +2302,27 @@ function dashboard() {
           let added=0;
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
-              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
+              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
             }
           }
-          if(added>0) this.markDirty();
+          // 标记已下架
+          const removedSet = new Set(d.removed||[]);
+          let removedMarked=0;
+          for(const m of prov.models){
+            const wasRemoved = removedSet.has(m.model_id) || removedSet.has(m.upstream_model);
+            if(wasRemoved && !m._removed) removedMarked++;
+            m._removed = wasRemoved;
+            if(wasRemoved) m._isNew=false;
+          }
+          if(added>0 || removedMarked>0) this.markDirty();
+          // 8 秒后自动清除 NEW 高亮
+          if(added>0){
+            setTimeout(()=>{ for(const m of prov.models) m._isNew=false; }, 8000);
+          }
           this.providersFormOk = true;
-          this.providersFormMsg = d.message;
+          this.providersFormMsg = d.message + (removedSet.size ? ' | 下架 ' + removedSet.size + ' 个' : '');
         } else {
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
@@ -2320,10 +2353,11 @@ function dashboard() {
              if (m.api_format) cfg.api_format = m.api_format;
              // 免费: 仅在与自动判定结果不同时才写显式字段, 保持配置干净;
              // 取消自动判定的免费需用户手动勾掉开关 (_freeTouched) 才写 free: false
-             const autoFree = this.autoFree(m.model_id, m.upstream_model);
-             if (m.free && !autoFree) cfg.free = true;
-             else if (!m.free && autoFree && m._freeTouched) cfg.free = false;
-             models[m.model_id] = Object.keys(cfg).length ? cfg : {};
+              const autoFree = this.autoFree(m.model_id, m.upstream_model);
+              if (m.free && !autoFree) cfg.free = true;
+              else if (!m.free && autoFree && m._freeTouched) cfg.free = false;
+              if (m.origin) cfg.origin = m.origin;
+              models[m.model_id] = Object.keys(cfg).length ? cfg : {};
            }
             return {
               name: p.name,
