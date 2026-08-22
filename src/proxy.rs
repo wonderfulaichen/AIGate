@@ -840,6 +840,7 @@ fn stream_response_with_tokens(
             } else {
                 None
             },
+            recent_lines: std::collections::VecDeque::new(),
             log_buffer: Some(TokenLogData {
                 log_buffer,
                 model,
@@ -996,6 +997,9 @@ struct TokenStream<S> {
     /// Responses API 模式: 非 None 时, 上游 SSE (data: 行) 经此转换器
     /// 翻译为 OpenAI chat/completions 格式 payload.
     responses_conv: Option<crate::responses::ResponsesStreamConv>,
+    /// 最近 N 条上游原始 SSE 行 (环形, 每行截断至 200 字符): 流异常中断时写入错误日志,
+    /// 用于事后分辨「上游发了什么就断了」(半截 JSON / error 事件 / 纯断流无内容).
+    recent_lines: std::collections::VecDeque<String>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -1038,6 +1042,20 @@ impl<S> TokenStream<S> {
         if line.is_empty() {
             return;
         }
+        // 记录最近原始行 (诊断用): 环形保留 8 条, 每条截断 200 字符防日志膨胀.
+        const RECENT_CAP: usize = 8;
+        const LINE_CLIP: usize = 200;
+        if self.recent_lines.len() >= RECENT_CAP {
+            self.recent_lines.pop_front();
+        }
+        let clipped: String = if line.len() > LINE_CLIP {
+            let mut s: String = line.chars().take(LINE_CLIP).collect();
+            s.push_str("…");
+            s
+        } else {
+            line.to_string()
+        };
+        self.recent_lines.push_back(clipped);
         // Anthropic /messages 模式: event:/data: 行经转换器翻译为 OpenAI payload, 再走统一处理.
         if let Some(conv) = &mut self.anthropic_conv {
             for payload in conv.feed_line(line) {
@@ -1367,7 +1385,28 @@ where
                             // 直接使用上游错误消息, 避免被笼统的 10014 截断掩盖.
                             Some(format!("responses upstream error: {err}"))
                         } else if !this.clean_finish {
-                            Some(crate::i18n::msg_stream_truncated().to_string())
+                            // 流被上游/中间链路以 TCP 干净关闭结束但无任何终止帧.
+                            // 附诊断上下文: 已输出 token 数 + 最后几条原始 SSE 行, 便于区分
+                            // 「长输出触顶被上游掐断」vs「代理/h2 GOAWAY 断连」vs「漏解析终止帧」.
+                            let tail: String = this
+                                .recent_lines
+                                .iter()
+                                .rev()
+                                .take(3)
+                                .rev()
+                                .map(|l| l.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ⏎ ");
+                            let mut msg = format!(
+                                "{} (已输出 {} tok / 输入 {} tok)",
+                                crate::i18n::msg_stream_truncated(),
+                                ct,
+                                pt
+                            );
+                            if !tail.is_empty() {
+                                msg.push_str(&format!(" [末帧: {tail}]"));
+                            }
+                            Some(msg)
                         } else {
                             this.finish_reason.clone()
                                 .filter(|f| f == "error")
@@ -2330,6 +2369,7 @@ mod tests {
             first_token_at: None,
             anthropic_conv: None,
             responses_conv: None,
+            recent_lines: std::collections::VecDeque::new(),
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -2422,6 +2462,7 @@ mod tests {
             first_token_at: None,
             anthropic_conv: None,
             responses_conv: None,
+            recent_lines: std::collections::VecDeque::new(),
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
