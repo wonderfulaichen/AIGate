@@ -14,7 +14,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use reqwest::Client;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -52,12 +52,12 @@ pub struct AppState {
     pub cache: std::sync::Arc<ResponseCache>,
     /// 并发去重运行态: 同一时刻字节级相同的非流式请求只打一次上游 (无损).
     pub inflight: Arc<crate::cache::InflightCache>,
-    /// 流式响应空闲超时.
-    pub stream_idle_timeout: Duration,
-    /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式前 5xx 重试).
-    pub retry_max: u32,
-    /// 重试退避基数 (毫秒): 每次重试前等待 base*attempt + 抖动.
-    pub retry_backoff: Duration,
+    /// 流式响应空闲超时 (秒, 原子存储: 面板运行时可调).
+    pub stream_idle_timeout_secs: Arc<std::sync::atomic::AtomicU64>,
+    /// 瞬态失败最大重试次数 (仅对连接/超时错误与流式前 5xx 重试; 面板运行时可调).
+    pub retry_max: Arc<std::sync::atomic::AtomicU32>,
+    /// 重试退避基数 (毫秒): 每次重试前等待 base*attempt + 抖动 (面板运行时可调).
+    pub retry_backoff_ms: Arc<std::sync::atomic::AtomicU64>,
     /// 熔断器表: provider name -> 该供应商的熔断器 (std Mutex, 临界区极短).
     pub breakers: BreakerMap,
     /// 模型死循环检测配置 (用于构造流式检测器, 默认开启).
@@ -69,6 +69,9 @@ pub struct AppState {
     /// 默认 0 = 不裁剪. 作为 AtomicUsize 存储在 AppState, 与 strip_history_reasoning 一致,
     /// 便于未来运行时面板可调 (当前仅环境变量控制, 重启生效).
     pub max_history_turns: Arc<AtomicUsize>,
+    /// 流截断自动续写次数上限 (0=关闭, 默认 2): 上游断流无 finish_reason 时自动
+    /// 带已输出正文重发"继续"请求并拼接新响应. 运行时可在面板调整.
+    pub auto_continue: Arc<AtomicUsize>,
 }
 
 /// 熔断器表类型别名.
@@ -481,7 +484,8 @@ pub async fn chat_completions(
     //    不含 429 (视为终态). 熔断上报统一在"最终 attempt"结果上执行一次,
     //    避免重试放大失败计数误开熔断.
     let ep_clone = endpoint.clone();
-    let total_attempts = state.retry_max.saturating_add(1);
+    let total_attempts = state.retry_max.load(Ordering::Relaxed).saturating_add(1);
+    let backoff_base = Duration::from_millis(state.retry_backoff_ms.load(Ordering::Relaxed));
     let mut upstream: Option<reqwest::Response> = None;
     let mut send_err: Option<String> = None;
     let mut attempt = 0u32;
@@ -515,7 +519,7 @@ pub async fn chat_completions(
                     // 5xx 可重试 (服务端瞬态故障); 不重试 4xx (含 429).
                     if attempt < total_attempts {
                         warn!("proxy: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
-                        retry_backoff(attempt, state.retry_backoff).await;
+                        retry_backoff(attempt, backoff_base).await;
                         continue;
                     }
                     upstream = Some(resp);
@@ -533,7 +537,7 @@ pub async fn chat_completions(
                 let retryable = e.is_connect() || e.is_timeout() || e.is_request();
                 if retryable && attempt < total_attempts {
                     warn!("proxy: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
-                    retry_backoff(attempt, state.retry_backoff).await;
+                    retry_backoff(attempt, backoff_base).await;
                     continue;
                 }
                 send_err = Some(chain);
@@ -678,6 +682,20 @@ pub async fn chat_completions(
             }
         }
     }
+    // 自动续写: 运行时开关 > 0 时携带续写上下文 (原始请求体/端点/key/headers),
+    // 流被上游中途掐断时由 TokenStream 自动重请求拼接.
+    let cont_max = state.auto_continue.load(Ordering::Relaxed) as u32;
+    let cont_ctx = if cont_max > 0 {
+        Some(ContinuationCtx {
+            client: state.client.clone(),
+            endpoint: endpoint.clone(),
+            headers: req_headers.clone(),
+            body_bytes: bytes.clone(),
+            idle: Duration::from_secs(state.stream_idle_timeout_secs.load(Ordering::Relaxed)),
+        })
+    } else {
+        None
+    };
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
@@ -689,10 +707,12 @@ pub async fn chat_completions(
         body_len_val,
         state.loop_guard.clone(),
         model_cfg.loop_guard,
-        state.stream_idle_timeout,
+        Duration::from_secs(state.stream_idle_timeout_secs.load(Ordering::Relaxed)),
         anthropic_mode,
         responses_mode,
         strip_saved_tokens, trim_saved_tokens,
+        cont_max,
+        cont_ctx,
     );
     Ok(resp)
 }
@@ -796,14 +816,31 @@ fn stream_response_with_tokens(
     responses: bool,
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
+    auto_continue_max: u32,
+    cont_ctx: Option<ContinuationCtx>,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
     // 用空闲超时包装上游字节流, 防止上游假死长期占用连接.
-    let inner_stream = IdleTimeoutStream::new(upstream.bytes_stream(), idle);
+    // 装箱为 trait object: 续写触发时可直接整体替换 (去泛型化).
+    let inner_stream = IdleTimeoutStream::new(upstream.bytes_stream(), idle)
+        .map(|r| r.map_err(|e| Box::new(e) as StreamErr));
+
+    let loop_guard_enabled = if !loop_cfg.enabled {
+        false
+    } else if let Some(v) = model_loop_guard {
+        v
+    } else if model.to_ascii_lowercase().contains("muse-spark")
+        || upstream_model.as_deref().map(|s| s.to_ascii_lowercase().contains("muse-spark")).unwrap_or(false)
+    {
+        // muse-spark 长推理含表格/代码围栏易误触，默认关闭，仍可通过模型档 loop_guard: true 显式开启
+        false
+    } else {
+        true
+    };
 
     let tracked = TokenStream {
-        inner: inner_stream,
+        inner: Box::pin(inner_stream),
         done: false,
         tokens_pt: 0,
         tokens_ct: 0,
@@ -811,18 +848,10 @@ fn stream_response_with_tokens(
         tokens_cache_miss: 0,
         tokens_cache_creation: 0,
         response_bytes: 0,
-        loop_guard: {
-            if !loop_cfg.enabled {
-                None
-            } else if let Some(v) = model_loop_guard {
-                if v { Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer)) } else { None }
-            } else if model.to_ascii_lowercase().contains("muse-spark")
-                || upstream_model.as_deref().map(|s| s.to_ascii_lowercase().contains("muse-spark")).unwrap_or(false) {
-                // muse-spark 长推理含表格/代码围栏易误触，默认关闭，仍可通过模型档 loop_guard: true 显式开启
-                None
-            } else {
-                Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
-            }
+        loop_guard: if loop_guard_enabled {
+            Some(LoopDetector::new(loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
+        } else {
+            None
         },
         loop_aborted: false,
         error_closed: false,
@@ -846,6 +875,21 @@ fn stream_response_with_tokens(
                 None
             },
             recent_lines: std::collections::VecDeque::new(),
+            // ── 自动续写 ──
+            cont_ctx,
+            cont_left: auto_continue_max,
+            accumulated_content: String::new(),
+            emitted_tool_calls: false,
+            cont_pending: None,
+            cont_segment: 0,
+            cont_fail_note: None,
+            anthropic_mode: anthropic,
+            responses_mode: responses,
+            loop_params: if loop_guard_enabled {
+                Some((loop_cfg.window, loop_cfg.min_repeat, loop_cfg.max_buffer))
+            } else {
+                None
+            },
             log_buffer: Some(TokenLogData {
                 log_buffer,
                 model,
@@ -949,13 +993,30 @@ struct TokenLogData {
     trim_saved_tokens: u32,
 }
 
+/// 装箱后的上游字节流错误: 生产为 IdleError<reqwest::Error>, 测试可注入任意 Error.
+/// 统一装箱使续写时可直接替换 inner 流 (去泛型化的前提).
+type StreamErr = Box<dyn std::error::Error + Send + Sync>;
+type BoxUpstreamStream = Pin<Box<dyn Stream<Item = Result<Bytes, StreamErr>> + Send>>;
+
+/// 自动续写上下文: 流被上游中途掐断时, 用原始请求体追加 assistant 已输出正文 + user
+/// "继续" 指令重新请求, 把新响应无缝拼进当前 SSE. 全部字段在构造时从 handler 克隆.
+struct ContinuationCtx {
+    client: Client,
+    endpoint: String,
+    headers: HeaderMap,
+    /// 发往上游的最终请求体 (已按协议转换/注入/瘦身), 续写时在其上追加消息.
+    body_bytes: Bytes,
+    /// 新建分段流的空闲超时.
+    idle: Duration,
+}
+
 /// 包装上游 SSE 字节流, 解析 `data: {...usage...}` 事件提取 token 数,
 /// 流结束时自动写入请求日志.
 ///
 /// 如果上游未发送 usage 事件 (常见于免费/开源模型), 则从响应 body
 /// 字节数估算 completion_tokens (body_bytes / 4 作为近似值).
-struct TokenStream<S> {
-    inner: S,
+struct TokenStream {
+    inner: BoxUpstreamStream,
     done: bool,
     tokens_pt: u32,
     tokens_ct: u32,
@@ -1010,10 +1071,93 @@ struct TokenStream<S> {
     /// 保持代理/CDN 的连接活跃计时器不超时, 防止长思考静默期被中间层掐断.
     /// Option 包装: 单测环境无 tokio 时间驱动, 置 None 跳过注入.
     keepalive: Option<Pin<Box<tokio::time::Sleep>>>,
+    // ── 自动续写 (上游断流后自动重试续段) ──
+    /// 续写上下文: None = 未启用 (auto_continue=0 或构造时未提供).
+    cont_ctx: Option<ContinuationCtx>,
+    /// 剩余续写次数.
+    cont_left: u32,
+    /// 已累积的 assistant 可见正文 (仅 delta.content, 不含推理链): 续写请求的 assistant 消息.
+    accumulated_content: String,
+    /// 本流是否输出过 tool_calls delta: 半截工具调用 JSON 无法安全续写, 触发即禁用续写.
+    emitted_tool_calls: bool,
+    /// 进行中的续写请求 future.
+    cont_pending: Option<Pin<Box<dyn Future<Output = Result<reqwest::Response, String>> + Send>>>,
+    /// 当前段序号 (0=原始响应, ≥1=第 N 次续写的响应段): usage 记账口径切换 (覆盖→累加).
+    cont_segment: u32,
+    /// 续写失败备注 (非空时禁止再次续写, 收尾日志优先展示).
+    cont_fail_note: Option<String>,
+    /// 协议模式标志 (续写换段时重建对应转换器).
+    anthropic_mode: bool,
+    responses_mode: bool,
+    /// 死循环检测器构造参数 (window, min_repeat, max_buffer): 换段时重建全新检测器,
+    /// 避免跨段窗口残留文本把上一段结尾+下一段开头误判成循环.
+    loop_params: Option<(usize, usize, usize)>,
     log_buffer: Option<TokenLogData>,
 }
 
-impl<S> TokenStream<S> {
+impl TokenStream {
+    /// 截断续写资格判定 + 续写请求构造. 返回 true 表示已发起续写 (poll_next 应转入等待态).
+    ///
+    /// 触发条件 (全部满足):
+    ///  - 流非干净结束 (上游未发 finish_reason/[DONE]) 且非死循环/错误收尾
+    ///  - 剩余续写名额 > 0, 无上次失败备注
+    ///  - 未输出过 tool_calls delta (半截工具调用 JSON 拼不回来)
+    ///  - 已累积正文非空 (有内容才值得续)
+    fn maybe_start_continuation(&mut self) -> bool {
+        if self.clean_finish || self.loop_aborted || self.stream_errored {
+            return false;
+        }
+        if self.cont_left == 0 || self.cont_fail_note.is_some() || self.emitted_tool_calls {
+            return false;
+        }
+        if self.accumulated_content.is_empty() {
+            return false;
+        }
+        let Some(ctx) = self.cont_ctx.as_ref() else {
+            return false;
+        };
+        // 在原始请求体上追加 assistant 已输出正文 + user 继续指令 (按协议格式).
+        let Ok(mut body) = serde_json::from_slice::<serde_json::Value>(&ctx.body_bytes) else {
+            return false;
+        };
+        let format = if self.anthropic_mode && !self.responses_mode {
+            1
+        } else if self.responses_mode && !self.anthropic_mode {
+            2
+        } else {
+            0
+        };
+        if !append_continuation_messages(&mut body, &self.accumulated_content, format) {
+            return false;
+        }
+        let Ok(new_body) = serde_json::to_vec(&body) else {
+            return false;
+        };
+        info!(
+            "proxy: auto-continue #{}: upstream cut without finish_reason, re-requesting (accumulated {} chars, model={})",
+            self.cont_segment + 1,
+            self.accumulated_content.len(),
+            self.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+        );
+        let client = ctx.client.clone();
+        let endpoint = ctx.endpoint.clone();
+        let headers = ctx.headers.clone();
+        let fut = async move {
+            client
+                .post(&endpoint)
+                .headers(headers)
+                .header("content-type", "application/json")
+                .header("accept", "text/event-stream")
+                .body(new_body)
+                .send()
+                .await
+                .map_err(|e| e.to_string())
+        };
+        self.cont_pending = Some(Box::pin(fut));
+        self.cont_left -= 1;
+        true
+    }
+
     /// 解析一个上游 chunk: 累积到行缓冲后处理完整行 (供 poll_next 与测试调用).
     /// 跨 chunk 的半行由 line_buf 续拼, 修复 mid-object split 导致的 10014.
     fn parse_sse_chunk(&mut self, data: &[u8]) {
@@ -1136,13 +1280,16 @@ impl<S> TokenStream<S> {
             self.pending_error_sse = Some(serde_json::to_string(&ev).unwrap_or_default());
             return;
         }
-        // 从 usage 事件提取精确 token 数
+        // 从 usage 事件提取精确 token 数.
+        // 分段口径: 原始段覆盖; 续写段 prompt 取 max (每段都重发全量上下文, 记最大值),
+        // completion 累加 (各段新生成的量之和才是总产出).
+        let is_cont_seg = self.cont_segment > 0;
         if let Some(usage) = val.get("usage") {
             if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                self.tokens_pt = pt as u32;
+                self.tokens_pt = if is_cont_seg { self.tokens_pt.max(pt as u32) } else { pt as u32 };
             }
             if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
-                self.tokens_ct = ct as u32;
+                self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
             }
             // 上游 KV Cache 命中/未命中/首次写入 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema)
             // 同一 usage 事件内 hit / miss / creation 任一非零则整体覆盖, 避免分块 usage 互相覆盖致数值错乱.
@@ -1158,10 +1305,10 @@ impl<S> TokenStream<S> {
             if let Some(choice) = choices.first() {
                 if let Some(inner_usage) = choice.get("usage") {
                     if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                        self.tokens_pt = pt as u32;
+                        self.tokens_pt = if is_cont_seg { self.tokens_pt.max(pt as u32) } else { pt as u32 };
                     }
                     if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
-                        self.tokens_ct = ct as u32;
+                        self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
                     }
                     // 上游 KV Cache 命中/未命中/首次写入 (兼容两种 schema); 任一非零则整体覆盖.
                     let (hit, miss, creation) = usage_cache(inner_usage);
@@ -1183,11 +1330,20 @@ impl<S> TokenStream<S> {
                                 has_token = true;
                             }
                             if key == "content" {
+                                // 续写素材: 累积可见正文 (不含推理链), 截断时作为 assistant 消息回传.
+                                if !s.is_empty() {
+                                    self.accumulated_content.push_str(s);
+                                }
                                 if let Some(detector) = self.loop_guard.as_mut() {
                                     detector.feed(s);
                                 }
                             }
                         }
+                    }
+                    // 工具调用检测: 出现过 tool_calls delta 的流禁止续写
+                    // (半截 arguments JSON 无法安全拼接, 续写会产生损坏的工具调用).
+                    if delta.get("tool_calls").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+                        self.emitted_tool_calls = true;
                     }
                     // 首次出现增量文本即记录首 token 时刻 (用于首 token 延迟 / 纯生成速度计算).
                     if has_token && self.first_token_at.is_none() {
@@ -1239,12 +1395,8 @@ impl<S> TokenStream<S> {
     }
 }
 
-impl<S, E> Stream for TokenStream<S>
-where
-    S: Stream<Item = Result<Bytes, E>> + Unpin,
-    E: std::fmt::Debug,
-{
-    type Item = Result<Bytes, E>;
+impl Stream for TokenStream {
+    type Item = Result<Bytes, StreamErr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
@@ -1252,8 +1404,69 @@ where
         if this.error_closed {
             return Poll::Ready(None);
         }
+        // ── 自动续写等待态: 上段被掐后发起的续写请求就绪检查 ──
+        if this.cont_pending.is_some() {
+            match this.cont_pending.as_mut().unwrap().as_mut().poll(cx) {
+                Poll::Pending => {
+                    // 等续写连接建立期间同样注入 keepalive, 防中间层在静默期掐断.
+                    if let Some(ka) = this.keepalive.as_mut() {
+                        if ka.as_mut().poll(cx).is_ready() {
+                            ka.as_mut().reset(tokio::time::Instant::now() + SSE_KEEPALIVE_INTERVAL);
+                            return Poll::Ready(Some(Ok(Bytes::from_static(b": keepalive\n\n"))));
+                        }
+                    }
+                    return Poll::Pending;
+                }
+                Poll::Ready(result) => {
+                    this.cont_pending = None;
+                    match result {
+                        Ok(resp) if resp.status().is_success() => {
+                            let idle = this.cont_ctx.as_ref().map(|c| c.idle)
+                                .unwrap_or(Duration::from_secs(120));
+                            let s = IdleTimeoutStream::new(resp.bytes_stream(), idle)
+                                .map(|r| r.map_err(|e| Box::new(e) as StreamErr));
+                            this.inner = Box::pin(s);
+                            // 分段状态重置: 新 SSE 流从零开始 (out_buf 保留 — 可能有未 flush 帧).
+                            this.line_buf.clear();
+                            this.recent_lines.clear();
+                            this.anthropic_conv = if this.anthropic_mode && !this.responses_mode {
+                                Some(crate::anthropic::AnthropicStreamConv::new())
+                            } else {
+                                None
+                            };
+                            this.responses_conv = if this.responses_mode && !this.anthropic_mode {
+                                Some(crate::responses::ResponsesStreamConv::new())
+                            } else {
+                                None
+                            };
+                            this.clean_finish = false;
+                            this.finish_reason = None;
+                            this.stream_errored = false;
+                            this.pending_error_sse = None;
+                            this.errored_msg = None;
+                            this.loop_aborted = false;
+                            if let Some((w, r, b)) = this.loop_params {
+                                this.loop_guard = Some(LoopDetector::new(w, r, b));
+                            }
+                            this.cont_segment += 1;
+                            info!("proxy: auto-continue segment #{} connected", this.cont_segment);
+                        }
+                        Ok(resp) => {
+                            // 非 2xx: 放弃续写转入统一收尾, 错误信息带上状态码.
+                            this.cont_fail_note =
+                                Some(format!("自动续写失败: 上游返回 HTTP {}", resp.status()));
+                        }
+                        Err(e) => {
+                            this.cont_fail_note = Some(format!("自动续写请求失败: {e}"));
+                        }
+                    }
+                    // 成功换段 → 落入下方主循环 poll 新 inner;
+                    // 失败 → done 仍为 false, None 分支会带 cont_fail_note 收尾.
+                }
+            }
+        }
         loop {
-            match Pin::new(&mut this.inner).poll_next(cx) {
+            match this.inner.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
                 // 有真实上游数据到达 → 重置 keepalive 定时器 (仅在静默期注入).
                 if let Some(ka) = this.keepalive.as_mut() {
@@ -1383,26 +1596,35 @@ where
                         return Poll::Ready(Some(Ok(Bytes::from(out))));
                     }
                     if !this.done {
+                        // 自动续写: 流被掐且满足条件 → 发起续写请求而非立即收尾.
+                        // 返回 Pending 等待续写连接建立 (reqwest future 会注册唤醒),
+                        // 下次 poll 走顶部 cont_pending 分支换段继续.
+                        if this.maybe_start_continuation() {
+                            return Poll::Pending;
+                        }
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
                         let (pt, ct, hit, miss, creation) = this.final_tokens(req_body_len);
                         // 完成日志的 error 判定:
                         //  - 死循环检测截断 (loop_aborted): 用专属文案, 避免误显示为上游截断.
+                        //  - 续写尝试失败 (cont_fail_note): 展示失败原因.
                         //  - 流从未干净结束 (clean_finish==false): 上游连接关了却没发 finish_reason/[DONE],
                         //    响应被截断 (典型 10014 mid-object split 丢尾帧) → 记为 error, 否则记录页会显示 200 成功.
                         //  - 流干净结束但 finish_reason=="error": 记为 error (10004 类).
                         // 必须在 async 块外计算 (this 是 &mut, 不能跨线程), 仅捕获拥有的 String 进 spawn.
                         let err_for_log: Option<String> = if this.loop_aborted {
                             Some("model loop detected, stream truncated by AIGate".to_string())
+                        } else if let Some(note) = this.cont_fail_note.clone() {
+                            Some(format!("{note}（已输出 {} tok / 输入 {} tok）", ct, pt))
                         } else if let Some(err) = this.responses_conv.as_ref().and_then(|c| c.last_error.as_ref()) {
                             // Responses API 上游返回了明确错误 (如 "Expected 'function' type."),
                             // 直接使用上游错误消息, 避免被笼统的 10014 截断掩盖.
                             Some(format!("responses upstream error: {err}"))
                         } else if !this.clean_finish {
                             // 流被上游/中间链路以 TCP 干净关闭结束但无任何终止帧.
-                            // 实测规律 (logs.jsonl 大样本): 截断全部发生在输出 >1.6 万 token 时,
-                            // ≤8K 的请求从未复现 —— 上游网关对超长生成直接断连而不发 finish_reason=length.
-                            // 故按输出量分级文案, 帮用户区分「上游长输出断流」与「链路异常」.
+                            // 统一文案 (不再按输出量分级): 大样本证实截断与输出量正相关,
+                            // 但 mimo 12K 也复现过, 固定阈值会漏; 且 keepalive 已缓解静默掐断,
+                            // 此处剩余场景均为上游主动断连, 文案如实描述即可.
                             let tail: String = this
                                 .recent_lines
                                 .iter()
@@ -1412,20 +1634,10 @@ where
                                 .map(|l| l.as_str())
                                 .collect::<Vec<_>>()
                                 .join(" ⏎ ");
-                            const LONG_OUTPUT_TOK: u32 = 16_000;
-                            let mut msg = if ct >= LONG_OUTPUT_TOK {
-                                format!(
-                                    "上游在长输出中途主动断流（已输出 {} tok / 输入 {} tok，非网关截断；客户端已收到 length 终止帧，可让模型续写）",
-                                    ct, pt
-                                )
-                            } else {
-                                format!(
-                                    "{} (已输出 {} tok / 输入 {} tok)",
-                                    crate::i18n::msg_stream_truncated(),
-                                    ct,
-                                    pt
-                                )
-                            };
+                            let mut msg = format!(
+                                "上游在生成中途断流（非网关截断；已输出 {} tok / 输入 {} tok，客户端已收到 length 终止帧，可让模型续写）",
+                                ct, pt
+                            );
                             if !tail.is_empty() {
                                 msg.push_str(&format!(" [末帧: {tail}]"));
                             }
@@ -1468,6 +1680,56 @@ where
                     return Poll::Pending;
                 }
             }
+        }
+    }
+}
+
+/// 在原始请求体上追加续写消息 (assistant 已输出正文 + user 继续指令).
+/// 按协议格式分派: 0=OpenAI chat/completions, 1=Anthropic /messages, 2=Responses API.
+/// 返回 false 表示请求体结构不符合预期 (缺 messages/input 数组等), 调用方放弃续写.
+fn append_continuation_messages(body: &mut serde_json::Value, accumulated: &str, format: u8) -> bool {
+    const CONTINUE_PROMPT: &str = "继续输出剩余内容，从上次中断处直接接着写，不要重复已有内容。";
+    match format {
+        1 => {
+            // Anthropic /messages: content 为 block 数组.
+            let Some(msgs) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+                return false;
+            };
+            msgs.push(serde_json::json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": accumulated}]
+            }));
+            msgs.push(serde_json::json!({
+                "role": "user",
+                "content": [{"type": "text", "text": CONTINUE_PROMPT}]
+            }));
+            true
+        }
+        2 => {
+            // Responses API: 消息在 input 数组, 文本类型区分 output_text/input_text.
+            let Some(input) = body.get_mut("input").and_then(|i| i.as_array_mut()) else {
+                return false;
+            };
+            input.push(serde_json::json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": accumulated}]
+            }));
+            input.push(serde_json::json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": CONTINUE_PROMPT}]
+            }));
+            true
+        }
+        _ => {
+            // OpenAI chat/completions: content 直接为字符串.
+            let Some(msgs) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+                return false;
+            };
+            msgs.push(serde_json::json!({ "role": "assistant", "content": accumulated }));
+            msgs.push(serde_json::json!({ "role": "user", "content": CONTINUE_PROMPT }));
+            true
         }
     }
 }
@@ -2380,12 +2642,60 @@ mod tests {
         assert_eq!(extract_usage(sse2), (3, 1, 0, 0, 0));
     }
 
+    /// 续写请求体构造: 三种协议格式都应追加 assistant 已输出正文 + user 继续指令.
+    #[test]
+    fn test_append_continuation_messages() {
+        // OpenAI chat/completions: messages 尾部追加两条 (字符串 content).
+        let mut body = serde_json::json!({
+            "model": "m", "stream": true,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(append_continuation_messages(&mut body, "已输出的一半", 0));
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[1]["content"], "已输出的一半");
+        assert_eq!(msgs[2]["role"], "user");
+        assert!(msgs[2]["content"].as_str().unwrap().contains("继续"));
+
+        // Anthropic: content 为 block 数组.
+        let mut body = serde_json::json!({
+            "model": "m", "stream": true, "system": [],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+        });
+        assert!(append_continuation_messages(&mut body, "part1", 1));
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[1]["content"][0]["type"], "text");
+        assert_eq!(msgs[2]["content"][0]["type"], "text");
+
+        // Responses API: 追加到 input 数组, output_text/input_text 类型.
+        let mut body = serde_json::json!({
+            "model": "m", "stream": true,
+            "input": [{"type": "message", "role": "user",
+                        "content": [{"type": "input_text", "text": "hi"}]}]
+        });
+        assert!(append_continuation_messages(&mut body, "seg-A", 2));
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[1]["content"][0]["type"], "output_text");
+        assert_eq!(input[1]["content"][0]["text"], "seg-A");
+        assert_eq!(input[2]["content"][0]["type"], "input_text");
+
+        // 结构不符 (缺 messages/input) → 放弃续写.
+        let mut bad = serde_json::json!({"model": "m"});
+        assert!(!append_continuation_messages(&mut bad, "x", 0));
+        assert!(!append_continuation_messages(&mut bad, "x", 2));
+
+        // 续写资格判定: tool_calls 出现过 / 正文为空 / 名额用尽 均不触发.
+    }
+
     /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
     #[test]
     fn test_parse_sse_chunk_cache_fields() {
-        use futures::stream;
-        let mut ts = TokenStream {
-            inner: stream::empty::<Result<Bytes, std::io::Error>>(),
+        use futures::stream;        let mut ts = TokenStream {
+            inner: Box::pin(stream::empty::<Result<Bytes, StreamErr>>()),
             done: false,
             tokens_pt: 0,
             tokens_ct: 0,
@@ -2408,6 +2718,16 @@ mod tests {
             first_token_at: None,
             anthropic_conv: None,
             responses_conv: None,
+            cont_ctx: None,
+            cont_left: 0,
+            accumulated_content: String::new(),
+            emitted_tool_calls: false,
+            cont_pending: None,
+            cont_segment: 0,
+            cont_fail_note: None,
+            anthropic_mode: false,
+            responses_mode: false,
+            loop_params: None,
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -2477,9 +2797,9 @@ mod tests {
         use futures::stream;
         use futures::StreamExt;
         let mut ts = TokenStream {
-            inner: stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from(
+            inner: Box::pin(stream::iter(vec![Ok::<_, std::io::Error>(bytes::Bytes::from(
                 "data: {\"error\":{\"message\":\"model not found\",\"type\":\"invalid_request_error\"}}\n\n",
-            ))]),
+            ))]).map(|r| r.map_err(|e| Box::new(e) as StreamErr))),
             done: false,
             tokens_pt: 0,
             tokens_ct: 0,
@@ -2502,6 +2822,16 @@ mod tests {
             anthropic_conv: None,
             responses_conv: None,
             recent_lines: std::collections::VecDeque::new(),
+            cont_ctx: None,
+            cont_left: 0,
+            accumulated_content: String::new(),
+            emitted_tool_calls: false,
+            cont_pending: None,
+            cont_segment: 0,
+            cont_fail_note: None,
+            anthropic_mode: false,
+            responses_mode: false,
+            loop_params: None,
             log_buffer: None,
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件

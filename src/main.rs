@@ -597,9 +597,9 @@ fn main() {
             config.cache_persist_path.clone(),
         )),
         inflight: Arc::new(crate::cache::InflightCache::new()),
-        stream_idle_timeout: Duration::from_secs(config.stream_idle_timeout_secs),
-        retry_max: config.retry_max,
-        retry_backoff: Duration::from_millis(config.retry_backoff_ms),
+        stream_idle_timeout_secs: Arc::new(std::sync::atomic::AtomicU64::new(config.stream_idle_timeout_secs)),
+        retry_max: Arc::new(std::sync::atomic::AtomicU32::new(config.retry_max)),
+        retry_backoff_ms: Arc::new(std::sync::atomic::AtomicU64::new(config.retry_backoff_ms)),
         key_store: keys::KeyStore::new(&resolved_data_dir, &providers_snapshot),
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
@@ -611,6 +611,7 @@ fn main() {
         loop_guard: config.loop_guard.clone(),
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
         max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
+        auto_continue: Arc::new(AtomicUsize::new(config.auto_continue)),
         breakers,
     };
 
@@ -631,6 +632,9 @@ fn main() {
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
         .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
+        .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
+        .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))
+        .route("/admin/api/retry", get(admin::api_retry_get).post(admin::api_retry_set))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock))
         .route("/admin/api/lang", get(admin::api_lang).post(admin::api_lang_set))

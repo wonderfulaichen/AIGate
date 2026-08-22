@@ -51,6 +51,9 @@ pub struct Config {
     /// 显式开关, 默认关闭以免悄悄丢失早期上下文依赖. system 消息始终保留, tool 链随所属
     /// user 轮一并保留/丢弃.
     pub max_history_turns: usize,
+    /// 流截断自动续写次数上限: 上游断流且无 finish_reason 时, 网关自动带已输出正文
+    /// 重发"继续"请求并把新响应拼进当前流. 默认 2; 0 = 关闭. 运行时可在面板调整.
+    pub auto_continue: usize,
 }
 
 impl Config {
@@ -101,6 +104,7 @@ impl Config {
             },
             strip_history_reasoning: env_bool("STRIP_HISTORY_REASONING", true), // 默认开启
             max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪 (保持上下文完整性, 旧版行为); 超限时由 proxy 紧急瘦身兜底
+            auto_continue: env_usize("AIGATE_AUTO_CONTINUE", 2), // 默认 2 次; 0 = 关闭
         }
     }
 }

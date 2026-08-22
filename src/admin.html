@@ -757,6 +757,53 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
           </div>
           <p class="text-[10px] mt-2" style="color:var(--text-muted)" x-text="t('history_trim_hint')"></p>
         </div></div>
+        <!-- 断流自动续写 -->
+        <div class="card"><div class="card-body">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-medium" x-text="t('auto_continue_label')"></div>
+              <div class="text-xs mt-0.5" style="color:var(--c-muted)" x-text="t('auto_continue_desc')"></div>
+            </div>
+            <button @click="setAutoContinue(autoContinue>0 ? 0 : 2)" class="relative w-12 h-6 rounded-full transition-colors" :style="autoContinue>0 ? 'background:#6366f1' : 'background:#2a2d37'" style="cursor:pointer;border:none">
+              <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :style="autoContinue>0 ? 'left:26px' : 'left:3px'"></span>
+            </button>
+          </div>
+          <div class="flex items-center gap-2 mt-3" :style="autoContinue===0 ? 'opacity:.4;pointer-events:none' : ''">
+            <span class="text-xs" style="color:var(--c-muted)" x-text="t('auto_continue_max')"></span>
+            <input type="number" min="1" max="5" :value="autoContinue" @change="setAutoContinue(parseInt($event.target.value)||0)"
+              class="w-20 px-2 py-1 rounded-md text-sm" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+            <span class="text-xs" style="color:var(--c-muted)" x-text="t('auto_continue_unit')"></span>
+          </div>
+          <p class="text-[10px] mt-2" style="color:var(--text-muted)" x-text="t('auto_continue_hint')"></p>
+        </div></div>
+        <!-- 连接参数 (空闲超时 / 重试) -->
+        <div class="card"><div class="card-body">
+          <div class="text-sm font-medium mb-3" x-text="t('conn_params_label')"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <div class="text-xs mb-1" style="color:var(--c-muted)" x-text="t('idle_timeout_label')"></div>
+              <div class="flex items-center gap-1">
+                <input type="number" min="30" max="600" :value="streamTimeoutSecs" @change="setStreamTimeout(parseInt($event.target.value)||120)"
+                  class="w-full px-2 py-1 rounded-md text-sm" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+                <span class="text-xs whitespace-nowrap" style="color:var(--c-muted)" x-text="t('unit_secs')"></span>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs mb-1" style="color:var(--c-muted)" x-text="t('retry_max_label')"></div>
+              <input type="number" min="0" max="5" :value="retryMax" @change="setRetry(parseInt($event.target.value)||0, retryBackoffMs)"
+                class="w-full px-2 py-1 rounded-md text-sm" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+            </div>
+            <div>
+              <div class="text-xs mb-1" style="color:var(--c-muted)" x-text="t('retry_backoff_label')"></div>
+              <div class="flex items-center gap-1">
+                <input type="number" min="0" max="10000" :value="retryBackoffMs" @change="setRetry(retryMax, parseInt($event.target.value)||200)"
+                  class="w-full px-2 py-1 rounded-md text-sm" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border)">
+                <span class="text-xs whitespace-nowrap" style="color:var(--c-muted)">ms</span>
+              </div>
+            </div>
+          </div>
+          <p class="text-[10px] mt-2" style="color:var(--text-muted)" x-text="t('conn_params_hint')"></p>
+        </div></div>
         <!-- ==================== CACHE (实验功能, 自 health 页移入) ==================== -->
         <div class="card mb-4"><div class="card-body">
           <div class="flex items-center justify-between mb-4">
@@ -1296,6 +1343,9 @@ const I18N = {
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制',
     'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
+    'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 'auto_continue_hint': '默认 2 次，0 = 关闭。工具调用流不会续写（半截 JSON 无法安全拼接）。每次续写会重发完整上下文，token 消耗相应增加。重启后回到环境变量 AIGATE_AUTO_CONTINUE 默认值',
+    'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
+    'unit_secs': '秒', 'conn_params_hint': '空闲超时：上游超过该时长未吐出数据则断开（30~600 秒）；重试仅对连接/超时错误与 5xx 生效。修改即时生效，重启后回到环境变量默认值',
     'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'forward_saved_resp_cache': '响应缓存命中', 'provider_opt_saved': '今日优化省量',
     'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
     'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
@@ -1397,6 +1447,9 @@ const I18N = {
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied',
     'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
+    'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 'auto_continue_hint': 'Default 2, 0 = off. Streams with tool calls are never continued (partial JSON cannot be safely stitched). Each continuation re-sends full context, increasing token usage. Restart reverts to env AIGATE_AUTO_CONTINUE',
+    'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
+    'unit_secs': 's', 'conn_params_hint': 'Idle timeout: disconnect if upstream sends nothing for this long (30~600 s); retries apply to connection/timeout errors and 5xx. Changes apply live; restart reverts to env defaults',
     'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'forward_saved_resp_cache': 'Response cache hit', 'provider_opt_saved': 'Today Optimization Savings',
     'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
     'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
@@ -1567,6 +1620,12 @@ function dashboard() {
     stripReasoning: false,
     // 长会话历史裁剪: 保留最近 user 轮数 (0 = 关闭), 运行时可切换
     maxHistoryTurns: 0,
+    // 断流自动续写次数上限 (0 = 关闭), 运行时可调
+    autoContinue: 2,
+    // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
+    streamTimeoutSecs: 120,
+    retryMax: 1,
+    retryBackoffMs: 200,
     // 转发优化省量统计: 推理链剥离 + 历史裁剪累计省下的字符数
 
     // 更新亮点弹窗：当前版本与已见版本不一致（含首次运行）时弹出。
@@ -1705,10 +1764,10 @@ function dashboard() {
       }
       this.activeTab = tabId;
       this.logPage = 0; this.expandedLog = -1;
-      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); }
+      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
-      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchCache(); }
+      if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
       if (tabId==='routes') { if (this.health.length===0) this.fetchHealth(); }
     },
 
@@ -1811,6 +1870,31 @@ function dashboard() {
     async setMaxHistoryTurns(val) {
       const turns = Math.max(0, val|0);
       try { const r=await fetch('/admin/api/max-history-turns',{method:'POST',headers:authHeaders(),body:JSON.stringify({turns:turns})}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
+    },
+    async fetchAutoContinue() {
+      try { const r=await fetch('/admin/api/auto-continue', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); } } catch(e){}
+    },
+    async setAutoContinue(val) {
+      const count = Math.min(5, Math.max(0, val|0));
+      try { const r=await fetch('/admin/api/auto-continue',{method:'POST',headers:authHeaders(),body:JSON.stringify({count:count})}); if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); } } catch(e){}
+    },
+    async fetchConnParams() {
+      try {
+        const [rt,st,ry] = await Promise.all([
+          fetch('/admin/api/auto-continue',{headers:authHeaders()}),
+          fetch('/admin/api/stream-timeout',{headers:authHeaders()}),
+          fetch('/admin/api/retry',{headers:authHeaders()}),
+        ]);
+        if(rt.ok){ const d=await rt.json(); this.autoContinue=Math.max(0,d.count|0); }
+        if(st.ok){ const d=await st.json(); this.streamTimeoutSecs=Math.max(30,d.secs|0); }
+        if(ry.ok){ const d=await ry.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); }
+      } catch(e){}
+    },
+    async setStreamTimeout(secs) {
+      try { const r=await fetch('/admin/api/stream-timeout',{method:'POST',headers:authHeaders(),body:JSON.stringify({secs:secs})}); if(r.ok) { const d=await r.json(); this.streamTimeoutSecs=Math.max(30,d.secs|0); } } catch(e){}
+    },
+    async setRetry(max, backoffMs) {
+      try { const r=await fetch('/admin/api/retry',{method:'POST',headers:authHeaders(),body:JSON.stringify({max:max|0, backoff_ms:backoffMs|0})}); if(r.ok) { const d=await r.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); } } catch(e){}
     },
     async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; await this.$nextTick(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
     async fetchHourlyStats() { try { const r=await fetch('/admin/api/stats?granularity=hour', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },

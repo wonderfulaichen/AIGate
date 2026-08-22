@@ -1451,6 +1451,83 @@ pub async fn api_max_history_turns_set(
     Json(serde_json::json!({ "turns": turns }))
 }
 
+// ─── 流截断自动续写 ───
+
+/// GET /admin/api/auto-continue — 返回当前流截断自动续写次数上限 (0 = 关闭).
+pub async fn api_auto_continue_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "count": state.auto_continue.load(std::sync::atomic::Ordering::Relaxed) }))
+}
+
+/// POST /admin/api/auto-continue — 运行时设置自动续写上限 (0 = 关闭, 推荐 1~3).
+/// 上游断流且无 finish_reason 时, 网关自动带已输出正文重发"继续"请求并拼接新响应.
+#[derive(serde::Deserialize)]
+pub struct AutoContinueReq {
+    pub count: usize,
+}
+
+pub async fn api_auto_continue_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<AutoContinueReq>,
+) -> Json<serde_json::Value> {
+    // 上限保护: 续写链过长会成倍放大延迟与 token 消耗.
+    let count = payload.count.min(5);
+    state.auto_continue.store(count, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "count": count }))
+}
+
+// ─── 流空闲超时 / 重试参数 (运行时可调) ───
+
+/// GET /admin/api/stream-timeout — 流式响应空闲超时秒数.
+pub async fn api_stream_timeout_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "secs": state.stream_idle_timeout_secs.load(std::sync::atomic::Ordering::Relaxed) }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct StreamTimeoutReq {
+    pub secs: u64,
+}
+
+pub async fn api_stream_timeout_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<StreamTimeoutReq>,
+) -> Json<serde_json::Value> {
+    // 合理区间: 太小误伤长思考静默期, 太大失去假死保护.
+    let secs = payload.secs.clamp(30, 600);
+    state.stream_idle_timeout_secs.store(secs, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "secs": secs }))
+}
+
+/// GET /admin/api/retry — 瞬态失败重试参数 (次数 + 退避基数毫秒).
+pub async fn api_retry_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "max": state.retry_max.load(std::sync::atomic::Ordering::Relaxed),
+        "backoff_ms": state.retry_backoff_ms.load(std::sync::atomic::Ordering::Relaxed),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RetryReq {
+    pub max: u32,
+    pub backoff_ms: u64,
+}
+
+pub async fn api_retry_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<RetryReq>,
+) -> Json<serde_json::Value> {
+    let mx = payload.max.min(5);
+    let backoff = payload.backoff_ms.min(10_000);
+    state.retry_max.store(mx, std::sync::atomic::Ordering::Relaxed);
+    state.retry_backoff_ms.store(backoff, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "max": mx, "backoff_ms": backoff }))
+}
+
 // ─── 使用统计 ───
 
 /// 本轮 (进程启动以来) 累计统计 — 在 push 时原子累加, 不受日志 5000 条滚动窗口封顶影响.

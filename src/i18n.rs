@@ -415,14 +415,6 @@ pub fn msg_lang_unsupported(lang: &str) -> String {
     fmt_msg!("不支持的语言: {}", "Unsupported language: {}", lang)
 }
 
-/// 上游流在上游返回 finish_reason/[DONE] 之前结束, 响应可能被截断.
-pub fn msg_stream_truncated() -> &'static str {
-    pick(
-        "stream 在上游返回 finish_reason/[DONE] 之前结束（响应可能被截断）",
-        "Stream ended without upstream finish_reason/[DONE] (response likely truncated)",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,19 +479,5 @@ mod tests {
         // 还原默认, 避免影响后续 (串行) 测试
         set_current_lang(Lang::Zh);
         assert_eq!(error_type("rate_limit_error"), "请求频率超限（请稍后重试）");
-    }
-
-    #[test]
-    fn stream_truncated_i18n() {
-        let _g = I18N_TEST_LOCK.lock().unwrap();
-        set_current_lang(Lang::Zh);
-        assert_eq!(
-            msg_stream_truncated(),
-            "stream 在上游返回 finish_reason/[DONE] 之前结束（响应可能被截断）"
-        );
-        set_current_lang(Lang::En);
-        assert!(msg_stream_truncated()
-            .contains("Stream ended without upstream finish_reason/[DONE]"));
-        set_current_lang(Lang::Zh);
     }
 }
