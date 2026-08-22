@@ -775,6 +775,10 @@ where
     }
 }
 
+/// SSE keepalive 注入间隔: 上游静默期间每 15s 向客户端发一条 ": keepalive" 注释帧.
+/// SSE 规范 (whatwg) 定义冒号开头的行为注释, 所有标准客户端忽略之, 不污染正文.
+const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+
 /// 对上游 SSE 流进行透传, 同时解析 usage 事件记录 token 数.
 fn stream_response_with_tokens(
     upstream: reqwest::Response,
@@ -827,6 +831,7 @@ fn stream_response_with_tokens(
         finish_reason: None,
         clean_finish: false,
         errored_msg: None,
+            keepalive: Some(Box::pin(tokio::time::sleep(SSE_KEEPALIVE_INTERVAL))),
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
@@ -1000,6 +1005,11 @@ struct TokenStream<S> {
     /// 最近 N 条上游原始 SSE 行 (环形, 每行截断至 200 字符): 流异常中断时写入错误日志,
     /// 用于事后分辨「上游发了什么就断了」(半截 JSON / error 事件 / 纯断流无内容).
     recent_lines: std::collections::VecDeque<String>,
+    /// SSE keepalive 定时器: 上游静默期间每 15s 触发一次, 向客户端注入
+    /// ": keepalive" 注释帧 (SSE 规范: 冒号开头的行为注释, 客户端自动忽略),
+    /// 保持代理/CDN 的连接活跃计时器不超时, 防止长思考静默期被中间层掐断.
+    /// Option 包装: 单测环境无 tokio 时间驱动, 置 None 跳过注入.
+    keepalive: Option<Pin<Box<tokio::time::Sleep>>>,
     log_buffer: Option<TokenLogData>,
 }
 
@@ -1245,6 +1255,10 @@ where
         loop {
             match Pin::new(&mut this.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
+                // 有真实上游数据到达 → 重置 keepalive 定时器 (仅在静默期注入).
+                if let Some(ka) = this.keepalive.as_mut() {
+                    ka.as_mut().reset(tokio::time::Instant::now() + SSE_KEEPALIVE_INTERVAL);
+                }
                 this.parse_sse_chunk(&chunk);
                 // 流内错误事件 (HTTP 200 + SSE error): 改写成中文 error 事件并干净结束流.
                 // 因 HTTP 头已发出 (200), 无法改为 JSON 错误响应, 只能以规范的 SSE
@@ -1438,7 +1452,21 @@ where
                     }
                     return Poll::Ready(None);
                 }
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    // SSE keepalive: 上游静默 (长思考 / 长生成间隙) 时, 每 15s 向客户端
+                    // 注入一条 ": keepalive" 注释帧. SSE 规范: 冒号开头的行为注释,
+                    // 所有标准客户端自动忽略, 不污染正文; 但可重置系统代理 / CDN 的
+                    // 连接活跃计时器, 防止长流在静默期被中间层掐断.
+                    // 注意: Sleep 触发后需重新 poll 才会再次注册唤醒, 下方 reset + 返回帧后
+                    // hyper 会继续驱动本流, 届时 poll(cx) 自动重新武装下一轮定时.
+                    if let Some(ka) = this.keepalive.as_mut() {
+                        if ka.as_mut().poll(cx).is_ready() {
+                            ka.as_mut().reset(tokio::time::Instant::now() + SSE_KEEPALIVE_INTERVAL);
+                            return Poll::Ready(Some(Ok(Bytes::from_static(b": keepalive\n\n"))));
+                        }
+                    }
+                    return Poll::Pending;
+                }
             }
         }
     }
@@ -2373,12 +2401,13 @@ mod tests {
             finish_reason: None,
             clean_finish: false,
             errored_msg: None,
+            keepalive: None,
+            recent_lines: std::collections::VecDeque::new(),
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
             anthropic_conv: None,
             responses_conv: None,
-            recent_lines: std::collections::VecDeque::new(),
             log_buffer: None,
         };
         // SSE 外层 usage
@@ -2466,6 +2495,7 @@ mod tests {
             finish_reason: None,
             clean_finish: false,
             errored_msg: None,
+            keepalive: None,
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
