@@ -1386,8 +1386,9 @@ where
                             Some(format!("responses upstream error: {err}"))
                         } else if !this.clean_finish {
                             // 流被上游/中间链路以 TCP 干净关闭结束但无任何终止帧.
-                            // 附诊断上下文: 已输出 token 数 + 最后几条原始 SSE 行, 便于区分
-                            // 「长输出触顶被上游掐断」vs「代理/h2 GOAWAY 断连」vs「漏解析终止帧」.
+                            // 实测规律 (logs.jsonl 大样本): 截断全部发生在输出 >1.6 万 token 时,
+                            // ≤8K 的请求从未复现 —— 上游网关对超长生成直接断连而不发 finish_reason=length.
+                            // 故按输出量分级文案, 帮用户区分「上游长输出断流」与「链路异常」.
                             let tail: String = this
                                 .recent_lines
                                 .iter()
@@ -1397,12 +1398,20 @@ where
                                 .map(|l| l.as_str())
                                 .collect::<Vec<_>>()
                                 .join(" ⏎ ");
-                            let mut msg = format!(
-                                "{} (已输出 {} tok / 输入 {} tok)",
-                                crate::i18n::msg_stream_truncated(),
-                                ct,
-                                pt
-                            );
+                            const LONG_OUTPUT_TOK: u32 = 16_000;
+                            let mut msg = if ct >= LONG_OUTPUT_TOK {
+                                format!(
+                                    "上游在长输出中途主动断流（已输出 {} tok / 输入 {} tok，非网关截断；客户端已收到 length 终止帧，可让模型续写）",
+                                    ct, pt
+                                )
+                            } else {
+                                format!(
+                                    "{} (已输出 {} tok / 输入 {} tok)",
+                                    crate::i18n::msg_stream_truncated(),
+                                    ct,
+                                    pt
+                                )
+                            };
                             if !tail.is_empty() {
                                 msg.push_str(&format!(" [末帧: {tail}]"));
                             }

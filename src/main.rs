@@ -496,7 +496,18 @@ fn main() {
         }
     };
 
-    let client = match apply_proxy_env(reqwest::Client::builder())
+    // 上游 HTTP 客户端: AIGATE_FORCE_HTTP1=1 时强制 HTTP/1.1 (禁用 h2 多路复用).
+    // 用途: 经系统代理的长流式连接在 h2 下偶发被中间层掐断
+    // ("unexpected EOF during chunk size line"), 强制 h1 可作为诊断与缓解开关.
+    let force_http1 = std::env::var("AIGATE_FORCE_HTTP1")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let mut client_builder = apply_proxy_env(reqwest::Client::builder());
+    if force_http1 {
+        client_builder = client_builder.http1_only();
+        info!("proxy: AIGATE_FORCE_HTTP1 set -> upstream forced to HTTP/1.1 (h2 disabled)");
+    }
+    let client = match client_builder
         .dns_resolver(Arc::new(Ipv4Resolver::new()))
         .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_secs))
         .timeout(std::time::Duration::from_secs(config.request_timeout_secs))

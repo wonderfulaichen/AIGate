@@ -5,6 +5,8 @@
 ## [0.4.9] - 2026-08-21
 
 ### 修复
+- **流截断根因确认与分级文案**：大样本日志证实「可能被截断」**全部**发生在输出 >1.6 万 token 时（18K~80K），≤8K 的请求从未复现——上游网关对超长生成直接断连而不发 `finish_reason=length`（日志中伴随 `unexpected EOF during chunk size line`）。错误文案按输出量分级：≥16K 标注「上游在长输出中途主动断流（非网关截断）」，否则维持原通用文案。网关侧已兜底补发 `length` 终止帧 + `[DONE]`，客户端可正常收尾并续问。
+- **新增 `AIGATE_FORCE_HTTP1=1` 环境变量**：强制上游走 HTTP/1.1（禁用 h2 多路复用）。经系统代理的长流式连接在 h2 下偶发被中间层掐断，此开关用于诊断与缓解（写入 `.env` 重启生效）。
 - **流截断诊断增强（"可能被截断"定位）**：`TokenStream` 新增最近 8 条原始 SSE 行环形缓冲，流无终止帧被关闭时，错误日志附带 `已输出/输入 token 数 + 末帧内容`（如 `[末帧: data: {"choices":…} ⏎ …]`），可一眼分辨「上游长输出触顶掐断」vs「系统代理/h2 GOAWAY 断连」vs「终止帧漏解析」。
 - **工具大输出中文截断闪退 `is_char_boundary`（`src/proxy.rs:1720`）**：`truncate_tool_outputs` 按字节截断在 UTF-8 多字节字符中间触发断言，`389KB` 中文 `tool` 结果直接 panic。新增 `floor_char_boundary` 按字符边界回退，两处截断均取边界安全点，非 `MAX_PER_TOOL` 刘海。
 - **死循环误报（`muse-spark` 1.2M 2.9K 场景）**：`loop_guard` 全局阈值 `384/6/4096 → 512/8/8192` 降低误击，`providers.rs` 新增模型级 `loop_guard` 开关，`proxy.rs` 对 `muse-spark` 默认关闭守卫（可通过 `providers.json: loop_guard: true` 显式开启），截图 `可能被截断` 的 `muse-spark:go 19:53/19:45` 将不再误判为循环。
