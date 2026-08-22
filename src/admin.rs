@@ -825,16 +825,28 @@ pub async fn api_providers_fetch_models(
         Err(e) => return Json(serde_json::json!({ "error": e })),
     };
 
-    // 3) 合并进内存注册表 (新增未存在的, 跳过已有) + 计算已下架
+    // 3) 合并进内存注册表 (新增未存在的, 跳过已有) + 计算已下架.
+    //    下架判定必须基于【上游模型ID】(upstream_model, 缺省回落中转ID):
+    //    中转ID 是用户自取别名可随时改名, 不能作为与上游清单比对的依据 ——
+    //    否则一改中转ID 就会被误标"已下架".
     let (added, skipped, removed) = {
         let mut registry = state.registry.write().await;
-        let existing: Vec<String> = registry
+        let mut existing: Vec<String> = registry
             .providers()
             .iter()
             .find(|p| p.name == name)
-            .map(|p| p.models.keys().cloned().collect())
+            .map(|p| {
+                let mut v: Vec<String> = p
+                    .models
+                    .iter()
+                    .map(|(k, m)| m.upstream_model.clone().unwrap_or_else(|| k.clone()))
+                    .collect();
+                v.sort();
+                v.dedup(); // 多个中转ID 可别名到同一上游模型, 去重避免重复计数
+                v
+            })
             .unwrap_or_default();
-        let removed: Vec<String> = existing.iter().filter(|id| !ids.contains(id)).cloned().collect();
+        let removed: Vec<String> = existing.drain(..).filter(|id| !ids.contains(id)).collect();
         let (added, skipped) = registry.add_models(&name, &ids);
         (added, skipped, removed)
     };

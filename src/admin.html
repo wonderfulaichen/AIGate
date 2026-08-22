@@ -2307,11 +2307,13 @@ function dashboard() {
               added++;
             }
           }
-          // 标记已下架
+          // 标记已下架: 仅按【上游模型ID】(upstream_model, 缺省回落中转ID) 比对,
+          // 中转ID 是用户可改的别名, 不能作为与上游清单比对的依据.
           const removedSet = new Set(d.removed||[]);
           let removedMarked=0;
           for(const m of prov.models){
-            const wasRemoved = removedSet.has(m.model_id) || removedSet.has(m.upstream_model);
+            const effectiveUpstream = m.upstream_model || m.model_id;
+            const wasRemoved = removedSet.has(effectiveUpstream);
             if(wasRemoved && !m._removed) removedMarked++;
             m._removed = wasRemoved;
             if(wasRemoved) m._isNew=false;
