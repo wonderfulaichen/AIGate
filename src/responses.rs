@@ -818,3 +818,79 @@ fn openai_usage_from_responses(u: &Value) -> String {
     }
     json!({ "choices": [], "usage": usage }).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 转换无损性: 每类消息的大体积内容都必须原样出现在转换产物中.
+    ///
+    /// 背景: 排查「模型失忆反复读文件/无法完成编辑」——若历史 tool 输出、
+    /// 助手正文或工具参数在 messages→input 转换时被丢弃, upstream 收到的
+    /// 上下文残缺, 模型表现为重复读取已读文件、忘记自己改过什么.
+    #[test]
+    fn conversion_preserves_all_message_content() {
+        let big_sys = "S".repeat(15_000);
+        let big_user = "U".repeat(10_000);
+        let big_asst = "A".repeat(20_000);
+        let big_args = format!("{{\"path\":\"a.rs\",\"blob\":\"{}\"}}", "Y".repeat(30_000));
+        let big_out = "X".repeat(50_000);
+
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "system", "content": big_sys},
+                {"role": "user", "content": big_user},
+                {"role": "assistant", "content": big_asst},
+                {"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function",
+                    "function": {"name": "edit_file", "arguments": big_args}}]},
+                {"role": "tool", "tool_call_id": "call_1", "content": big_out},
+            ],
+        });
+        let conv = openai_to_responses(&body);
+
+        // system → instructions (完整保留)
+        assert_eq!(conv["instructions"].as_str(), Some(big_sys.as_str()), "system 内容丢失");
+        let input = conv["input"].as_array().unwrap();
+        // user message
+        let u = &input[0];
+        assert_eq!(u["content"][0]["text"].as_str(), Some(big_user.as_str()), "user 内容丢失");
+        // assistant 正文
+        let a = &input[1];
+        assert_eq!(a["content"][0]["text"].as_str(), Some(big_asst.as_str()), "assistant 正文丢失");
+        // function_call arguments 完整
+        let fc = &input[2];
+        assert_eq!(fc["type"], "function_call");
+        assert_eq!(fc["arguments"].as_str(), Some(big_args.as_str()), "工具参数丢失");
+        // tool 输出完整
+        let out = &input[3];
+        assert_eq!(out["type"], "function_call_output");
+        assert_eq!(out["output"].as_str(), Some(big_out.as_str()), "tool 输出丢失");
+    }
+
+    /// 顺序保持: 多轮 function_call/output 对的相对顺序必须与原始一致,
+    /// 错序会让模型把 A 工具的结果当成 B 的, 直接破坏编辑类工具链.
+    #[test]
+    fn conversion_preserves_tool_pair_order() {
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": "go"},
+                {"role": "assistant", "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{\"p\":\"1\"}"}},
+                    {"id": "c2", "type": "function", "function": {"name": "list_dir", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "c1", "content": "result-1"},
+                {"role": "tool", "tool_call_id": "c2", "content": "result-2"},
+                {"role": "assistant", "content": "done"},
+            ],
+        });
+        let conv = openai_to_responses(&body);
+        let input = conv["input"].as_array().unwrap();
+        let kinds: Vec<String> = input.iter().map(|it| it["type"].as_str().unwrap_or("?").to_string()).collect();
+        assert_eq!(kinds, vec!["message", "function_call", "function_call", "function_call_output", "function_call_output", "message"]);
+        assert_eq!(input[3]["call_id"], "c1");
+        assert_eq!(input[4]["call_id"], "c2");
+    }
+}

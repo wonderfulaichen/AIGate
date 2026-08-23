@@ -323,11 +323,29 @@ pub async fn chat_completions(
                     input_count, has_instructions, has_tools, tools_len,
                     converted.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
                     tool0_preview, tc_before_trim, tc_after_trim, input_preview);
-                // 调试: 落盘最近一次 responses 转换的完整请求体, 供手动 curl 复现对比 flat vs nested
+                // 诊断 (转换丢内容排查): 分项字节数对比 — 原始 OpenAI 格式 messages/tools
+                // vs 转换后 Responses 格式 input/instructions/tools. 落差大即转换丢失.
+                {
+                    let raw_msgs = v.get("messages").map(|m| serde_json::to_string(m).unwrap_or_default().len()).unwrap_or(0);
+                    let raw_tools = v.get("tools").map(|t| serde_json::to_string(t).unwrap_or_default().len()).unwrap_or(0);
+                    let raw_sys = v.get("messages").and_then(|m| m.as_array()).map(|a| a.iter()
+                        .filter(|x| x.get("role").and_then(|r| r.as_str()) == Some("system"))
+                        .map(|x| serde_json::to_string(x).unwrap_or_default().len()).sum::<usize>()).unwrap_or(0);
+                    let conv_input = converted.get("input").map(|i| serde_json::to_string(i).unwrap_or_default().len()).unwrap_or(0);
+                    let conv_instr = converted.get("instructions").map(|i| serde_json::to_string(i).unwrap_or_default().len()).unwrap_or(0);
+                    let conv_tools = converted.get("tools").map(|t| serde_json::to_string(t).unwrap_or_default().len()).unwrap_or(0);
+                    info!("proxy: responses size diag: raw(msgs={}B sys={}B tools={}B) -> conv(input={}B instr={}B tools={}B)",
+                        raw_msgs, raw_sys, raw_tools, conv_input, conv_instr, conv_tools);
+                }
+                // 调试: 落盘最近一次 responses 转换的完整请求体 + 转换前原始体, 供手动 diff 定位丢内容环节
                 if has_tools {
                     let _ = std::fs::write(
                         "C:\\Users\\qq274\\AppData\\Local\\Temp\\opencode\\last_responses_converted.json",
                         serde_json::to_string_pretty(&converted).unwrap_or_default()
+                    );
+                    let _ = std::fs::write(
+                        "C:\\Users\\qq274\\AppData\\Local\\Temp\\opencode\\last_responses_raw.json",
+                        serde_json::to_string_pretty(&v).unwrap_or_default()
                     );
                 }
                 match serde_json::to_vec(&converted) {
