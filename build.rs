@@ -15,6 +15,14 @@ fn main() {
     let build_time = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     println!("cargo:rustc-env=AIGATE_BUILD_TIME={build_time}");
     println!("cargo:rustc-env=AIGATE_GIT_COMMIT={}", git_commit());
+    // 显式声明重跑条件: 一旦声明任何 rerun-if-changed, cargo 默认的
+    // "包内任一文件变更即重跑" 就会失效, 故需把原有隐式依赖补全.
+    // .git/HEAD 必须列入 — 否则 commit 后首次构建会复用缓存的脚本输出,
+    // 版本横幅嵌入旧 commit 号 (实际踩过: 部署出去显示 ee946f5 而非 4399a88).
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=.git/HEAD");
 
     // 生成并编译版本资源 (含图标 + 文件属性版本号).
     // 版本号来自 Cargo.toml 单一真相源; 不含 build_time/commit, 避免每次重链.
