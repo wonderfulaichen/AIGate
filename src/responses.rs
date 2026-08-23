@@ -666,21 +666,65 @@ impl ResponsesStreamConv {
             | "response.reasoning_summary_part.added"
             | "response.reasoning.done" => vec![],
 
-            // ── 错误: 记录到 last_error, 返回空 (流结束后 poll_next 会用 last_error 记录日志) ──
-            "error" | "response.failed" | "response.incomplete" => {
-                let err_msg = val
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .or_else(|| val.get("error").and_then(|e| e.as_str()))
-                    .unwrap_or("upstream error");
-                self.last_error = Some(err_msg.to_string());
+            // ── 错误: 提取详情记入 last_error (流结束后记录日志用), 并向客户端
+            //    转发 OpenAI 风格错误帧 — 否则客户端只看到静默的空响应/length 收尾,
+            //    完全无法感知失败原因 (实测 muse 复杂回合 response.failed 后
+            //    CodeBuddy 表现为"永远不改文件"的空转).
+            //    注意错误位置因事件类型而异: error 事件在顶层 error.{message,code},
+            //    response.failed 嵌在 response.error.{message,code}.
+            "error" | "response.failed" => {
+                let err_msg = extract_upstream_error_detail(val).unwrap_or_else(|| "upstream error".to_string());
+                let status = val.get("response").and_then(|r| r.get("status")).and_then(|s| s.as_str());
+                let full = match status {
+                    Some(st) => format!("{err_msg} [status={st}]"),
+                    None => err_msg,
+                };
+                self.last_error = Some(full.clone());
+                vec![json!({"error": {"message": full, "type": "upstream_error"}}).to_string()]
+            }
+            // response.incomplete 是"正常截断"而非失败 (如 max_output_tokens 用尽),
+            // 不向客户端发错误帧 — 收尾的 finish_reason=length 已表达截断语义;
+            // 但 reason 仍记入 last_error 供日志定位.
+            "response.incomplete" => {
+                let reason = extract_upstream_error_detail(val)
+                    .unwrap_or_else(|| "max_output_tokens".to_string());
+                self.last_error = Some(reason);
                 vec![]
             }
 
             _ => vec![], // 其他事件忽略
         }
     }
+}
+
+/// 从 Responses 错误类事件中提取人类可读的错误详情.
+/// 覆盖三种形态:
+/// - error 事件: 顶层 `error.message` 或 `error` 本身是字符串
+/// - response.failed: 嵌套 `response.error.message` / `response.error.code`
+/// - response.incomplete: `response.incomplete_details.reason`
+fn extract_upstream_error_detail(val: &Value) -> Option<String> {
+    let resp = val.get("response");
+    val.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .or_else(|| val.get("error").and_then(|e| e.as_str()))
+        .or_else(|| {
+            resp.and_then(|r| r.get("error"))
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+        })
+        .or_else(|| {
+            resp.and_then(|r| r.get("error"))
+                .and_then(|e| e.get("code"))
+                .and_then(|c| c.as_str())
+        })
+        .or_else(|| {
+            resp.and_then(|r| r.get("incomplete_details"))
+                .and_then(|d| d.get("reason"))
+                .and_then(|s| s.as_str())
+        })
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 impl Default for ResponsesStreamConv {
@@ -952,5 +996,47 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["type"], "output_text");
         assert_eq!(arr[0]["text"], "正文");
+    }
+
+    /// response.failed 的错误详情嵌在 response.error 下 (非顶层), 必须被提取,
+    /// 且客户端要收到 OpenAI 风格错误帧 — 否则表现为静默空响应.
+    /// 背景: muse 复杂回合连续 4 次生成 ~38.7K tok 后 response.failed,
+    /// 旧版只记 "upstream error" 且不转发, CodeBuddy 端表现为"永远不改文件".
+    #[test]
+    fn response_failed_surfaces_detail_and_emits_error_frame() {
+        let mut conv = ResponsesStreamConv::new();
+        let out = conv.feed_line(
+            r#"data: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"generation limit exceeded"}}}"#,
+        );
+        assert_eq!(out.len(), 1, "必须向客户端转发错误帧");
+        let frame: Value = serde_json::from_str(&out[0]).unwrap();
+        assert_eq!(frame["error"]["type"], "upstream_error");
+        assert!(
+            frame["error"]["message"].as_str().unwrap().contains("generation limit exceeded"),
+            "错误帧缺少上游详情: {}", out[0]
+        );
+        let last = conv.last_error.clone().unwrap();
+        assert!(last.contains("generation limit exceeded") && last.contains("status=failed"), "last_error={last}");
+    }
+
+    /// response.incomplete 是正常截断 (如 max_output_tokens 用尽): 记录原因供日志,
+    /// 但不发错误帧 — 收尾的 finish_reason=length 已表达截断语义.
+    #[test]
+    fn response_incomplete_records_reason_without_error_frame() {
+        let mut conv = ResponsesStreamConv::new();
+        let out = conv.feed_line(
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+        );
+        assert!(out.is_empty(), "截断不应发错误帧: {out:?}");
+        assert_eq!(conv.last_error.as_deref(), Some("max_output_tokens"));
+    }
+
+    /// 顶层 error 事件的 message 直接提取.
+    #[test]
+    fn top_level_error_event_extracts_message() {
+        let mut conv = ResponsesStreamConv::new();
+        let out = conv.feed_line(r#"data: {"type":"error","error":{"message":"context too long"}}"#);
+        assert_eq!(out.len(), 1);
+        assert!(conv.last_error.as_deref() == Some("context too long"));
     }
 }
