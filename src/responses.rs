@@ -387,6 +387,9 @@ fn convert_input_content_types(msg: &mut Value) {
 
 /// 从消息中提取 content 并转换 type 字段, 返回 Responses API content 数组.
 /// - target_type: 替换后的 type 值 (如 `"input_text"` / `"output_text"`)
+/// - 输入侧 (`input_text`) 额外保留 `image_url` 图片部件 → `input_image`
+///   (chat 格式 image_url 字段为 {url} 对象或裸字符串两种形态);
+///   输出侧 (`output_text`) 仍只保留文本 — Responses API 无输出图片类型.
 fn extract_and_convert_content(msg: &Value, target_type: &str) -> Value {
     match msg.get("content") {
         Some(Value::String(s)) => json!([{"type": target_type, "text": s}]),
@@ -394,7 +397,16 @@ fn extract_and_convert_content(msg: &Value, target_type: &str) -> Value {
             let converted: Vec<Value> = parts
                 .iter()
                 .filter_map(|p| {
-                    let text = match p.get("type").and_then(|t| t.as_str()) {
+                    let ptype = p.get("type").and_then(|t| t.as_str());
+                    if target_type == "input_text" && ptype == Some("image_url") {
+                        let url = match p.get("image_url") {
+                            Some(Value::String(s)) => Some(s.clone()),
+                            Some(Value::Object(o)) => o.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()),
+                            _ => None,
+                        };
+                        return url.map(|u| json!({"type": "input_image", "image_url": u}));
+                    }
+                    let text = match ptype {
                         Some("text") | Some("input_text") | Some("output_text") => {
                             p.get("text").and_then(|t| t.as_str()).unwrap_or("")
                         }
@@ -892,5 +904,53 @@ mod tests {
         assert_eq!(kinds, vec!["message", "function_call", "function_call", "function_call_output", "function_call_output", "message"]);
         assert_eq!(input[3]["call_id"], "c1");
         assert_eq!(input[4]["call_id"], "c2");
+    }
+
+    /// 用户消息中的图片部件必须保留: chat `image_url` → Responses `input_image`.
+    ///
+    /// 背景: 排查「Responses 模型无法用 tool 改文件」时发现转换落差为恒定
+    /// 冻结块 — 若会话历史含图片, 旧版在 extract_and_convert_content 中把
+    /// 非 text 部件整体丢弃, 带图请求模型全程"失明".
+    #[test]
+    fn conversion_preserves_user_image_parts() {
+        let data_uri = format!("data:image/png;base64,{}", "Z".repeat(100_000));
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": "照这张图改 UI"},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                    {"type": "image_url", "image_url": "data:image/jpeg;base64,QkFTRTY0"},
+                ]},
+            ],
+        });
+        let conv = openai_to_responses(&body);
+        let content = conv["input"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3, "图片部件被丢弃");
+        assert_eq!(content[0]["type"], "input_text");
+        assert_eq!(content[1]["type"], "input_image");
+        // 对象形态: 大 base64 data URI 必须逐字节保留
+        assert_eq!(content[1]["image_url"].as_str(), Some(data_uri.as_str()), "对象形态 image_url 丢失");
+        // 裸字符串形态
+        assert_eq!(content[2]["type"], "input_image");
+        assert_eq!(content[2]["image_url"], "data:image/jpeg;base64,QkFTRTY0");
+    }
+
+    /// assistant 输出侧不产出 input_image (Responses API 无输出图片类型),
+    /// 非 text 部件仍按原行为跳过, 不影响纯文本正文.
+    #[test]
+    fn assistant_output_side_drops_non_text_parts() {
+        let msg = json!({
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "正文"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+            ],
+        });
+        let out = convert_output_content_types(&msg);
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["type"], "output_text");
+        assert_eq!(arr[0]["text"], "正文");
     }
 }
