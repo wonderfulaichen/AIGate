@@ -52,6 +52,7 @@ mod balance;
 mod currency;
 mod proxy_cfg;
 mod seen_version;
+mod model_meta;
 
 use admin::compute_realtime_stats_sync;
 
@@ -612,6 +613,7 @@ fn main() {
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
         max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
         auto_continue: Arc::new(AtomicUsize::new(config.auto_continue)),
+        model_meta: Arc::new(model_meta::MetaCache::new()),
         breakers,
     };
 
@@ -635,6 +637,7 @@ fn main() {
         .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
         .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))
         .route("/admin/api/retry", get(admin::api_retry_get).post(admin::api_retry_set))
+        .route("/admin/api/model-meta", post(admin::api_model_meta))
         .route("/admin/api/stats", get(admin::api_stats))
         .route("/admin/api/mock", post(admin::api_mock))
         .route("/admin/api/lang", get(admin::api_lang).post(admin::api_lang_set))

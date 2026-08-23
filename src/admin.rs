@@ -1170,8 +1170,11 @@ mod changelog_tests {
             assert!(v.get("date").is_some(), "缺少 date");
             assert!(v.get("sections").and_then(|s| s.as_array()).is_some(), "缺少 sections");
         }
-        // 首个版本应为最新版 0.4.9
-        assert_eq!(versions[0].get("version").and_then(|x| x.as_str()), Some("0.4.9"));
+        // 首个版本应为最新版 = 当前 Cargo 版本 (动态断言, 版本号升级不再破坏测试).
+        assert_eq!(
+            versions[0].get("version").and_then(|x| x.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 }
 
@@ -1526,6 +1529,27 @@ pub async fn api_retry_set(
     state.retry_max.store(mx, std::sync::atomic::Ordering::Relaxed);
     state.retry_backoff_ms.store(backoff, std::sync::atomic::Ordering::Relaxed);
     Json(serde_json::json!({ "max": mx, "backoff_ms": backoff }))
+}
+
+// ─── 模型元信息 (models.dev) ───
+
+/// POST /admin/api/model-meta — 批量解析模型元信息 (上下文/输出限制/视觉等).
+/// 请求体 `{names: ["kimi-k3-free", ...]}`; 响应 `{meta: {名称: ModelMeta|null}}`,
+/// null = 未收录 (前端隐藏标签). 首次调用触发 models.dev 拉取 (24h 缓存, 走系统代理),
+/// 拉取失败返回全 null 不阻塞面板.
+#[derive(serde::Deserialize)]
+pub struct ModelMetaReq {
+    pub names: Vec<String>,
+}
+
+pub async fn api_model_meta(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<ModelMetaReq>,
+) -> Json<serde_json::Value> {
+    // 上限保护: 名单异常大时截断 (正常配置 <500 个模型).
+    let names: Vec<String> = payload.names.into_iter().take(2000).collect();
+    let map = state.model_meta.resolve_many(&state.client, &names).await;
+    Json(serde_json::json!({ "meta": map }))
 }
 
 // ─── 使用统计 ───

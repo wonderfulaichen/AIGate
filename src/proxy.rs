@@ -72,6 +72,8 @@ pub struct AppState {
     /// 流截断自动续写次数上限 (0=关闭, 默认 2): 上游断流无 finish_reason 时自动
     /// 带已输出正文重发"继续"请求并拼接新响应. 运行时可在面板调整.
     pub auto_continue: Arc<AtomicUsize>,
+    /// 模型元信息缓存 (models.dev): 面板悬停展示上下文/输出限制与视觉标签.
+    pub model_meta: Arc<crate::model_meta::MetaCache>,
 }
 
 /// 熔断器表类型别名.
