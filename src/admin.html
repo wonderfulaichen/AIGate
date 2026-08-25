@@ -347,11 +347,14 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                     <div class="flex items-center justify-between text-xs mb-1">
                       <div class="flex items-center gap-2 min-w-0">
                         <span class="w-4 text-center font-bold shrink-0" :class="'text-['+(i===0?'#f59e0b':i===1?'#cdd0d4':i===2?'#d97706':'#6b7280')+']'" x-text="'#'+(i+1)"></span>
-                        <span class="truncate" style="color:var(--c-accent2)" :title="fmtMetaTitle({model_id:m.model})" x-text="m.model"></span><template x-if="m.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template>
+                        <span class="truncate cursor-pointer hover:underline" style="color:var(--c-accent2)" @click="ovMetaOpen = toggleMeta(ovMetaOpen, m.model)" x-text="m.model"></span><template x-if="m.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template>
                       </div>
                       <span class="shrink-0 ml-2" style="color:var(--c-muted)" x-text="m.requests+' '+t('unit_times')"></span>
                     </div>
                     <div class="progress-track"><div class="progress-fill accent" :style="'width:'+(m.requests/maxModelReqs*100)+'%'"></div></div>
+                    <div x-show="ovMetaOpen && ovMetaOpen[m.model] && metaHasModel(m.model)" class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] rounded px-2.5 py-1.5" style="background:rgba(99,102,241,.05);border:1px solid var(--c-border)">
+                      <div class="flex flex-wrap items-center gap-2" x-html="ovMetaChips(m.model)"></div>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -360,12 +363,17 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                   <button @click="showAllModels=!showAllModels" class="text-xs hover:underline" style="color:var(--c-indigo)"><span x-text="showAllModels?t('collapse'):t('expand_all')"></span> <span style="color:var(--c-muted)" x-text="'('+(stats.per_model.length-5)+')'"></span></button>
                   <div x-show="showAllModels" class="mt-2 space-y-1">
                     <template x-for="m in stats.per_model.slice(5)" :key="m.model">
-                      <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
-                        <div class="flex items-center gap-1.5 min-w-0"><span class="truncate max-w-[55%]" style="color:var(--c-accent2)" :title="fmtMetaTitle({model_id:m.model})" x-text="m.model"></span><template x-if="m.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></div>
-                        <div class="flex items-center gap-3" style="color:var(--c-muted)">
-                          <span x-text="m.requests+' '+t('unit_times')"></span>
-                          <template x-if="m.errors>0"><span style="color:#f87171" x-text="m.errors+' '+t('unit_errors')"></span></template>
-                          <span x-text="fmtMs(m.avg_latency_ms)"></span>
+                      <div>
+                        <div class="flex items-center justify-between text-xs px-3 py-1.5 rounded" style="background:rgba(255,255,255,.02)">
+                          <div class="flex items-center gap-1.5 min-w-0"><span class="truncate max-w-[55%] cursor-pointer hover:underline" style="color:var(--c-accent2)" @click="ovMetaOpen = toggleMeta(ovMetaOpen, m.model)" x-text="m.model"></span><template x-if="m.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></div>
+                          <div class="flex items-center gap-3" style="color:var(--c-muted)">
+                            <span x-text="m.requests+' '+t('unit_times')"></span>
+                            <template x-if="m.errors>0"><span style="color:#f87171" x-text="m.errors+' '+t('unit_errors')"></span></template>
+                            <span x-text="fmtMs(m.avg_latency_ms)"></span>
+                          </div>
+                        </div>
+                        <div x-show="ovMetaOpen && ovMetaOpen[m.model] && metaHasModel(m.model)" class="mt-1 mb-1 mx-3 flex flex-wrap items-center gap-2 text-[11px] rounded px-2.5 py-1.5" style="background:rgba(99,102,241,.05);border:1px solid var(--c-border)">
+                          <div class="flex flex-wrap items-center gap-2" x-html="ovMetaChips(m.model)"></div>
                         </div>
                       </div>
                     </template>
@@ -1134,9 +1142,9 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                       <div class="overflow-x-auto">
                       <table class="mb-2">
                         <thead><tr><th style="width:5%"><input type="checkbox" :checked="isAllSelected(prov)" @change="toggleAll(prov, $event.target.checked)" class="w-3.5 h-3.5"/></th><th style="width:10%" x-text="t('tbl.vendor')"></th><th style="width:15%" x-text="t('tbl.model_id')"></th><th style="width:15%" x-text="t('tbl.upstream_model')"></th><th style="width:11%" x-text="t('tbl.reasoning')"></th><th style="width:9%" x-text="t('badge.free')"></th><th style="width:10%" x-text="t('tbl.protocol')"></th><th style="width:10%"></th></tr></thead>
-                        <tbody>
-                          <template x-for="(m, mi) in prov.models" :key="mi">
-                            <tr x-show="!prov._filter || (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())" :title="fmtMetaTitle(m)" :class="(m._removed ? 'opacity-60 ' : '') + (m._isNew ? 'bg-[rgba(52,211,153,.06)] ' : '') + (prov._selected && prov._selected[mi] ? 'bg-[rgba(99,102,241,.06)]' : '')">
+                        <template x-for="(m, mi) in prov.models" :key="mi">
+                          <tbody x-show="!prov._filter || (m.model_id||'').toLowerCase().includes((prov._filter||'').toLowerCase()) || (m.upstream_model||'').toLowerCase().includes((prov._filter||'').toLowerCase())">
+                            <tr :class="(m._removed ? 'opacity-60 ' : '') + (m._isNew ? 'bg-[rgba(52,211,153,.06)] ' : '') + (prov._selected && prov._selected[mi] ? 'bg-[rgba(99,102,241,.06)]' : '')">
                               <td><input type="checkbox" :checked="!!(prov._selected && prov._selected[mi])" @change="prov._selected = prov._selected||{}; prov._selected[mi]=$event.target.checked; markDirty()" class="w-3.5 h-3.5"/></td>
                               <td>
                                 <div class="flex items-center gap-1 flex-wrap">
@@ -1145,12 +1153,15 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                                   <template x-if="m._removed"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)">下架</span></template>
                                   <template x-if="m.origin==='manual'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)">手动</span></template>
                                   <template x-if="!m.origin || m.origin==='fetched'"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.25)">获取</span></template>
-                                  <template x-if="metaFor(m) && metaFor(m).vision"><span class="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold" style="background:rgba(168,85,247,.14);color:#c084fc;border:1px solid rgba(168,85,247,.32)">👁 <span x-text="t('meta_vision')"></span></span></template>
                                 </div>
                               </td>
-                              <td><input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id); markDirty()" class="w-full bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" /></td>
-                              <td><input type="text" x-model="m.upstream_model" readonly title="上游主键（只读，改别名请改左侧中转ID）" class="w-full bg-[rgba(255,255,255,.02)] border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none cursor-not-allowed opacity-80" :placeholder="t('upstream_placeholder')" /></td>
                               <td>
+                                <div class="flex items-center gap-1">
+                                  <button type="button" x-show="metaFor(m)" @click="prov._metaOpen = toggleMeta(prov._metaOpen, mi)" class="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[10px] transition-colors" :class="(prov._metaOpen && prov._metaOpen[mi]) ? 'bg-[rgba(99,102,241,.25)]' : 'hover:bg-[rgba(255,255,255,.08)]'" style="color:var(--c-muted)" :title="t('meta_title')" x-text="(prov._metaOpen && prov._metaOpen[mi]) ? '▾' : '▸'"></button>
+                                  <input type="text" x-model="m.model_id" @input="if(!m._fmtTouched) m.api_format = this.defaultApiFormat(m.model_id); markDirty()" class="flex-1 min-w-0 bg-transparent border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none" />
+                                </div>
+                              </td>
+                              <td><input type="text" x-model="m.upstream_model" readonly title="上游主键（只读，改别名请改左侧中转ID）" class="w-full bg-[rgba(255,255,255,.02)] border border-[#2a2d37] rounded px-2 py-1 text-xs font-mono focus:border-[#6366f1] outline-none cursor-not-allowed opacity-80" :placeholder="t('upstream_placeholder')" /></td>                              <td>
                                 <select x-model="m.reasoning_effort" @change="markDirty()" class="w-full bg-[#2a2d37] border border-[#374151] rounded px-2 py-1 text-xs focus:border-[#6366f1] outline-none" style="color:var(--c-ink)">
                                   <option value="" x-text="t('eff.none')"></option>
                                   <option value="low" x-text="t('eff.low')"></option>
@@ -1176,8 +1187,16 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
                                 <button @click="deleteModel(pi, mi); markDirty()" class="text-xs px-2 py-1 rounded hover:bg-[rgba(239,68,68,.15)]" style="color:#f87171" x-text="t('delete')"></button>
                               </td>
                             </tr>
+                            <tr x-show="prov._metaOpen && prov._metaOpen[mi]">
+                              <td colspan="8" style="background:rgba(99,102,241,.05);border-bottom:1px solid var(--c-border);padding:8px 12px">
+                                <div class="flex items-center gap-2">
+                                  <div class="flex flex-wrap items-center gap-2 text-[11px]" x-html="metaChipsHtml(m)"></div>
+                                  <span class="ml-auto shrink-0 text-[10px]" style="color:var(--c-muted)">models.dev</span>
+                                </div>
+                              </td>
+                            </tr>
+                          </tbody>
                           </template>
-                        </tbody>
                       </table>
                       </div>
                       <div class="flex items-center gap-2">
@@ -1347,7 +1366,7 @@ const I18N = {
     'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 'auto_continue_hint': '默认 2 次，0 = 关闭。工具调用流不会续写（半截 JSON 无法安全拼接）。每次续写会重发完整上下文，token 消耗相应增加。重启后回到环境变量 AIGATE_AUTO_CONTINUE 默认值',
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
     'unit_secs': '秒', 'conn_params_hint': '空闲超时：上游超过该时长未吐出数据则断开（30~600 秒）；重试仅对连接/超时错误与 5xx 生效。修改即时生效，重启后回到环境变量默认值',
-    'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 'meta_in': '输入',
+    'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 'meta_in': '输入', 'meta_title': '模型信息',
     'meta_in_vis': '文本 + 图像', 'meta_text_only': '仅文本', 'meta_reasoning': '推理', 'meta_tools': '工具调用',
     'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'forward_saved_resp_cache': '响应缓存命中', 'provider_opt_saved': '今日优化省量',
     'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
@@ -1453,7 +1472,7 @@ const I18N = {
     'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 'auto_continue_hint': 'Default 2, 0 = off. Streams with tool calls are never continued (partial JSON cannot be safely stitched). Each continuation re-sends full context, increasing token usage. Restart reverts to env AIGATE_AUTO_CONTINUE',
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
     'unit_secs': 's', 'conn_params_hint': 'Idle timeout: disconnect if upstream sends nothing for this long (30~600 s); retries apply to connection/timeout errors and 5xx. Changes apply live; restart reverts to env defaults',
-    'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 'meta_in': 'Input',
+    'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 'meta_in': 'Input', 'meta_title': 'Model info',
     'meta_in_vis': 'Text + Image', 'meta_text_only': 'Text only', 'meta_reasoning': 'Reasoning', 'meta_tools': 'Tool call',
     'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'forward_saved_resp_cache': 'Response cache hit', 'provider_opt_saved': 'Today Optimization Savings',
     'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
@@ -1629,6 +1648,8 @@ function dashboard() {
     autoContinue: 2,
     // 模型元信息 (models.dev): {模型名: {context,output,vision,reasoning,tool_call}|null}
     modelMeta: {},
+    ovMetaOpen: {},
+    _metaSig: '',
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
     streamTimeoutSecs: 120,
     retryMax: 1,
@@ -1903,7 +1924,7 @@ function dashboard() {
     async setRetry(max, backoffMs) {
       try { const r=await fetch('/admin/api/retry',{method:'POST',headers:authHeaders(),body:JSON.stringify({max:max|0, backoff_ms:backoffMs|0})}); if(r.ok) { const d=await r.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); } } catch(e){}
     },
-    // ── 模型元信息 (models.dev): 悬停展示上下文/输出限制 + 视觉标签 ──
+    // ── 模型元信息 (models.dev): 点击展开 chips 面板 (上下文/输出/视觉/推理/工具) ──
     async fetchModelMeta() {
       try {
         const names=new Set();
@@ -1911,7 +1932,16 @@ function dashboard() {
           const u=(m.upstream_model||'').trim(); if(u) names.add(u);
           const id=(m.model_id||'').trim(); if(id) names.add(id);
         }));
+        // 概览页统计的模型名带 "provider/" 中转前缀, 剥离后一并查询
+        [...((this.stats?.top_models)||[]), ...((this.stats?.per_model)||[])].forEach(m=>{
+          const raw=(m.model||'').trim(); if(!raw) return;
+          names.add(raw.includes('/') ? raw.split('/').pop() : raw);
+        });
         if(!names.size) return;
+        // 签名去重: 轮询/重复进入不重发 (服务端有 24h 缓存, 也省一次往返)
+        const sig=[...names].sort().join(',');
+        if(sig===this._metaSig && Object.keys(this.modelMeta).length) return;
+        this._metaSig=sig;
         const r=await fetch('/admin/api/model-meta',{method:'POST',headers:authHeaders(),body:JSON.stringify({names:[...names]})});
         if(r.ok){ const d=await r.json(); this.modelMeta=d.meta||{}; }
       } catch(e){}
@@ -1920,21 +1950,27 @@ function dashboard() {
       const u=(m.upstream_model||'').trim();
       return this.modelMeta[u] ?? this.modelMeta[(m.model_id||'').trim()] ?? null;
     },
-    fmtTok(n) { return n>=1000 ? Math.round(n/1000)+'K' : String(n); },
-    fmtMetaTitle(m) {
+    fmtTok(n) { if(!n) return '—'; if(n>=1e6) return (Math.round(n/1e5)/10)+'M'; if(n>=1000) return Math.round(n/1000)+'K'; return String(n); },
+    // 展开状态切换 (不可变更新保证 Alpine 响应)
+    toggleMeta(obj, key) { const o=Object.assign({}, obj||{}); o[key]=!o[key]; return o; },
+    // 概览页模型名带 "provider/" 中转前缀, meta 表键为裸 upstream_model, 查找前需剥离
+    metaHasModel(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return !!this.metaFor({model_id:id}); },
+    ovMetaChips(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return this.metaChipsHtml({model_id:id}); },
+    // 模型元信息 chips 面板内容 (数据源 models.dev, 仅数字/布尔/i18n 文案, x-html 安全)
+    metaChipsHtml(m) {
       const meta=this.metaFor(m);
       if(!meta) return '';
-      const parts=[];
-      if(meta.context) parts.push(t('meta_ctx')+' '+this.fmtTok(meta.context));
-      if(meta.output) parts.push(t('meta_out')+' '+this.fmtTok(meta.output));
-      let line2=[];
-      line2.push(t('meta_in')+': '+(meta.vision ? t('meta_in_vis') : t('meta_text_only')));
-      if(meta.reasoning) line2.push(t('meta_reasoning'));
-      if(meta.tool_call) line2.push(t('meta_tools'));
-      parts.push(line2.join(' · '));
-      return parts.join('\n');
+      const chip=(l,v,c)=>'<span class="inline-flex items-center gap-1 rounded px-2 py-0.5" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44"><span style="opacity:.7">'+l+'</span><b class="font-mono">'+v+'</b></span>';
+      const tag=(l,c)=>'<span class="inline-flex items-center rounded px-2 py-0.5 font-bold" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44">'+l+'</span>';
+      let h='';
+      if(meta.context) h+=chip(t('meta_ctx'), this.fmtTok(meta.context), '#38bdf8');
+      if(meta.output) h+=chip(t('meta_out'), this.fmtTok(meta.output), '#818cf8');
+      h+=chip(t('meta_in'), meta.vision?t('meta_in_vis'):t('meta_text_only'), meta.vision?'#c084fc':'#9ca3af');
+      if(meta.reasoning) h+=tag(t('meta_reasoning'), '#fbbf24');
+      if(meta.tool_call) h+=tag(t('meta_tools'), '#34d399');
+      return h;
     },
-    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; await this.$nextTick(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
+    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
     async fetchHourlyStats() { try { const r=await fetch('/admin/api/stats?granularity=hour', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },
     // ── 更新亮点：取最新一条 changelog 作为弹窗内容 ──
     get whatsNewEntry() {
