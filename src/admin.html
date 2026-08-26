@@ -520,33 +520,14 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
             <option value="24h" x-text="t('time_24h')"></option>
             <option value="7d" x-text="t('time_7d')"></option>
           </select>
-          <div class="flex items-center gap-1.5 ml-auto shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0">
             <select x-model.number="pageSize" @change="resetLogView()" class="select-input text-xs shrink-0" style="max-width:64px">
               <option :value="20">20</option>
               <option :value="50">50</option>
             </select>
-            <button @click="fetchLogs();fetchErrors()" class="btn-ghost text-xs shrink-0" x-text="t('refresh')"></button>
+            <button @click="fetchLogs()" class="btn-ghost text-xs shrink-0" x-text="t('refresh')"></button>
           </div>
         </div>
-        <!-- 独立错误区块: 数据来自 /admin/api/errors, 按"错误"维度与下方 100 条请求窗口完全分离, 正常请求再多也不会把错误刷掉 -->
-        <template x-if="errorList.length>0">
-          <div class="mb-3 rounded-lg" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35)">
-            <div class="px-3 py-2 flex items-center justify-between" style="border-bottom:1px solid rgba(239,68,68,.2)">
-              <span style="color:#f87171;font-weight:600;white-space:nowrap" x-text="'⚠ ' + t('errors_title', errorList.length)"></span>
-              <button @click="errorExpanded=!errorExpanded" class="text-xs hover:underline" style="color:var(--c-indigo)" x-text="errorExpanded?t('collapse'):t('expand_all')"></button>
-            </div>
-            <div x-show="errorExpanded" class="max-h-[280px] overflow-y-auto list-scroll px-3 py-2 space-y-1.5">
-              <template x-for="(e,i) in errorList" :key="i">
-                <div class="text-[11px] leading-snug">
-                  <span class="font-mono" style="color:var(--c-muted)" x-text="fmtTs(e.timestamp)"></span>
-                  <span style="color:#f87171" x-text="' '+e.status+' '"></span>
-                  <span style="color:var(--c-accent2)"><span x-text="(e.model||'?')"></span><template x-if="e.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ml-1 align-middle" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template><span x-text="' · '+(e.provider||'?')"></span></span>
-                  <div class="break-all mt-0.5" style="color:#fca5a5" x-text="e.error" :title="e.error"></div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
         <template x-if="filteredLogs.length===0">
           <div class="text-center py-12">
             <div class="text-2xl mb-2" style="opacity:.35">🛰️</div>
@@ -1826,7 +1807,7 @@ function dashboard() {
       this.logPage = 0; this.expandedLog = -1;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
-      if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
+      if (tabId==='records') { this.fetchLogs(); }
       if (tabId==='routes'||tabId==='settings') { this.fetchRoutes(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
       if (tabId==='routes') { if (this.health.length===0) this.fetchHealth(); }
     },
