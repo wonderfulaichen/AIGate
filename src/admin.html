@@ -500,19 +500,33 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
             <button @click="clearLogs()" class="btn-ghost text-xs" x-text="t('clear')"></button>
           </div>
         </div>
-        <div class="flex items-center gap-2 mb-3">
-          <input type="text" x-model="logSearch" :placeholder="t('search_placeholder')" class="search-input flex-1" />
-          <select x-model="logProviderFilter" class="select-input text-xs" style="max-width:140px">
+        <!-- 筛选条: 吸顶胶囊栏, 筛选即时生效并重置分页/展开 -->
+        <div class="sticky top-0 z-10 mb-3 rounded-xl px-3 py-2.5 flex flex-wrap items-center gap-2" style="background:rgba(15,17,23,.92);border:1px solid var(--c-border);backdrop-filter:blur(8px)">
+          <input type="text" x-model="logSearch" @input.debounce.200ms="resetLogView()" :placeholder="t('search_placeholder')" class="search-input flex-1 min-w-[160px]" />
+          <select x-model="logProviderFilter" @change="resetLogView()" class="select-input text-xs shrink-0" style="max-width:140px">
             <option value="" x-text="t('opt.all_providers')"></option>
             <template x-for="p in logProviders" :key="p">
               <option :value="p" x-text="p"></option>
             </template>
           </select>
-          <select x-model="logStatusFilter" class="select-input text-xs" style="max-width:100px">
-            <option value="" x-text="t('opt.all_status')"></option>
-            <option value="success" x-text="t('opt.success')"></option>
-            <option value="error" x-text="t('opt.error')"></option>
+          <div class="flex items-center rounded-lg p-0.5 gap-0.5 shrink-0" style="background:rgba(255,255,255,.04);border:1px solid var(--c-border)">
+            <button @click="logStatusFilter='';resetLogView()" class="px-2.5 py-1 rounded-md text-xs transition" :class="logStatusFilter===''?'bg-[rgba(99,102,241,.3)] text-white font-medium':'text-[var(--c-muted)] hover:text-white'" x-text="t('opt_all')"></button>
+            <button @click="logStatusFilter='success';resetLogView()" class="px-2.5 py-1 rounded-md text-xs transition" :class="logStatusFilter==='success'?'bg-[rgba(52,211,153,.2)] text-[#34d399] font-medium':'text-[var(--c-muted)] hover:text-white'" x-text="t('opt.success')"></button>
+            <button @click="logStatusFilter='error';resetLogView()" class="px-2.5 py-1 rounded-md text-xs transition" :class="logStatusFilter==='error'?'bg-[rgba(239,68,68,.2)] text-[#f87171] font-medium':'text-[var(--c-muted)] hover:text-white'" x-text="t('opt.error')"></button>
+          </div>
+          <select x-model="logTimeFilter" @change="resetLogView()" class="select-input text-xs shrink-0" style="max-width:110px">
+            <option value="" x-text="t('time_all')"></option>
+            <option value="1h" x-text="t('time_1h')"></option>
+            <option value="24h" x-text="t('time_24h')"></option>
+            <option value="7d" x-text="t('time_7d')"></option>
           </select>
+          <div class="flex items-center gap-1.5 ml-auto shrink-0">
+            <select x-model.number="pageSize" @change="resetLogView()" class="select-input text-xs shrink-0" style="max-width:64px">
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+            <button @click="fetchLogs();fetchErrors()" class="btn-ghost text-xs shrink-0" x-text="t('refresh')"></button>
+          </div>
         </div>
         <!-- 独立错误区块: 数据来自 /admin/api/errors, 按"错误"维度与下方 100 条请求窗口完全分离, 正常请求再多也不会把错误刷掉 -->
         <template x-if="errorList.length>0">
@@ -534,37 +548,51 @@ body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
           </div>
         </template>
         <template x-if="filteredLogs.length===0">
-          <div class="text-center py-8 text-sm" style="color:var(--c-muted)" x-text="logSearch?t('no_match'):t('no_logs')"></div>
+          <div class="text-center py-12">
+            <div class="text-2xl mb-2" style="opacity:.35">🛰️</div>
+            <div class="text-sm" style="color:var(--c-muted)" x-text="(logSearch||logProviderFilter||logStatusFilter||logTimeFilter)?t('no_match'):t('no_logs')"></div>
+            <button x-show="logSearch||logProviderFilter||logStatusFilter||logTimeFilter" @click="logSearch='';logProviderFilter='';logStatusFilter='';logTimeFilter='';resetLogView()" class="mt-2 text-xs hover:underline" style="color:var(--c-indigo)" x-text="t('filter_reset')"></button>
+          </div>
         </template>
         <template x-if="filteredLogs.length>0">
           <div>
-            <div class="space-y-0.5 max-h-[500px] overflow-y-auto list-scroll">
+            <div class="space-y-1.5">
               <template x-for="(log,i) in paginatedLogs" :key="i">
-                <div>
-                  <div class="flex items-center gap-3 text-xs px-3 py-2 rounded-lg cursor-pointer transition" style="border-left:2px solid" :style="log.status>=400?'border-color:#ef4444;background:rgba(239,68,68,.03)':'border-color:#34d399;background:rgba(52,211,153,.02)'" @click="expandedLog=(expandedLog===i?-1:i)" :class="expandedLog===i?'rounded-b-none':''">
-                    <span class="w-16 shrink-0 font-mono" style="color:var(--c-muted)" x-text="fmtTs(log.timestamp)"></span>
-                    <div class="flex items-center gap-1 min-w-0 max-w-[22%] shrink-0"><span class="font-mono truncate" :class="log.status>=400?'text-[#f87171]':'text-[#818cf8]'" x-text="log.model"></span><template x-if="log.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></div>
-                    <span class="truncate max-w-[10%] shrink-0" style="color:var(--c-muted)" x-text="log.provider"></span>
-                    <span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
-                    <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0 badge-primary" :title="t('badge.cached_title')" x-text="t('badge.cached')"></span></template>
-                    <template x-if="(log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium shrink-0" style="background:rgba(34,211,238,.15);color:#22d3ee" :title="'KV '+fmtT(log.prompt_cache_hit_tokens)+' / '+fmtT(log.prompt_cache_miss_tokens)+' tok'" x-text="'KV '+(((log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0)?((log.prompt_cache_hit_tokens/(log.prompt_tokens||1)*100).toFixed(0)):'0')+'%'"></span></template>
-                    <span class="w-14 text-right font-mono shrink-0" style="color:var(--c-muted)" x-text="log.latency_ms+'ms'"></span>
-                    <span class="w-16 text-right shrink-0" style="color:var(--c-muted)" x-text="fmtB(log.body_len)"></span>
-                    <template x-if="log.error"><span class="text-[#f87171] truncate min-w-0 text-[11px]" x-text="log.error.substring(0,45)"></span></template>
-                  </div>
-                  <div x-show="expandedLog===i" class="text-xs px-4 py-3 rounded-b-lg space-y-1" style="background:rgba(255,255,255,.02);border:1px solid rgba(42,45,55,.5);border-top:0">
-                    <div class="flex flex-wrap gap-x-6 gap-y-1" style="color:var(--c-muted)">
-                      <span><span x-text="t('detail.time')"></span>: <span style="color:var(--c-ink)" x-text="fmtDateTime(log.timestamp)"></span></span>
-                      <span><span x-text="t('detail.model')"></span>: <span style="color:var(--c-indigo)" x-text="log.model"></span><template x-if="log.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ml-1 align-middle" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template></span>
-                      <span><span x-text="t('detail.provider')"></span>: <span style="color:var(--c-ink)" x-text="log.provider"></span></span>
-                      <span><span x-text="t('detail.endpoint')"></span>: <span class="font-mono text-[10px]" style="color:var(--c-ink)" x-text="log.endpoint"></span></span>
-                      <span><span x-text="t('detail.status')"></span>: <span :class="log.status<400?'text-[#34d399]':'text-[#ef4444]'" x-text="log.status"></span></span>
-                      <span><span x-text="t('detail.latency')"></span>: <span style="color:var(--c-ink)" x-text="log.latency_ms+'ms'"></span></span>
-                      <span><span x-text="t('detail.body')"></span>: <span style="color:var(--c-ink)" x-text="fmtB(log.body_len)"></span></span>
-                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.kv_cache')"></span>: <span style="color:#22d3ee" x-text="t('kv_hit', fmtT(log.prompt_cache_hit_tokens))"></span><span style="color:var(--c-muted)"> / </span><span style="color:var(--c-ink)" x-text="t('kv_miss', fmtT(log.prompt_cache_miss_tokens))"></span><template x-if="(log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0"><span style="color:var(--c-muted)"> (<span x-text="((log.prompt_cache_hit_tokens/(log.prompt_tokens||1)*100).toFixed(1))"></span>%</span></template></span></template>
-                      <template x-if="log.error"><span class="w-full mt-1"><span x-text="t('detail.error')"></span>: <span class="break-all" style="color:#f87171" x-text="log.error"></span></span></template>
-                      <template x-if="log.first_token_ms && log.first_token_ms < log.latency_ms && log.completion_tokens>0"><span class="w-full mt-1"><span x-text="t('detail.gen_speed')"></span>: <span style="color:#34d399" x-text="(log.completion_tokens/((log.latency_ms-log.first_token_ms)/1000)).toFixed(0)+' '+t('unit_tokps')"></span><span style="color:var(--c-muted)"> (TTFT <span x-text="log.first_token_ms"></span>ms)</span></span></template>
+                <div class="rounded-lg cursor-pointer transition" style="border-left:3px solid" :style="log.status>=400?'border-color:#ef4444;background:rgba(239,68,68,.04)':'border-color:#34d399;background:rgba(52,211,153,.02)'" :class="(expandedLog===i?'ring-1 ring-[rgba(99,102,241,.4)]':'hover:bg-[rgba(255,255,255,.04)]')" @click="expandedLog=(expandedLog===i?-1:i)">
+                  <!-- 主行: 时间+状态 | 模型 | (右) 输入/输出 · KV · 延迟 · 大小 -->
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-xs">
+                    <div class="flex items-center gap-2 shrink-0">
+                      <span class="font-mono" style="color:var(--c-muted)" x-text="fmtTs(log.timestamp)"></span>
+                      <span class="px-1.5 py-0.5 rounded text-[11px] font-medium" :class="log.status<300?'badge-success':log.status<500?'badge-warning':'badge-error'" x-text="log.status"></span>
+                      <template x-if="log.cached"><span class="px-1.5 py-0.5 rounded text-[11px] font-medium badge-primary" :title="t('badge.cached_title')" x-text="t('badge.cached')"></span></template>
                     </div>
+                    <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                      <span class="font-mono truncate" :class="log.status>=400?'text-[#f87171]':'text-[#818cf8]'" :title="log.model" x-text="log.model"></span>
+                      <template x-if="log.free"><span class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0" style="background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35)" x-text="t('badge.free')"></span></template>
+                      <span class="truncate text-[11px] shrink-0" style="color:var(--c-muted)" x-text="log.provider"></span>
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0 font-mono text-[11px]" style="color:var(--c-muted)">
+                      <span :title="t('token_io')"><span x-text="fmtT(log.prompt_tokens||0)"></span><span style="opacity:.5"> → </span><span style="color:var(--c-ink)" x-text="fmtT(log.completion_tokens||0)"></span></span>
+                      <template x-if="(log.prompt_cache_hit_tokens||0)+(log.prompt_cache_miss_tokens||0)>0"><span style="color:#22d3ee" :title="'KV '+fmtT(log.prompt_cache_hit_tokens)+' / '+fmtT(log.prompt_cache_miss_tokens)+' tok'" x-text="'KV '+((log.prompt_cache_hit_tokens/(log.prompt_tokens||1))*100).toFixed(0)+'%'"></span></template>
+                      <span class="w-14 text-right" x-text="log.latency_ms+'ms'"></span>
+                      <span class="w-14 text-right" x-text="fmtB(log.body_len)"></span>
+                      <span class="w-3 text-center transition-transform" :class="expandedLog===i?'rotate-180':''" style="color:var(--c-muted)">▾</span>
+                    </div>
+                    <template x-if="log.error"><div class="w-full truncate text-[11px]" style="color:#f87171" :title="log.error" x-text="log.error"></div></template>
+                  </div>
+                  <!-- 展开区: 模型元信息 chips + 完整明细 -->
+                  <div x-show="expandedLog===i" x-cloak class="px-3.5 pb-3 pt-1 space-y-2" @click.stop>
+                    <template x-if="metaChipsHtml(log)"><div class="flex flex-wrap items-center gap-2 text-[11px]"><div class="flex flex-wrap items-center gap-2" x-html="metaChipsHtml(log)"></div><span class="ml-auto text-[10px]" style="color:var(--c-muted)">models.dev</span></div></template>
+                    <div class="flex flex-wrap gap-x-5 gap-y-1 text-[11px]" style="color:var(--c-muted)">
+                      <span><span x-text="t('detail.time')"></span>: <span style="color:var(--c-ink)" x-text="fmtDateTime(log.timestamp)"></span></span>
+                      <span><span x-text="t('detail.provider')"></span>: <span style="color:var(--c-ink)" x-text="log.provider"></span></span>
+                      <span><span x-text="t('detail.endpoint')"></span>: <span class="font-mono" style="color:var(--c-ink)" x-text="log.endpoint"></span></span>
+                      <template x-if="log.upstream_model && log.upstream_model!==log.model"><span>upstream: <span class="font-mono" style="color:var(--c-ink)" x-text="log.upstream_model"></span></span></template>
+                      <span><span x-text="t('detail.body')"></span>: <span style="color:var(--c-ink)" x-text="fmtB(log.body_len)"></span></span>
+                      <template x-if="log.prompt_cache_hit_tokens>0 || log.prompt_cache_miss_tokens>0"><span><span x-text="t('detail.kv_cache')"></span>: <span style="color:#22d3ee" x-text="t('kv_hit', fmtT(log.prompt_cache_hit_tokens))"></span><span style="color:var(--c-muted)"> / </span><span style="color:var(--c-ink)" x-text="t('kv_miss', fmtT(log.prompt_cache_miss_tokens))"></span><span style="color:var(--c-muted)"> (<span x-text="((log.prompt_cache_hit_tokens/(log.prompt_tokens||1))*100).toFixed(1)"></span>%)</span></span></template>
+                      <template x-if="log.first_token_ms && log.first_token_ms < log.latency_ms && log.completion_tokens>0"><span><span x-text="t('detail.gen_speed')"></span>: <span style="color:#34d399" x-text="(log.completion_tokens/((log.latency_ms-log.first_token_ms)/1000)).toFixed(0)+' '+t('unit_tokps')"></span><span style="color:var(--c-muted)"> (TTFT <span x-text="log.first_token_ms"></span>ms)</span></span></template>
+                    </div>
+                    <template x-if="log.error"><div class="rounded p-2.5 break-all text-[11px] leading-relaxed" style="background:rgba(239,68,68,.08);color:#fca5a5" x-text="log.error"></div></template>
                   </div>
                 </div>
               </template>
@@ -1324,6 +1352,8 @@ const I18N = {
     'provider_stats': '供应商统计',
     'records_title': '请求记录', 'records_count': '{0} 条',
     'export_json': '导出 JSON', 'clear': '清除',
+    'opt_all': '全部', 'time_all': '全部时间', 'time_1h': '近1小时', 'time_24h': '近24小时', 'time_7d': '近7天',
+    'token_io': '输入/输出 Tokens', 'filter_reset': '清空筛选', 'refresh': '刷新',
     'search_placeholder': '搜索模型/供应商/错误...',
     'opt.all_providers': '全部供应商', 'opt.all_status': '全部状态', 'opt.success': '成功', 'opt.error': '错误',
     'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
@@ -1430,6 +1460,8 @@ const I18N = {
     'provider_stats': 'Provider Stats',
     'records_title': 'Request Logs', 'records_count': '{0} entries',
     'export_json': 'Export JSON', 'clear': 'Clear',
+    'opt_all': 'All', 'time_all': 'All time', 'time_1h': 'Last 1h', 'time_24h': 'Last 24h', 'time_7d': 'Last 7d',
+    'token_io': 'Tokens in/out', 'filter_reset': 'Reset filters', 'refresh': 'Refresh',
     'search_placeholder': 'Search model/provider/error...',
     'opt.all_providers': 'All providers', 'opt.all_status': 'All status', 'opt.success': 'Success', 'opt.error': 'Error',
     'no_match': 'No matches', 'no_logs': 'No request logs',
@@ -1675,7 +1707,7 @@ function dashboard() {
     trendGranularity: 'day',
 
     // Logs
-    logSearch: '', logProviderFilter: '', logStatusFilter: '', logPage: 0, expandedLog: -1, pageSize: 25,
+    logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, expandedLog: -1, pageSize: 20,
 
     // Donut chart
     donutColors: ['#6366f1','#06b6d4','#f59e0b','#34d399','#f472b6','#a78bfa','#fb923c','#2dd4bf'],
@@ -2654,12 +2686,17 @@ function dashboard() {
       if (this.logProviderFilter) r = r.filter(l=>l.provider===this.logProviderFilter);
       if (this.logStatusFilter==='success') r = r.filter(l=>l.status<400);
       if (this.logStatusFilter==='error') r = r.filter(l=>l.status>=400);
+      if (this.logTimeFilter) {
+        const win = {'1h':3600,'24h':86400,'7d':604800}[this.logTimeFilter]||0;
+        if (win) { const cutoff = Date.now()/1000 - win; r = r.filter(l=>l.timestamp>=cutoff); }
+      }
       if(this.logSearch) {
         const q=this.logSearch.toLowerCase();
         r = r.filter(l=>l.model.toLowerCase().includes(q)||l.provider.toLowerCase().includes(q)||(l.error&&l.error.toLowerCase().includes(q))||String(l.status).includes(q));
       }
       return r;
     },
+    resetLogView() { this.logPage = 0; this.expandedLog = -1; },
     get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
