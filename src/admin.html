@@ -1928,7 +1928,9 @@ function dashboard() {
     async fetchModelMeta() {
       try {
         const names=new Set();
-        (this.providersFormData?.providers||[]).forEach(p=>(p.models||[]).forEach(m=>{
+        // 注意: providersFormData 就是供应商数组本身 (非 {providers:[]}),
+        // 旧版误写 .providers 导致表单模型名从未被收集, 仅统计接口的模型有元数据.
+        (this.providersFormData||[]).forEach(p=>(p.models||[]).forEach(m=>{
           const u=(m.upstream_model||'').trim(); if(u) names.add(u);
           const id=(m.model_id||'').trim(); if(id) names.add(id);
         }));
