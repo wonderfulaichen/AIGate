@@ -865,7 +865,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                       <template x-if="m.origin==='manual'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)">手动</span></template>
                       <template x-if="!m.origin || m.origin==='fetched'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.25)">获取</span></template>
                     </div></td>
-                    <td style="padding:6px 10px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"></td>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" :placeholder="m.model_id===drawerProv.name+'/'?drawerProv.name+'/模型ID':''" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"><button style="flex-shrink:0;background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px" :title="t('copy_model_id')" @click="copyText(m.model_id||'', 'mid'+ei)"><template x-if="copiedField!==('mid'+ei)">⧉</template><template x-if="copiedField==='mid'+ei"><span style="color:var(--ok)">✓</span></template></button></div></td>
                     <td style="padding:6px 10px;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
@@ -977,7 +977,7 @@ const I18N = {
     'ui_language': '界面语言', 'lang_zh': '简体中文', 'lang_en': 'English',
     'proxy_service': '代理服务', 'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
     'proxy_policy': '上游代理策略', 'proxy_mode_system': '继承系统代理', 'proxy_mode_no_proxy': '已禁用代理', 'proxy_mode_custom': '自定义代理', 'proxy_hint': '由环境变量 AIGATE_NO_PROXY / AIGATE_PROXY 控制，修改后需重启生效',
-    'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制',
+    'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制', 'copy_model_id': '复制模型中转 ID',
     'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
     'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 'auto_continue_hint': '默认 2 次，0 = 关闭。工具调用流不会续写（半截 JSON 无法安全拼接）。每次续写会重发完整上下文，token 消耗相应增加。重启后回到环境变量 AIGATE_AUTO_CONTINUE 默认值',
@@ -1131,7 +1131,7 @@ const I18N = {
     'ui_language': 'Interface Language', 'lang_zh': '简体中文', 'lang_en': 'English',
     'proxy_service': 'Proxy Service', 'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
     'proxy_policy': 'Upstream Proxy Policy', 'proxy_mode_system': 'System Proxy', 'proxy_mode_no_proxy': 'Disabled', 'proxy_mode_custom': 'Custom', 'proxy_hint': 'Controlled by env AIGATE_NO_PROXY / AIGATE_PROXY; restart required to apply',
-    'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied',
+    'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied', 'copy_model_id': 'Copy model transit ID',
     'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
     'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 'auto_continue_hint': 'Default 2, 0 = off. Streams with tool calls are never continued (partial JSON cannot be safely stitched). Each continuation re-sends full context, increasing token usage. Restart reverts to env AIGATE_AUTO_CONTINUE',
@@ -2242,9 +2242,11 @@ function dashboard() {
         } catch(e){}
       },
       addModel(pi) {
-       this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,origin:'manual',_isNew:false,_removed:false,_freeTouched:false,_fmtTouched:false,_metaExpanded:false});
-        this.markDirty();
-      },
+      const provName = (this.providersFormData[pi]&&this.providersFormData[pi].name)||'';
+      // 预填「供应商/」前缀: 新模型中转 ID 自动成为"供应商/…"形式, 补全剩余即可; 也可直接改.
+      this.providersFormData[pi].models.push({model_id:provName+'/',upstream_model:'',reasoning_effort:'',api_format:'',free:false,origin:'manual',_isNew:false,_removed:false,_freeTouched:false,_fmtTouched:false,_metaExpanded:false});
+      this.markDirty();
+    },
      deleteModel(pi, mi) {
         this.providersFormData[pi].models.splice(mi,1);
         this.markDirty();
@@ -2338,7 +2340,9 @@ function dashboard() {
             if(line.startsWith('#')) continue;
             const parts=line.split(/[,;\t|]/).map(s=>s.trim()).filter(Boolean);
             if(!parts.length) continue;
-            const model_id=parts[0];
+            // 中转 ID 未显式带「供应商/」前缀时自动补全 (与拉取模型一致), 免手动命名.
+            let model_id=parts[0];
+            if(!model_id.includes('/')) model_id = prov.name + '/' + model_id;
             const upstream=parts[1]||model_id;
             const effort=parts[2]||'';
             const fmt=parts[3]||'';
@@ -2390,7 +2394,9 @@ function dashboard() {
           let added=0;
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
-              prov.models.push({ model_id:id, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
+              // 中转 ID 自动生成为「供应商/上游模型ID」, 免去手动命名; 不满意可直接改.
+              const prefixed = (id.includes('/') ? id : prov.name + '/' + id);
+              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
             }
