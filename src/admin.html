@@ -146,6 +146,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .btn-p{background:var(--primary);color:var(--primary-fg)}.btn-p:hover{background:var(--primary-h)}
 .btn-g{background:transparent;color:var(--muted)}.btn-g:hover{background:rgba(255,255,255,.06);color:var(--fg)}
 .btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:rgba(255,255,255,.06)}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+@keyframes aispin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:aispin .6s linear infinite;flex:0 0 auto}
 .inp{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--fg);transition:border-color .15s,box-shadow .15s}
 .inp:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
 .inp::placeholder{color:var(--muted)}
@@ -341,6 +344,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .btn-p{background:var(--primary);color:var(--primary-fg)}.btn-p:hover{background:var(--primary-h)}
 .btn-g{background:transparent;color:var(--muted)}.btn-g:hover{background:rgba(255,255,255,.06);color:var(--fg)}
 .btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:rgba(255,255,255,.06)}
+.btn[disabled]{opacity:.55;cursor:not-allowed}
+@keyframes aispin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:aispin .6s linear infinite;flex:0 0 auto}
 /* ── new-api input ── */
 .inp{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--fg);transition:border-color .15s,box-shadow .15s}
 .inp:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
@@ -482,7 +488,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </template>
 </div>
 <div x-show="activeTab==='analytics'" class="page-enter ov-page">
-  <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats();fetchHourlyStats()" x-text="t('refresh')"></button></div></div>
+  <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats()" x-text="t('refresh')"></button></div></div>
   <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('no_data')"></span></div></div></template>
   <template x-if="stats"><div style="display:flex;flex-direction:column;gap:16px">
     <div class="an-stat-strip">
@@ -492,8 +498,8 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div class="an-stat"><div class="an-stat-label" x-text="t('average_rpm')"></div><div class="an-stat-value" x-text="analysisRpm.toFixed(2)"></div></div>
       <div class="an-stat"><div class="an-stat-label" x-text="t('average_tpm')"></div><div class="an-stat-value" x-text="fmtT(Math.round(analysisTpm))"></div><div class="txs tm" x-text="t('tokens_per_min')"></div></div>
     </div>
-    <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsRange==='1d'}" @click="analyticsRange='1d';trendGranularity='hour';fetchStats();fetchHourlyStats()" x-text="t('range_1d')"></span><span class="seg-i" :class="{'a':analyticsRange==='7d'}" @click="analyticsRange='7d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_7d')"></span><span class="seg-i" :class="{'a':analyticsRange==='14d'}" @click="analyticsRange='14d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_14d')"></span><span class="seg-i" :class="{'a':analyticsRange==='29d'}" @click="analyticsRange='29d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_29d')"></span></div><span class="txs tm" style="margin-left:8px" x-text="t('trend_granularity')"></span><div class="seg"><span class="seg-i" :class="{'a':trendGranularity==='hour'}" @click="trendGranularity='hour';fetchStats();fetchHourlyStats()" x-text="t('granularity_hour')"></span><span class="seg-i" :class="{'a':trendGranularity==='day'}" @click="trendGranularity='day';fetchStats()" x-text="t('granularity_day')"></span><span class="seg-i" :class="{'a':trendGranularity==='month'}" @click="trendGranularity='month';fetchStats()" x-text="t('granularity_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range',analyticsRange?t('range_'+analyticsRange):t('current_log_window'))"></span></div></div>
-    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><div class="ta-grid" x-show="tokenActivityFlat.length" style="grid-template-columns:repeat(7,20px)" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
+    <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></span><span class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></span><span class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><div class="ta-grid" x-show="tokenActivityFlat.length" :style="'grid-template-columns:repeat('+Math.max(1,Math.ceil((tokenActivityFlat.length||0)/7))+',20px);grid-template-rows:repeat(7,20px)'" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div x-show="modelTrendSvgHtml" x-html="modelTrendSvgHtml"></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="(k,idx) in (modelTrendData&&modelTrendData.keys||[]).slice(0,6)" :key="k"><span class="model-trend-chip" :class="{dim:hiddenModels[k]}" @click="toggleModel(k)" style="cursor:pointer"><i :style="'background:'+['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'][idx%6]"></i><span x-text="k.split('/').slice(1).join('/')||k"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100).toFixed(1)+'%':'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_matching_models')"></td></tr></template></tbody></table></div></div>
@@ -645,7 +651,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div style="display:flex;gap:8px;align-items:center">
     <template x-if="isDirty"><span class="dirty">● <span x-text="t('unsaved_changes')"></span></span></template>
     <button class="btn btn-g" @click="loadProvidersForm()" x-text="t('refresh')"></button>
-    <button class="btn btn-p" :disabled="!isDirty" @click="saveProvidersForm()" x-text="t('save_config')"></button>
+    <button class="btn btn-p" :disabled="!isDirty||_saving" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
     <button class="btn btn-p" @click="showAddProvider=true" x-text="t('add')"></button>
   </div>
 </div>
@@ -680,13 +686,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <td>
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
       <span class="mono txsm" x-text="(prov.models||[]).length"></span>
+      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:9px" x-text="t('new_models_badge', prov._newModels)"></span></template>
       <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
     </div>
   </td>
   <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
-    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('test_connection')" @click="testProvider(providersFormData.indexOf(prov))">⚡</button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
     <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
-    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('fetch_models')" @click="fetchProviderModels(providersFormData.indexOf(prov))">↓</button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
     <button class="btn btn-o" style="font-size:11px;padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
     <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))">✕</button>
   </div></td>
@@ -700,10 +707,11 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):t('health_na')"></span>
       <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
       <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
+      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:9px" x-text="t('new_models_badge', prov._newModels)"></span></template>
       <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn btn-g" style="font-size:11px;padding:4px 8px" @click="fetchProviderModels(providersFormData.indexOf(prov))" x-text="t('fetch_models')"></button>
+      <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span x-text="t('fetch_models')"></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
       <button class="btn btn-o" style="font-size:11px;padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
       <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err);margin-left:auto" @click="deleteProvider(providersFormData.indexOf(prov))" x-text="t('delete')"></button>
     </div>
@@ -753,7 +761,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
             <div style="flex:1"><div class="sec-title" x-text="t('addprov.endpoint')"></div><div class="sec-sub" x-text="t('endpoint_protocol_desc')"></div></div>
             <button class="btn btn-g" style="font-size:11px;white-space:nowrap" :disabled="drawerProv._testing" @click="testProvider(providersFormData.indexOf(drawerProv))">
               <template x-if="!drawerProv._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template>
-              <template x-if="drawerProv._testing"><span style="color:var(--muted)">⏳ <span x-text="t('testing')"></span></span></template>
+              <template x-if="drawerProv._testing"><span class="spin" style="margin-right:6px"></span><span x-text="t('testing')"></span></template>
             </button>
           </div>
           <div class="sec-body">
@@ -847,10 +855,16 @@ tr:hover td{background:rgba(99,102,241,.04)}
                 </thead>
                 <tbody>
                   <template x-for="(m,ei) in drawerProv.models" :key="ei">
-                  <tr x-show="modelVisible(m,drawerProv)" style="border-bottom:1px solid rgba(255,255,255,.04)" :style="m._removed?'opacity:.4':''">
+                  <tr x-show="modelVisible(m,drawerProv)" style="border-bottom:1px solid rgba(255,255,255,.04)" :style="(m._removed?'opacity:.4':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
                     <td style="padding:6px 10px"><input type="checkbox" :checked="!!(drawerProv._selected&&drawerProv._selected[ei])" @change="drawerProv._selected=drawerProv._selected||{};drawerProv._selected[ei]=$event.target.checked;markDirty()"></td>
-                    <td style="padding:6px 10px"><span class="bdg bdg-p" style="font-size:10px" x-text="brandFor(m.upstream_model,drawerProv.name).label" :style="'background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'"></span></td>
-                    <td style="padding:6px 10px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" @input="if(!m._fmtTouched)m.api_format=this.defaultApiFormat(m.model_id);markDirty()"></td>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                      <span class="bdg bdg-p" style="font-size:10px" x-text="brandFor(m.upstream_model,drawerProv.name).label" :style="'background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'"></span>
+                      <template x-if="m._isNew"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)">NEW</span></template>
+                      <template x-if="m._removed"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)">下架</span></template>
+                      <template x-if="m.origin==='manual'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)">手动</span></template>
+                      <template x-if="!m.origin || m.origin==='fetched'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.25)">获取</span></template>
+                    </div></td>
+                    <td style="padding:6px 10px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"></td>
                     <td style="padding:6px 10px;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
@@ -868,7 +882,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <!-- Footer -->
       <div class="dr-foot">
         <button class="btn btn-g" @click="closeProviderDrawer()" x-text="t('cancel')"></button>
-        <button class="btn btn-p" @click="saveProvidersForm()" x-text="t('save_config')"></button>
+        <button class="btn btn-p" :disabled="_saving" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
       </div>
     </div>
   </div>
@@ -917,7 +931,7 @@ const I18N = {
     'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
     'btn.line': '线', 'btn.bar': '柱',
     'no_trend': '暂无趋势数据',
-    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按日期查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '颜色表示 Token 使用量，空白日期表示没有请求', 'token_trend_title': '每日 Token 趋势', 'token_trend_desc': '按上游模型拆分的每日 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
+    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按日期查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '颜色表示 Token 使用量，空白日期表示没有请求', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
     'heatmap_mon': '一', 'heatmap_tue': '二', 'heatmap_wed': '三', 'heatmap_thu': '四', 'heatmap_fri': '五', 'heatmap_sat': '六', 'heatmap_sun': '日',
     'provider_stats': '供应商统计',
     'records_title': '请求记录', 'records_count': '{0} 条',
@@ -1012,7 +1026,7 @@ const I18N = {
     'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
     'current_log_window': '当前日志窗口', 'total_requests': '总请求数', 'total_cost': '总费用', 'total_tokens': '总 Tokens',
     'average_rpm': '平均 RPM', 'average_tpm': '平均 TPM', 'tokens_per_min': 'Tokens / 分钟', 'time_range': '时间范围',
-    'range_1d': '1 天', 'range_7d': '7 天', 'range_14d': '14 天', 'range_29d': '29 天', 'trend_granularity': '趋势粒度',
+    'range_1d': '1 天', 'range_7d': '7 天', 'range_14d': '14 天', 'range_29d': '29 天', 'range_365d': '12 个月', 'trend_granularity': '趋势粒度', 'span_hour': '小时 (24)', 'span_day': '天 (30)', 'span_month': '月 (12)',
     'granularity_hour': '小时', 'granularity_day': '天', 'granularity_month': '月', 'stats_range': '统计范围：{0}',
     'request_count': '{0} 次请求', 'consumption_trend': '消费趋势',
     'consumption_desc': '请求、Tokens、延迟与费用', 'line_chart': '线', 'bar_chart': '柱',
@@ -1032,7 +1046,7 @@ const I18N = {
     'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
     'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
     'confirm_clear_removed_models': '确认清理 {0} 个已下架模型？', 'removed_models_cleaned': '已清理 {0} 个下架模型',
-    'models_imported': '已导入 {0} 个模型', 'removed_models_suffix': ' | 下架 {0} 个',
+    'models_imported': '已导入 {0} 个模型', 'removed_models_suffix': ' | 下架 {0} 个', 'new_models_badge': '新 +{0}',
     'provider_name_required': '供应商 name 不能为空', 'provider_name_duplicate': '供应商 name 重复：{0}',
     'provider_keys_saved': '已保存 {0} 个供应商的密钥', 'provider_keys_save_failed': '{0} 个供应商的密钥保存失败',
 
@@ -1071,7 +1085,7 @@ const I18N = {
     'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
     'btn.line': 'Line', 'btn.bar': 'Bar',
     'no_trend': 'No trend data',
-    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage by date', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Color shows token usage; blank dates have no requests', 'token_trend_title': 'Daily token trend', 'token_trend_desc': 'Daily token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
+    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage by date', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Color shows token usage; blank dates have no requests', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
     'heatmap_mon': 'Mon', 'heatmap_tue': 'Tue', 'heatmap_wed': 'Wed', 'heatmap_thu': 'Thu', 'heatmap_fri': 'Fri', 'heatmap_sat': 'Sat', 'heatmap_sun': 'Sun',
     'provider_stats': 'Provider Stats',
     'records_title': 'Request Logs', 'records_count': '{0} entries',
@@ -1166,7 +1180,7 @@ const I18N = {
     'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
     'current_log_window': 'Current log window', 'total_requests': 'Total requests', 'total_cost': 'Total cost', 'total_tokens': 'Total tokens',
     'average_rpm': 'Average RPM', 'average_tpm': 'Average TPM', 'tokens_per_min': 'Tokens / min', 'time_range': 'Time range',
-    'range_1d': '1 day', 'range_7d': '7 days', 'range_14d': '14 days', 'range_29d': '29 days', 'trend_granularity': 'Trend granularity',
+    'range_1d': '1 day', 'range_7d': '7 days', 'range_14d': '14 days', 'range_29d': '29 days', 'range_365d': '12 months', 'trend_granularity': 'Trend granularity', 'span_hour': 'Hour (24)', 'span_day': 'Day (30)', 'span_month': 'Month (12)',
     'granularity_hour': 'Hour', 'granularity_day': 'Day', 'granularity_month': 'Month', 'stats_range': 'Range: {0}',
     'request_count': '{0} requests', 'consumption_trend': 'Consumption trend',
     'consumption_desc': 'Requests, tokens, latency, and cost', 'line_chart': 'Line', 'bar_chart': 'Bar',
@@ -1186,7 +1200,7 @@ const I18N = {
     'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
     'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
     'confirm_clear_removed_models': 'Remove {0} discontinued models?', 'removed_models_cleaned': 'Removed {0} discontinued models',
-    'models_imported': 'Imported {0} models', 'removed_models_suffix': ' | {0} discontinued',
+    'models_imported': 'Imported {0} models', 'removed_models_suffix': ' | {0} discontinued', 'new_models_badge': 'New +{0}',
     'provider_name_required': 'Provider name is required', 'provider_name_duplicate': 'Duplicate provider name: {0}',
     'provider_keys_saved': 'Saved keys for {0} providers', 'provider_keys_save_failed': 'Failed to save keys for {0} providers',
 
@@ -1333,7 +1347,8 @@ function dashboard() {
     balanceEditProvider: null, balanceEditValue: '',
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
-    analyticsRange: '7d',
+    analyticsRange: '29d',
+    analyticsSpan: 'day', // 'hour' | 'day' | 'month' — 统一时间范围与粒度 (24h/30d/12m)
     modelDetailFilter: '',
     modelProviderFilter: '',
     hourlyStats: null, // hourly granularity for heatmap
@@ -1341,6 +1356,7 @@ function dashboard() {
     tokenActivityCells: [],
     tokenActivityFlat: [],
     tokenActivityHtml: '',
+    dailyTrends: [], // 日历固定按“天”聚合当前范围, 与所选趋势粒度解耦
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     _chartModeHooked: false,
@@ -1370,7 +1386,7 @@ function dashboard() {
 
     // Settings
     keysByProvider: {}, keyMsg: '',
-    providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false,
+    providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provNameFilter: '', provProtocolFilter: '', provEffortFilter: '', provFreeOnly: false, provNoKeyOnly: false, provViewMode: 'table', drawerProv: null,
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
@@ -1505,7 +1521,7 @@ function dashboard() {
       this.activeTab = tabId;
       this.logPage = 0;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
-      if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
+      if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
       if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
     },
@@ -1516,7 +1532,7 @@ function dashboard() {
         this.fetchLogs();
         this.fetchErrors();
         if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
-        if (this.activeTab==='analytics') { this.fetchStats(); this.fetchHourlyStats(); } // 后端 15s 缓存, 倒计时随之跳动
+        if (this.activeTab==='analytics') { this.fetchStats(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
       }, 3000);
     },
 
@@ -1735,7 +1751,13 @@ function dashboard() {
       if(this.modelMetaLoading) return '<span class="meta-pending">'+t('meta_loading')+'</span>';
       return '<span class="meta-pending">'+t('meta_unavailable')+'</span>';
     },
-    async fetchStats(rangeOverride)   { try { const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d')); const params=new URLSearchParams({granularity:this.trendGranularity,range}); const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick(); this.computeTokenActivityCells(); this.computeModelTrend(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
+    async fetchStats(rangeOverride)   { try { const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d')); const params=new URLSearchParams({granularity:this.trendGranularity,range}); const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick();
+      // 日历固定按“天”聚合当前范围, 与所选趋势粒度解耦: 粒度=day 时直接复用, 否则单独拉日级数据
+      if(this.trendGranularity==='day'){ this.dailyTrends=this.stats.trends||[]; this.computeTokenActivityCells(); }
+      else { this.fetchDailyTrends(range); }
+      this.computeModelTrend(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
+    // 日历专用: 始终以“天”为粒度拉取当前范围, 避免把 hour/month 桶当成天渲染
+    async fetchDailyTrends(range) { try { const r=await fetch('/admin/api/stats?granularity=day&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok){ const d=await r.json(); this.dailyTrends=d.trends||[]; this.computeTokenActivityCells(); } } catch(e){} },
     isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
@@ -1761,6 +1783,14 @@ function dashboard() {
     modelSuccessRate(model) { const total=Number(model&&model.requests||0); return total?Math.round((total-this.modelErrorCount(model))/total*100):100; },
     get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
     async fetchHourlyStats() { try { const range=this.analyticsRange||'1d'; const r=await fetch('/admin/api/stats?granularity=hour&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },
+    // 统一时间范围与粒度: 小时(24h)/天(30d)/月(12m). 每个选项同时决定窗口与桶大小, 避免两套控件重叠混乱.
+    setSpan(span) {
+      this.analyticsSpan = span;
+      const map = { hour: ['1d','hour'], day: ['29d','day'], month: ['365d','month'] };
+      const m = map[span];
+      if (m) { this.analyticsRange = m[0]; this.trendGranularity = m[1]; }
+      this.fetchStats();
+    },
     // ── 更新亮点：取最新一条 changelog 作为弹窗内容 ──
     get whatsNewEntry() {
       return (this.changelog && this.changelog.length) ? this.changelog[0] : null;
@@ -1768,7 +1798,7 @@ function dashboard() {
     // ── 活跃热力图 SVG: 最近 24 个小时桶的相对请求量 ──
     get tokenActivityGridCols() { return 'repeat('+Math.max(1,this.tokenActivityCells.length)+',16px)'; },
     computeTokenActivityCells() {
-      const days=(this.stats?.trends||[]).filter(x=>x&&x.ts).sort((a,b)=>a.ts-b.ts).map(x=>({ts:x.ts,date:x.date,requests:Number(x.requests||0),errors:Number(x.errors||0),input:Number(x.total_prompt_tokens||0),output:Number(x.total_completion_tokens||0),tokens:Number(x.total_prompt_tokens||0)+Number(x.total_completion_tokens||0)}));
+      const days=(this.dailyTrends||[]).filter(x=>x&&x.ts).sort((a,b)=>a.ts-b.ts).map(x=>({ts:x.ts,date:x.date,requests:Number(x.requests||0),errors:Number(x.errors||0),input:Number(x.total_prompt_tokens||0),output:Number(x.total_completion_tokens||0),tokens:Number(x.total_prompt_tokens||0)+Number(x.total_completion_tokens||0)}));
       if(!days.length){this.tokenActivityCells=[];this.tokenActivityFlat=[];return;}
       const max=Math.max(...days.map(d=>d.tokens),1);
       const start=days[0].ts,end=days[days.length-1].ts;
@@ -1821,13 +1851,14 @@ function dashboard() {
       const keys=allKeys.filter(k=>!this.hiddenModels[k]);
       this.modelTrendData={keys:allKeys,sums};
       if(!rows.length||!keys.length){this.modelTrendSvgHtml='';return;}
-      const dates=[...new Map(rows.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
+      const dates=[...new Map((this.stats.trends||[]).filter(x=>x&&x.ts).map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
       const W=900,H=280,left=52,right=18,top=18,bottom=36,pw=W-left-right,ph=H-top-bottom;
       const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
       const values=keys.map(k=>dates.map(([ts])=>{const [p,...u]=k.split('/');const r=map.get(ts+'/'+p+'/'+u.join('/'));return r?Number(r.prompt_tokens||0)+Number(r.completion_tokens||0):0;}));
-      const max=Math.max(...values.flat(),1);
+      const stackMax=Math.max(...dates.map((_,i)=>values.reduce((s,vals)=>s+vals[i],0)),1);
+      const max=this.chartMode==='bar'?stackMax:Math.max(...values.flat(),1);
       const n=dates.length;
       const x=i=>left+(n===1?pw/2:pw*i/(n-1));
       const y=v=>top+ph-v/max*ph;
@@ -2377,6 +2408,7 @@ function dashboard() {
           if(added>0 || removedMarked>0) this.markDirty();
           // 8 秒后自动清除 NEW 高亮
           if(added>0){
+            prov._newModels = (prov._newModels||0) + added;
             setTimeout(()=>{ for(const m of prov.models) m._isNew=false; }, 8000);
           }
           this.providersFormOk = true;
@@ -2391,6 +2423,8 @@ function dashboard() {
     },
     async saveProvidersForm() {
       this.providersFormMsg='';
+      this._saving=true;
+      try {
       // 前端预校验: name 非空且唯一 (后端也会校验拦截).
       const names = this.providersFormData.map(p=>(p.name||'').trim());
       const seen = new Set();
@@ -2442,9 +2476,12 @@ function dashboard() {
             // 配置保存成功后, 同步保存所有有草稿的 key
             await this.saveAllProviderKeys();
             this.isDirty=false;
+            // 保存即持久化, 清除各供应商"新模型"未保存提示
+            this.providersFormData.forEach(p=>p._newModels=0);
             setTimeout(()=>this.providersFormMsg='',3000);
           }
        } catch(e){ this.providersFormMsg=t('network_error'); }
+       } finally { this._saving=false; }
        },
        async saveAllProviderKeys() {
        // 遍历所有供应商, 保存有草稿的 key

@@ -1768,6 +1768,8 @@ fn stats_range_seconds(range: &str) -> Option<u64> {
         "7d" => Some(7 * 86400),
         "14d" => Some(14 * 86400),
         "29d" => Some(29 * 86400),
+        "30d" => Some(30 * 86400),
+        "365d" => Some(365 * 86400),
         _ => None,
     }
 }
@@ -1847,7 +1849,7 @@ pub async fn api_stats(
     stats.has_price_config = has_price_config;
     let effective_start = range_start.unwrap_or_else(|| filtered_logs.iter().map(|log| log.timestamp).min().unwrap_or(now));
     stats.trends = compute_trends_window(&filtered_logs, granularity, &price_overrides, Some(effective_start), Some(range_end));
-    stats.model_trends = compute_model_trends_window(&filtered_logs, "day", Some(effective_start), Some(range_end));
+    stats.model_trends = compute_model_trends_window(&filtered_logs, granularity, Some(effective_start), Some(range_end));
     stats.window_start = effective_start;
     stats.window_end = range_end;
     stats.window_minutes = ((range_end.saturating_sub(effective_start)) as f64 / 60.0).max(1.0);
@@ -1856,6 +1858,8 @@ pub async fn api_stats(
         "7d" => "最近 7 天".to_string(),
         "14d" => "最近 14 天".to_string(),
         "29d" => "最近 29 天".to_string(),
+        "30d" => "最近 30 天".to_string(),
+        "365d" => "最近 12 个月".to_string(),
         _ => "当前运行日志窗口".to_string(),
     };
     stats.session = state.log_buffer.session_stats();
