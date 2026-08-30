@@ -46,6 +46,7 @@ mod pricing;
 mod proxy;
 mod loop_guard;
 mod store;
+mod rollup;
 mod version;
 mod tooltip;
 mod balance;
@@ -605,9 +606,9 @@ fn main() {
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
         ),
-        log_buffer: LogBuffer::new().with_store({
-            store::LogStore::new(&resolved_data_dir)
-        }),
+        log_buffer: LogBuffer::new()
+            .with_store(store::LogStore::new(&resolved_data_dir))
+            .with_rollup(rollup::RollupBook::new(&resolved_data_dir)),
         stats_cache: Arc::new(tokio::sync::Mutex::new(None)),
         loop_guard: config.loop_guard.clone(),
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
@@ -745,8 +746,9 @@ fn main() {
                 toggle_console(!hidden);
                 handles.console_item.set_checked(!hidden);
             } else if id == handles.quit_item.id().0 {
-                // 退出程序: 先同步刷新日志/缓存到磁盘, 避免异步尾写 / 缓存丢失.
+                // 退出程序: 先同步刷新日志/缓存/日级 rollup 到磁盘, 避免异步尾写 / 缓存丢失.
                 state_for_shutdown.log_buffer.flush_blocking();
+                state_for_shutdown.log_buffer.rollup_flush_blocking();
                 state_for_shutdown.cache.flush_blocking();
                 elwt.exit();
             }
@@ -816,8 +818,9 @@ fn main() {
                 _ => {}
             },
             Event::LoopExiting => {
-                // 兜底: 事件循环退出前再同步刷新一次日志与缓存 (覆盖非菜单退出路径).
+                // 兜底: 事件循环退出前再同步刷新一次日志/缓存/日级 rollup (覆盖非菜单退出路径).
                 state_for_shutdown.log_buffer.flush_blocking();
+                state_for_shutdown.log_buffer.rollup_flush_blocking();
                 state_for_shutdown.cache.flush_blocking();
                 toggle_console(true); // 退出前显示控制台, 让用户看到最后日志
             }

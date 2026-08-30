@@ -97,31 +97,28 @@ pub fn is_peak(ts: u64) -> bool {
 ///
 /// 返回三元组 `(input, output, cache_read)`, cache_read 已展开 `Option`（缺失回退 input）.
 pub fn effective(p: ModelPrice, ts: u64) -> (f64, f64, f64) {
-    if is_peak(ts) {
-        (
-            p.input_per_m,
-            p.output_per_m,
-            p.cache_read_per_m.unwrap_or(p.input_per_m),
-        )
-    } else {
-        (
-            if p.input_per_m_offpeak > 0.0 {
-                p.input_per_m_offpeak
-            } else {
-                p.input_per_m
-            },
-            if p.output_per_m_offpeak > 0.0 {
-                p.output_per_m_offpeak
-            } else {
-                p.output_per_m
-            },
-            if p.cache_read_per_m_offpeak > 0.0 {
-                p.cache_read_per_m_offpeak
-            } else {
-                p.cache_read_per_m.unwrap_or(p.input_per_m)
-            },
-        )
-    }
+    let (peak, offpeak) = effective_parts(p);
+    if is_peak(ts) { peak } else { offpeak }
+}
+
+/// 返回 (高峰, 空闲) 两组生效单价三元组 `(input, output, cache_read)`.
+/// 供日级 rollup 按时段拆分存储的计费 token 在查询期重算费用使用.
+pub fn effective_parts(p: ModelPrice) -> ((f64, f64, f64), (f64, f64, f64)) {
+    let peak = (
+        p.input_per_m,
+        p.output_per_m,
+        p.cache_read_per_m.unwrap_or(p.input_per_m),
+    );
+    let offpeak = (
+        if p.input_per_m_offpeak > 0.0 { p.input_per_m_offpeak } else { p.input_per_m },
+        if p.output_per_m_offpeak > 0.0 { p.output_per_m_offpeak } else { p.output_per_m },
+        if p.cache_read_per_m_offpeak > 0.0 {
+            p.cache_read_per_m_offpeak
+        } else {
+            p.cache_read_per_m.unwrap_or(p.input_per_m)
+        },
+    );
+    (peak, offpeak)
 }
 
 /// 去除常见免费 / 试用后缀（如 `-free`）, 用于更宽松地匹配内置表.

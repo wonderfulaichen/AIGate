@@ -114,6 +114,8 @@ pub struct LogBuffer {
     /// 写入序列号: 每次 push/clear 递增, 供统计缓存做失效判断 (读端纳秒级, 无需克隆全量).
     seq: Arc<AtomicU64>,
     store: Option<LogStore>,
+    /// 日级 rollup 账本 (跨日志滚动窗口的持久化统计, 供月视图等长跨度查询).
+    rollup: Option<std::sync::Arc<crate::rollup::RollupBook>>,
     // ─── 本轮 (进程启动以来) 累计计数, 在 push 时原子累加, 不受 5000 条滚动窗口封顶影响 ───
     /// 本轮请求总数 (含错误/缓存命中).
     session_requests: Arc<AtomicU64>,
@@ -135,6 +137,7 @@ impl LogBuffer {
             inner: Arc::new(Mutex::new(VecDeque::with_capacity(crate::store::MAX_LINES))),
             seq: Arc::new(AtomicU64::new(0)),
             store: None,
+            rollup: None,
             session_requests: Arc::new(AtomicU64::new(0)),
             session_success: Arc::new(AtomicU64::new(0)),
             session_prompt_tokens: Arc::new(AtomicU64::new(0)),
@@ -167,6 +170,50 @@ impl LogBuffer {
         self
     }
 
+    /// 附加日级 rollup 账本 (启动时调用, 须在 [`Self::with_store`] 之后 —
+    /// 回填依赖已加载到内存的全量日志).
+    pub fn with_rollup(mut self, book: crate::rollup::RollupBook) -> Self {
+        book.load_from_file();
+        // 启动回填: 日志完整覆盖的天以日志为准重建 (修正崩溃丢失的增量);
+        // 首次启用 (账本为空) 时连边界天一起尽力回填.
+        let logs: Vec<RequestLog> = {
+            if let Ok(buf) = self.inner.try_lock() {
+                buf.iter().cloned().collect()
+            } else {
+                Vec::new()
+            }
+        };
+        book.backfill_from_logs(&logs);
+        book.flush_blocking();
+        self.rollup = Some(std::sync::Arc::new(book));
+        self
+    }
+
+    /// rollup 账本句柄 (统计查询合并历史用).
+    pub fn rollup(&self) -> Option<&std::sync::Arc<crate::rollup::RollupBook>> {
+        self.rollup.as_ref()
+    }
+
+    /// 内存中最早日志的时间戳 (缓冲区为空时返回 None).
+    pub async fn oldest_ts(&self) -> Option<u64> {
+        let buf = self.inner.lock().await;
+        buf.iter().map(|l| l.timestamp).min()
+    }
+
+    /// 同步落盘 rollup 账本 (关机时调用).
+    pub fn rollup_flush_blocking(&self) {
+        if let Some(book) = &self.rollup {
+            book.flush_blocking();
+        }
+    }
+
+    /// 清空 rollup 账本并删除落盘文件 (与清空日志联动).
+    pub async fn rollup_clear(&self) {
+        if let Some(book) = &self.rollup {
+            book.clear().await;
+        }
+    }
+
     pub async fn push(&self, log: RequestLog) {
         let mut buf = self.inner.lock().await;
         if buf.len() >= crate::store::MAX_LINES {
@@ -188,6 +235,14 @@ impl LogBuffer {
             .fetch_add(log.prompt_cache_hit_tokens as u64, Ordering::Relaxed);
         self.session_cache_miss_tokens
             .fetch_add(log.prompt_cache_miss_tokens as u64, Ordering::Relaxed);
+        // 日级 rollup 实时累加 (跨滚动窗口的持久化统计), 节流触发异步落盘.
+        if let Some(book) = &self.rollup {
+            book.record(&log);
+            if book.should_flush() {
+                let book = std::sync::Arc::clone(book);
+                tokio::spawn(async move { book.flush().await });
+            }
+        }
         // 异步持久化 (文件为全量权威源, 不受内存容量限制).
         if let Some(store) = &self.store {
             let store = store.clone();
@@ -480,6 +535,7 @@ pub async fn api_logs_delete(
     // 清空内存展示缓冲与持久化文件. 删除前先同步落盘已有数据, 避免异步尾写丢失.
     state.log_buffer.flush().await;
     state.log_buffer.clear().await;
+    state.log_buffer.rollup_clear().await;
     Json(serde_json::json!({ "message": crate::i18n::msg_logs_cleared(count) }))
 }
 
@@ -1589,14 +1645,19 @@ pub struct ModelStats {
     pub errors: usize,
     pub avg_latency_ms: f64,
     pub total_body_bytes: usize,
-    pub total_prompt_tokens: u32,
-    pub total_completion_tokens: u32,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
     /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
     /// 纯生成吐字速度 (tok/s): 仅统计首 token 延迟已知的流式请求,
     /// = Σ输出token / Σ(总耗时-首token延迟) × 1000. 排除排队与 TTFT, 比 avg_latency 反推更准.
     pub gen_speed: f64,
+    /// Σ输出 token / Σ生成耗时 (合并 rollup 统计时重算 gen_speed 用, 不下发给前端).
+    #[serde(skip)]
+    pub gen_output_tokens: u64,
+    #[serde(skip)]
+    pub gen_time_sum_ms: u64,
     /// 映射到本聚合项的中转 ID 集合 (去重). 因统计按"供应商/上游模型"聚合,
     /// 多个中转 ID 可映射到同一上游模型, 此字段便于对照溯源.
     pub aliases: Vec<String>,
@@ -1619,13 +1680,18 @@ pub struct ProviderStats {
     pub errors: usize,
     pub avg_latency_ms: f64,
     pub total_body_bytes: usize,
-    pub total_prompt_tokens: u32,
-    pub total_completion_tokens: u32,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
     /// 上游 KV Cache 命中/未命中 token 数 (DeepSeek 等).
     pub total_cache_hit_tokens: u64,
     pub total_cache_miss_tokens: u64,
     /// 纯生成吐字速度 (tok/s), 同 ModelStats.gen_speed.
     pub gen_speed: f64,
+    /// Σ输出 token / Σ生成耗时 (合并 rollup 统计时重算 gen_speed 用, 不下发给前端).
+    #[serde(skip)]
+    pub gen_output_tokens: u64,
+    #[serde(skip)]
+    pub gen_time_sum_ms: u64,
     /// 该供应商累计费用 (元), 见 `crate::pricing`.
     pub total_cost: f64,
     /// 该供应商今日窗口费用 (元, 东八区日界). 前端据 total_cost/today_cost 是否 >0 决定
@@ -1689,8 +1755,8 @@ pub struct UsageStats {
     pub error_count: usize,
     pub total_body_bytes: usize,
     pub avg_latency_ms: f64,
-    pub total_prompt_tokens: u32,
-    pub total_completion_tokens: u32,
+    pub total_prompt_tokens: u64,
+    pub total_completion_tokens: u64,
     pub per_model: Vec<ModelStats>,
     pub per_provider: Vec<ProviderStats>,
     pub trends: Vec<DailyTrend>,
@@ -1752,6 +1818,11 @@ pub struct UsageStats {
     pub gen_speed: f64,
     /// 参与生成速度计算的请求数.
     pub gen_samples: usize,
+    /// Σ输出 token / Σ生成耗时 (合并 rollup 统计时重算 gen_speed 用, 不下发给前端).
+    #[serde(skip)]
+    pub gen_output_tokens: u64,
+    #[serde(skip)]
+    pub gen_time_sum_ms: u64,
     /// 当前查询窗口的起始时间戳（秒）.
     pub window_start: u64,
     /// 当前查询窗口的结束时间戳（秒）.
@@ -1845,11 +1916,38 @@ pub async fn api_stats(
     }
     drop(registry);
 
-    let mut stats = compute_stats(&filtered_logs, &price_overrides, &free_ids);
+    // ─── 日级 rollup 合并: 日志滚动窗口之外、且今天之前的天从 rollup 读取,
+    // 补齐月视图等长跨度统计 (5000 条封顶不再限制总请求/总费用/趋势).
+    // 仅显式范围 (分析页 29d/365d 等) 合并; 'window' (仪表盘) 不合并 —
+    // 否则 effective_start 会被历史数据拉远, 趋势桶数量爆炸冻结前端. ───
+    let mut log_side = filtered_logs;
+    let mut merged_days: Vec<crate::rollup::DailyRollup> = Vec::new();
+    // 小时粒度只看近 24 小时 (总在日志窗口内), 且 rollup 无小时拆分, 不参与合并.
+    if granularity != "hour" && range_start.is_some() {
+        let today_start =
+            (((now as i64) + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
+        // rollup() 返回临时引用 &Arc; 必须 clone Arc 才能在 if let 块外安全使用.
+        if let Some(book_arc) = state.log_buffer.rollup().cloned() {
+            if let Some(cover_ts) = state.log_buffer.oldest_ts().await {
+                let cover_day = bucket_start(cover_ts, "day");
+                if cover_day < today_start {
+                    let rstart = range_start.unwrap_or(0);
+                    merged_days = book_arc.days_between(rstart, cover_day);
+                    if !merged_days.is_empty() {
+                        // 边界天 (cover_day) 在日志里的尾部数据已含于 rollup 的完整天中, 剔除防重复计数.
+                        log_side.retain(|log| bucket_start(log.timestamp, "day") > cover_day);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut stats = compute_stats(&log_side, &price_overrides, &free_ids);
     stats.has_price_config = has_price_config;
-    let effective_start = range_start.unwrap_or_else(|| filtered_logs.iter().map(|log| log.timestamp).min().unwrap_or(now));
-    stats.trends = compute_trends_window(&filtered_logs, granularity, &price_overrides, Some(effective_start), Some(range_end));
-    stats.model_trends = compute_model_trends_window(&filtered_logs, granularity, Some(effective_start), Some(range_end));
+    let effective_start = range_start.unwrap_or_else(|| log_side.iter().map(|log| log.timestamp).min().unwrap_or(now));
+    stats.trends = compute_trends_window(&log_side, granularity, &price_overrides, Some(effective_start), Some(range_end));
+    stats.model_trends = compute_model_trends_window(&log_side, granularity, Some(effective_start), Some(range_end));
+    merge_rollup_days(&mut stats, &merged_days, granularity, &price_overrides, &free_ids);
     stats.window_start = effective_start;
     stats.window_end = range_end;
     stats.window_minutes = ((range_end.saturating_sub(effective_start)) as f64 / 60.0).max(1.0);
@@ -1920,7 +2018,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// 将 ts 对齐到指定粒度的桶起始秒 (本地时区). hour=整点, day=本地0点, month=本地月首0点.
-fn bucket_start(ts: u64, granularity: &str) -> u64 {
+pub(crate) fn bucket_start(ts: u64, granularity: &str) -> u64 {
     let local = (ts as i64) + TZ_OFFSET_SECS;
     match granularity {
         "hour" => {
@@ -2105,8 +2203,8 @@ fn compute_stats(
     } else {
         0.0
     };
-    let total_prompt_tokens: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
-    let total_completion_tokens: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+    let total_prompt_tokens: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
+    let total_completion_tokens: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
     let total_cache_hit_tokens: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
     let total_cache_miss_tokens: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
     let total_cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
@@ -2116,6 +2214,7 @@ fn compute_stats(
             .map(|ft| (l.completion_tokens as u64, l.latency_ms.saturating_sub(ft), 1usize))
     }).fold((0u64, 0u64, 0usize), |(tokens, millis, samples), (t, m, s)| (tokens + t, millis + m, samples + s));
     let gen_speed = if gen_millis > 0 { gen_tokens as f64 / gen_millis as f64 * 1000.0 } else { 0.0 };
+    let (stats_gen_output_tokens, stats_gen_time_sum_ms) = (gen_tokens, gen_millis);
     // 转发优化省量 (剥离推理链 + 历史裁剪 + 响应缓存命中): 累计 token 与折算费用 (按各模型 input 单价, 与 total_cost 同口径).
     let total_strip_saved_tokens: u64 = logs.iter().map(|l| l.strip_saved_tokens as u64).sum();
     let total_trim_saved_tokens: u64 = logs.iter().map(|l| l.trim_saved_tokens as u64).sum();
@@ -2246,8 +2345,8 @@ fn compute_stats(
             let errs = logs.iter().filter(|l| is_log_error(l)).count();
             let bytes: usize = logs.iter().map(|l| l.body_len).sum();
             let avg = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
-            let pt: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
-            let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+            let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
+            let ct: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
@@ -2301,6 +2400,8 @@ fn compute_stats(
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
                 gen_speed,
+                gen_output_tokens: gen_ct,
+                gen_time_sum_ms: gen_ms,
                 aliases,
                 total_cost: cost,
                 price,
@@ -2327,8 +2428,8 @@ fn compute_stats(
             let errs = logs.iter().filter(|l| is_log_error(l)).count();
             let bytes: usize = logs.iter().map(|l| l.body_len).sum();
             let avg = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
-            let pt: u32 = logs.iter().map(|l| l.prompt_tokens).sum();
-            let ct: u32 = logs.iter().map(|l| l.completion_tokens).sum();
+            let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
+            let ct: u64 = logs.iter().map(|l| l.completion_tokens as u64).sum();
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
@@ -2388,6 +2489,8 @@ fn compute_stats(
                 total_cache_hit_tokens: hit,
                 total_cache_miss_tokens: miss,
                 gen_speed,
+                gen_output_tokens: gen_ct,
+                gen_time_sum_ms: gen_ms,
                 total_cost: cost,
                 today_cost,
                 cache_saved,
@@ -2455,6 +2558,8 @@ fn compute_stats(
         session: SessionStats::default(),
         gen_speed,
         gen_samples,
+        gen_output_tokens: stats_gen_output_tokens,
+        gen_time_sum_ms: stats_gen_time_sum_ms,
         window_start: logs.iter().map(|log| log.timestamp).min().unwrap_or_else(now_ts),
         window_end: now_ts(),
         window_minutes: 1.0,
@@ -2462,7 +2567,385 @@ fn compute_stats(
     }
 }
 
+/// 解析 rollup 条目的生效价格: 中转 ID 覆盖优先 (组内任一别名命中即用), 否则按上游模型回退内置表.
+/// 与日志口径 (memo.resolve 按 relay id 覆盖 → upstream 内置表) 语义一致.
+fn entry_price(
+    price_overrides: &HashMap<String, ModelPrice>,
+    e: &crate::rollup::RollupEntry,
+) -> Option<ModelPrice> {
+    for alias in &e.aliases {
+        if let Some(p) = price_overrides.get(alias) {
+            return Some(*p);
+        }
+    }
+    pricing::resolve_price(None, Some(&e.upstream))
+}
+
+/// rollup 条目费用 (元): 按高峰/空闲拆分的计费 token 以当前费率重算.
+/// 与逐条 `log_cost` 求和完全等价 (费用对 token 线性, 分段求和可交换).
+fn entry_cost(p: ModelPrice, e: &crate::rollup::RollupEntry) -> f64 {
+    let (peak, offpeak) = pricing::effective_parts(p);
+    let part = |(ip, op, cp): (f64, f64, f64), prompt: u64, completion: u64, hit: u64| -> f64 {
+        let hit = (hit as f64).min(prompt as f64);
+        let miss = (prompt as f64 - hit).max(0.0);
+        hit / 1e6 * cp + miss / 1e6 * ip + completion as f64 / 1e6 * op
+    };
+    part(peak, e.bill_prompt_peak, e.bill_completion_peak, e.bill_hit_peak)
+        + part(offpeak, e.bill_prompt_offpeak, e.bill_completion_offpeak, e.bill_hit_offpeak)
+}
+
+/// rollup 条目 KV 缓存净省金额 (元), 口径与 `log_cache_saved` 一致
+/// (净省 = 命中折扣 − 写入溢价; 输入价 0 → 无计费基数记 0; 不钳制到 0).
+fn entry_cache_saved(p: ModelPrice, e: &crate::rollup::RollupEntry) -> f64 {
+    let (peak, offpeak) = pricing::effective_parts(p);
+    let part = |(ip, _op, cp): (f64, f64, f64), hit: u64, creation: u64| -> f64 {
+        if ip == 0.0 {
+            return 0.0;
+        }
+        let read_saved = (ip - cp).max(0.0);
+        let creation_price = p.cache_creation_per_m.unwrap_or(ip);
+        let penalty = (creation_price - ip).max(0.0);
+        hit as f64 / 1e6 * read_saved - creation as f64 / 1e6 * penalty
+    };
+    part(peak, e.bill_hit_peak, e.bill_creation_peak)
+        + part(offpeak, e.bill_hit_offpeak, e.bill_creation_offpeak)
+}
+
+/// 将日级 rollup 历史合并进统计结果 (月视图等长跨度查询).
+///
+/// `days` 与日志来源按天严格互斥 (仅含日志滚动窗口之外、且今天之前的天), 各项直接累加:
+/// 总量/趋势取并集, 模型与供应商表按键合并后重算均值与吐字速度.
+/// 费用/省量金额由拆分存储的计费 token 以当前费率重算, 改价可追溯历史 (与日志口径一致).
+/// 趋势合并只累加到日志侧已补齐的窗口桶, 不创建新桶 (防止桶数量爆炸冻结前端).
+fn merge_rollup_days(
+    stats: &mut UsageStats,
+    days: &[crate::rollup::DailyRollup],
+    granularity: &str,
+    price_overrides: &HashMap<String, ModelPrice>,
+    free_ids: &std::collections::HashSet<String>,
+) {
+    if days.is_empty() {
+        return;
+    }
+    let now = now_ts() as i64;
+    let today_start = ((now + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
+    let month_start = bucket_start(now as u64, "month");
+
+    // ── 总量累加 (含 "-" 占位条目, 与 compute_stats 总量口径一致) ──
+    let mut total_requests = 0usize;
+    let mut error_count = 0usize;
+    let mut total_body_bytes = 0usize;
+    let mut lat_sum_ms = 0u64;
+    let mut total_prompt_tokens = 0u64;
+    let mut total_completion_tokens = 0u64;
+    let mut total_cache_hit_tokens = 0u64;
+    let mut total_cache_miss_tokens = 0u64;
+    let mut total_cost = 0f64;
+    let mut total_cache_saved = 0f64;
+    let mut total_opt_saved_tokens = 0u64;
+    let mut total_opt_saved_fee = 0f64;
+    let mut total_strip = 0u64;
+    let mut total_trim = 0u64;
+    let mut total_resp = 0u64;
+    let mut gen_output = 0u64;
+    let mut gen_ms = 0u64;
+    let mut gen_samples = 0usize;
+    let mut month_opt_saved_tokens = 0u64;
+    let mut saved_since_day: Option<u64> = None;
+    for day in days {
+        for e in &day.entries {
+            total_requests += e.requests as usize;
+            error_count += e.errors as usize;
+            total_body_bytes += e.body_bytes as usize;
+            lat_sum_ms += e.latency_sum_ms;
+            total_prompt_tokens += e.prompt_tokens;
+            total_completion_tokens += e.completion_tokens;
+            total_cache_hit_tokens += e.cache_hit_tokens;
+            total_cache_miss_tokens += e.cache_miss_tokens;
+            gen_output += e.gen_output_tokens;
+            gen_ms += e.gen_time_sum_ms;
+            gen_samples += e.gen_samples as usize;
+            let saved = e.strip_saved_tokens + e.trim_saved_tokens + e.resp_cache_saved_tokens;
+            total_strip += e.strip_saved_tokens;
+            total_trim += e.trim_saved_tokens;
+            total_resp += e.resp_cache_saved_tokens;
+            total_opt_saved_tokens += saved;
+            if day.day_start >= month_start {
+                month_opt_saved_tokens += saved;
+            }
+            if saved > 0 && saved_since_day.map_or(true, |d| day.day_start < d) {
+                saved_since_day = Some(day.day_start);
+            }
+            // 金额: 价格缺失按 0 计 (与 log_cost 同口径).
+            if let Some(p) = entry_price(price_overrides, e) {
+                total_cost += entry_cost(p, e);
+                if !e.aliases.iter().any(|a| free_ids.contains(a)) {
+                    total_cache_saved += entry_cache_saved(p, e);
+                }
+                // 优化省量折费: 省下 token × 对应时段 input 价 (与 total_opt_saved_fee 同口径).
+                if p.input_per_m > 0.0 {
+                    let peak_saved = e.saved_peak_tokens.min(saved);
+                    let offpeak_saved = saved - peak_saved;
+                    let (_, offpeak_input, _) = pricing::effective_parts(p).1;
+                    total_opt_saved_fee +=
+                        peak_saved as f64 / 1e6 * p.input_per_m + offpeak_saved as f64 / 1e6 * offpeak_input;
+                }
+            }
+        }
+    }
+
+    // 写回总量 (加权平均重算均值/吐字速度).
+    let new_total = stats.total_requests + total_requests;
+    stats.avg_latency_ms = (stats.avg_latency_ms * stats.total_requests as f64 + lat_sum_ms as f64)
+        / new_total.max(1) as f64;
+    stats.total_requests = new_total;
+    stats.success_count += total_requests - error_count;
+    stats.error_count += error_count;
+    stats.total_body_bytes += total_body_bytes;
+    stats.total_prompt_tokens += total_prompt_tokens;
+    stats.total_completion_tokens += total_completion_tokens;
+    stats.total_cache_hit_tokens += total_cache_hit_tokens;
+    stats.total_cache_miss_tokens += total_cache_miss_tokens;
+    stats.cache_hit_rate = if stats.total_prompt_tokens > 0 {
+        stats.total_cache_hit_tokens as f64 / stats.total_prompt_tokens as f64
+    } else {
+        0.0
+    };
+    stats.total_cost += total_cost;
+    stats.total_cache_saved += total_cache_saved;
+    stats.total_opt_saved_tokens += total_opt_saved_tokens;
+    stats.total_opt_saved_fee += total_opt_saved_fee;
+    stats.total_strip_saved_tokens += total_strip;
+    stats.total_trim_saved_tokens += total_trim;
+    stats.total_resp_cache_saved_tokens += total_resp;
+    stats.month_opt_saved_tokens += month_opt_saved_tokens;
+    stats.gen_output_tokens += gen_output;
+    stats.gen_time_sum_ms += gen_ms;
+    stats.gen_samples += gen_samples;
+    stats.gen_speed = if stats.gen_time_sum_ms > 0 {
+        stats.gen_output_tokens as f64 / stats.gen_time_sum_ms as f64 * 1000.0
+    } else {
+        0.0
+    };
+    // 合并天严格早于所有日志天 → 省量起算点取合并侧 (若有).
+    if let Some(d) = saved_since_day {
+        stats.opt_saved_since = ts_to_date(d);
+    }
+    // 近 30 天省量序列: 合并天在窗口内的槽位直接覆写 (日志侧对这些天本无数据).
+    for day in days {
+        if day.day_start > today_start {
+            continue;
+        }
+        let ago = (today_start - day.day_start) / 86400;
+        if ago < 30 {
+            let idx = 29 - ago as usize;
+            let saved: u64 = day
+                .entries
+                .iter()
+                .map(|e| e.strip_saved_tokens + e.trim_saved_tokens + e.resp_cache_saved_tokens)
+                .sum();
+            if idx < stats.opt_saved_series.len() {
+                stats.opt_saved_series[idx] = saved;
+            }
+        }
+    }
+
+    // ── 模型表合并: 按 (供应商, 上游模型) 累加, 重算均值/吐字速度 ──
+    for day in days {
+        for e in &day.entries {
+            if e.provider.is_empty() || e.provider == "-" {
+                continue;
+            }
+            let entry_free = e.aliases.iter().any(|a| free_ids.contains(a));
+            let cost = entry_price(price_overrides, e).map(|p| entry_cost(p, e)).unwrap_or(0.0);
+            if let Some(m) = stats
+                .per_model
+                .iter_mut()
+                .find(|m| m.provider == e.provider && m.upstream_model == e.upstream)
+            {
+                let new_reqs = m.requests + e.requests as usize;
+                m.avg_latency_ms = (m.avg_latency_ms * m.requests as f64 + e.latency_sum_ms as f64)
+                    / new_reqs.max(1) as f64;
+                m.requests = new_reqs;
+                m.errors += e.errors as usize;
+                m.total_body_bytes += e.body_bytes as usize;
+                m.total_prompt_tokens += e.prompt_tokens;
+                m.total_completion_tokens += e.completion_tokens;
+                m.total_cache_hit_tokens += e.cache_hit_tokens;
+                m.total_cache_miss_tokens += e.cache_miss_tokens;
+                m.gen_output_tokens += e.gen_output_tokens;
+                m.gen_time_sum_ms += e.gen_time_sum_ms;
+                m.gen_speed = if m.gen_time_sum_ms > 0 {
+                    m.gen_output_tokens as f64 / m.gen_time_sum_ms as f64 * 1000.0
+                } else {
+                    0.0
+                };
+                for a in &e.aliases {
+                    if !m.aliases.contains(a) {
+                        m.aliases.push(a.clone());
+                    }
+                }
+                m.aliases.sort();
+                m.total_cost += cost;
+                m.free = m.free || entry_free;
+            } else {
+                let price = entry_price(price_overrides, e);
+                stats.per_model.push(ModelStats {
+                    model: e.upstream.clone(),
+                    provider: e.provider.clone(),
+                    upstream_model: e.upstream.clone(),
+                    requests: e.requests as usize,
+                    errors: e.errors as usize,
+                    avg_latency_ms: if e.requests > 0 {
+                        e.latency_sum_ms as f64 / e.requests as f64
+                    } else {
+                        0.0
+                    },
+                    total_body_bytes: e.body_bytes as usize,
+                    total_prompt_tokens: e.prompt_tokens,
+                    total_completion_tokens: e.completion_tokens,
+                    total_cache_hit_tokens: e.cache_hit_tokens,
+                    total_cache_miss_tokens: e.cache_miss_tokens,
+                    gen_speed: if e.gen_time_sum_ms > 0 {
+                        e.gen_output_tokens as f64 / e.gen_time_sum_ms as f64 * 1000.0
+                    } else {
+                        0.0
+                    },
+                    gen_output_tokens: e.gen_output_tokens,
+                    gen_time_sum_ms: e.gen_time_sum_ms,
+                    aliases: {
+                        let mut a = e.aliases.clone();
+                        a.sort();
+                        a
+                    },
+                    total_cost: cost,
+                    price,
+                    free: entry_free,
+                });
+            }
+        }
+    }
+    stats.per_model.sort_by(|a, b| b.requests.cmp(&a.requests));
+    stats.top_models = stats.per_model.iter().take(5).cloned().collect();
+
+    // ── 供应商表合并 ──
+    for day in days {
+        for e in &day.entries {
+            if e.provider.is_empty() || e.provider == "-" {
+                continue;
+            }
+            let entry_free = e.aliases.iter().any(|a| free_ids.contains(a));
+            let price = entry_price(price_overrides, e);
+            let cost = price.map(|p| entry_cost(p, e)).unwrap_or(0.0);
+            let cache_saved = price
+                .filter(|_| !entry_free)
+                .map(|p| entry_cache_saved(p, e))
+                .unwrap_or(0.0);
+            if let Some(pv) = stats.per_provider.iter_mut().find(|p| p.provider == e.provider) {
+                let new_reqs = pv.requests + e.requests as usize;
+                pv.avg_latency_ms = (pv.avg_latency_ms * pv.requests as f64 + e.latency_sum_ms as f64)
+                    / new_reqs.max(1) as f64;
+                pv.requests = new_reqs;
+                pv.errors += e.errors as usize;
+                pv.total_body_bytes += e.body_bytes as usize;
+                pv.total_prompt_tokens += e.prompt_tokens;
+                pv.total_completion_tokens += e.completion_tokens;
+                pv.total_cache_hit_tokens += e.cache_hit_tokens;
+                pv.total_cache_miss_tokens += e.cache_miss_tokens;
+                pv.gen_output_tokens += e.gen_output_tokens;
+                pv.gen_time_sum_ms += e.gen_time_sum_ms;
+                pv.gen_speed = if pv.gen_time_sum_ms > 0 {
+                    pv.gen_output_tokens as f64 / pv.gen_time_sum_ms as f64 * 1000.0
+                } else {
+                    0.0
+                };
+                pv.total_cost += cost;
+                pv.cache_saved += cache_saved;
+                pv.billing = pv.billing || !entry_free;
+            } else {
+                stats.per_provider.push(ProviderStats {
+                    provider: e.provider.clone(),
+                    requests: e.requests as usize,
+                    errors: e.errors as usize,
+                    avg_latency_ms: if e.requests > 0 {
+                        e.latency_sum_ms as f64 / e.requests as f64
+                    } else {
+                        0.0
+                    },
+                    total_body_bytes: e.body_bytes as usize,
+                    total_prompt_tokens: e.prompt_tokens,
+                    total_completion_tokens: e.completion_tokens,
+                    total_cache_hit_tokens: e.cache_hit_tokens,
+                    total_cache_miss_tokens: e.cache_miss_tokens,
+                    gen_speed: if e.gen_time_sum_ms > 0 {
+                        e.gen_output_tokens as f64 / e.gen_time_sum_ms as f64 * 1000.0
+                    } else {
+                        0.0
+                    },
+                    gen_output_tokens: e.gen_output_tokens,
+                    gen_time_sum_ms: e.gen_time_sum_ms,
+                    total_cost: cost,
+                    today_cost: 0.0,
+                    cache_saved,
+                    billing: !entry_free,
+                    today_opt_saved_tokens: 0,
+                    today_strip_saved_tokens: 0,
+                    today_trim_saved_tokens: 0,
+                    today_resp_cache_saved_tokens: 0,
+                });
+            }
+        }
+    }
+    stats.per_provider.sort_by(|a, b| b.requests.cmp(&a.requests));
+
+    // ── 趋势合并: 仅向日志侧已补齐的窗口桶累加, 不创建新桶 ──
+    let mut buckets: BTreeMap<u64, DailyTrend> =
+        std::mem::take(&mut stats.trends).into_iter().map(|t| (t.ts, t)).collect();
+    for day in days {
+        let ts = bucket_start(day.day_start, granularity);
+        if let Some(b) = buckets.get_mut(&ts) {
+            for e in &day.entries {
+                let new_reqs = b.requests + e.requests as usize;
+                b.avg_latency =
+                    (b.avg_latency * b.requests as f64 + e.latency_sum_ms as f64) / new_reqs.max(1) as f64;
+                b.requests = new_reqs;
+                b.errors += e.errors as usize;
+                b.total_prompt_tokens += e.prompt_tokens;
+                b.total_completion_tokens += e.completion_tokens;
+                b.total_cache_hit_tokens += e.cache_hit_tokens;
+                b.total_cache_miss_tokens += e.cache_miss_tokens;
+                if let Some(p) = entry_price(price_overrides, e) {
+                    b.total_cost += entry_cost(p, e);
+                }
+            }
+        }
+    }
+    stats.trends = buckets.into_values().collect();
+
+    // ── 模型趋势合并 (仅累加到已存在的桶; BTreeMap 键保持时间序) ──
+    let mut mt: BTreeMap<(u64, String, String), ModelTrend> = std::mem::take(&mut stats.model_trends)
+        .into_iter()
+        .map(|t| ((t.ts, t.provider.clone(), t.upstream_model.clone()), t))
+        .collect();
+    for day in days {
+        let ts = bucket_start(day.day_start, granularity);
+        for e in &day.entries {
+            if e.provider.is_empty() || e.provider == "-" {
+                continue;
+            }
+            if let Some(t) = mt.get_mut(&(ts, e.provider.clone(), e.upstream.clone())) {
+                t.prompt_tokens += e.prompt_tokens;
+                t.completion_tokens += e.completion_tokens;
+                t.requests += e.requests as usize;
+                t.errors += e.errors as usize;
+            }
+        }
+    }
+    stats.model_trends = mt.into_values().collect();
+}
+
 /// 按指定粒度聚合趋势数据.
+
 ///
 /// 关键: 聚合后按粒度补齐**固定窗口**的空桶 (hour=24 整点 / day=最近30天 / month=最近12个月),
 /// 使时间轴严格对齐且递增 —— 最新桶=当前粒度边界, 最旧桶=窗口起点 (含无请求空段),
