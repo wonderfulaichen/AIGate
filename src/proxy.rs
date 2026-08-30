@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::Body;
+use http_body_util::BodyStream;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -735,6 +736,164 @@ pub async fn chat_completions(
         cont_ctx,
     );
     Ok(resp)
+}
+
+/// 处理 POST /v1/messages — 对外 Anthropic 协议入口.
+///
+/// 流程: 读 Anthropic /messages 请求 → 译为 OpenAI chat/completions 规范 → 复用
+/// [`chat_completions`] 整条管线 (模型路由/参数注入/上游协议转换/熔断/重试/统计) →
+/// 把 OpenAI 格式响应在出口译回 Anthropic 返回客户端.
+pub async fn messages_completions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    req: Request<Body>,
+) -> Result<Response, Response> {
+    let (_, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(e) => return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string())),
+    };
+    let oai = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(v) => crate::anthropic::anthropic_to_openai_request(&v),
+        Err(e) => return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string())),
+    };
+    let oai_bytes = match serde_json::to_vec(&oai) {
+        Ok(b) => bytes::Bytes::from(b),
+        Err(e) => return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+    };
+    // 以 OpenAI 请求形态复用 chat_completions (headers 原样透传, 保持鉴权/代理语义).
+    let oai_req = Request::builder()
+        .method("POST")
+        .uri("/v1/chat/completions")
+        .body(Body::from(oai_bytes))
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    let oai_resp = chat_completions(State(state), headers, oai_req).await?;
+    Ok(anthropize_response(oai_resp).await)
+}
+
+/// 把 OpenAI 格式响应 (chat_completions 管线产物) 译回 Anthropic /messages 响应.
+async fn anthropize_response(resp: Response) -> Response {
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    let body = resp.into_body();
+    let status_code = status.as_u16();
+
+    if status_code >= 400 {
+        // 错误体 → Anthropic {"type":"error","error":{...}}
+        let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+            Ok(b) => b,
+            Err(_) => return error_response(status, "failed to read error body"),
+        };
+        let val = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .unwrap_or_else(|_| serde_json::json!({"error": {"message": String::from_utf8_lossy(&bytes)}}));
+        let ant = crate::anthropic::openai_error_to_anthropic(&val);
+        (status, axum::Json(ant)).into_response()
+    } else if content_type.contains("text/event-stream") {
+        // 流式: 包装 body, OpenAI SSE → Anthropic SSE 逐帧转换.
+        let stream = OpenAIToAnthropicSse {
+            inner: BodyStream::new(body),
+            line_buf: Vec::new(),
+            out_buf: Vec::new(),
+            conv: crate::anthropic::OpenAIStreamConv::new(),
+        };
+        Response::builder()
+            .status(status)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .body(Body::from_stream(stream))
+            .unwrap_or_else(|_| error_response(status, "stream conversion failed"))
+    } else {
+        // 非流式 JSON → Anthropic message.
+        let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+            Ok(b) => b,
+            Err(_) => return error_response(status, "failed to read response body"),
+        };
+        let val = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .unwrap_or_else(|_| serde_json::json!({"choices": []}));
+        let ant = crate::anthropic::openai_to_anthropic_response(&val);
+        (status, axum::Json(ant)).into_response()
+    }
+}
+
+/// OpenAI SSE → Anthropic SSE 的流式包装器.
+///
+/// 逐行解析 `data: {json}` 帧, 喂入 [`OpenAIStreamConv`] 翻译为
+/// `event: X` + `data: {...}` 事件对, 再按 Anthropic SSE 格式写出.
+struct OpenAIToAnthropicSse {
+    inner: BodyStream<Body>,
+    line_buf: Vec<u8>,
+    out_buf: Vec<u8>,
+    conv: crate::anthropic::OpenAIStreamConv,
+}
+
+impl Stream for OpenAIToAnthropicSse {
+    type Item = Result<Bytes, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            if !self.out_buf.is_empty() {
+                let out = std::mem::take(&mut self.out_buf);
+                return Poll::Ready(Some(Ok(Bytes::from(out))));
+            }
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    if let Ok(data) = frame.into_data() {
+                        self.line_buf.extend_from_slice(&data);
+                        self.drain_converted();
+                    }
+                    // 继续循环, 把本次数据产生的输出在下一个循环返回.
+                }
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(std::io::Error::other(e))));
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => {
+                    if !self.out_buf.is_empty() {
+                        let out = std::mem::take(&mut self.out_buf);
+                        return Poll::Ready(Some(Ok(Bytes::from(out))));
+                    }
+                    return Poll::Pending;
+                }
+            }
+        }
+    }
+}
+
+impl OpenAIToAnthropicSse {
+    /// 累积 line_buf 中的完整行, 解析 `data:` 帧并转换到 out_buf.
+    fn drain_converted(&mut self) {
+        while let Some(pos) = self.line_buf.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.line_buf[..pos].to_vec();
+            self.line_buf.drain(..=pos);
+            let Ok(text) = std::str::from_utf8(&raw) else {
+                continue;
+            };
+            let line = text.trim();
+            if line.is_empty() {
+                continue;
+            }
+            // 仅处理 data 帧; 注释/event:/空行忽略.
+            let Some(payload) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let payload = payload.trim();
+            if payload.is_empty() {
+                continue;
+            }
+            for (ev, data) in self.conv.feed(payload) {
+                self.out_buf.extend_from_slice(b"event: ");
+                self.out_buf.extend_from_slice(ev.as_bytes());
+                self.out_buf.extend_from_slice(b"\ndata: ");
+                self.out_buf.extend_from_slice(data.as_bytes());
+                self.out_buf.extend_from_slice(b"\n\n");
+            }
+        }
+    }
 }
 
 /// 上游字节流的空闲超时包装.

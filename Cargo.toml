@@ -6,6 +6,7 @@ description = "Local OpenAI-compatible reverse proxy: admin panel, multi-vendor 
 
 [dependencies]
 axum = "0.7"
+http-body-util = "0.1"
 bytes = "1"
 futures = "0.3"
 reqwest = { version = "0.12", features = ["stream", "json", "http2"] }

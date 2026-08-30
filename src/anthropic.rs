@@ -624,6 +624,554 @@ pub fn anthropic_error_to_openai(body: &Value) -> Value {
     })
 }
 
+// ─── 反向转换: 对外 Anthropic /messages 入口 → OpenAI 规范 ───
+//
+// AIGate 对内(业务管线)以 OpenAI chat/completions 为统一规范. 对外新增
+// Anthropic /messages 入口时, 在入口边界把 Anthropic 请求译为 OpenAI,
+// 复用整条 OpenAI 管线 (模型路由/参数注入/上游协议转换/熔断/重试/统计),
+// 响应再在出口边界译回 Anthropic. 这些函数与上面的 openai_to_anthropic
+// 方向相反, 字段映射同样对齐 opencode anthropic-messages.ts.
+
+/// 把 Anthropic /messages 请求体转换为 OpenAI chat/completions 请求体.
+///
+/// 反向覆盖 [`openai_to_anthropic`] 处理的所有字段: messages/system 拆分、
+/// tool 消息展开、tools/tool_choice、max_tokens、思考配置.
+pub fn anthropic_to_openai_request(body: &Value) -> Value {
+    let mut out = Map::new();
+
+    if let Some(m) = body.get("model") {
+        out.insert("model".to_string(), m.clone());
+    }
+
+    // messages: 顶层 system (字符串 / 文本块数组) → 首条 system 消息
+    let mut messages: Vec<Value> = vec![];
+    if let Some(sys) = body.get("system") {
+        let text = match sys {
+            Value::String(s) => s.clone(),
+            Value::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        if !text.is_empty() {
+            messages.push(json!({"role": "system", "content": text}));
+        }
+    }
+
+    if let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) {
+        for msg in msgs {
+            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            match role {
+                "user" => {
+                    // user 消息可能同时含 text/image 与 tool_result 块:
+                    // text/image 归入 user 消息; tool_result 展开为独立 OpenAI tool 消息.
+                    let mut user_content: Vec<Value> = vec![];
+                    let mut tool_msgs: Vec<Value> = vec![];
+                    match msg.get("content") {
+                        Some(Value::String(s)) => {
+                            if !s.is_empty() {
+                                user_content.push(Value::from(s.clone()));
+                            }
+                        }
+                        Some(Value::Array(blocks)) => {
+                            for b in blocks {
+                                match b.get("type").and_then(|t| t.as_str()) {
+                                    Some("text") => {
+                                        if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                                            if !t.is_empty() {
+                                                user_content.push(Value::from(t.to_string()));
+                                            }
+                                        }
+                                    }
+                                    Some("image") => {
+                                        if let Some(src) = b.get("source") {
+                                            let is_url = src.get("type").and_then(|t| t.as_str()) == Some("url");
+                                            let url = src.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                                            let media = src.get("media_type").and_then(|m| m.as_str()).unwrap_or("image/png");
+                                            let data = src.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                                            if is_url && !url.is_empty() {
+                                                user_content.push(json!({
+                                                    "type": "image_url",
+                                                    "image_url": {"url": url}
+                                                }));
+                                            } else if !data.is_empty() {
+                                                user_content.push(json!({
+                                                    "type": "image_url",
+                                                    "image_url": {"url": format!("data:{media};base64,{data}")}
+                                                }));
+                                            }
+                                        }
+                                    }
+                                    Some("tool_result") => {
+                                        let id = b.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                        let content = match b.get("content") {
+                                            Some(Value::String(s)) => Value::from(s.clone()),
+                                            Some(Value::Array(arr)) => {
+                                                let text = arr.iter()
+                                                    .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
+                                                    .collect::<Vec<_>>().join("");
+                                                Value::from(text)
+                                            }
+                                            _ => Value::Null,
+                                        };
+                                        let mut tm = Map::new();
+                                        tm.insert("role".to_string(), json!("tool"));
+                                        tm.insert("tool_call_id".to_string(), json!(id));
+                                        tm.insert("content".to_string(), content);
+                                        tool_msgs.push(Value::Object(tm));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    if !user_content.is_empty() {
+                        // 仅一条纯文本 → 字符串 content; 多段/含图 → content 数组.
+                        let content_val = if user_content.len() == 1 && user_content[0].is_string() {
+                            user_content.remove(0)
+                        } else {
+                            Value::Array(user_content)
+                        };
+                        messages.push(json!({"role": "user", "content": content_val}));
+                    }
+                    messages.extend(tool_msgs);
+                }
+                "assistant" => {
+                    // assistant 消息: text 块 → content; thinking 块 → reasoning_content;
+                    // tool_use 块 → tool_calls.
+                    let mut text_parts: Vec<String> = vec![];
+                    let mut thinking_parts: Vec<String> = vec![];
+                    let mut tool_calls: Vec<Value> = vec![];
+                    match msg.get("content") {
+                        Some(Value::String(s)) => text_parts.push(s.clone()),
+                        Some(Value::Array(blocks)) => {
+                            for b in blocks {
+                                match b.get("type").and_then(|t| t.as_str()) {
+                                    Some("text") => {
+                                        if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                                            text_parts.push(t.to_string());
+                                        }
+                                    }
+                                    Some("thinking") => {
+                                        if let Some(t) = b.get("thinking").and_then(|x| x.as_str()) {
+                                            thinking_parts.push(t.to_string());
+                                        }
+                                    }
+                                    Some("tool_use") => {
+                                        let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                        let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                        let input = b.get("input").cloned().unwrap_or_else(|| json!({}));
+                                        tool_calls.push(json!({
+                                            "id": id,
+                                            "type": "function",
+                                            "function": {"name": name, "arguments": input.to_string()}
+                                        }));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    let mut oa = Map::new();
+                    oa.insert("role".to_string(), json!("assistant"));
+                    if !thinking_parts.is_empty() {
+                        oa.insert("reasoning_content".to_string(), json!(thinking_parts.join("")));
+                    }
+                    oa.insert("content".to_string(), if text_parts.is_empty() { json!(null) } else { json!(text_parts.join("")) });
+                    if !tool_calls.is_empty() {
+                        oa.insert("tool_calls".to_string(), Value::Array(tool_calls));
+                    }
+                    messages.push(Value::Object(oa));
+                }
+                _ => {}
+            }
+        }
+    }
+    out.insert("messages".to_string(), Value::Array(messages));
+
+    // tools: Anthropic {name, description, input_schema} → OpenAI function 声明
+    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
+        let lowered: Vec<Value> = tools
+            .iter()
+            .filter_map(|t| {
+                let name = t.get("name").and_then(|v| v.as_str())?.to_string();
+                let mut o = Map::new();
+                o.insert("type".to_string(), json!("function"));
+                let mut f = Map::new();
+                f.insert("name".to_string(), json!(name));
+                if let Some(desc) = t.get("description").and_then(|v| v.as_str()) {
+                    f.insert("description".to_string(), json!(desc));
+                }
+                if let Some(schema) = t.get("input_schema") {
+                    f.insert("parameters".to_string(), schema.clone());
+                }
+                o.insert("function".to_string(), Value::Object(f));
+                Some(Value::Object(o))
+            })
+            .collect();
+        if !lowered.is_empty() {
+            out.insert("tools".to_string(), Value::Array(lowered));
+        }
+    }
+
+    // tool_choice: auto→auto / any→required / tool{name}→function / none→none
+    if let Some(tc) = body.get("tool_choice") {
+        let mapped = match tc {
+            Value::String(s) if s == "auto" => Some(json!("auto")),
+            Value::String(s) if s == "any" => Some(json!("required")),
+            Value::String(s) if s == "none" => Some(json!("none")),
+            Value::Object(o) => {
+                let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if t == "none" {
+                    Some(json!("none"))
+                } else if t == "any" {
+                    Some(json!("required"))
+                } else if let Some(n) = o.get("name").and_then(|v| v.as_str()) {
+                    Some(json!({"type": "function", "function": {"name": n}}))
+                } else {
+                    Some(json!("auto"))
+                }
+            }
+            _ => None,
+        };
+        if let Some(m) = mapped {
+            out.insert("tool_choice".to_string(), m);
+        }
+    }
+
+    // max_tokens → max_tokens (OpenAI 侧同名)
+    if let Some(mt) = body.get("max_tokens") {
+        out.insert("max_tokens".to_string(), mt.clone());
+    }
+    for key in ["temperature", "top_p", "stream"] {
+        if let Some(v) = body.get(key) {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
+    // stop_sequences → stop
+    if let Some(stops) = body.get("stop_sequences").and_then(|s| s.as_array()) {
+        if !stops.is_empty() {
+            out.insert("stop".to_string(), Value::Array(stops.clone()));
+        }
+    }
+    // thinking → reasoning_effort (OpenAI 侧消费; 上游若为 Anthropic,
+    // 内部 openai_to_anthropic 会再映射回 thinking, budget 近似).
+    if let Some(th) = body.get("thinking") {
+        if th.get("type").and_then(|t| t.as_str()) == Some("enabled") {
+            let budget = th.get("budget_tokens").and_then(|b| b.as_u64()).unwrap_or(0);
+            let effort = if budget == 0 || budget < 1200 { "low" }
+                else if budget < 2500 { "medium" }
+                else if budget < 6000 { "high" }
+                else { "max" };
+            out.insert("reasoning_effort".to_string(), json!(effort));
+        }
+    }
+
+    Value::Object(out)
+}
+
+/// OpenAI finish_reason → Anthropic stop_reason.
+fn map_finish_reason(r: &str) -> String {
+    match r {
+        "stop" | "stop_sequence" | "eos" => "end_turn".to_string(),
+        "length" => "max_tokens".to_string(),
+        "tool_calls" | "function_call" => "tool_use".to_string(),
+        "content_filter" => "refusal".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 把 OpenAI chat/completions 非流式响应体转换为 Anthropic /messages 响应体.
+///
+/// 反向覆盖 [`anthropic_to_openai_nonstream`]: choices[0].message 的
+/// content/reasoning_content/tool_calls → content blocks; usage 拆分
+/// cache_read/cache_creation 到独立的 input 计数.
+pub fn openai_to_anthropic_response(body: &Value) -> Value {
+    let mut content: Vec<Value> = vec![];
+    let mut stop_reason = "end_turn".to_string();
+    if let Some(choice) = body.get("choices").and_then(|c| c.as_array()).and_then(|c| c.first()) {
+        let message = choice.get("message");
+        if let Some(t) = message.and_then(|m| m.get("content")).and_then(|c| c.as_str()) {
+            if !t.is_empty() {
+                content.push(json!({"type": "text", "text": t}));
+            }
+        }
+        if let Some(r) = message.and_then(|m| m.get("reasoning_content")).and_then(|c| c.as_str()) {
+            if !r.is_empty() {
+                content.push(json!({"type": "thinking", "thinking": r}));
+            }
+        }
+        if let Some(tcs) = message.and_then(|m| m.get("tool_calls")).and_then(|c| c.as_array()) {
+            for tc in tcs {
+                let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = tc.pointer("/function/name").and_then(|v| v.as_str()).unwrap_or("");
+                let arguments = tc.pointer("/function/arguments")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    .unwrap_or_else(|| json!({}));
+                content.push(json!({"type": "tool_use", "id": id, "name": name, "input": arguments}));
+            }
+        }
+        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+            stop_reason = map_finish_reason(fr);
+        }
+    }
+    // usage: prompt_tokens = input 总计; 拆分 cache_read/cache_creation
+    let (input_total, cache_read, cache_creation, output) = match body.get("usage") {
+        Some(u) => {
+            let prompt = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let cached = u.pointer("/prompt_tokens_details/cached_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let creation = u.pointer("/prompt_tokens_details/cache_creation_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let ct = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            (prompt, cached, creation, ct)
+        }
+        None => (0, 0, 0, 0),
+    };
+    let mut usage = Map::new();
+    usage.insert("input_tokens".to_string(), json!(input_total));
+    usage.insert("output_tokens".to_string(), json!(output));
+    if cache_read > 0 {
+        usage.insert("cache_read_input_tokens".to_string(), json!(cache_read));
+    }
+    if cache_creation > 0 {
+        usage.insert("cache_creation_input_tokens".to_string(), json!(cache_creation));
+    }
+    json!({
+        "id": body.get("id").cloned().unwrap_or_else(|| json!("msg-unknown")),
+        "type": "message",
+        "role": "assistant",
+        "content": Value::Array(content),
+        "model": body.get("model").cloned().unwrap_or_else(|| json!("")),
+        "stop_reason": stop_reason,
+        "stop_sequence": Value::Null,
+        "usage": Value::Object(usage),
+    })
+}
+
+/// 把 OpenAI 错误响应体转换为 Anthropic 错误格式.
+///
+/// OpenAI:  `{"error":{"message":"...","type":"..."}}`
+/// Anthropic: `{"type":"error","error":{"type":"...","message":"..."}}`
+pub fn openai_error_to_anthropic(body: &Value) -> Value {
+    let err = body.get("error").cloned().unwrap_or_else(|| json!({"message": body.to_string()}));
+    json!({
+        "type": "error",
+        "error": err
+    })
+}
+
+/// OpenAI SSE → Anthropic SSE 的有状态转换器 (对外 /messages 流式返回).
+///
+/// 输入为 OpenAI chat/completions chunk payload (含 usage / role / content /
+/// reasoning_content / tool_calls / finish_reason 帧与 [DONE] 终止帧), 输出为
+/// Anthropic `event:` + `data:` 事件对. 与 [`AnthropicStreamConv`] 方向相反.
+///
+/// content_block 索引按块出现顺序动态分配 (text/thinking/tool_use 共享同一
+/// 索引空间, 与 Anthropic 规范一致); 首段增量须先发 `content_block_start`,
+/// 后续增量才发 `content_block_delta`.
+#[derive(Default)]
+pub struct OpenAIStreamConv {
+    /// 下一个可用的 content_block 索引.
+    next_block: usize,
+    /// 文本块分配的索引.
+    text_block: Option<usize>,
+    /// 思考块分配的索引.
+    thinking_block: Option<usize>,
+    /// OpenAI tool index → Anthropic content_block 索引.
+    tool_block: HashMap<usize, usize>,
+    /// 工具块累积: content_block index → (id, name, 已累积 partial JSON).
+    tool_acc: HashMap<usize, (String, String, String)>,
+    /// 是否已发出 message_start.
+    message_started: bool,
+}
+
+impl OpenAIStreamConv {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 输入一条 OpenAI chunk payload (JSON 字符串或 `[DONE]`), 返回要转发的
+    /// Anthropic `(event, data_json)` 事件对.
+    pub fn feed(&mut self, json_str: &str) -> Vec<(String, String)> {
+        if json_str == "[DONE]" || json_str == "DONE" {
+            return vec![("message_stop".to_string(), "{}".to_string())];
+        }
+        let Ok(val) = serde_json::from_str::<Value>(json_str) else {
+            return vec![];
+        };
+        self.handle(&val)
+    }
+
+    fn handle(&mut self, val: &Value) -> Vec<(String, String)> {
+        // error 事件: 透传为 Anthropic error 事件
+        if let Some(err) = val.get("error") {
+            let ev = json!({"type": "error", "error": err});
+            return vec![("error".to_string(), ev.to_string())];
+        }
+        let Some(choices) = val.get("choices").and_then(|c| c.as_array()) else {
+            return vec![];
+        };
+        let Some(choice) = choices.first() else {
+            return vec![];
+        };
+        let mut events: Vec<(String, String)> = vec![];
+        // role 帧 → message_start (携带 usage input)
+        let delta = choice.get("delta").cloned().unwrap_or_else(|| json!({}));
+        if !self.message_started {
+            self.message_started = true;
+            let mut start = Map::new();
+            start.insert("type".to_string(), json!("message_start"));
+            let mut message = Map::new();
+            message.insert("id".to_string(), json!("msg-stream"));
+            message.insert("type".to_string(), json!("message"));
+            message.insert("role".to_string(), json!("assistant"));
+            let mut usage = Map::new();
+            usage.insert("input_tokens".to_string(), json!(0));
+            usage.insert("output_tokens".to_string(), json!(0));
+            message.insert("usage".to_string(), Value::Object(usage));
+            start.insert("message".to_string(), Value::Object(message));
+            events.push(("message_start".to_string(), Value::Object(start).to_string()));
+        }
+
+        // 文本增量
+        if let Some(text) = delta.get("content").and_then(|t| t.as_str()) {
+            if !text.is_empty() {
+                events.extend(self.block_delta("text", "text_delta", "text", text));
+            }
+        }
+        // 思考增量 → thinking 块
+        if let Some(r) = delta.get("reasoning_content").and_then(|t| t.as_str()) {
+            if !r.is_empty() {
+                events.extend(self.block_delta("thinking", "thinking_delta", "thinking", r));
+            }
+        }
+        // 工具调用: 累积 partial JSON → input_json_delta
+        if let Some(tcs) = delta.get("tool_calls").and_then(|c| c.as_array()) {
+            for tc in tcs {
+                let oidx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = tc.pointer("/function/name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let args = tc.pointer("/function/arguments").and_then(|v| v.as_str()).unwrap_or("");
+                let cidx = match self.tool_block.get(&oidx) {
+                    Some(&c) => c,
+                    None => {
+                        let c = self.next_block;
+                        self.next_block += 1;
+                        self.tool_block.insert(oidx, c);
+                        self.tool_acc.insert(c, (id.clone(), name.clone(), String::new()));
+                        let ev = json!({
+                            "type": "content_block_start",
+                            "index": c,
+                            "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}
+                        });
+                        events.push(("content_block_start".to_string(), ev.to_string()));
+                        c
+                    }
+                };
+                if let Some((sid, sname, acc)) = self.tool_acc.get_mut(&cidx) {
+                    // 部分网关首帧缺 id/name, 后续帧补齐
+                    if sid.is_empty() && !id.is_empty() {
+                        *sid = id.clone();
+                    }
+                    if sname.is_empty() && !name.is_empty() {
+                        *sname = name.clone();
+                    }
+                    acc.push_str(args);
+                }
+                let partial = self.tool_acc
+                    .get(&cidx)
+                    .map(|(_, _, acc)| acc.clone())
+                    .unwrap_or_default();
+                let ev = json!({
+                    "type": "content_block_delta",
+                    "index": cidx,
+                    "delta": {"type": "input_json_delta", "partial_json": partial}
+                });
+                events.push(("content_block_delta".to_string(), ev.to_string()));
+            }
+        }
+
+        // finish_reason → message_delta (携带 stop_reason + usage output)
+        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+            if !fr.is_empty() {
+                let mut ev = Map::new();
+                ev.insert("type".to_string(), json!("message_delta"));
+                let mut delta_map = Map::new();
+                delta_map.insert("stop_reason".to_string(), json!(map_finish_reason(fr)));
+                ev.insert("delta".to_string(), Value::Object(delta_map));
+                if let Some(u) = val.get("usage") {
+                    ev.insert("usage".to_string(), u.clone());
+                }
+                events.push(("message_delta".to_string(), Value::Object(ev).to_string()));
+            }
+        }
+        // 独立 usage 帧 (部分供应商在 finish_reason 前单独发 usage)
+        if let Some(u) = val.get("usage") {
+            let has_finish = choice
+                .get("finish_reason")
+                .and_then(|f| f.as_str())
+                .map(|f| !f.is_empty())
+                .unwrap_or(false);
+            if !has_finish {
+                let ev = json!({
+                    "type": "message_delta",
+                    "delta": {"stop_reason": Value::Null},
+                    "usage": u
+                });
+                events.push(("message_delta".to_string(), ev.to_string()));
+            }
+        }
+        events
+    }
+
+    /// 生成单一文本/思考块的增量事件: 块首次出现分配索引并发 content_block_start,
+    /// 后续增量只发 content_block_delta. `which` 决定当前是文本块还是思考块.
+    fn block_delta(
+        &mut self,
+        which: &str,
+        delta_type: &str,
+        field: &str,
+        text: &str,
+    ) -> Vec<(String, String)> {
+        let slot = if which == "text" {
+            &mut self.text_block
+        } else {
+            &mut self.thinking_block
+        };
+        let is_new = slot.is_none();
+        let idx = if is_new {
+            let c = self.next_block;
+            self.next_block += 1;
+            *slot = Some(c);
+            c
+        } else {
+            slot.unwrap()
+        };
+        let mut events = vec![];
+        if is_new {
+            events.push(("content_block_start".to_string(), json!({
+                "type": "content_block_start",
+                "index": idx,
+                "content_block": {"type": which, "signature": ""}
+            }).to_string()));
+        }
+        let mut d = Map::new();
+        d.insert("type".to_string(), json!(delta_type));
+        d.insert(field.to_string(), json!(text));
+        let ev = json!({
+            "type": "content_block_delta",
+            "index": idx,
+            "delta": Value::Object(d)
+        });
+        events.push(("content_block_delta".to_string(), ev.to_string()));
+        events
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,5 +1437,147 @@ mod tests {
         let out = anthropic_error_to_openai(&body);
         assert_eq!(out["error"]["message"], "服务过载");
         assert_eq!(out["error"]["type"], "overloaded_error");
+    }
+
+    // ─── 反向转换 (对外 /messages 入口) 测试 ───
+
+    #[test]
+    fn back_request_system_and_messages() {
+        let body = json!({
+            "model": "deepseek-v4-flash",
+            "system": [{"type": "text", "text": "你是助手"}],
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "你好"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "你好！"}]},
+                {"role": "user", "content": [{"type": "text", "text": "再见"}]
+            }],
+            "max_tokens": 2048,
+            "stream": true
+        });
+        let out = anthropic_to_openai_request(&body);
+        assert_eq!(out["model"], "deepseek-v4-flash");
+        assert_eq!(out["max_tokens"], 2048);
+        assert_eq!(out["stream"], true);
+        // system → 首条 system 消息
+        let msgs = out["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "你是助手");
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[1]["content"], "你好");
+        assert_eq!(msgs[2]["content"], "你好！");
+    }
+
+    #[test]
+    fn back_request_tool_use_and_result() {
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "查天气"}]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "c1", "name": "get_weather", "input": {"city": "bj"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "晴"}
+                ]}
+            ],
+            "tools": [{"name": "get_weather", "description": "查天气", "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": "get_weather"}
+        });
+        let out = anthropic_to_openai_request(&body);
+        let msgs = out["messages"].as_array().unwrap();
+        // assistant tool_use → tool_calls
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[1]["tool_calls"][0]["id"], "c1");
+        assert_eq!(msgs[1]["tool_calls"][0]["function"]["name"], "get_weather");
+        assert_eq!(msgs[1]["tool_calls"][0]["function"]["arguments"], "{\"city\":\"bj\"}");
+        // tool_result → 独立 tool 消息
+        assert_eq!(msgs[2]["role"], "tool");
+        assert_eq!(msgs[2]["tool_call_id"], "c1");
+        assert_eq!(msgs[2]["content"], "晴");
+        // tools / tool_choice
+        assert_eq!(out["tools"][0]["function"]["name"], "get_weather");
+        assert_eq!(out["tool_choice"], json!({"type": "function", "function": {"name": "get_weather"}}));
+    }
+
+    #[test]
+    fn back_request_thinking_map() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": 8000}
+        });
+        let out = anthropic_to_openai_request(&body);
+        assert_eq!(out["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn back_nonstream_response() {
+        let body = json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "第一段",
+                    "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "f", "arguments": "{\"x\":1}"}}]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3,
+                      "prompt_tokens_details": {"cached_tokens": 2, "cache_creation_tokens": 3}}
+        });
+        let out = openai_to_anthropic_response(&body);
+        assert_eq!(out["type"], "message");
+        assert_eq!(out["role"], "assistant");
+        assert_eq!(out["stop_reason"], "tool_use");
+        let content = out["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "t1");
+        assert_eq!(content[1]["input"]["x"], 1);
+        // usage: input=7(含缓存细分), output=3
+        assert_eq!(out["usage"]["input_tokens"], 7);
+        assert_eq!(out["usage"]["output_tokens"], 3);
+        assert_eq!(out["usage"]["cache_read_input_tokens"], 2);
+        assert_eq!(out["usage"]["cache_creation_input_tokens"], 3);
+    }
+
+    #[test]
+    fn back_error_conversion() {
+        let body = json!({"error": {"message": "服务过载", "type": "overloaded_error"}});
+        let out = openai_error_to_anthropic(&body);
+        assert_eq!(out["type"], "error");
+        assert_eq!(out["error"]["message"], "服务过载");
+    }
+
+    #[test]
+    fn back_stream_full_flow() {
+        let mut conv = OpenAIStreamConv::new();
+        let mut events: Vec<(String, String)> = vec![];
+        // 首角色帧 + 文本增量
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]}).to_string()));
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {"content": "你好"}, "finish_reason": null}]}).to_string()));
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {"content": "世界"}, "finish_reason": null}]}).to_string()));
+        // 工具: 首帧带 id/name, 后续 partial
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "t1", "type": "function", "function": {"name": "f", "arguments": ""}}]}, "finish_reason": null}]}).to_string()));
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"a\":"}}]}, "finish_reason": null}]}).to_string()));
+        // 结束: finish_reason + usage + DONE
+        events.extend(conv.feed(&json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}).to_string()));
+        events.extend(conv.feed("[DONE]"));
+
+        let names: Vec<&str> = events.iter().map(|(e, _)| e.as_str()).collect();
+        assert!(names.contains(&"message_start"));
+        assert!(names.contains(&"content_block_start"));
+        // 文本增量 → content_block_delta(text_delta)
+        assert!(events.iter().any(|(e, d)| e == "content_block_delta" && d.contains("\"text_delta\"") && d.contains("你好")));
+        // 工具增量 → content_block_delta(input_json_delta), partial 累积
+        assert!(events.iter().any(|(e, d)| e == "content_block_delta" && d.contains("input_json_delta")));
+        let last_delta = events.iter().rev().find(|(e, _)| e == "content_block_delta").unwrap().1.clone();
+        assert!(last_delta.contains("{\\\"a\\\":"));
+        // 结束: message_delta stop_reason=tool_use + message_stop
+        assert!(events.iter().any(|(e, d)| e == "message_delta" && d.contains("\"tool_use\"")));
+        assert_eq!(events.last().map(|(e, _)| e.as_str()), Some("message_stop"));
     }
 }
