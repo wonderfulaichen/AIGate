@@ -26,3 +26,17 @@ check_js.js
 diag_*.ps1
 verify_*.ps1
 *_fix.txt
+
+# ZCode 工作记忆
+.zcode/
+
+# 临时调试/备份文件
+NUL
+served_check.html
+design-preview/
+src/admin.html.original
+src/admin_from_8787.html
+src/admin_part.html
+src/admin_working.html
+src/admin.js
+transform.py
