@@ -21,6 +21,12 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+/// 返回安全的密钥后缀：短值不暴露任何原文，长值按 Unicode 字符取最后四位。
+fn masked_suffix(value: &str) -> Option<String> {
+    let chars: Vec<char> = value.chars().collect();
+    (chars.len() > 4).then(|| chars[chars.len() - 4..].iter().collect())
+}
+
 /// 密钥存储. 索引键 = 供应商名.
 #[derive(Clone)]
 pub struct KeyStore {
@@ -142,13 +148,7 @@ impl KeyStore {
                             .ok()
                             .filter(|s| !s.is_empty())
                     });
-                let suffix = value.as_ref().and_then(|v| {
-                    if v.len() > 4 {
-                        Some(v[v.len() - 4..].to_string())
-                    } else {
-                        Some(v.clone())
-                    }
-                });
+                let suffix = value.as_deref().and_then(masked_suffix);
                 ProviderKeyView {
                     provider: p.name.clone(),
                     env_var: p.api_key_env.clone(),
@@ -184,6 +184,23 @@ pub struct ProviderKeyView {
     pub env_var: String,
     /// 是否已配置 (面板值或环境变量任一非空).
     pub configured: bool,
-    /// 密钥后 4 位 (脱敏).
+    /// 密钥后 4 位 (脱敏). 短密钥不返回原文，因此可能为空.
     pub suffix: Option<String>,
+}
+
+#[cfg(test)]
+mod masking_tests {
+    use super::masked_suffix;
+
+    #[test]
+    fn masks_short_values_without_leaking_them() {
+        assert_eq!(masked_suffix("a"), None);
+        assert_eq!(masked_suffix("abcd"), None);
+    }
+
+    #[test]
+    fn takes_last_four_unicode_chars_safely() {
+        assert_eq!(masked_suffix("abcdefgh"), Some("efgh".to_string()));
+        assert_eq!(masked_suffix("密钥-12345"), Some("2345".to_string()));
+    }
 }

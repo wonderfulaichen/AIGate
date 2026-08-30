@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AIGate · 控制台</title>
+<title>AIGate</title>
 <script>
 window.__errs=[];
 var __flt=function(m){return !/cdn.tailwindcss|should not be used in production/.test(m)};
@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', function() {
 :root{color-scheme:dark;--bg:#0c0c10;--card:#16161c;--elevated:#1c1c24;--input:#1c1c24;--fg:#e8e8ec;--muted:#9aa0aa;--border:rgba(255,255,255,.08);--border-s:rgba(255,255,255,.12);--primary:#6366f1;--primary-h:#5457e5;--primary-fg:#fff;--ok:#34d399;--warn:#f59e0b;--err:#ef4444;--cyan:#06b6d4;--violet:#a78bfa;--indigo:#818cf8;--r:12px;--rl:14px;--rm:8px;--sh:0 1px 3px rgba(0,0,0,.3);--shm:0 20px 60px rgba(0,0,0,.45);--bg-base:#0c0c10;--bg-card:#16161c;--bg-elevated:#1c1c24;--bg-input:#1c1c24;--text-primary:#e8e8ec;--text-secondary:#cdd0d4;--text-muted:#9aa0aa;--text:#e8e8ec;--border-subtle:rgba(255,255,255,.06);--border-default:rgba(255,255,255,.08);--border-strong:rgba(255,255,255,.12);--accent:#6366f1;--accent-soft:rgba(99,102,241,.12);--c-muted:#9aa0aa;--c-border:#2a2d37;--c-accent2:#a5b4fc;--c-ink:#cdd0d4;--c-ok:#34d399;--c-warn:#f59e0b;--c-err:#ef4444;--c-cyan:#06b6d4;--c-violet:#a78bfa;--c-sky:#38bdf8;--c-amber:#fbbf24;--c-indigo:#818cf8;--c-pink:#f472b6}
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+*,*::before,*::after{box-sizing:border-box}
 *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent}
 *::-webkit-scrollbar{width:6px;height:6px}
 *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
@@ -39,7 +40,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 @keyframes loadBar{0%{transform:translateX(-100%)}50%{transform:translateX(80%)}100%{transform:translateX(200%)}}
 .page-enter{animation:fadeIn .2s ease-out}
 @media(prefers-reduced-motion:reduce){.page-enter{animation:none!important}}
-.layout{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.layout{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;overflow:hidden}
 .hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:rgba(12,12,16,.92);flex-shrink:0}
 .hdr-title{font-size:14px;font-weight:700;letter-spacing:-.01em;color:var(--fg)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px}
@@ -58,13 +59,40 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .sb.colapsed .sb-item span{opacity:0;width:0}
 .sb-foot{padding:12px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden}
 .sb.colapsed .sb-foot span{opacity:0}
-@media(max-width:768px){.sb{width:100%!important;height:52px;flex-direction:row;border-right:none;border-top:1px solid var(--border-subtle)}.sb .sb-nav{display:flex;overflow-x:auto;gap:4px;padding:4px 8px}.sb .sb-glabel{display:none}.sb .sb-item{flex-direction:column;font-size:9px;padding:6px 8px;gap:2px}.sb .sb-item.active::before{display:none}.sb .sb-item span{opacity:1;width:auto}.sb .sb-foot{display:none}.main{padding-bottom:60px!important}}
-.main{flex:1;overflow-y:auto;overflow-x:hidden;padding:24px;scroll-behavior:smooth}
-@media(max-width:640px){.main{padding:16px}}
-@media(min-width:1600px){.main{max-width:1600px;margin:0 auto}}
-@media(min-width:1920px){.main{max-width:1800px}}
+@media(max-width:768px){.body{flex-direction:column}.sb{width:100%!important;height:52px;flex-direction:row;border-right:none;border-top:1px solid var(--border-subtle)}.sb .sb-nav{display:flex;overflow-x:auto;gap:4px;padding:4px 8px}.sb .sb-glabel{display:none}.sb .sb-item{flex-direction:column;font-size:9px;padding:6px 8px;gap:2px}.sb .sb-item.active::before{display:none}.sb .sb-item span{opacity:1;width:auto}.sb .sb-foot{display:none}}
+.main{flex:1;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:24px;scroll-behavior:smooth}
+.page-wide{width:100%;max-width:1600px;margin:0 auto}
+.about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.about-capability{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.02);min-width:0}
+.about-capability-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--indigo);font-size:15px;font-weight:700}
+@media(max-width:640px){.about-capabilities{grid-template-columns:1fr}}
+.about-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:4px 2px 0}
+.about-eyebrow{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--indigo);margin-bottom:6px}
+.about-hero-title{font-size:clamp(1.5rem,3vw,2rem);font-weight:800;letter-spacing:-.03em;color:var(--fg);line-height:1.15}
+.about-hero-desc{font-size:13px;color:var(--muted);margin-top:6px}
+.about-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.8fr);gap:16px;align-items:start}
+.about-main{height:100%;display:flex;flex-direction:column;gap:24px;padding:24px}
+.about-intro{max-width:760px}
+.about-intro-title{font-size:18px;font-weight:700;color:var(--fg);margin-bottom:8px}
+.about-intro-desc{font-size:13px;line-height:1.8;color:var(--muted)}
+.about-section{padding-top:20px;border-top:1px solid var(--border)}
+.about-section-title{font-size:12px;font-weight:700;color:var(--fg);margin-bottom:10px}
+.about-endpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.02);min-width:0}
+.about-endpoint-method{font:700 10px 'JetBrains Mono',monospace;color:var(--indigo);min-width:34px}
+.about-endpoint-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.about-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.about-side-panel{padding:20px}
+.about-tech{display:flex;gap:8px;flex-wrap:wrap}
+.about-changelog{max-height:460px;overflow:auto}
+@media(max-width:980px){.about-grid{grid-template-columns:1fr}.about-side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.about-changelog{max-height:none}}
+@media(max-width:640px){.main{padding:16px}.about-hero{align-items:flex-start;flex-direction:column}.about-main{padding:18px}.about-side{display:flex}.about-endpoints{grid-template-columns:1fr}}
+
+@media(min-width:1600px){.main{max-width:none;margin:0}}
+@media(min-width:1920px){.main{max-width:none}}
 .pnl{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden}
-.pnl-h{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
 .pnl-ht{font-size:13px;font-weight:600;color:var(--fg)}
 .pnl-b{padding:16px}
 .phd{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px}
@@ -78,6 +106,30 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .si-l{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .si-v{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
 .si-s{font-size:11px;color:var(--muted)}
+.sc-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:768px){.sc-row{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.sc-row{grid-template-columns:1fr}}
+.sc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden;transition:border-color .15s}
+.sc:hover{border-color:var(--border-s)}
+.sc-accent{position:absolute;top:0;left:0;width:3px;height:100%;border-radius:0 2px 2px 0}
+.sc-hdr{display:flex;align-items:center;justify-content:space-between}
+.sc-ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.sc-lbl{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.sc-val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
+.sc-sub{font-size:11px;color:var(--muted)}
+/* ── model filter chips ── */
+.m-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);transition:all .15s;white-space:nowrap}
+.m-chip:hover{background:rgba(255,255,255,.05);color:var(--fg)}
+.m-chip.on{background:rgba(99,102,241,.12);color:#818cf8;border-color:rgba(99,102,241,.3)}
+.m-chip.on:hover{background:rgba(99,102,241,.18)}
+.m-card{border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:0}
+.m-card-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
+.m-card-hdr>div{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.m-card-table-scroll{min-width:0;overflow-x:auto}
+.m-card-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.04)}
+.meta-chip,.meta-tag{display:inline-flex;align-items:center;gap:3px;border-radius:5px;padding:2px 5px;font-size:9px;line-height:1.2;white-space:nowrap}
+.meta-chip b{font-weight:600}
+.meta-pending{display:inline-flex;align-items:center;color:var(--muted);font-size:9px;line-height:1.2;white-space:nowrap}
 .st{display:flex;align-items:center;gap:8px;color:var(--muted);padding-left:12px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;position:relative}
 .st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,#818cf8,#6366f1)}
 table{width:100%;border-collapse:collapse}
@@ -135,6 +187,109 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .fw6{font-weight:600}.fw7{font-weight:700}
 .tm{color:var(--muted)}
 [x-cloak]{display:none!important}
+.ov-page{width:100%;max-width:none;margin:0}
+.ov-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);gap:16px;align-items:start;width:100%}
+.ov-main{min-width:0;display:flex;flex-direction:column;gap:16px}
+.ov-side{min-width:0;display:flex;flex-direction:column;gap:16px}
+@media(max-width:980px){.ov-grid{grid-template-columns:minmax(0,1fr)}}
+.ov-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:700px){.ov-kpis{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:460px){.ov-kpis{grid-template-columns:1fr}}
+.ov-kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;min-width:0}
+.ov-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ov-kpi-label{font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.ov-kpi-value{font:700 1.45rem/1.15 'JetBrains Mono',monospace;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;margin-top:8px}
+.ov-kpi-hint{font-size:11px;color:var(--muted);margin-top:5px}
+.ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.ov-summary-card{background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0}
+.ov-summary-card .ov-kpi-value{font-size:1.5rem}
+.ov-secondary-item{background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
+.ov-secondary-label{font-size:11px;color:var(--muted)}
+.ov-secondary-value{font:600 1rem 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
+.mini-spark{height:28px;margin-top:8px;opacity:.9;overflow:hidden}
+.mini-spark svg{display:block;width:100%;height:28px}
+@media(max-width:700px){.ov-summary-grid,.ov-secondary-grid{grid-template-columns:1fr}}
+.ov-icon{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+.ov-health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media(max-width:600px){.ov-health-grid{grid-template-columns:1fr}}
+.ov-health-item{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.ov-health-label{font-size:11px;color:var(--muted)}
+.ov-health-value{font:600 14px 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
+.ov-model-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.ov-model-row:last-child{border-bottom:none}
+.ov-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ov-api-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.ov-api-row:last-child{border-bottom:none}
+.ov-api-method{font:600 10px 'JetBrains Mono',monospace;color:#818cf8;background:rgba(99,102,241,.12);padding:3px 6px;border-radius:5px}
+.ov-api-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-actions{display:flex;gap:8px;flex-wrap:wrap}
+.an-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
+.an-stat-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:0;overflow:hidden;border:1px solid var(--border);border-radius:var(--rl);background:var(--card)}
+.an-stat{padding:14px 16px;border-right:1px solid var(--border)}
+.an-stat:last-child{border-right:none}
+.an-stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.an-stat-value{font:700 1.25rem 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums;margin-top:6px}
+@media(max-width:1000px){.an-stat-strip{grid-template-columns:repeat(3,1fr)}.an-stat:nth-child(3){border-right:none}.an-stat:nth-child(n+4){border-top:1px solid var(--border)}}
+@media(max-width:560px){.an-stat-strip{grid-template-columns:repeat(2,1fr)}.an-stat:nth-child(2),.an-stat:nth-child(4){border-right:none}.an-stat:nth-child(3){border-right:1px solid var(--border)}.an-stat:nth-child(n+3){border-top:1px solid var(--border)}}
+.an-chart-tabs{display:flex;gap:4px;align-items:center;overflow-x:auto}
+.an-chart-tabs .seg-i{white-space:nowrap}
+.chart-context{font-size:10px;color:var(--muted);margin-top:4px}
+.chart-note{padding:8px 16px;border-top:1px solid var(--border);font-size:10px;color:var(--muted)}
+.chart-legend-row{display:flex;align-items:center;gap:7px;padding:8px 16px 0;font-size:11px;color:var(--fg)}
+.chart-legend-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px}
+.chart-legend-row .tm{margin-left:8px}
+.chart-summary{padding:6px 16px 12px;font-size:10px;color:var(--muted);line-height:1.6}
+.ta-grid{display:inline-grid;grid-template-columns:repeat(auto-fill,minmax(16px,1fr));gap:3px}
+.ta-week{display:grid;grid-template-columns:repeat(7,16px);gap:3px}
+.ta-cell{position:relative;width:20px;height:20px;border-radius:4px}
+.ta-month{position:absolute;top:-14px;left:0;font-size:10px;color:#9aa0aa;white-space:nowrap}
+.ta-weekday{position:absolute;left:-28px;top:2px;font-size:10px;color:#9aa0aa;width:24px;text-align:right}
+.token-trend-body{overflow-x:auto;min-height:260px;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);padding:16px}
+.model-trend-legend{display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px 0}
+.model-trend-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid var(--border);border-radius:999px;font-size:10px;color:var(--muted);cursor:pointer;transition:opacity .15s}
+.model-trend-chip:hover{border-color:var(--border-s);color:var(--fg)}
+.model-trend-chip.dim{opacity:.3}
+.model-trend-chip i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.an-rank{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.an-rank:last-child{border-bottom:none}
+.an-rank-bar{height:7px;border-radius:99px;background:linear-gradient(90deg,#6366f1,#8b5cf6);min-width:3px;transition:width .2s ease}
+.an-performance{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;border:1px solid var(--border);border-radius:var(--rl);background:var(--card)}
+.an-performance-title{font-size:12px;font-weight:600;color:var(--fg);padding-right:4px}
+.an-inline-metric{display:inline-flex;align-items:baseline;gap:6px;padding-left:14px;border-left:1px solid var(--border)}
+.an-inline-label{font-size:11px;color:var(--muted)}
+.an-inline-value{font:600 12px 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums}
+.an-model-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:rgba(255,255,255,.05);font-size:11px;max-width:220px}
+.an-model-chip-name{font:500 11px 'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-model-progress{height:5px;margin:5px 0 0 15px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden}
+.ov-model-progress > span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#6366f1,#818cf8)}
+.dist-legend{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.dist-legend:last-child{border-bottom:none}
+.dist-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dist-pct{font:600 11px 'JetBrains Mono',monospace;color:var(--muted)}
+.chart-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.chart-legend-item{display:inline-flex;align-items:center;gap:5px}
+.chart-legend-dot{width:7px;height:7px;border-radius:50%}
+.rec-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+@media(max-width:700px){.rec-stats{grid-template-columns:repeat(2,1fr)}}
+.rec-stat{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);padding:12px 14px}
+.rec-stat-label{font-size:11px;color:var(--muted)}
+.rec-stat-value{font:700 1.2rem 'JetBrains Mono',monospace;margin-top:5px;color:var(--fg)}
+.rec-layout{display:flex;flex-direction:column;gap:16px}
+.rec-errors{border-color:rgba(239,68,68,.28)}
+.rec-error-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;transition:background .15s,color .15s}
+.rec-error-row:hover{background:rgba(255,255,255,.04)}
+.rec-error-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:6px}
+.rec-error-row:last-child{border-bottom:none}
+.log-modal{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)}
+.log-modal-card{width:100%;max-width:680px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.log-modal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.log-modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 20px}
+.log-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.log-detail-grid{grid-template-columns:1fr}}
+.log-detail-item{padding:9px 10px;background:var(--input);border:1px solid var(--border);border-radius:8px;min-width:0}
+.log-detail-key{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.log-detail-val{font-size:12px;color:var(--fg);margin-top:4px;overflow-wrap:anywhere}
 
 .set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px}
 .row-t{font-size:13px;font-weight:600;color:var(--fg)}
@@ -152,7 +307,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .sb .sidebar-item span{overflow:hidden;transition:opacity .15s;white-space:nowrap}
 /* ── new-api panel ── */
 .pnl{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden}
-.pnl-h{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
 .pnl-ht{font-size:13px;font-weight:600;color:var(--fg)}
 .pnl-b{padding:16px}
 /* ── new-api page header ── */
@@ -210,11 +365,20 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .plaza-ep{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plaza-ft{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
 /* ── drawer (centered modal) ── */
+.modal-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)}
+.modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 32px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.modal-card-sm{max-width:480px}
+.modal-card-add{max-width:420px}
+.modal-head{flex:0 0 auto;padding:16px 24px;border-bottom:1px solid var(--border)}
+.modal-title{font-size:14px;font-weight:600;color:var(--fg)}
+.modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px}
+.modal-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border)}
 .dr-bk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
-.dr-card{pointer-events:auto;width:min(780px,94vw);max-height:88vh;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
-.dr-h{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
-.dr-body{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:0}
+.dr-card{pointer-events:auto;width:100%;max-width:780px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.dr-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
+.dr-model-table-scroll{min-width:0;overflow-x:auto}
 .dr-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border);flex-shrink:0}
 /* ── section cards ── */
 .sec{margin:0;border-bottom:1px solid var(--border)}
@@ -235,6 +399,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 @media(max-width:640px){.f-grid{grid-template-columns:1fr}}
 /* ── misc ── */
 .dirty{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600;background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.25)}
+.key-status-row{font-size:11px;color:var(--muted);margin-bottom:8px}
 .mono{font-family:'JetBrains Mono',monospace}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:640px){.g2{grid-template-columns:1fr}}
@@ -259,45 +424,104 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div class="hdr-right">
     <span class="txs mono tm">v<span x-text="version.version"></span></span>
     <select class="sel" style="font-size:11px;padding:3px 24px 3px 8px" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'">
-      <option value="zh-CN">中文</option><option value="en-US">EN</option>
+      <option value="zh-CN" x-text="t('lang_zh')"></option><option value="en-US" x-text="t('lang_en')"></option>
     </select>
   </div>
 </header>
 <div class="body">
 <nav class="sb" :class="{'colapsed':sbCollapsed}">
   <div class="sb-nav">
-    <div class="sb-glabel">监控</div>
+    <div class="sb-glabel" x-text="t('nav_group.monitor')"></div>
     <a href="#" @click.prevent="switchTab('dashboard')" class="sb-item" :class="{'active':activeTab==='dashboard'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span x-text="t('nav.dashboard')"></span></a>
     <a href="#" @click.prevent="switchTab('analytics')" class="sb-item" :class="{'active':activeTab==='analytics'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg><span x-text="t('nav.analytics')"></span></a>
     <a href="#" @click.prevent="switchTab('records')" class="sb-item" :class="{'active':activeTab==='records'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span x-text="t('nav.records')"></span></a>
-    <div class="sb-glabel">配置</div>
+    <div class="sb-glabel" x-text="t('nav_group.config')"></div>
 
     <a href="#" @click.prevent="switchTab('providers')" class="sb-item" :class="{'active':activeTab==='providers'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="6" rx="2"/><rect x="3" y="15" width="18" height="6" rx="2"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="18" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.providers')"></span></a>
     <a href="#" @click.prevent="switchTab('settings')" class="sb-item" :class="{'active':activeTab==='settings'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span x-text="t('nav.settings')"></span></a>
-    <div class="sb-glabel">系统</div>
+    <div class="sb-glabel" x-text="t('nav_group.system')"></div>
     <a href="#" @click.prevent="switchTab('about')" class="sb-item" :class="{'active':activeTab==='about'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.about')"></span></a>
   </div>
   <div class="sb-foot"><span x-text="'v'+version.version"></span></div>
 </nav>
 <main class="main">
-<template x-if="loading && !stats"><div style="display:flex;align-items:center;justify-content:center;height:50vh"><div style="width:200px;height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,var(--primary),#818cf8);border-radius:99px;width:60%;animation:loadBar 1.8s ease-in-out infinite"></div></div></div></template>
-<div x-show="activeTab==='dashboard'" class="page-enter" style="max-width:1200px;margin:0 auto">
-  <template x-if="!stats || stats.total_requests===0"><div><div class="phd"><h1 class="pt" x-text="t('overview')"></h1></div><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px"><span class="bdg bdg-s mb2" x-text="t('service_running')"></span><h2 style="font-size:1.1rem;font-weight:600;color:var(--fg);margin:8px 0" x-text="t('waiting_first_request')"></h2><p class="txsm tm mb3" x-text="t('setup_hint')"></p><div class="fb" style="max-width:400px;margin:0 auto;padding:10px 14px;background:var(--input);border-radius:8px;border:1px solid var(--border)"><span class="mono txsm" style="color:var(--fg)" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:11px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div></div></div></div></template>
-  <template x-if="stats && stats.total_requests>0"><div><div class="phd"><h1 class="pt" x-text="t('overview')"></h1></div>
-    <div class="sg mb4"><div class="si"><span class="si-l" x-text="t('stat.today_requests')"></span><span class="si-v" x-text="stats.today_requests"></span></div><div class="si"><span class="si-l" x-text="t('stat.today_success_rate')"></span><span class="si-v" :style="'color:'+(sRate>=95?'var(--ok)':sRate>=80?'var(--warn)':'var(--err)')" x-text="sRate+'%'"></span></div><div class="si"><span class="si-l" x-text="t('stat.today_avg_latency')"></span><span class="si-v" style="color:var(--cyan)" x-text="fmtMs(stats.today_avg_latency_ms||0)"></span></div><div class="si"><span class="si-l" x-text="t('stat.today_input_tokens')"></span><span class="si-v" style="color:var(--ok)" x-text="fmtT(stats.today_total_prompt_tokens)"></span></div><div class="si"><span class="si-l" x-text="t('stat.today_output_tokens')"></span><span class="si-v" style="color:var(--violet)" x-text="fmtT(stats.today_total_completion_tokens)"></span></div><div class="si"><span class="si-l" x-text="t('stat.today_cache_hit')"></span><span class="si-v" style="color:var(--cyan)" x-text="todayCacheRate+'%'"></span><span class="si-s" x-text="stats.today_total_cache_hit_tokens?t('hit_count',fmtT(stats.today_total_cache_hit_tokens)):''"></span></div></div>
-    <div class="pnl mb4"><div class="pnl-b"><div class="fb mb2"><span class="st" x-text="t('opt_saved_title')"></span><span class="txs tm" x-text="t('opt_saved_cumulative',fmtT((stats.today_opt_saved_tokens||0)),new Date().toLocaleDateString())"></span></div><div class="g2" style="max-width:500px"><div><span class="txs tm" x-text="t('opt_saved_today_tokens')"></span><div class="si-v" style="font-size:1.25rem" x-text="fmtT((stats.today_opt_saved_tokens||0))+' tok'"></div></div><div><span class="txs tm" x-text="t('opt_saved_month_tokens')"></span><div class="si-v" style="font-size:1.25rem" x-text="fmtT((stats.month_opt_saved_tokens||0))+' tok'"></div></div></div></div></div>
-    <div class="g2 mb4"><div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('provider_overview')"></span><button class="btn btn-g" style="font-size:11px" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b"><template x-for="row in providerRows" :key="row.provider"><div class="fb" style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)"><div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:6px;overflow:hidden" x-html="providerLogo(row.provider)"></div><div><div class="txsm fw6" x-text="row.provider"></div><div class="txs tm" x-text="row.hasBalance?fmtMoney(row.balance):'—'"></div></div></div><div style="text-align:right"><div class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></div><div class="txs tm" x-text="t('stat.total_cost')+' '+fmtMoney(row.total_cost)"></div></div></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:16px" x-text="t('balance_none')"></div></template></div></div>
-    <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('model_usage_rank')"></span></div><div class="pnl-b"><div style="display:flex;gap:16px"><div style="flex:1"><template x-for="(m,i) in (stats.top_models||[]).slice(0,showAllModels?99:5)" :key="m.model"><div class="fb" style="padding:4px 0"><div style="display:flex;align-items:center;gap:8px;min-width:0"><span class="txs fw7 mono" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><span class="txs mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span></div><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span></div></template><template x-if="(stats.top_models||[]).length>5 && !showAllModels"><button class="btn btn-g" style="font-size:11px;margin-top:4px" @click="showAllModels=true" x-text="t('expand_all')+' ('+((stats.top_models||[]).length-5)+')'"></button></template></div><div style="width:140px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div></div></div></div></div></template></div>
-<div x-show="activeTab==='analytics'" class="page-enter" style="max-width:1200px;margin:0 auto">
-  <div class="phd"><h1 class="pt" x-text="t('nav.analytics')"></h1></div>
+<template x-if="loading && !stats"><div style="display:flex;align-items:center;justify-content:center;min-height:120px;padding:48px 16px"><div style="width:200px;height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,var(--primary),#818cf8);border-radius:99px;width:60%;animation:loadBar 1.8s ease-in-out infinite"></div></div></div></template>
+<div x-show="activeTab==='dashboard'" class="page-enter ov-page">
+  <div class="phd">
+    <div><h1 class="pt" x-text="t('dashboard_title')"></h1><p class="ps" x-text="t('dashboard_subtitle')"></p></div>
+    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
+  </div>
+  <template x-if="!stats || stats.total_requests===0">
+    <div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px">
+      <span class="bdg bdg-s mb2" x-text="t('service_running')"></span>
+      <h2 style="font-size:1.1rem;font-weight:600;color:var(--fg);margin:8px 0" x-text="t('waiting_first_request')"></h2>
+      <p class="txsm tm mb3" x-text="t('setup_hint')"></p>
+      <div class="fb" style="max-width:460px;margin:0 auto;padding:10px 14px;background:var(--input);border-radius:8px;border:1px solid var(--border)"><span class="mono txsm" style="color:var(--fg);overflow:hidden;text-overflow:ellipsis" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:11px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
+    </div></div>
+  </template>
+  <template x-if="stats && stats.total_requests>0">
+    <div class="ov-grid">
+      <div class="ov-main">
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" x-text="t('today_label')"></span></div><div class="pnl-b"><div class="ov-summary-grid">
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_requests')"></span><span class="ov-icon" style="background:rgba(99,102,241,.12);color:#818cf8">↗</span></div><div class="ov-kpi-value" x-text="stats.today_requests"></div><div class="ov-kpi-hint" x-text="t('errors_total',stats.today_errors,stats.total_requests)"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.requests),'#818cf8')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_cost')"></span><span class="ov-icon" style="background:rgba(245,158,11,.12);color:#f59e0b">¥</span></div><div class="ov-kpi-value" style="color:#f59e0b" x-text="stats.has_price_config?fmtMoney(stats.today_total_cost||0):'—'"></div><div class="ov-kpi-hint" x-text="stats.has_price_config?t('cost_estimated'):t('price_unconfigured')"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.total_cost||0),'#f59e0b')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_total_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:#a78bfa">◇</span></div><div class="ov-kpi-value" style="color:#a78bfa" x-text="fmtT((stats.today_total_prompt_tokens||0)+(stats.today_total_completion_tokens||0))"></div><div class="ov-kpi-hint" x-text="t('tokens_input_output',fmtT(stats.today_total_prompt_tokens),fmtT(stats.today_total_completion_tokens))"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
+        </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:#34d399" x-text="fmtT(stats.today_total_prompt_tokens)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:#a78bfa" x-text="fmtT(stats.today_total_completion_tokens)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:#22d3ee" x-text="todayCacheRate+'%'"></div></div></div></div></div>
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+(sRate>=95?'#34d399':sRate>=80?'#f59e0b':'#ef4444')" x-text="sRate+'%'"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms||0)"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
+        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?Math.round((m.requests-m.errors)/m.requests*100)+'%':'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('api_information')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('api_information_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('providers')" x-text="t('view_providers')+' →'"></button></div><div class="pnl-b"><template x-for="item in [{method:'BASE',path:baseUrl,descKey:'api_base_url_desc'},{method:'GET',path:'/v1/models',descKey:'available_models'},{method:'POST',path:'/v1/chat/completions',descKey:'chat_completions'}]" :key="item.path"><div class="ov-api-row"><span class="ov-api-method" x-text="item.method"></span><span class="ov-api-path" style="flex:1" x-text="item.path"></span><span class="txs tm" x-text="t(item.descKey)"></span><button class="btn btn-g" style="font-size:11px;padding:4px 8px" @click="copyText(item.path,'api')" x-text="copiedField==='api'?t('copied'):t('copy')"></button></div></template></div></div>
+      </div>
+      <div class="ov-side">
+        <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('balance_cost')"></span><button class="btn btn-g" style="font-size:11px" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider"><div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)"><div style="display:flex;align-items:center;gap:8px"><div style="width:24px;height:24px;border-radius:6px;overflow:hidden" x-html="providerLogo(row.provider)"></div><span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span><span class="txsm mono fw6" x-text="row.hasBalance?fmtMoney(row.balance):'—'"></span></div><div style="display:flex;justify-content:space-between;padding-left:32px;margin-top:4px"><span class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span><span class="txs tm" x-text="row.source||''"></span></div><template x-if="row.error"><div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div></template></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template></div></div>
+        <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('quick_start')"></span></div><div class="pnl-b"><div class="txs tm" style="line-height:1.6;margin-bottom:10px" x-text="t('quick_start_desc')"></div><div class="fb" style="padding:8px 10px;background:var(--input);border:1px solid var(--border);border-radius:8px"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:11px;padding:4px 6px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div><div class="ov-actions" style="margin-top:10px"><button class="btn btn-o" style="font-size:11px" @click="switchTab('providers')" x-text="t('manage_providers')"></button><button class="btn btn-g" style="font-size:11px" @click="switchTab('records')" x-text="t('view_records')"></button></div></div></div>
+      </div>
+    </div>
+  </template>
+</div>
+<div x-show="activeTab==='analytics'" class="page-enter ov-page">
+  <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats();fetchHourlyStats()" x-text="t('refresh')"></button></div></div>
   <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('no_data')"></span></div></div></template>
   <template x-if="stats"><div style="display:flex;flex-direction:column;gap:16px">
-    <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('heatmap_title')"></span></div><div class="pnl-b" style="overflow-x:auto" x-html="heatmapSvg?heatmapSvg:'<span class=tm>'+t('no_data')+'</span>'"></div></div>
-    <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('req_token_trend')"></span><div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line'" x-text="t('btn.line')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar'" x-text="t('btn.bar')"></span></div><div class="seg"><template x-for="m in ['requests','latency','tokens','cost']" :key="m"><span class="seg-i" :class="{'a':dailyMode===m}" @click="dailyMode=m" x-text="t('btn.'+m)"></span></template></div><div class="seg"><template x-for="g in ['hour','day','month']" :key="g"><span class="seg-i" :class="{'a':trendGranularity===g}" @click="trendGranularity=g;fetchStats()" x-text="t('btn.'+g)"></span></template></div></div></div><div class="pnl-b" style="overflow-x:auto" x-html="trendSvg?trendSvg:'<span class=tm>'+t('no_trend')+'</span>'"></div></div>
-    <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('provider_stats')"></span></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('tbl.cache_saved')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="p.success"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100).toFixed(1)+'%' :'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template></tbody></table></div></div>
-  </div></template></div>
-<div x-show="activeTab==='records'" class="page-enter" style="max-width:1200px;margin:0 auto"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('records_title')"></span> <span class="txs tm" x-text="'('+filteredLogs.length+' '+t('unit_entries')+')'"></span></div><div style="display:flex;gap:8px"><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" @click="clearAllLogs()" x-text="t('clear')"></button></div></div><div style="display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center"><input type="text" class="inp" style="width:180px" :placeholder="t('search_placeholder')" x-model="logSearch" @input="resetLogView()"><select class="sel" x-model="logProviderFilter" @change="resetLogView()"><option value="" x-text="t('opt.all_providers')"></option><template x-for="p in logProviders" :key="p"><option :value="p" x-text="p"></option></template></select><div class="seg"><span class="seg-i" :class="{'a':logStatusFilter===''}" @click="logStatusFilter='';resetLogView()" x-text="t('opt_all')"></span><span class="seg-i" :class="{'a':logStatusFilter==='success'}" @click="logStatusFilter='success';resetLogView()" x-text="t('opt.success')"></span><span class="seg-i" :class="{'a':logStatusFilter==='error'}" @click="logStatusFilter='error';resetLogView()" x-text="t('opt.error')"></span></div><select class="sel" x-model="logTimeFilter" @change="resetLogView()"><option value="" x-text="t('time_all')"></option><option value="1h" x-text="t('time_1h')"></option><option value="24h" x-text="t('time_24h')"></option><option value="7d" x-text="t('time_7d')"></option></select></div><div style="max-height:calc(100vh - 280px);overflow-y:auto"><template x-for="(log,i) in paginatedLogs" :key="i"><div style="padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer" @click="expandedLog=expandedLog===logPage*pageSize+i?-1:logPage*pageSize+i" :style="log.status>=400?'border-left:2px solid var(--err)':'border-left:2px solid var(--ok)'"><div class="fb"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="txs tm mono" x-text="fmtTs(log.timestamp)"></span><span class="bdg" :class="log.status<400?'bdg-s':'bdg-e'" x-text="log.status"></span><template x-if="log.cached"><span class="bdg bdg-g" x-text="t('badge.cached')"></span></template><span class="txs fw6" style="color:var(--fg)" x-text="log.model"></span><span class="txs tm" x-text="log.provider"></span></div><div style="display:flex;align-items:center;gap:8px"><span class="txs tm" x-text="fmtT(log.prompt_tokens)+'→'+fmtT(log.completion_tokens)"></span><span class="txs tm" x-text="fmtMs(log.latency_ms)"></span></div></div><template x-if="expandedLog===logPage*pageSize+i"><div style="margin-top:8px;padding:8px 12px;background:var(--input);border-radius:8px;font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:4px"><div><span class="tm" x-text="t('detail.time')+'：'"></span><span class="mono" x-text="fmtDateTime(log.timestamp)"></span></div><div><span class="tm" x-text="t('detail.provider')+'：'"></span><span x-text="log.provider"></span></div><div><span class="tm" x-text="t('detail.endpoint')+'：'"></span><span class="mono" x-text="log.endpoint"></span></div><div><span class="tm" x-text="t('detail.status')+'：'"></span><span x-text="log.status"></span></div><div><span class="tm" x-text="t('detail.body')+'：'"></span><span class="mono" x-text="fmtB(log.body_len)"></span></div><div><span class="tm" x-text="t('detail.latency')+'：'"></span><span x-text="fmtMs(log.latency_ms)"></span></div><div><span class="tm" x-text="t('tbl.upstream_model')+'：'"></span><span x-text="log.upstream_model||'—'"></span></div><div><span class="tm">TTFT：</span><span x-text="log.first_token_ms?fmtMs(log.first_token_ms):'—'"></span></div><template x-if="log.error"><div style="grid-column:1/-1"><span class="tm" x-text="t('detail.error')+'：'"></span><span style="color:var(--err)" x-text="log.error"></span></div></template></div></template></div></template><template x-if="filteredLogs.length===0"><div style="text-align:center;padding:48px"><span class="tm" x-text="t('no_logs')"></span></div></template></div><div class="fb" style="padding:10px 16px;border-top:1px solid var(--border)"><span class="txs tm" x-text="t('total_count',filteredLogs.length)"></span><div style="display:flex;gap:8px"><button class="btn btn-g" :disabled="logPage===0" @click="logPage--;expandedLog=-1" x-text="t('prev_page')"></button><span class="txs tm" x-text="(logPage+1)+'/'+totalLogPages"></span><button class="btn btn-g" :disabled="logPage>=totalLogPages-1" @click="logPage++;expandedLog=-1" x-text="t('next_page')"></button></div></div></div></div>
-<div x-show="activeTab==='settings'" class="page-enter" style="max-width:1200px;margin:0 auto">
+    <div class="an-stat-strip">
+      <div class="an-stat"><div class="an-stat-label" x-text="t('total_requests')"></div><div class="an-stat-value" x-text="stats.total_requests||0"></div></div>
+      <div class="an-stat"><div class="an-stat-label" x-text="t('total_cost')"></div><div class="an-stat-value" x-text="fmtMoney(stats.total_cost||0)"></div></div>
+      <div class="an-stat"><div class="an-stat-label" x-text="t('total_tokens')"></div><div class="an-stat-value" x-text="fmtT((stats.total_prompt_tokens||0)+(stats.total_completion_tokens||0))"></div></div>
+      <div class="an-stat"><div class="an-stat-label" x-text="t('average_rpm')"></div><div class="an-stat-value" x-text="analysisRpm.toFixed(2)"></div></div>
+      <div class="an-stat"><div class="an-stat-label" x-text="t('average_tpm')"></div><div class="an-stat-value" x-text="fmtT(Math.round(analysisTpm))"></div><div class="txs tm" x-text="t('tokens_per_min')"></div></div>
+    </div>
+    <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsRange==='1d'}" @click="analyticsRange='1d';trendGranularity='hour';fetchStats();fetchHourlyStats()" x-text="t('range_1d')"></span><span class="seg-i" :class="{'a':analyticsRange==='7d'}" @click="analyticsRange='7d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_7d')"></span><span class="seg-i" :class="{'a':analyticsRange==='14d'}" @click="analyticsRange='14d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_14d')"></span><span class="seg-i" :class="{'a':analyticsRange==='29d'}" @click="analyticsRange='29d';trendGranularity='day';fetchStats();fetchHourlyStats()" x-text="t('range_29d')"></span></div><span class="txs tm" style="margin-left:8px" x-text="t('trend_granularity')"></span><div class="seg"><span class="seg-i" :class="{'a':trendGranularity==='hour'}" @click="trendGranularity='hour';fetchStats();fetchHourlyStats()" x-text="t('granularity_hour')"></span><span class="seg-i" :class="{'a':trendGranularity==='day'}" @click="trendGranularity='day';fetchStats()" x-text="t('granularity_day')"></span><span class="seg-i" :class="{'a':trendGranularity==='month'}" @click="trendGranularity='month';fetchStats()" x-text="t('granularity_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range',analyticsRange?t('range_'+analyticsRange):t('current_log_window'))"></span></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><div class="ta-grid" x-show="tokenActivityFlat.length" style="grid-template-columns:repeat(7,20px)" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div x-show="modelTrendSvgHtml" x-html="modelTrendSvgHtml"></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="(k,idx) in (modelTrendData&&modelTrendData.keys||[]).slice(0,6)" :key="k"><span class="model-trend-chip" :class="{dim:hiddenModels[k]}" @click="toggleModel(k)" style="cursor:pointer"><i :style="'background:'+['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'][idx%6]"></i><span x-text="k.split('/').slice(1).join('/')||k"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
+    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
+    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100).toFixed(1)+'%':'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_matching_models')"></td></tr></template></tbody></table></div></div>
+    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('provider_performance')"></span><div class="txs tm" style="margin-top:3px" x-text="t('current_window_aggregate')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('kv_cache_saved')"></th><th x-text="t('optimization_saved_tokens')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="Math.max(0,(p.requests||0)-(p.errors||0))"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100).toFixed(1)+'%':'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="p.billing?fmtMoney(p.cache_saved||0):'—'"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template></tbody></table></div></div>
+  </div></template>
+</div>
+<div x-show="activeTab==='records'" class="page-enter page-wide">
+  <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs();fetchErrors()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" @click="clearAllLogs()" x-text="t('clear')"></button></div></div>
+  <div class="rec-stats">
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" style="color:var(--ok)" x-text="logs.length?recordSuccessRate+'%':'—'"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
+  </div>
+  <div class="rec-layout">
+    <div class="pnl rec-errors" x-show="errorList.length">
+      <div class="pnl-h"><div><span class="pnl-ht" x-text="t('errors_summary')"></span><span class="txs tm" style="margin-left:8px" x-text="t('entry_count',errorList.length)"></span></div><button class="btn btn-g" style="font-size:11px" @click="errorExpanded=!errorExpanded" x-text="errorExpanded?t('collapse_action'):t('expand_action')"></button></div>
+      <div class="pnl-b" x-show="errorExpanded" style="padding:8px 16px"><template x-for="(log,i) in errorList.slice(0,8)" :key="i"><div class="rec-error-row" role="button" tabindex="0" @click="openLogDetail(log)" @keydown.enter="openLogDetail(log)" @keydown.space.prevent="openLogDetail(log)" :title="t('log_details_hint')"><span class="bdg bdg-e" x-text="log.status"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="log.model"></span><span class="txs tm" x-text="log.provider"></span><span class="txs tm" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="log.error||t('request_failed')"></span></div></template></div>
+    </div>
+    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_records')"></span><span class="txs tm" style="margin-left:8px" x-text="filteredLogs.length+' / '+logs.length"></span></div></div>
+      <div class="an-filter"><input type="text" class="inp" style="width:220px" :placeholder="t('search_placeholder')" x-model="logSearch" @input="resetLogView()"><select class="sel" x-model="logProviderFilter" @change="resetLogView()"><option value="" x-text="t('opt.all_providers')"></option><template x-for="p in logProviders" :key="p"><option :value="p" x-text="p"></option></template></select><div class="seg"><span class="seg-i" :class="{'a':logStatusFilter===''}" @click="logStatusFilter='';resetLogView()" x-text="t('opt_all')"></span><span class="seg-i" :class="{'a':logStatusFilter==='success'}" @click="logStatusFilter='success';resetLogView()" x-text="t('opt.success')"></span><span class="seg-i" :class="{'a':logStatusFilter==='error'}" @click="logStatusFilter='error';resetLogView()" x-text="t('opt.error')"></span></div><select class="sel" x-model="logTimeFilter" @change="resetLogView()"><option value="" x-text="t('time_all')"></option><option value="1h" x-text="t('time_1h')"></option><option value="24h" x-text="t('time_24h')"></option><option value="7d" x-text="t('time_7d')"></option></select><button class="btn btn-g" style="font-size:11px" @click="logSearch='';logProviderFilter='';logStatusFilter='';logTimeFilter='';resetLogView()" x-text="t('filter_reset')"></button></div>
+      <div style="overflow-x:auto"><table><thead><tr><th x-text="t('detail.time')"></th><th x-text="t('status')"></th><th x-text="t('detail.model')"></th><th x-text="t('detail.provider')"></th><th x-text="t('unit_tokens')"></th><th x-text="t('latency')"></th><th x-text="t('cache_label')"></th></tr></thead><tbody><template x-for="(log,i) in paginatedLogs" :key="i"><tr @click="openLogDetail(log)" style="cursor:pointer"><td class="mono txs tm" x-text="fmtTs(log.timestamp)"></td><td><span class="bdg" :class="log.status<400?'bdg-s':'bdg-e'" x-text="log.status"></span></td><td><div class="mono txs fw6" x-text="log.model"></div><div class="txs tm" x-text="log.upstream_model&&log.upstream_model!==log.model?log.upstream_model:''"></div></td><td class="txs" x-text="log.provider"></td><td class="mono txs" x-text="fmtT(log.prompt_tokens||0)+' → '+fmtT(log.completion_tokens||0)"></td><td class="mono txs" x-text="fmtMs(log.latency_ms)+' / '+(log.first_token_ms?fmtMs(log.first_token_ms):'—')"></td><td><span class="bdg bdg-g" x-show="log.cached" x-text="t('badge.cached')"></span><span class="txs tm" x-show="!log.cached">—</span></td></tr></template><template x-if="!filteredLogs.length"><tr><td colspan="7" style="text-align:center;padding:40px" class="tm" x-text="logs.length?t('no_match'):t('no_logs')"></td></tr></template></tbody></table></div>
+      <div class="fb" style="padding:10px 16px;border-top:1px solid var(--border)"><span class="txs tm" x-text="t('total_count',filteredLogs.length)"></span><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-g" :disabled="logPage===0" @click="logPage--" x-text="t('prev_page')"></button><span class="txs tm" x-text="(logPage+1)+'/'+totalLogPages"></span><button class="btn btn-g" :disabled="logPage>=totalLogPages-1" @click="logPage++" x-text="t('next_page')"></button></div></div>
+    </div>
+  </div>
+  <template x-if="selectedLog"><div class="log-modal" @click.self="selectedLog=null"><div class="log-modal-card"><div class="log-modal-head"><div><span class="pnl-ht" x-text="t('request_details')"></span><span class="bdg" style="margin-left:8px" :class="selectedLog.status<400?'bdg-s':'bdg-e'" x-text="selectedLog.status"></span></div><button class="btn btn-g" @click="selectedLog=null">✕</button></div><div class="log-modal-body"><div class="log-detail-grid"><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.time')"></div><div class="log-detail-val mono" x-text="fmtDateTime(selectedLog.timestamp)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.model')"></div><div class="log-detail-val mono" x-text="selectedLog.model"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('tbl.upstream_model')"></div><div class="log-detail-val mono" x-text="selectedLog.upstream_model||'—'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.provider')"></div><div class="log-detail-val" x-text="selectedLog.provider"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.endpoint')"></div><div class="log-detail-val mono" x-text="selectedLog.endpoint"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_body_size')"></div><div class="log-detail-val mono" x-text="fmtB(selectedLog.body_len)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_prompt_completion')"></div><div class="log-detail-val mono" x-text="fmtT(selectedLog.prompt_tokens||0)+' / '+fmtT(selectedLog.completion_tokens||0)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_latency_ttft')"></div><div class="log-detail-val mono" x-text="fmtMs(selectedLog.latency_ms)+' / '+(selectedLog.first_token_ms?fmtMs(selectedLog.first_token_ms):'—')"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.kv_cache')"></div><div class="log-detail-val mono" x-text="fmtT(selectedLog.prompt_cache_hit_tokens||0)+' hit / '+fmtT(selectedLog.prompt_cache_miss_tokens||0)+' miss'"></div></div><template x-if="selectedLog.error"><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.error')"></div><div class="log-detail-val" style="color:var(--err)" x-text="selectedLog.error"></div></div></template></div></div></div></div></template>
+</div>
+<div x-show="activeTab==='settings'" class="page-enter page-wide">
 <div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
 <div class="st mb3" x-text="t('section.perf_opt')"></div>
 <div class="pnl mb4">
@@ -324,7 +548,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">
       <div><div class="txs tm mb2" style="text-align:right" x-text="t('idle_timeout_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="30" max="600" :value="streamTimeoutSecs" @change="setStreamTimeout(parseInt($event.target.value)||120)" class="inp" style="width:90px"><span class="txs tm" x-text="t('unit_secs')"></span></div></div>
       <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_max_label')"></div><input type="number" min="0" max="5" :value="retryMax" @change="setRetry(parseInt($event.target.value)||0,retryBackoffMs)" class="inp" style="width:90px"></div>
-      <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_backoff_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="0" max="10000" :value="retryBackoffMs" @change="setRetry(retryMax,parseInt($event.target.value)||200)" class="inp" style="width:90px"><span class="txs tm">ms</span></div></div>
+      <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_backoff_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="0" max="10000" :value="retryBackoffMs" @change="setRetry(retryMax,parseInt($event.target.value)||200)" class="inp" style="width:90px"><span class="txs tm" x-text="t('unit_ms')"></span></div></div>
     </div>
   </div>
 </div>
@@ -415,11 +639,11 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
 </div>
 </div>
-<div x-show="activeTab==='providers'" class="page-enter" style="max-width:1200px;margin:0 auto">
+<div x-show="activeTab==='providers'" class="page-enter page-wide">
 <div class="phd">
   <div><h1 class="pt" x-text="t('provider_config')"></h1><p class="ps" x-text="t('plaza_summary',(providersFormData?providersFormData.length:0),totalModelCount())"></p></div>
   <div style="display:flex;gap:8px;align-items:center">
-    <template x-if="isDirty"><span class="dirty">● 未保存</span></template>
+    <template x-if="isDirty"><span class="dirty">● <span x-text="t('unsaved_changes')"></span></span></template>
     <button class="btn btn-g" @click="loadProvidersForm()" x-text="t('refresh')"></button>
     <button class="btn btn-p" :disabled="!isDirty" @click="saveProvidersForm()" x-text="t('save_config')"></button>
     <button class="btn btn-p" @click="showAddProvider=true" x-text="t('add')"></button>
@@ -427,39 +651,32 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </div>
 <div class="pnl mb3"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 16px">
   <input type="text" class="inp" style="width:230px" x-model="provSearch" :placeholder="t('plaza_search_ph')">
-  <select class="sel" x-model="provNameFilter"><option value="" x-text="t('provider_name')+'：'+t('plaza_all')"></option><template x-for="p in (providersFormData||[])" :key="p.name"><option :value="p.name" x-text="p.name"></option></template></select>
-  <select class="sel" x-model="provProtocolFilter"><option value="" x-text="t('plaza_protocol')+'：'+t('plaza_all')"></option><option value="anthropic">Anthropic</option><option value="responses">Responses</option></select>
-  <select class="sel" x-model="provEffortFilter"><option value="" x-text="t('plaza_effort')+'：'+t('plaza_all')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select>
-  
-  
-  <button class="btn btn-g" style="font-size:11px" @click="clearProvFilters()" x-text="t('plaza_clear_filters')"></button>
+  <span class="txs tm" x-text="(providersFormData||[]).length+' '+t('unit_providers')+' · '+(providersFormData||[]).reduce((s,p)=>s+(p.models||[]).length,0)+' '+t('unit_models')"></span>
   <span style="margin-left:auto" class="txs tm" x-text="t('plaza_showing')+' '+visibleProviders.length+' / '+(providersFormData?providersFormData.length:0)"></span>
   <div class="seg"><span class="seg-i" :class="{'a':provViewMode==='table'}" @click="provViewMode='table'" x-text="t('plaza_view_table')"></span><span class="seg-i" :class="{'a':provViewMode==='card'}" @click="provViewMode='card'" x-text="t('plaza_view_card')"></span></div>
 </div></div>
-<template x-if="visibleProviders.length===0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:11px" @click="clearProvFilters()" x-text="t('plaza_clear_filters')"></button></div></div></template>
+<template x-if="visibleProviders.length===0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:11px" @click="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
 <template x-if="provViewMode==='table' && visibleProviders.length>0"><div class="pnl"><div style="overflow-x:auto">
 <table><thead><tr>
 <th style="width:5%"></th>
 <th x-text="t('provider_name')"></th>
-<th x-text="t('tbl.endpoint')"></th>
-<th>状态</th>
-<th>延迟</th>
-<th>Key</th>
+<th x-text="t('provider_status')"></th>
+<th x-text="t('latency')"></th>
+<th x-text="t('circuit')"></th>
+<th x-text="t('key_label')"></th>
 <th x-text="t('unit_models')"></th>
-<th style="text-align:right">操作</th>
+<th style="text-align:right" x-text="t('actions')"></th>
 </tr></thead>
 <tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
   <td><div style="width:28px;height:28px;border-radius:6px;overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
   <td><div class="txsm fw6" x-text="prov.name"></div><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
   <td>
-    <template x-if="health.find(h => h.provider === prov.name)"><span>
-      <span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_text||'—'" style="margin-right:4px"></span>
-      <span class="txs tm mono" x-text="fmtMs(health.find(h=>h.provider===prov.name).latency_ms)"></span>
-    </span></template>
-    <template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm">—</span></template>
+    <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template>
   </td>
-  <td class="txs tm mono" x-text="health.find(h => h.provider === prov.name) ? fmtMs(health.find(h => h.provider === prov.name).latency_ms) : '—'"></td>
-  <td><span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'✓':'✗'"></span></td>
+  <td class="txs tm mono" x-text="health.find(h => h.provider === prov.name) ? fmtMs(health.find(h => h.provider === prov.name).latency_ms) : t('health_na')"></td>
+  <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).circuit==='closed'?'bdg-s':health.find(h=>h.provider===prov.name).circuit==='half-open'?'bdg-w':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
+  <td><span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span></td>
   <td>
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
       <span class="mono txsm" x-text="(prov.models||[]).length"></span>
@@ -467,8 +684,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
   </td>
   <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
-    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" title="测试连接" @click="testProvider(providersFormData.indexOf(prov))">⚡</button>
-    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" title="拉取模型" @click="fetchProviderModels(providersFormData.indexOf(prov))">↓</button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('test_connection')" @click="testProvider(providersFormData.indexOf(prov))">⚡</button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('fetch_models')" @click="fetchProviderModels(providersFormData.indexOf(prov))">↓</button>
     <button class="btn btn-o" style="font-size:11px;padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
     <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))">✕</button>
   </div></td>
@@ -478,7 +696,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card">
     <div class="plaza-ch"><div class="plaza-ic" x-html="providerLogo(prov.name)"></div><div style="min-width:0"><div class="plaza-nm" x-text="prov.name"></div><div class="plaza-ep" x-text="prov.endpoint"></div></div></div>
     <div class="plaza-ft">
-      <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'● 已配置':'● 未配置'"></span>
+      <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
+      <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):t('health_na')"></span>
+      <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
       <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
       <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
     </div>
@@ -488,13 +708,26 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err);margin-left:auto" @click="deleteProvider(providersFormData.indexOf(prov))" x-text="t('delete')"></button>
     </div>
   </div></template>
-</div></template>
+  </div></template>
 </div>
-<div x-show="activeTab==='about'" class="page-enter" style="max-width:640px;margin:0 auto"><div class="phd" style="justify-content:center"><h1 class="pt">AIGate</h1></div><div class="pnl"><div class="pnl-b" style="text-align:center;padding:32px"><div style="font-size:13px;color:var(--muted);margin-bottom:16px" x-text="t('about_desc1')"></div><div style="font-size:13px;color:var(--muted);margin-bottom:24px" x-text="t('about_desc2')"></div><div class="st" style="justify-content:center;margin-bottom:12px" x-text="t('api_endpoints_title')"></div><div style="display:flex;flex-direction:column;gap:4px;margin-bottom:24px"><a class="txs mono" style="color:var(--indigo)" href="/v1/models" target="_blank">GET /v1/models</a><a class="txs mono" style="color:var(--indigo)" href="/v1/chat/completions" target="_blank">POST /v1/chat/completions</a><a class="txs mono" style="color:var(--indigo)" href="/health" target="_blank">GET /health</a><a class="txs mono" style="color:var(--indigo)" href="/admin/api/stats" target="_blank">GET /admin/api/stats</a></div><div class="st" style="justify-content:center;margin-bottom:12px" x-text="t('tech_stack')"></div><div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-bottom:24px"><span class="bdg bdg-g">Rust</span><span class="bdg bdg-g">Axum</span><span class="bdg bdg-g">Reqwest</span><span class="bdg bdg-g">Tailwind CSS</span><span class="bdg bdg-g">Alpine.js</span></div><template x-if="changelog && changelog.length"><div style="margin-top:24px;text-align:left"><div class="st mb2" x-text="t('changelog_title')"></div><template x-for="v in changelog.slice(0,5)" :key="v.version"><details style="margin-bottom:4px"><summary class="txs fw6" style="cursor:pointer;color:var(--fg);padding:4px 0" x-text="v.version+(v.date?' · '+v.date:'')"></summary><div style="padding:4px 0 4px 12px"><template x-for="sec in v.sections" :key="sec.title"><div class="mt2"><div class="txs fw7" style="color:var(--indigo)" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs tm" style="padding:2px 0">· <span x-text="item"></span></div></template></div></template></div></details></template></div></template></div></div></div>
+<div x-show="activeTab==='about'" class="page-enter about-page">
+  <div class="about-hero"><div><div class="about-eyebrow">AIGATE</div><h1 class="about-hero-title">AIGate</h1><p class="about-hero-desc" x-text="t('about_page_subtitle')"></p></div><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span></div>
+  <div class="about-grid">
+    <div class="pnl about-main">
+      <div class="about-intro"><div class="about-intro-title" x-text="t('about_intro_title')"></div><div class="about-intro-desc" x-text="t('about_desc1')"></div><div class="about-intro-desc" style="margin-top:8px" x-text="t('about_desc2')"></div></div>
+      <div class="about-section"><div class="about-section-title" x-text="t('api_endpoints_title')"></div><div class="about-endpoints"><a class="about-endpoint" href="/v1/models" target="_blank"><span class="about-endpoint-method">GET</span><span class="about-endpoint-path">/v1/models</span></a><a class="about-endpoint" href="/v1/chat/completions" target="_blank"><span class="about-endpoint-method">POST</span><span class="about-endpoint-path">/v1/chat/completions</span></a><a class="about-endpoint" href="/health" target="_blank"><span class="about-endpoint-method">GET</span><span class="about-endpoint-path">/health</span></a><a class="about-endpoint" href="/admin/api/stats" target="_blank"><span class="about-endpoint-method">GET</span><span class="about-endpoint-path">/admin/api/stats</span></a></div></div>
+      <div class="about-section"><div class="about-section-title" x-text="t('about_capabilities_title')"></div><div class="about-capabilities"><div class="about-capability"><span class="about-capability-icon">↔</span><div><div class="txsm fw6" x-text="t('about_capability_routing')"></div><div class="txs tm" x-text="t('about_capability_routing_desc')"></div></div></div><div class="about-capability"><span class="about-capability-icon">◎</span><div><div class="txsm fw6" x-text="t('about_capability_mapping')"></div><div class="txs tm" x-text="t('about_capability_mapping_desc')"></div></div></div><div class="about-capability"><span class="about-capability-icon">◈</span><div><div class="txsm fw6" x-text="t('about_capability_monitoring')"></div><div class="txs tm" x-text="t('about_capability_monitoring_desc')"></div></div></div><div class="about-capability"><span class="about-capability-icon">↯</span><div><div class="txsm fw6" x-text="t('about_capability_reasoning')"></div><div class="txs tm" x-text="t('about_capability_reasoning_desc')"></div></div></div></div></div>
+    </div>
+    <div class="about-side">
+      <div class="pnl about-side-panel"><div class="about-section-title" x-text="t('tech_stack')"></div><div class="about-tech"><span class="bdg bdg-g">Rust</span><span class="bdg bdg-g">Axum</span><span class="bdg bdg-g">Reqwest</span><span class="bdg bdg-g">Tailwind CSS</span><span class="bdg bdg-g">Alpine.js</span></div></div>
+      <div class="pnl about-side-panel about-changelog"><template x-if="changelog && changelog.length"><div><div class="about-section-title" x-text="t('changelog_title')"></div><template x-for="v in changelog.slice(0,5)" :key="v.version"><details style="margin-bottom:8px"><summary class="txs fw6" style="cursor:pointer;color:var(--fg);padding:4px 0" x-text="v.version+(v.date?' · '+v.date:'')"></summary><div style="padding:4px 0 4px 12px"><template x-for="sec in v.sections" :key="sec.title"><div class="mt2"><div class="txs fw7" style="color:var(--indigo)" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs tm" style="padding:2px 0">· <span x-text="item"></span></div></template></div></template></div></details></template></div></template><template x-if="!changelog || !changelog.length"><div class="txs tm" x-text="t('whats_new_empty')"></div></template></div>
+    </div>
+  </div>
+</div>
 </main>
 </div>
-<div x-show="showWhatsNew" style="position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)" @click.self="dismissWhatsNew()"><div style="max-width:480px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--shm)"><div style="padding:20px 24px 12px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('whats_new')"></span><span class="txs mono tm" x-text="whatsNewEntry?(whatsNewEntry.version+(whatsNewEntry.date?' · '+whatsNewEntry.date:'')):''"></span></div><div style="font-size:1.1rem;font-weight:700;color:var(--fg)" x-text="t('whats_new_title')"></div></div><div style="padding:0 24px 16px;max-height:320px;overflow-y:auto"><template x-if="whatsNewEntry"><div style="display:flex;flex-direction:column;gap:12px;padding:8px 0"><template x-for="sec in whatsNewEntry.sections" :key="sec.title"><div><div class="txs fw7" style="color:var(--indigo);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs" style="color:var(--fg);padding:2px 0">▸ <span x-text="item"></span></div></template></div></template></div></template></div><div style="padding:12px 24px;border-top:1px solid var(--border);text-align:right"><button class="btn btn-p" @click="dismissWhatsNew()" x-text="t('got_it')"></button></div></div></div>
-<div x-show="showAddProvider" style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)" @click.self="showAddProvider=false"><div style="max-width:420px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--shm)"><div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px" x-text="t('add_provider_title')"></div><div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
+<div x-show="showWhatsNew" x-cloak class="modal-overlay" @click.self="dismissWhatsNew()"><div class="modal-card modal-card-sm"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('whats_new')"></span><span class="txs mono tm" x-text="whatsNewEntry?(whatsNewEntry.version+(whatsNewEntry.date?' · '+whatsNewEntry.date:'')):''"></span></div><div class="modal-title" x-text="t('whats_new_title')"></div></div><div class="modal-body"><template x-if="whatsNewEntry"><div style="display:flex;flex-direction:column;gap:12px;padding:8px 0"><template x-for="sec in whatsNewEntry.sections" :key="sec.title"><div><div class="txs fw7" style="color:var(--indigo);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs" style="color:var(--fg);padding:2px 0">▸ <span x-text="item"></span></div></template></div></template></div></template></div><div class="modal-foot"><button class="btn btn-p" @click="dismissWhatsNew()" x-text="t('got_it')"></button></div></div></div>
+<div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" @click.self="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
 <template x-if="drawerProv">
 <div>
   <div class="dr-bk" @click="closeProviderDrawer()"></div>
@@ -506,7 +739,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
           <span style="font-size:15px;font-weight:600;color:var(--fg)" x-text="drawerProv.name"></span>
           <span class="bdg bdg-p" style="font-size:10px" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
           <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg" style="background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.25);font-size:10px">● <span x-text="t('health_ok')"></span></span></template>
-          <template x-if="healthOf(drawerProv.name)==='err'"><span class="bdg" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25);font-size:10px">● <span x-text="t('health_err')"></span></span></template>
+          <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25);font-size:10px">● <span x-text="t('health_err')"></span></span></template>
           <template x-if="healthOf(drawerProv.name)===''"><span class="bdg" style="background:rgba(156,163,175,.12);color:#9ca3af;border:1px solid rgba(156,163,175,.25);font-size:10px">○ <span x-text="t('health_na')"></span></span></template>
         </div>
         <button class="btn btn-g" @click="closeProviderDrawer()" style="padding:4px 8px">✕</button>
@@ -517,10 +750,10 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="sec">
           <div class="sec-hdr">
             <div class="sec-ic blue">🔗</div>
-            <div style="flex:1"><div class="sec-title" x-text="t('addprov.endpoint')"></div><div class="sec-sub">API base URL & protocol-specific endpoints</div></div>
+            <div style="flex:1"><div class="sec-title" x-text="t('addprov.endpoint')"></div><div class="sec-sub" x-text="t('endpoint_protocol_desc')"></div></div>
             <button class="btn btn-g" style="font-size:11px;white-space:nowrap" :disabled="drawerProv._testing" @click="testProvider(providersFormData.indexOf(drawerProv))">
-              <template x-if="!drawerProv._testing"><span>⚡ <span x-text="t('test_connection')||'测试连接'"></span></span></template>
-              <template x-if="drawerProv._testing"><span style="color:var(--muted)">⏳ <span x-text="t('testing')||'测试中...'"></span></span></template>
+              <template x-if="!drawerProv._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template>
+              <template x-if="drawerProv._testing"><span style="color:var(--muted)">⏳ <span x-text="t('testing')"></span></span></template>
             </button>
           </div>
           <div class="sec-body">
@@ -549,13 +782,15 @@ tr:hover td{background:rgba(99,102,241,.04)}
             <div><div class="sec-title" x-text="t('apikey_mgmt')"></div><div class="sec-sub" x-text="t('key_save_hint')"></div></div>
           </div>
           <div class="sec-body">
-            <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:rgba(255,255,255,.02)">
-              <div style="display:flex;gap:8px;align-items:center">
-                <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft">
-                <button class="btn btn-p" style="white-space:nowrap" @click="saveAllProviderKeys()" x-text="t('save')"></button>
-                <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
-              </div>
+              <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:rgba(255,255,255,.02)">
+            <div class="key-status-row" x-text="keyStatusText(drawerProv.name)"></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="saveDrawerKey()">
+              <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" x-text="drawerProv._keySaving?t('saving'):t('save')"></button>
+              <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
             </div>
+            <template x-if="drawerProv._keyMsg"><div style="margin-top:8px;font-size:12px;padding:6px 10px;border-radius:6px" :style="drawerProv._keyOk?'background:rgba(52,211,153,.1);color:#34d399':'background:rgba(239,68,68,.1);color:#ef4444'" x-text="drawerProv._keyMsg"></div></template>
+          </div>
           </div>
         </div>
 
@@ -563,25 +798,51 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="sec">
           <div class="sec-hdr">
             <div class="sec-ic amber">📦</div>
-            <div style="flex:1"><div class="sec-title" x-text="t('unit_models')+' ('+(drawerProv.models||[]).length+')'"></div><div class="sec-sub">Model routing configuration</div></div>
-            <div style="display:flex;gap:6px;align-items:center;margin-left:auto">
-              <input type="text" class="inp" style="width:140px;font-size:12px" x-model="drawerProv._filter" :placeholder="t('search_models')||'搜索模型...'">
-              <button class="btn btn-g" style="font-size:12px" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
-            </div>
+            <div style="flex:1"><div class="sec-title" x-text="t('unit_models')"></div><div class="sec-sub" x-text="t('model_routing_config')"></div></div>
+            <span class="bdg bdg-p" style="font-size:11px" x-text="filteredModelCount()+' / '+(drawerProv.models||[]).length"></span>
           </div>
-          <div class="sec-body" style="padding-bottom:0">
-            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-              <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <div class="sec-body">
+            <div class="m-card">
+              <!-- Search + actions header -->
+              <div class="m-card-hdr">
+                <input type="text" class="inp" style="flex:1;max-width:320px;font-size:12px" x-model="drawerProv._filter" :placeholder="t('search_models')">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button class="btn btn-g" style="font-size:11px" @click="toggleAll(drawerProv,true)" x-text="t('select_all')"></button>
+                  <button class="btn btn-g" style="font-size:11px" @click="toggleAll(drawerProv,false)" x-text="t('deselect_all')"></button>
+                  <button class="btn btn-g" style="font-size:11px;color:var(--err)" @click="deleteSelectedModels()" x-text="t('delete_selected')"></button>
+                  <button class="btn btn-p" style="font-size:11px" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
+                </div>
+              </div>
+              <!-- Brand filter chips -->
+              <div class="m-card-bar">
+                <span class="txs tm" style="margin-right:4px" x-text="t('brand')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._brandFilter}" @click="drawerProv._brandFilter=''" x-text="t('plaza_all')"></span>
+                <template x-for="b in drawerBrands()" :key="b.label">
+                  <span class="m-chip" :class="{'on':drawerProv._brandFilter===b.label}" @click="drawerProv._brandFilter=b.label">
+                    <span :style="'width:6px;height:6px;border-radius:50%;background:'+b.color"></span>
+                    <span x-text="b.label"></span>
+                  </span>
+                </template>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('thinking_short')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._effFilter}" @click="drawerProv._effFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='low'}" @click="drawerProv._effFilter='low'" x-text="t('eff.low')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='medium'}" @click="drawerProv._effFilter='medium'" x-text="t('eff.medium')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='high'}" @click="drawerProv._effFilter='high'" x-text="t('eff.high')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')"></span>
+              </div>
+              <!-- Model table -->
+              <div class="m-card-table-scroll"><table style="width:100%;min-width:760px;border-collapse:collapse;font-size:12px">
                 <thead>
                   <tr style="background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">
-                    <th style="padding:8px 10px;text-align:left;width:4%"><input type="checkbox" :checked="isAllSelected(drawerProv)" @change="toggleAll(drawerProv,$event.target.checked)"></th>
-                    <th style="padding:8px 10px;text-align:left;width:8%" x-text="t('tbl.vendor')"></th>
-                    <th style="padding:8px 10px;text-align:left" x-text="t('tbl.model_id')"></th>
-                    <th style="padding:8px 10px;text-align:left" x-text="t('tbl.upstream_model')"></th>
-                    <th style="padding:8px 10px;text-align:left;width:9%" x-text="t('tbl.reasoning')"></th>
-                    <th style="padding:8px 10px;text-align:left;width:6%" x-text="t('badge.free')"></th>
-                    <th style="padding:8px 10px;text-align:left;width:9%" x-text="t('tbl.protocol')"></th>
-                    <th style="padding:8px 10px;width:4%"></th>
+                    <th style="padding:8px 12px;text-align:left;width:4%"><input type="checkbox" :checked="isAllSelected(drawerProv)" @change="toggleAll(drawerProv,$event.target.checked)"></th>
+                    <th style="padding:8px 12px;text-align:left;width:8%" x-text="t('tbl.vendor')"></th>
+                    <th style="padding:8px 12px;text-align:left" x-text="t('tbl.model_id')"></th>
+                    <th style="padding:8px 12px;text-align:left" x-text="t('tbl.upstream_model')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.reasoning')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:6%" x-text="t('badge.free')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.protocol')"></th>
+                    <th style="padding:8px 12px;width:4%"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -590,15 +851,15 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px"><input type="checkbox" :checked="!!(drawerProv._selected&&drawerProv._selected[ei])" @change="drawerProv._selected=drawerProv._selected||{};drawerProv._selected[ei]=$event.target.checked;markDirty()"></td>
                     <td style="padding:6px 10px"><span class="bdg bdg-p" style="font-size:10px" x-text="brandFor(m.upstream_model,drawerProv.name).label" :style="'background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'"></span></td>
                     <td style="padding:6px 10px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" @input="if(!m._fmtTouched)m.api_format=this.defaultApiFormat(m.model_id);markDirty()"></td>
-                    <td style="padding:6px 10px;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace" x-text="m.upstream_model||'—'"></td>
+                    <td style="padding:6px 10px;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
-                    <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic">Anthropic</option><option value="responses">Responses</option></select></td>
+                    <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
                     <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)">✕</button></td>
                   </tr>
                   </template>
                 </tbody>
-              </table>
+              </table></div>
             </div>
           </div>
         </div>
@@ -613,7 +874,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
 </div>
 </template>
-</div>
 </div>
 <script>
 setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; var n=(window.__errs||[]).length; if(n===window.__lastN) return; window.__lastN=n; if(!n){ d.style.display='none'; return; } d.style.display='block'; d.textContent=window.__errs.join(String.fromCharCode(10)).slice(0,1500); }, 600);
@@ -647,7 +907,7 @@ const I18N = {
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'expand_all': '展开全部', 'collapse': '收起',
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
@@ -657,13 +917,13 @@ const I18N = {
     'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
     'btn.line': '线', 'btn.bar': '柱',
     'no_trend': '暂无趋势数据',
-    'heatmap_title': '活跃热力图', 'heatmap_few': '较少', 'heatmap_many': '较多',
+    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按日期查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '颜色表示 Token 使用量，空白日期表示没有请求', 'token_trend_title': '每日 Token 趋势', 'token_trend_desc': '按上游模型拆分的每日 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
     'heatmap_mon': '一', 'heatmap_tue': '二', 'heatmap_wed': '三', 'heatmap_thu': '四', 'heatmap_fri': '五', 'heatmap_sat': '六', 'heatmap_sun': '日',
     'provider_stats': '供应商统计',
     'records_title': '请求记录', 'records_count': '{0} 条',
     'export_json': '导出 JSON', 'clear': '清除',
     'opt_all': '全部', 'time_all': '全部时间', 'time_1h': '近1小时', 'time_24h': '近24小时', 'time_7d': '近7天',
-    'token_io': '输入/输出 Tokens', 'filter_reset': '清空筛选', 'refresh': '刷新',
+    'token_io': '输入/输出 Tokens', 'filter_reset': '清空筛选',
     'search_placeholder': '搜索模型/供应商/错误...',
     'opt.all_providers': '全部供应商', 'opt.all_status': '全部状态', 'opt.success': '成功', 'opt.error': '错误',
     'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
@@ -690,8 +950,10 @@ const I18N = {
     'legend_hint': '连续失败会触发熔断保护，断开后不再向上游发起请求以避免雪崩；点击"重置熔断"可手动恢复。',
     'fetch_models': '拉取模型', 'fetching': '拉取中...',
     'developer': '开发者：wonderful艾晨',
+    'about_page_subtitle': '本地 AI 网关与运维控制台', 'about_intro_title': '统一接入，集中运维',
     'about_desc1': '本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。',
     'about_desc2': '功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。',
+    'about_capabilities_title': '核心能力', 'about_capability_routing': '多供应商路由', 'about_capability_routing_desc': '按模型和供应商配置请求转发。', 'about_capability_mapping': '模型名映射', 'about_capability_mapping_desc': '用统一的中转 ID 管理上游模型。', 'about_capability_monitoring': '实时监控', 'about_capability_monitoring_desc': '查看请求、延迟、错误和费用趋势。', 'about_capability_reasoning': '思考强度注入', 'about_capability_reasoning_desc': '为支持的模型统一管理推理档位。',
     'changelog_title': '更新日志',
     'api_endpoints_title': 'API 端点', 'tech_stack': '技术栈', 'help_title': '使用帮助',
     'help.config': '编程工具配置：', 'help.config_desc': '将上方「中转 Base URL」填入编程工具（Trae / Cursor / CodeBuddy 等）的 API 地址，API Key 任意填写。',
@@ -722,7 +984,7 @@ const I18N = {
     'provider_config': '供应商配置', 'add': '新增', 'refresh': '刷新', 'save_config': '保存配置',
     'upstream_placeholder': '留空=原样',
     'eff.none': '- 无 -', 'eff.low': '低', 'eff.medium': '中', 'eff.high': '高', 'eff.max': '最高',
-    'delete': '删除', 'add_model': '添加模型',
+    'delete': '删除', 'add_model': '添加模型', 'select_all': '全选', 'deselect_all': '取消', 'delete_selected': '删除选中',
     'add_provider_title': '新增供应商',
     'addprov.name': '供应商名称', 'addprov.endpoint': '端点 URL', 'addprov.keyhint': 'API Key 在添加后于供应商卡片内填写并保存',
     'addprov.ph_name': '如 my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
@@ -733,7 +995,47 @@ const I18N = {
     'plaza_protocol': '协议', 'plaza_effort': '思考强度', 'plaza_free_only': '仅看免费模型', 'plaza_no_key': '仅看未配置密钥',
     'plaza_clear_filters': '清除筛选', 'plaza_view_card': '卡片', 'plaza_view_table': '表格', 'plaza_showing': '显示',
     'plaza_details': '详情', 'plaza_no_match': '没有符合筛选条件的供应商', 'plaza_summary': '{0} 个供应商 · {1} 个模型',
-    'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
+    'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'details': '详情', 'health_ok': '正常', 'health_err': '异常', 'health_na': '未检测', 'test_connection': '测试连接', 'testing': '测试中...', 'saving': '保存中...', 'search_models': '搜索模型 ID 或上游模型名...', 'unsaved_confirm': '有未保存的供应商配置，切换将丢失改动，是否继续？', 'meta_loading': '加载模型信息...', 'meta_unavailable': '暂无公开模型信息', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
+    'nav_group.monitor': '监控', 'nav_group.config': '配置', 'nav_group.system': '系统', 'unsaved_changes': '未保存', 'unit_ms': '毫秒',
+    'dashboard_title': '控制台', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
+    'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日',
+    'today_requests': '今日请求', 'errors_total': '错误 {0} · 总计 {1}', 'today_cost': '今日费用',
+    'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 'today_total_tokens': '今日总 Tokens',
+    'tokens_input_output': '{0} 输入 · {1} 输出', 'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
+    'kv_cache_hit': 'KV Cache 命中', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
+    'view_analytics': '查看分析', 'success_rate': '成功率', 'avg_latency': '平均延迟', 'generation_speed': '生成速度',
+    'sample_count': '{0} 个样本', 'top_models_traffic': '流量最高的模型', 'api_information': 'API 信息',
+    'api_information_desc': '用于客户端接入的地址', 'view_providers': '查看供应商', 'api_base_url_desc': '兼容 OpenAI 的 API 基地址',
+    'available_models': '可用模型', 'chat_completions': 'Chat Completions', 'balance_cost': '余额与费用',
+    'quick_start': '快速开始', 'quick_start_desc': '将以下地址填入 Cursor、Trae 或其他客户端的 API Base URL。',
+    'manage_providers': '管理供应商', 'view_records': '查看请求记录',
+    'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
+    'current_log_window': '当前日志窗口', 'total_requests': '总请求数', 'total_cost': '总费用', 'total_tokens': '总 Tokens',
+    'average_rpm': '平均 RPM', 'average_tpm': '平均 TPM', 'tokens_per_min': 'Tokens / 分钟', 'time_range': '时间范围',
+    'range_1d': '1 天', 'range_7d': '7 天', 'range_14d': '14 天', 'range_29d': '29 天', 'trend_granularity': '趋势粒度',
+    'granularity_hour': '小时', 'granularity_day': '天', 'granularity_month': '月', 'stats_range': '统计范围：{0}',
+    'request_count': '{0} 次请求', 'consumption_trend': '消费趋势',
+    'consumption_desc': '请求、Tokens、延迟与费用', 'line_chart': '线', 'bar_chart': '柱',
+    'call_distribution': '调用分布', 'aggregate_provider_model': '按供应商 / 上游模型聚合', 'call_ranking': '调用排名',
+    'top_model_routes': '请求量最多的模型路由', 'model_details': '模型明细',
+    'model_details_desc': '按供应商 / 上游模型聚合，可搜索并筛选供应商', 'analytics_search_models': '搜索模型、上游模型或别名...',
+    'provider_all': '供应商：全部', 'instant_filter': '即时筛选 · {0} 条', 'no_matching_models': '没有匹配的模型',
+    'provider_performance': '供应商性能', 'current_window_aggregate': '当前运行日志窗口的聚合结果', 'kv_cache_saved': 'KV Cache Saved',
+    'optimization_saved_tokens': '优化省 Tokens', 'chart_metric_requests': '请求', 'chart_metric_tokens': 'Tokens', 'chart_metric_latency': '延迟', 'chart_metric_cost': '费用',
+    'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_status': '密钥状态', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '当前窗口请求',
+    'error_requests': '错误请求', 'errors_summary': '错误摘要', 'entry_count': '{0} 条', 'expand_action': '展开',
+    'collapse_action': '收起', 'call_records': '调用记录', 'request_details': '请求详情', 'log_details_hint': '点击查看详情',
+    'detail_body_size': 'Body 大小', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': '延迟 / TTFT',
+    'provider_status': '状态', 'latency': '延迟', 'circuit': '熔断', 'key_label': 'Key', 'actions': '操作',
+    'configured': '已配置', 'unconfigured': '未配置', 'endpoint_protocol_desc': 'API 基地址与协议专用端点',
+    'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：',
+    'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
+    'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
+    'confirm_clear_removed_models': '确认清理 {0} 个已下架模型？', 'removed_models_cleaned': '已清理 {0} 个下架模型',
+    'models_imported': '已导入 {0} 个模型', 'removed_models_suffix': ' | 下架 {0} 个',
+    'provider_name_required': '供应商 name 不能为空', 'provider_name_duplicate': '供应商 name 重复：{0}',
+    'provider_keys_saved': '已保存 {0} 个供应商的密钥', 'provider_keys_save_failed': '{0} 个供应商的密钥保存失败',
+
   },
   'en-US': {
     'app_title': 'AIGate · Console',
@@ -759,7 +1061,7 @@ const I18N = {
     'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'expand_all': 'Expand all', 'collapse': 'Collapse',
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
@@ -769,13 +1071,13 @@ const I18N = {
     'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
     'btn.line': 'Line', 'btn.bar': 'Bar',
     'no_trend': 'No trend data',
-    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More',
+    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage by date', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Color shows token usage; blank dates have no requests', 'token_trend_title': 'Daily token trend', 'token_trend_desc': 'Daily token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
     'heatmap_mon': 'Mon', 'heatmap_tue': 'Tue', 'heatmap_wed': 'Wed', 'heatmap_thu': 'Thu', 'heatmap_fri': 'Fri', 'heatmap_sat': 'Sat', 'heatmap_sun': 'Sun',
     'provider_stats': 'Provider Stats',
     'records_title': 'Request Logs', 'records_count': '{0} entries',
     'export_json': 'Export JSON', 'clear': 'Clear',
     'opt_all': 'All', 'time_all': 'All time', 'time_1h': 'Last 1h', 'time_24h': 'Last 24h', 'time_7d': 'Last 7d',
-    'token_io': 'Tokens in/out', 'filter_reset': 'Reset filters', 'refresh': 'Refresh',
+    'token_io': 'Tokens in/out', 'filter_reset': 'Reset filters',
     'search_placeholder': 'Search model/provider/error...',
     'opt.all_providers': 'All providers', 'opt.all_status': 'All status', 'opt.success': 'Success', 'opt.error': 'Error',
     'no_match': 'No matches', 'no_logs': 'No request logs',
@@ -802,8 +1104,10 @@ const I18N = {
     'legend_hint': 'Consecutive failures trip the circuit breaker, which stops sending requests upstream to avoid cascading failures. Click "Reset breaker" to recover manually.',
     'fetch_models': 'Fetch models', 'fetching': 'Fetching...',
     'developer': 'Developer: wonderful艾晨',
-    'about_desc1': 'Local OpenAI-compatible reverse proxy with multi-provider routing, model mapping, and reasoning injection.',
+    'about_page_subtitle': 'Local AI gateway and operations console', 'about_intro_title': 'One gateway, centralized operations',
+    'about_desc1': 'A local OpenAI-compatible reverse proxy with multi-provider routing, model mapping, and reasoning injection.',
     'about_desc2': 'Features: multi-provider routing · model mapping · reasoning injection · real-time dashboard.',
+    'about_capabilities_title': 'Core capabilities', 'about_capability_routing': 'Multi-provider routing', 'about_capability_routing_desc': 'Forward requests by model and provider configuration.', 'about_capability_mapping': 'Model mapping', 'about_capability_mapping_desc': 'Manage upstream models through consistent proxy IDs.', 'about_capability_monitoring': 'Real-time monitoring', 'about_capability_monitoring_desc': 'Track requests, latency, errors, and cost trends.', 'about_capability_reasoning': 'Reasoning injection', 'about_capability_reasoning_desc': 'Manage reasoning levels consistently for supported models.',
     'changelog_title': 'Changelog',
     'api_endpoints_title': 'API Endpoints', 'tech_stack': 'Tech Stack', 'help_title': 'Help',
     'help.config': 'Coding tool setup:', 'help.config_desc': 'Paste the "Proxy Base URL" above into your coding tool (Trae / Cursor / CodeBuddy, etc.) as the API base URL; any API Key works.',
@@ -834,7 +1138,7 @@ const I18N = {
     'provider_config': 'Providers', 'add': 'Add', 'refresh': 'Refresh', 'save_config': 'Save Config',
     'upstream_placeholder': 'Blank = as-is',
     'eff.none': '- None -', 'eff.low': 'Low', 'eff.medium': 'Medium', 'eff.high': 'High', 'eff.max': 'Max',
-    'delete': 'Delete', 'add_model': 'Add Model',
+    'delete': 'Delete', 'add_model': 'Add Model', 'select_all': 'Select All', 'deselect_all': 'Deselect', 'delete_selected': 'Delete Selected',
     'add_provider_title': 'Add Provider',
     'addprov.name': 'Provider name', 'addprov.endpoint': 'Endpoint URL', 'addprov.keyhint': 'API Key can be set in the provider card after adding',
     'addprov.ph_name': 'e.g. my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
@@ -845,7 +1149,47 @@ const I18N = {
     'plaza_protocol': 'Protocol', 'plaza_effort': 'Reasoning', 'plaza_free_only': 'Free models only', 'plaza_no_key': 'Unconfigured keys only',
     'plaza_clear_filters': 'Clear filters', 'plaza_view_card': 'Cards', 'plaza_view_table': 'Table', 'plaza_showing': 'Showing',
     'plaza_details': 'Details', 'plaza_no_match': 'No providers match the filters', 'plaza_summary': '{0} providers · {1} models',
-    'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
+    'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'details': 'Details', 'health_ok': 'Healthy', 'health_err': 'Error', 'health_na': 'Not checked', 'test_connection': 'Test connection', 'testing': 'Testing...', 'saving': 'Saving...', 'search_models': 'Search model ID or upstream model...', 'unsaved_confirm': 'You have unsaved provider changes. Switching tabs will discard them. Continue?', 'meta_loading': 'Loading model info...', 'meta_unavailable': 'No public model metadata', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
+    'nav_group.monitor': 'Monitoring', 'nav_group.config': 'Configuration', 'nav_group.system': 'System', 'unsaved_changes': 'Unsaved', 'unit_ms': 'ms',
+    'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
+    'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today',
+    'today_requests': 'Today requests', 'errors_total': '{0} errors · {1} total', 'today_cost': 'Today cost',
+    'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 'today_total_tokens': 'Today total tokens',
+    'tokens_input_output': '{0} in · {1} out', 'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
+    'kv_cache_hit': 'KV Cache hit', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
+    'view_analytics': 'View analytics', 'success_rate': 'Success rate', 'avg_latency': 'Average latency', 'generation_speed': 'Generation speed',
+    'sample_count': '{0} samples', 'top_models_traffic': 'Top models by traffic', 'api_information': 'API information',
+    'api_information_desc': 'Endpoints for client access', 'view_providers': 'View providers', 'api_base_url_desc': 'OpenAI-compatible API base URL',
+    'available_models': 'Available models', 'chat_completions': 'Chat Completions', 'balance_cost': 'Balance & cost',
+    'quick_start': 'Quick start', 'quick_start_desc': 'Paste the following address into Cursor, Trae, or another client as the API Base URL.',
+    'manage_providers': 'Manage providers', 'view_records': 'View request logs',
+    'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
+    'current_log_window': 'Current log window', 'total_requests': 'Total requests', 'total_cost': 'Total cost', 'total_tokens': 'Total tokens',
+    'average_rpm': 'Average RPM', 'average_tpm': 'Average TPM', 'tokens_per_min': 'Tokens / min', 'time_range': 'Time range',
+    'range_1d': '1 day', 'range_7d': '7 days', 'range_14d': '14 days', 'range_29d': '29 days', 'trend_granularity': 'Trend granularity',
+    'granularity_hour': 'Hour', 'granularity_day': 'Day', 'granularity_month': 'Month', 'stats_range': 'Range: {0}',
+    'request_count': '{0} requests', 'consumption_trend': 'Consumption trend',
+    'consumption_desc': 'Requests, tokens, latency, and cost', 'line_chart': 'Line', 'bar_chart': 'Bar',
+    'call_distribution': 'Call distribution', 'aggregate_provider_model': 'Aggregated by provider / upstream model', 'call_ranking': 'Call ranking',
+    'top_model_routes': 'Model routes with the most requests', 'model_details': 'Model details',
+    'model_details_desc': 'Aggregated by provider / upstream model; searchable and filterable by provider', 'analytics_search_models': 'Search model, upstream model, or alias...',
+    'provider_all': 'Provider: All', 'instant_filter': 'Instant filter · {0} entries', 'no_matching_models': 'No matching models',
+    'provider_performance': 'Provider performance', 'current_window_aggregate': 'Aggregated results for the current log window', 'kv_cache_saved': 'KV Cache saved',
+    'optimization_saved_tokens': 'Optimization savings (tokens)', 'chart_metric_requests': 'Requests', 'chart_metric_tokens': 'Tokens', 'chart_metric_latency': 'Latency', 'chart_metric_cost': 'Cost',
+    'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_status': 'Key status', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Requests in window',
+    'error_requests': 'Error requests', 'errors_summary': 'Error summary', 'entry_count': '{0} entries', 'expand_action': 'Expand',
+    'collapse_action': 'Collapse', 'call_records': 'Call records', 'request_details': 'Request details', 'log_details_hint': 'Click to view details',
+    'detail_body_size': 'Body size', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': 'Latency / TTFT',
+    'provider_status': 'Status', 'latency': 'Latency', 'circuit': 'Circuit', 'key_label': 'Key', 'actions': 'Actions',
+    'configured': 'Configured', 'unconfigured': 'Not configured', 'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
+    'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ',
+    'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
+    'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
+    'confirm_clear_removed_models': 'Remove {0} discontinued models?', 'removed_models_cleaned': 'Removed {0} discontinued models',
+    'models_imported': 'Imported {0} models', 'removed_models_suffix': ' | {0} discontinued',
+    'provider_name_required': 'Provider name is required', 'provider_name_duplicate': 'Duplicate provider name: {0}',
+    'provider_keys_saved': 'Saved keys for {0} providers', 'provider_keys_save_failed': 'Failed to save keys for {0} providers',
+
   },
 };
 document.addEventListener('alpine:init', function() {
@@ -861,6 +1205,7 @@ document.addEventListener('alpine:init', function() {
     },
     dismiss(id) { this.items = this.items.filter(x => x.id !== id); },
   });
+  Alpine.data('dashboard', dashboard);
 });
 function toast(msg, type) { if (window.Alpine) Alpine.store('toast').push(msg, type); }
 function t(key) {
@@ -962,12 +1307,11 @@ function _logoWrap(svg) {
 }
 function dashboard() {
   return {
-    // Sidebar navigation — order: overview, analytics, logs, routes+health, settings, about
+    // Sidebar navigation — monitoring, provider configuration, settings, about
     navItems: [
       { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', labelKey:'nav.dashboard' },
       { id:'analytics', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>', labelKey:'nav.analytics' },
       { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', labelKey:'nav.records' },
-      { id:'routes', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>', labelKey:'nav.routes' },
       { id:'settings', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', labelKey:'nav.settings' },
       { id:'about', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>', labelKey:'nav.about' },
     ],
@@ -983,12 +1327,24 @@ function dashboard() {
     copyTimer: null,
 
     // Data
-    logs: [], errors: [], errorExpanded: true, routes: {}, health: [], stats: null, cache: null,
-    healthLoading: false, showAllModels: false, balanceData: null, balanceLoading: false,
+    logs: [], errors: [], errorExpanded: true, selectedLog: null, health: [], stats: null, cache: null,
+    healthLoading: false,
+    balanceData: null, balanceLoading: false,
     balanceEditProvider: null, balanceEditValue: '',
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
+    analyticsRange: '7d',
+    modelDetailFilter: '',
+    modelProviderFilter: '',
     hourlyStats: null, // hourly granularity for heatmap
+    tokenActivityView: 'daily',
+    tokenActivityCells: [],
+    tokenActivityFlat: [],
+    tokenActivityHtml: '',
+    modelTrendData: {keys:[],dates:[],legend:''},
+    modelTrendSvgHtml: '',
+    _chartModeHooked: false,
+    hiddenModels: {},
     // Proxy policy status
     proxyStatus: null,
     // 历史推理链剥离开关 (运行时, 重启回到环境变量默认)
@@ -999,6 +1355,7 @@ function dashboard() {
     autoContinue: 2,
     // 模型元信息 (models.dev): {模型名: {context,output,vision,reasoning,tool_call}|null}
     modelMeta: {},
+    modelMetaLoading: false,
     ovMetaOpen: {},
     _metaSig: '',
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
@@ -1027,7 +1384,7 @@ function dashboard() {
     trendGranularity: 'day',
 
     // Logs
-    logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, expandedLog: -1, pageSize: 20,
+    logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, pageSize: 20,
 
     // Donut chart
     donutColors: ['#6366f1','#06b6d4','#f59e0b','#34d399','#f472b6','#a78bfa','#fb923c','#2dd4bf'],
@@ -1098,6 +1455,7 @@ function dashboard() {
           e.returnValue='';
         }
       });
+      this.$watch('chartMode', ()=>{ this.computeModelTrend(); });
     },
 
     // 切换界面语言并持久化 (写入 lang.json + 更新运行态由后端处理)
@@ -1139,17 +1497,17 @@ function dashboard() {
 
     switchTab(tabId) {
       if(this.isDirty && tabId!==this.activeTab){
-        if(!confirm(t('unsaved_confirm')||'有未保存的供应商配置，切换将丢失改动，是否继续？')){
+        if(!confirm(t('unsaved_confirm'))){
           return;
         }
         this.isDirty=false;
       }
       this.activeTab = tabId;
-      this.logPage = 0; this.expandedLog = -1;
+      this.logPage = 0;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchHourlyStats(); this.fetchBalance(); }
-      if (tabId==='records') { this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); this.fetchRoutes(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
+      if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
+      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
     },
 
     startPoll() {
@@ -1173,30 +1531,66 @@ function dashboard() {
     },
     async fetchLogs()    { try { const r=await fetch('/admin/api/logs', {headers:authHeaders()}); if(r.ok) this.logs=await r.json(); } catch(e){} },
     async fetchErrors()  { try { const r=await fetch('/admin/api/errors', {headers:authHeaders()}); if(r.ok) this.errors=await r.json(); } catch(e){} },
-    async fetchRoutes()  { try { const r=await fetch('/admin/api/routes', {headers:authHeaders()}); if(r.ok) this.routes=await r.json(); } catch(e){} },
     async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
     healthOf(name) { const h=(this.health||[]).find(x=>x.provider===name); return h?(h.status_level||''):''; },
     // 品牌徽章: 从上游模型名/供应商名识别品牌, 返回 {label, color}
+    // 品牌徽章: 移植自 new-api MODEL_CATEGORY_RULES
+    _brandColorCache: {},
+    _MODEL_BRANDS: [
+      { name:'Perplexity', kw:['perplexity','sonar-'] },
+      { name:'NVIDIA', kw:['nvidia/','nvidia.','nemotron'] },
+      { name:'OpenAI', kw:['openai/','openai.','gpt-','chatgpt-','codex-','dall-e-','whisper-','omni-moderation-','text-moderation-','text-embedding-ada-','text-embedding-3-','text-ada-','text-babbage-','text-curie-','davinci-','babbage-','computer-use-preview','sora'], re:/(?:^|[/.:])(?:o(?:1|3|4)(?=$|[-.:])|tts-)/ },
+      { name:'Anthropic', kw:['anthropic','claude'] },
+      { name:'Gemini', kw:['gemini','gemma','learnlm','imagen','veo','nano-banana','palm-'], re:/(?:^|[/.:])aqa$/ },
+      { name:'xAI', kw:['x-ai/','xai/','xai-','grok'] },
+      { name:'DeepSeek', kw:['deepseek'] },
+      { name:'Qwen', kw:['qwen','qwq-','qvq-','tongyi','gte-'], re:/(?:^|[/.:])(?:text-embedding-v\d+|gui-plus|z-image)(?:$|[-_.:])/ },
+      { name:'Moonshot', kw:['moonshot','kimi-'] },
+      { name:'MiniMax', kw:['minimax','abab','hailuo'], re:/^(?:t2v|i2v|s2v)-01(?:-|$)/ },
+      { name:'Doubao', kw:['doubao','volcengine','seedance','seedream','seed-1-'] },
+      { name:'Zhipu', kw:['zhipu','zai-org','thudm','chatglm','cogview','cogvideo'], re:/(?:^|[/._-])glm(?=$|[-._])/ },
+      { name:'Baidu', kw:['baidu','wenxin','ernie'] },
+      { name:'Yi', kw:['01-ai/'], re:/(?:^|[/.:])yi(?=$|[-_])/ },
+      { name:'iFlytek', kw:['iflytek','sparkdesk'] },
+      { name:'Tencent', kw:['tencent','hunyuan'], re:/(?:^|[/.:])hy\d*(?=$|[-_.:])/ },
+      { name:'Baichuan', kw:['baichuan'] },
+      { name:'InternLM', kw:['internlm'] },
+      { name:'StepFun', kw:['stepfun','step-'] },
+      { name:'MiMo', kw:['xiaomi','mimo-'] },
+      { name:'Mistral', kw:['mistral','mixtral','codestral','ministral','pixtral','magistral'] },
+      { name:'Meta', kw:['meta-llama','llama-','llama2','llama3'] },
+      { name:'Cohere', kw:['cohere','command-','c4ai-aya','aya-'], re:/(?:^|[/.:])command$/ },
+      { name:'Jina', kw:['jinaai','jina-'] },
+      { name:'BAAI', kw:['baai/','bge-'] },
+      { name:'Black Forest Labs', kw:['black-forest-labs','flux.'] },
+      { name:'Microsoft', kw:['microsoft/'], re:/(?:^|[/.:])phi(?=$|[-._])/ },
+      { name:'Amazon', kw:['amazon/','amazon.','nova-','titan-'] },
+      { name:'AI21 Labs', kw:['ai21','jamba'] },
+      { name:'Stability AI', kw:['stabilityai','stable-diffusion','stable-image','sdxl-'] },
+      { name:'Nous Research', kw:['nousresearch','hermes-'] },
+      { name:'360 AI', kw:['360gpt','360zhinao'] },
+      { name:'Midjourney', kw:['midjourney','mj_','mj-','swap_face'] },
+      { name:'Kling', kw:['kling'] },
+      { name:'Vidu', kw:['vidu'] },
+      { name:'Suno', kw:['suno'] },
+      { name:'Jimeng', kw:['jimeng'] },
+    ],
     brandFor(upstream, providerName) {
       const s = (upstream || providerName || '').toLowerCase();
-      const brands = [
-        { keys:['deepseek'], label:'DS', color:'#4d6bfe' },
-        { keys:['gpt','openai','o1-preview','o1-mini','o3-','o4-'], label:'OpenAI', color:'#10a37f' },
-        { keys:['qwen','tongyi'], label:'Qwen', color:'#6d5dfc' },
-        { keys:['moonshot','kimi'], label:'Kimi', color:'#38bdf8' },
-        { keys:['claude','anthropic'], label:'Claude', color:'#d97757' },
-        { keys:['gemini','gemma'], label:'Gemini', color:'#4285f4' },
-        { keys:['glm','zhipu'], label:'GLM', color:'#60a5fa' },
-        { keys:['yi-','01-ai'], label:'Yi', color:'#a78bfa' },
-        { keys:['minimax'], label:'MiniMax', color:'#f59e0b' },
-        { keys:['ernie','baidu','文心'], label:'ERNIE', color:'#7c9fff' },
-        { keys:['step'], label:'Step', color:'#f87171' },
-        { keys:['siliconflow'], label:'SF', color:'#22d3ee' },
-        { keys:['volcengine','doubao','豆包'], label:'豆包', color:'#ef4444' },
-        { keys:['grok','xai'], label:'Grok', color:'#e5e7eb' },
-      ];
-      for (const b of brands) for (const k of b.keys) if (s.includes(k)) return b;
-      return { label: (upstream || providerName || '?').slice(0, 8).toUpperCase(), color: '#9ca3af' };
+      for (const rule of this._MODEL_BRANDS) {
+        if (rule.kw && rule.kw.some(k => s.includes(k))) return this._brandEntry(rule.name);
+        if (rule.re && rule.re.test(s)) return this._brandEntry(rule.name);
+      }
+      return { label: '?', color: '#9ca3af' };
+    },
+    _brandEntry(label) {
+      if (this._brandColorCache[label]) return this._brandColorCache[label];
+      let h = 0; for (let i = 0; i < label.length; i++) h = label.charCodeAt(i) + ((h << 5) - h);
+      const hue = Math.abs(h) % 360;
+      const color = `hsl(${hue},65%,55%)`;
+      const entry = { label, color };
+      this._brandColorCache[label] = entry;
+      return entry;
     },
     // 免费模型自动判定: 模型名/上游模型名含 free 或 免费 (与后端 is_free 回退逻辑一致)
     autoFree(modelId, upstream) {
@@ -1280,6 +1674,7 @@ function dashboard() {
     },
     // ── 模型元信息 (models.dev): 点击展开 chips 面板 (上下文/输出/视觉/推理/工具) ──
     async fetchModelMeta() {
+      this.modelMetaLoading = true;
       try {
         const names=new Set();
         // 注意: providersFormData 就是供应商数组本身 (非 {providers:[]}),
@@ -1293,14 +1688,15 @@ function dashboard() {
           const raw=(m.model||'').trim(); if(!raw) return;
           names.add(raw.includes('/') ? raw.split('/').pop() : raw);
         });
-        if(!names.size) return;
+        if(!names.size) { this.modelMetaLoading = false; return; }
         // 签名去重: 轮询/重复进入不重发 (服务端有 24h 缓存, 也省一次往返)
         const sig=[...names].sort().join(',');
-        if(sig===this._metaSig && Object.keys(this.modelMeta).length) return;
+        if(sig===this._metaSig && Object.keys(this.modelMeta).length) { this.modelMetaLoading = false; return; }
         this._metaSig=sig;
         const r=await fetch('/admin/api/model-meta',{method:'POST',headers:authHeaders(),body:JSON.stringify({names:[...names]})});
         if(r.ok){ const d=await r.json(); this.modelMeta=d.meta||{}; }
       } catch(e){}
+      this.modelMetaLoading = false;
     },
     metaFor(m) {
       const u=(m.upstream_model||'').trim();
@@ -1313,178 +1709,216 @@ function dashboard() {
     metaHasModel(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return !!this.metaFor({model_id:id}); },
     ovMetaChips(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return this.metaChipsHtml({model_id:id}); },
     // 模型元信息 chips 面板内容 (数据源 models.dev, 仅数字/布尔/i18n 文案, x-html 安全)
+    sparklineSvg(values,color) {
+      const vals=(values||[]).map(Number).filter(v=>Number.isFinite(v));
+      if(vals.length<2) return '';
+      const w=160,h=28,p=2,mx=Math.max(...vals),mn=Math.min(...vals),span=Math.max(mx-mn,1);
+      const pts=vals.map((v,i)=>`${p+(w-2*p)*i/(vals.length-1)},${h-p-(v-mn)/span*(h-2*p)}`);
+      const area=`${p},${h} ${pts.join(' ')} ${w-p},${h}`;
+      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sp${Math.abs(color.length+vals.length)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".24"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" fill="url(#sp${Math.abs(color.length+vals.length)})"/><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    },
     metaChipsHtml(m) {
       const meta=this.metaFor(m);
       if(!meta) return '';
-      const chip=(l,v,c)=>'<span class="inline-flex items-center gap-1 rounded px-2 py-0.5" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44"><span style="opacity:.7">'+l+'</span><b class="font-mono">'+v+'</b></span>';
-      const tag=(l,c)=>'<span class="inline-flex items-center rounded px-2 py-0.5 font-bold" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44">'+l+'</span>';
+      const chip=(l,v,c)=>'<span class="meta-chip" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44"><span style="opacity:.7">'+l+'</span><b class="mono">'+v+'</b></span>';
+      const tag=(l,c)=>'<span class="meta-tag" style="background:'+c+'1a;color:'+c+';border:1px solid '+c+'44">'+l+'</span>';
       let h='';
       if(meta.context) h+=chip(t('meta_ctx'), this.fmtTok(meta.context), '#38bdf8');
       if(meta.output) h+=chip(t('meta_out'), this.fmtTok(meta.output), '#818cf8');
-      h+=chip(t('meta_in'), meta.vision?t('meta_in_vis'):t('meta_text_only'), meta.vision?'#c084fc':'#9ca3af');
+      if(meta.vision) h+=tag(t('meta_vision'), '#c084fc');
       if(meta.reasoning) h+=tag(t('meta_reasoning'), '#fbbf24');
       if(meta.tool_call) h+=tag(t('meta_tools'), '#34d399');
       return h;
     },
-    async fetchStats()   { try { const r=await fetch('/admin/api/stats?granularity='+this.trendGranularity, {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
-    async fetchHourlyStats() { try { const r=await fetch('/admin/api/stats?granularity=hour', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },
+    modelMetaStatusHtml(m) {
+      if(this.metaFor(m)) return this.metaChipsHtml(m);
+      if(this.modelMetaLoading) return '<span class="meta-pending">'+t('meta_loading')+'</span>';
+      return '<span class="meta-pending">'+t('meta_unavailable')+'</span>';
+    },
+    async fetchStats(rangeOverride)   { try { const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d')); const params=new URLSearchParams({granularity:this.trendGranularity,range}); const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick(); this.computeTokenActivityCells(); this.computeModelTrend(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
+    isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
+    get analysisWindowMinutes() {
+      return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
+    },
+    get analysisSuccessRate() {
+      const total=Number(this.stats&&this.stats.total_requests||0);
+      if(!total) return 100;
+      const errors=Number(this.stats.error_count||0);
+      return Math.round(Math.max(0,total-errors)/total*100);
+    },
+    get analysisRpm() { return Number(this.stats&&this.stats.total_requests||0)/this.analysisWindowMinutes; },
+    get analysisTpm() { return ((Number(this.stats&&this.stats.total_prompt_tokens||0)+Number(this.stats&&this.stats.total_completion_tokens||0))/this.analysisWindowMinutes); },
+    get filteredModelStats() {
+      const q=(this.modelDetailFilter||'').toLowerCase().trim();
+      return (this.stats&&this.stats.per_model||[]).filter(m=>{
+        if(this.modelProviderFilter && this.modelProviderName(m)!==this.modelProviderFilter) return false;
+        return !q || (m.model||'').toLowerCase().includes(q) || (m.upstream_model||'').toLowerCase().includes(q) || (m.provider||'').toLowerCase().includes(q) || (m.aliases||[]).some(a=>a.toLowerCase().includes(q));
+      });
+    },
+    modelProviderName(model) { return (model&&model.provider)||'—'; },
+    modelUpstreamName(model) { return (model&&model.upstream_model)||'—'; },
+    modelErrorCount(model) { return Number(model&&model.errors||0); },
+    modelSuccessRate(model) { const total=Number(model&&model.requests||0); return total?Math.round((total-this.modelErrorCount(model))/total*100):100; },
+    get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
+    async fetchHourlyStats() { try { const range=this.analyticsRange||'1d'; const r=await fetch('/admin/api/stats?granularity=hour&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },
     // ── 更新亮点：取最新一条 changelog 作为弹窗内容 ──
     get whatsNewEntry() {
       return (this.changelog && this.changelog.length) ? this.changelog[0] : null;
     },
-    // ── 热力图 SVG (GitHub 风格周对齐: 列=周, 行=星期几) ──
+    // ── 活跃热力图 SVG: 最近 24 个小时桶的相对请求量 ──
+    get tokenActivityGridCols() { return 'repeat('+Math.max(1,this.tokenActivityCells.length)+',16px)'; },
+    computeTokenActivityCells() {
+      const days=(this.stats?.trends||[]).filter(x=>x&&x.ts).sort((a,b)=>a.ts-b.ts).map(x=>({ts:x.ts,date:x.date,requests:Number(x.requests||0),errors:Number(x.errors||0),input:Number(x.total_prompt_tokens||0),output:Number(x.total_completion_tokens||0),tokens:Number(x.total_prompt_tokens||0)+Number(x.total_completion_tokens||0)}));
+      if(!days.length){this.tokenActivityCells=[];this.tokenActivityFlat=[];return;}
+      const max=Math.max(...days.map(d=>d.tokens),1);
+      const start=days[0].ts,end=days[days.length-1].ts;
+      const firstWD=(new Date((start+8*3600)*1000).getUTCDay()+6)%7;
+      const cellCount=Math.ceil((end-start)/86400+1);
+      const weekCount=Math.ceil((firstWD+cellCount)/7);
+      const dayMap=new Map(days.map(d=>[d.ts,d]));
+      const WEEKDAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      const color=v=>{if(!v)return '#1c1d24';const r=Math.min(v/max,1);return r>.75?'#60a5fa':r>.5?'#3b82f6':r>.25?'#2563eb':'#1d4ed8';};
+      // Build week-indexed cells (for backwards compat)
+      const cells=[];
+      for(let wi=0;wi<weekCount;wi++){
+        const week=[];
+        for(let di=0;di<7;di++){
+          const dayIndex=wi*7+di-firstWD;
+          if(dayIndex<0||dayIndex>=cellCount){week.push(null);continue;}
+          const ts=start+dayIndex*86400;
+          const d=dayMap.get(ts)||{ts,date:new Date((ts+8*3600)*1000).toISOString().slice(5,10),requests:0,tokens:0};
+          week.push({color:color(d.tokens),title:(d.date||'')+' · '+this.fmtT(d.tokens)+' tok',tokens:d.tokens,requests:d.requests});
+        }
+        cells.push(week);
+      }
+      this.tokenActivityCells=cells;
+      // Flatten for CSS grid: row=weekday(7), column=week(N)
+      // cells[c][r] where c=week index, r=weekday index
+      const flat=[];
+      for(let r=0;r<7;r++){
+        for(let c=0;c<weekCount;c++){
+          const cell=cells[c]&&cells[c][r]?cells[c][r]:null;
+          if(!cell){flat.push(null);continue;}
+          const dayIndex=c*7+r-firstWD;
+          if(dayIndex<0||dayIndex>=cellCount){flat.push(null);continue;}
+          const ts=start+dayIndex*86400;
+          let value=cell.tokens;
+          if(this.tokenActivityView==='cumulative') value=days.filter(x=>x.ts<=ts).reduce((a,x)=>a+x.tokens,0);
+          if(this.tokenActivityView==='weekly'){const ws=ts-(((ts+8*3600)*1000/1000+3600*8)%86400/86400+(6))*86400;if(r===0)value=days.filter(x=>x.ts>=ws&&x.ts<ws+7*86400).reduce((a,x)=>a+x.tokens,0);}
+          const p=new Date((ts+8*3600)*1000);const wd=(p.getUTCDay()+6)%7;
+          const monthLabel=(r===0&&(dayIndex===0||(c===0&&r===firstWD)))?(p.getUTCMonth()+1)+'/'+p.getUTCFullYear():'';
+          flat.push({color:color(value),title:(cell.title||'')+' ('+WEEKDAYS[wd]+')',showMonth:!!monthLabel,monthLabel,showWeekday:c===0,weekdayLabel:WEEKDAYS[wd]});
+        }
+      }
+      this.tokenActivityCells=cells;
+      this.tokenActivityFlat=flat;
+      this.tokenActivityHtml=flat.map(c=>c?'<div class="ta-cell" style="background:'+c.color+';" title="'+(c.title||'').replace(/"/g,'&quot;')+'"></div>':'<div class="ta-cell" style="background:#1c1d24;"></div>').join('');
+    },
+    computeModelTrend() {
+      const rows=this.stats?.model_trends||[]; const sums={};
+      rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||'');sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
+      const allKeys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6);
+      const keys=allKeys.filter(k=>!this.hiddenModels[k]);
+      this.modelTrendData={keys:allKeys,sums};
+      if(!rows.length||!keys.length){this.modelTrendSvgHtml='';return;}
+      const dates=[...new Map(rows.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
+      const W=900,H=280,left=52,right=18,top=18,bottom=36,pw=W-left-right,ph=H-top-bottom;
+      const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
+      const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
+      const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
+      const values=keys.map(k=>dates.map(([ts])=>{const [p,...u]=k.split('/');const r=map.get(ts+'/'+p+'/'+u.join('/'));return r?Number(r.prompt_tokens||0)+Number(r.completion_tokens||0):0;}));
+      const max=Math.max(...values.flat(),1);
+      const n=dates.length;
+      const x=i=>left+(n===1?pw/2:pw*i/(n-1));
+      const y=v=>top+ph-v/max*ph;
+      const smooth=pts=>{if(pts.length<2)return '';let d='M'+pts[0][0]+','+pts[0][1];for(let i=0;i<pts.length-1;i++){const cx=(pts[i][0]+pts[i+1][0])/2;d+=' C'+cx+','+pts[i][1]+' '+cx+','+pts[i+1][1]+' '+pts[i+1][0]+','+pts[i+1][1];}return d;};
+      let out='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="model-trend-svg" role="img">';
+      for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" stroke="#2a2d37" stroke-width=".7"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" font-size="9" fill="#6b7280">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
+      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" fill="'+color+'"><title>'+this.escapeHtml(dates[i][1]||'')+' · '+this.escapeHtml(k.split('/').slice(1).join('/'))+' · '+this.fmtT(v)+' tok</title></rect>';});});}else{
+        values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
+          const ptsStr=pts.map(p=>p[0]+','+p[1]).join(' ');
+          const gid='tg'+si;
+          out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+color+'" stop-opacity=".25"/><stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
+          const areaD='M'+x(0)+','+(top+ph)+' L'+pts.map(p=>p[0]+','+p[1]).join(' L')+' L'+x(n-1)+','+(top+ph)+' Z';
+          out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
+          out+='<polyline points="'+ptsStr+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+          vals.forEach((v,i)=>{if(!v)return;const r=rows.find(q=>q.ts===dates[i][0]&&((q.provider||'')+'/'+(q.upstream_model||''))===k);out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.5" fill="'+color+'" stroke="#16161c" stroke-width="1.5"><title>'+this.escapeHtml(dates[i][1]||'')+' · '+this.escapeHtml(k.split('/').slice(1).join('/'))+' · '+this.fmtT(v)+' tok</title></circle>';});
+        });
+      }
+      const step=Math.max(1,Math.ceil(n/8));dates.forEach((d,i)=>{if(i%step===0||i===n-1)out+='<text x="'+x(i)+'" y="'+(H-12)+'" text-anchor="middle" font-size="9" fill="#6b7280">'+this.escapeHtml(d[1]||'')+'</text>';});out+='</svg>';
+      this.modelTrendSvgHtml=out;
+    },
+    toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
+    get modelTokenTrendSeries() {
+      const rows=this.stats?.model_trends||[]; const sums={};
+      rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||''); sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
+      const keys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6); return {rows,keys,sums};
+    },
+    get modelTokenTrendLegend() {
+      const colors=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6']; const s=this.modelTrendData||{}; const keys=s.keys||[]; const sums=s.sums||{}; return keys.map((k,i)=>'<span class="model-trend-chip"><i style="background:'+colors[i]+'"></i>'+this.escapeHtml(k.split('/').slice(1).join('/')||k)+'</span>').join('')+(Object.keys(sums).length>keys.length?'<span class="model-trend-chip">Other ('+(Object.keys(sums).length-keys.length)+')</span>':'');
+    },
+    get heatmapHours() {
+      return (this.hourlyStats||[]).slice(-24);
+    },
+    get heatmapTotalRequests() {
+      return this.heatmapHours.reduce((sum,h)=>sum+Number(h.requests||0),0);
+    },
     get heatmapSvg() {
-      const hs = this.hourlyStats || [];
-      if (!hs.length) return '';
-
-      // 1. 聚合到天 (MM/DD)
-      const dayTotals = {};
-      hs.forEach(h => {
-        const d = h.date.split(' ')[0];
-        dayTotals[d] = (dayTotals[d] || 0) + h.requests;
-      });
-      const dateKeys = Object.keys(dayTotals);
-      if (!dateKeys.length) return '';
-
-      // 2. 解析日期并排序
-      const now = new Date(); const yr = now.getFullYear();
-      const parsed = dateKeys.map(k => {
-        const [m, dd] = k.split('/').map(Number);
-        return { key: k, date: new Date(yr, m - 1, dd) };
-      }).sort((a, b) => a.date - b.date);
-
-      const minDate = parsed[0].date;
-      const maxDate = parsed[parsed.length - 1].date;
-
-      // 3. 找到 minDate 所在周的周一 (GitHub 以周一为一周起始)
-      const getMonday = (date) => {
-        const d = new Date(date);
-        const day = d.getDay(); // 0=Sun, 1=Mon ... 6=Sat
-        const diff = day === 0 ? -6 : 1 - day;
-        d.setDate(d.getDate() + diff);
-        return d;
-      };
-      const startMonday = getMonday(minDate);
-
-      // 4. 计算总周数
-      const endSunday = getMonday(maxDate);
-      endSunday.setDate(endSunday.getDate() + 6);
-      const totalDays = Math.ceil((endSunday - startMonday) / 86400000) + 1;
-      const weeks = Math.ceil(totalDays / 7);
-
-      // 5. 构建日期网格: dateGrid[week][dow] = "MM/DD"
-      const dateGrid = [];
-      for (let w = 0; w < weeks; w++) {
-        dateGrid[w] = [];
-        for (let dow = 0; dow < 7; dow++) {
-          const d = new Date(startMonday);
-          d.setDate(d.getDate() + w * 7 + dow);
-          const mm = String(d.getMonth() + 1).padStart(2, '0');
-          const dd = String(d.getDate()).padStart(2, '0');
-          dateGrid[w][dow] = `${mm}/${dd}`;
-        }
+      const hs=this.heatmapHours; if(!hs.length) return '';
+      const vals=hs.map(h=>Number(h.requests||0)); const mx=Math.max(...vals,1);
+      const W=760,H=116,left=34,right=10,top=12,bottom=28,plotW=W-left-right,plotH=H-top-bottom;
+      const colors=['#1c1d24','#202b3d','#263f63','#2f66bd','#5f9df0','#9ac4ff'];
+      const x=i=>left+plotW*(i+.5)/Math.max(vals.length,1);
+      const barW=Math.max(6,plotW/Math.max(vals.length,1)-4);
+      let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:116px">`;
+      for(let i=0;i<vals.length;i++){
+        const level=vals[i]===0?0:Math.min(5,Math.floor(vals[i]/mx*5)+1), h=vals[i]/mx*plotH;
+        s+=`<rect x="${x(i)-barW/2}" y="${top+plotH-h}" width="${barW}" height="${h}" rx="3" fill="${colors[level]}"><title>${hs[i].date}: ${vals[i]} ${t('unit_times')}</title></rect>`;
+        if(i%Math.max(1,Math.ceil(vals.length/8))===0||i===vals.length-1) s+=`<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#6b7280">${(hs[i].date||'').split(' ').pop()||''}</text>`;
       }
-
-      // 6. 最大值 & 颜色
-      const mx = Math.max(...Object.values(dayTotals), 1);
-      const colors = ['#1e2028', '#1a2332', '#1e3a5f', '#2563eb', '#60a5fa', '#93c5fd'];
-
-      // 7. 尺寸
-      const cellW = 14, cellH = 14, gap = 3;
-      const leftLabelW = 28, topLabelH = 18;
-      const W = leftLabelW + weeks * (cellW + gap);
-      const H = topLabelH + 7 * (cellH + gap) + 4;
-
-      let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">`;
-
-      // 行标签 (周一~周日)
-      const dayLabels = ['一', '二', '三', '四', '五', '六', '日'];
-      dayLabels.forEach((l, j) => {
-        const y = topLabelH + j * (cellH + gap) + cellH / 2;
-        s += `<text x="0" y="${y}" font-size="9" fill="#6b7280" dominant-baseline="middle">${l}</text>`;
-      });
-
-      // 格子
-      for (let w = 0; w < weeks; w++) {
-        for (let dow = 0; dow < 7; dow++) {
-          const d = dateGrid[w][dow];
-          const v = dayTotals[d] || 0;
-          const level = v === 0 ? 0 : Math.min(5, Math.floor(v / mx * 5) + 1);
-          const x = leftLabelW + w * (cellW + gap);
-          const y = topLabelH + dow * (cellH + gap);
-           s += `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="2" fill="${colors[level]}"><title>${d}: ${v} ${window.t ? window.t('unit_times') : '次'}</title></rect>`;
-        }
-      }
-
-      // 列标签 (月份标记: 每月第一周标注)
-      let lastMonth = -1;
-      for (let w = 0; w < weeks; w++) {
-        const [m] = dateGrid[w][0].split('/').map(Number);
-        if (m !== lastMonth) {
-          lastMonth = m;
-          const x = leftLabelW + w * (cellW + gap);
-          s += `<text x="${x}" y="${topLabelH - 5}" font-size="8" fill="#6b7280" text-anchor="middle">${m}月</text>`;
-        }
-      }
-
-      s += '</svg>';
+      s+=`<text x="${left}" y="9" font-size="9" fill="#6b7280">${t('heatmap_few')}</text><text x="${W-right}" y="9" text-anchor="end" font-size="9" fill="#6b7280">${t('heatmap_many')}</text></svg>`;
       return s;
     },
     // ── 趋势图 SVG (line/bar 共用坐标系: 第 j 列中心 x=35+j*70) ──
+    get trendColor() {
+      return this.dailyMode==='cost'?'#f59e0b':this.dailyMode==='tokens'?'#a78bfa':this.dailyMode==='latency'?'#22d3ee':'#818cf8';
+    },
+    get trendGranularityLabel() {
+      return t(this.trendGranularity==='hour'?'granularity_hour':this.trendGranularity==='month'?'granularity_month':'granularity_day');
+    },
+    get trendMetricLabel() {
+      return t(this.dailyMode==='cost'?'chart_metric_label_cost':this.dailyMode==='tokens'?'chart_metric_label_tokens':this.dailyMode==='latency'?'chart_metric_label_latency':'chart_metric_label_requests');
+    },
+    get tzLabel() { return t('tz_label'); },
+    get trendSummaryHtml() {
+      const tr=(this.stats?.trends||[]).slice(-1)[0];
+      if(!tr) return '';
+      const cost=this.stats?.has_price_config?this.fmtMoney(tr.total_cost||0):t('chart_no_price');
+      return '<span>'+t('trend_detail_title')+': '+this.escapeHtml(tr.date||'—')+'</span><br><span>'+t('trend_bucket_metrics',tr.requests||0,tr.errors||0,this.fmtT(tr.total_prompt_tokens||0),this.fmtT(tr.total_completion_tokens||0),this.escapeHtml(cost))+'</span>';
+    },
+    escapeHtml(value) { return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
     get trendSvg() {
-      const t=this.stats?.trends||[]; if(!t.length) return '';
-      const n=t.length, W=n*70, H=132;
-      const barMode=this.chartMode==='bar';
-      const vals=t.map(tr=>{
-        if(this.dailyMode==='cost') return tr.total_cost||0;
-        if(this.dailyMode==='tokens') return (tr.total_prompt_tokens||0)+(tr.total_completion_tokens||0);
-        if(this.dailyMode==='latency') return tr.avg_latency||0;
-        return tr.requests;
-      });
-      const mx=Math.max(...vals,1);
-      const stroke=barMode?'#a78bfa':(this.dailyMode==='tokens'?'#a78bfa':this.dailyMode==='latency'?'#f59e0b':'#818cf8');
-      let s=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">`;
-      s+=`<defs><linearGradient id="trendArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${stroke}" stop-opacity="0.26"/><stop offset="100%" stop-color="${stroke}" stop-opacity="0"/></linearGradient></defs>`;
-      // 数据点 hover 提示（原生 title，零 JS、零常驻视觉噪音）
-      const tipText=(tr,v)=>{
-        if(this.dailyMode==='cost') return this.fmtMoney(v)+(this.currencyConfig?.currency||'');
-        if(this.dailyMode==='tokens') return this.fmtT(v)+' '+window.t('unit_tokens');
-        if(this.dailyMode==='latency') return this.fmtMs(v);
-        return v+' '+window.t('unit_times');
-      };
-      // 网格线 + Y 轴标签（左 30px 内）
-      for(let i=1;i<=3;i++) s+=`<line x1="30" x2="${W}" y1="${20+i*30}" y2="${20+i*30}" stroke="#2a2d37" stroke-width="0.5"/>`;
-      for(let i=0;i<=4;i++){
-        const y=20+i*22;
-        const v=Math.round(mx*(1-i/4));
-        const label = this.dailyMode==='cost'? this.fmtMoney(v): (this.dailyMode==='tokens'||this.dailyMode==='latency')? (v>999? (v/1000).toFixed(1)+'K':v): v;
-        s+=`<text x="0" y="${y+3}" font-size="8" fill="#6b7280" text-anchor="start">${label}</text>`;
-      }
-      if(barMode){
-        // 条形
-        vals.forEach((v,i)=>{
-          const h=Math.max((v/mx)*88,0);
-          s+=`<rect x="${i*70+10}" y="${108-h}" width="50" height="${h}" rx="4" fill="${stroke}" opacity="0.85"><title>${t[i].date}: ${tipText(t[i],v)}</title></rect>`;
-        });
+      const trends=this.stats?.trends||[]; if(!trends.length) return '';
+      const n=trends.length, W=760, H=190, left=44, right=12, top=18, bottom=34;
+      const plotW=W-left-right, plotH=H-top-bottom, stroke=this.trendColor;
+      const vals=trends.map(tr=>this.dailyMode==='cost'?(tr.total_cost||0):this.dailyMode==='tokens'?((tr.total_prompt_tokens||0)+(tr.total_completion_tokens||0)):this.dailyMode==='latency'?(tr.requests?(tr.avg_latency||0):null):(tr.requests||0));
+      const finite=vals.filter(v=>v!==null&&Number.isFinite(v)); const mx=Math.max(...finite,1);
+      const x=i=>left+(n===1?plotW/2:plotW*i/(n-1));
+      const y=v=>v===null?top+plotH:top+plotH-(v/mx)*plotH;
+      const tip=(tr,v)=>t('trend_bucket_metrics',tr.requests||0,tr.errors||0,this.fmtT(tr.total_prompt_tokens||0),this.fmtT(tr.total_completion_tokens||0),this.stats?.has_price_config?this.escapeHtml(this.fmtMoney(tr.total_cost||0)):t('chart_no_price'));
+      let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:190px"><defs><linearGradient id="trendAreaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${stroke}" stop-opacity=".22"/><stop offset="1" stop-color="${stroke}" stop-opacity="0"/></linearGradient></defs>`;
+      for(let i=0;i<=4;i++){const yy=top+plotH*i/4;const value=mx*(1-i/4);const label=this.dailyMode==='cost'?this.fmtMoney(value):this.dailyMode==='tokens'?this.fmtT(value):this.dailyMode==='latency'?this.fmtMs(value):Math.round(value);s+=`<line x1="${left}" x2="${W-right}" y1="${yy}" y2="${yy}" stroke="#2a2d37" stroke-width=".7"/><text x="${left-7}" y="${yy+3}" font-size="9" text-anchor="end" fill="#6b7280">${label}</text>`;}
+      const points=vals.map((v,i)=>[x(i),y(v)]);
+      if(this.chartMode==='bar'){
+        const gap=Math.min(8,plotW/n*.22), bw=Math.max(2,plotW/n-gap);
+        vals.forEach((v,i)=>{if(v===null)return;const xx=x(i)-bw/2,hh=top+plotH-y(v);s+=`<rect x="${xx}" y="${y(v)}" width="${bw}" height="${hh}" rx="3" fill="${stroke}" opacity=".85"><title>${tip(trends[i],v)}</title></rect>`;});
       } else {
-        // 折线 + 面积渐变
-        const ptsArr=vals.map((v,i)=>[35+i*70, 108-(v/mx)*88]);
-        const area=`${ptsArr[0][0]},108 ` + ptsArr.map(p=>p[0]+','+p[1]).join(' ') + ` ${ptsArr[ptsArr.length-1][0]},108`;
-        s+=`<polygon points="${area}" fill="url(#trendArea)" stroke="none"/>`;
-        const pts=ptsArr.map(p=>p.join(',')).join(' ');
-        s+=`<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
-        vals.forEach((v,i)=>{
-          const y=108-(v/mx)*88;
-          s+=`<circle cx="${35+i*70}" cy="${y}" r="3" fill="${stroke}" stroke="#1e2028" stroke-width="1" style="cursor:pointer"><title>${t[i].date}: ${tipText(t[i],v)}</title></circle>`;
-        });
+        const pts=points.filter((_,i)=>vals[i]!==null).map(p=>p.join(',')).join(' ');
+        if(pts){const area=`${left},${top+plotH} ${pts} ${W-right},${top+plotH}`;s+=`<polygon points="${area}" fill="url(#trendAreaFill)"/><polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;}
+        points.forEach((p,i)=>{if(vals[i]===null)return;s+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${stroke}" stroke="#16161c" stroke-width="1.5"><title>${tip(trends[i],vals[i])}</title></circle>`;});
       }
-      // x 轴日期标签 (稀疏, 与下方列 div 对齐)
-      const step=Math.max(1,Math.ceil(n/8));
-      t.forEach((tr,i)=>{
-        if(i%step!==0 && i!==n-1) return;
-        s+=`<text x="${35+i*70}" y="126" text-anchor="middle" font-size="10" fill="#6b7280">${tr.date}</text>`;
-      });
-      s+='</svg>';
+      const step=Math.max(1,Math.ceil(n/7));trends.forEach((tr,i)=>{if(i%step!==0&&i!==n-1)return;s+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="9" fill="#6b7280">${tr.date}</text>`;});
+      s+=`<text x="${W-right}" y="${top+3}" text-anchor="end" font-size="9" fill="${stroke}">${this.escapeHtml(this.trendMetricLabel)}</text></svg>`;
       return s;
     },
     async fetchBalance() {
@@ -1633,24 +2067,57 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({provider:prov.name,value:''})});
         const d=await r.json();
-        if(r.ok) { this.keyMsg='已清空 '+prov.name+' 的密钥'; this.fetchKeys(); setTimeout(()=>this.keyMsg='',3000); }
+        if(r.ok) { this.keyMsg=t('key_cleared',prov.name); this.fetchKeys(); setTimeout(()=>this.keyMsg='',3000); }
         else this.keyMsg=d.error||t('save_failed');
       } catch(e){ this.keyMsg=t('network_error'); }
+    },
+    async saveDrawerKey() {
+      const prov = this.drawerProv;
+      if (!prov || !(prov._keyDraft||'').trim()) return;
+      prov._keySaving = true; prov._keyMsg = ''; prov._keyOk = false;
+      try {
+        const r = await fetch('/admin/api/keys', { method:'PUT', headers:authHeaders(), body:JSON.stringify({provider:prov.name, value:prov._keyDraft.trim()}) });
+        const d = await r.json();
+        if (r.ok) { prov._keyDraft=''; prov._keyMsg=t('saved'); prov._keyOk=true; this.fetchKeys(); }
+        else { prov._keyMsg=d.error||t('save_failed'); prov._keyOk=false; }
+      } catch(e) { prov._keyMsg=t('network_error'); prov._keyOk=false; }
+      prov._keySaving = false;
+      setTimeout(()=>{ if(prov) prov._keyMsg=''; }, 3000);
     },
     // 删除供应商 (仅从表单移除, 需点"保存配置"后生效; 后端级联清除其密钥).
     async deleteProvider(pi) {
       const prov = this.providersFormData[pi];
-      if (!confirm('确认删除供应商「'+prov.name+'」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。')) return;
+      if (!confirm(t('confirm_delete_provider',prov.name))) return;
       this.providersFormData.splice(pi,1);
-      this.providersFormMsg = '已移除「'+prov.name+'」，点"保存配置"后生效';
+      this.providersFormMsg = t('provider_removed',prov.name);
       this.providersFormOk = true;
       this.markDirty();
       setTimeout(()=>this.providersFormMsg='',4000);
     },
     modelVisible(m, prov){
       const q=(prov._filter||'').toLowerCase();
-      if(!q) return true;
-      return (m.model_id||'').toLowerCase().includes(q) || (m.upstream_model||'').toLowerCase().includes(q);
+      if(q && !((m.model_id||'').toLowerCase().includes(q) || (m.upstream_model||'').toLowerCase().includes(q))) return false;
+      const brand=prov._brandFilter||'';
+      if(brand){
+        const b=this.brandFor(m.upstream_model,prov.name);
+        if(b.label!==brand) return false;
+      }
+      const eff=prov._effFilter||'';
+      if(eff && (m.reasoning_effort||'')!==eff) return false;
+      return true;
+    },
+    drawerBrands(){
+      if(!this.drawerProv) return [];
+      const seen=new Map();
+      (this.drawerProv.models||[]).forEach(m=>{
+        const b=this.brandFor(m.upstream_model,this.drawerProv.name);
+        if(!seen.has(b.label)) seen.set(b.label,b);
+      });
+      return [...seen.values()];
+    },
+    filteredModelCount(){
+      if(!this.drawerProv) return 0;
+      return (this.drawerProv.models||[]).filter(m=>this.modelVisible(m,this.drawerProv)).length;
     },
     totalModelCount(){
       return (this.providersFormData||[]).reduce((n,p)=>n+((p.models||[]).length),0);
@@ -1678,26 +2145,27 @@ function dashboard() {
     get visibleProviders(){
       if(!this.providersFormData) return [];
       return this.providersFormData.filter(p=>{
-        if(this.provNameFilter && p.name!==this.provNameFilter) return false;
-        if(this.provProtocolFilter && !this.provHasProtocol(p,this.provProtocolFilter)) return false;
-        if(this.provEffortFilter && !this.provHasEffort(p,this.provEffortFilter)) return false;
-        if(this.provFreeOnly && !this.provHasFree(p)) return false;
-        if(this.provNoKeyOnly && (this.keysByProvider[p.name] && this.keysByProvider[p.name].configured)) return false;
         return this.provMatches(p);
       });
+    },
+    keyStatusText(name){
+      const key=this.keysByProvider[name];
+      if(!key || !key.configured) return t('key_unconfigured');
+      return key.suffix ? t('key_configured_masked',key.suffix) : t('key_configured');
     },
     openProviderDrawer(pi){
       const prov=this.providersFormData[pi];
       if(!prov) return;
       if(prov._filter===undefined) prov._filter='';
+      if(prov._brandFilter===undefined) prov._brandFilter='';
+      if(prov._effFilter===undefined) prov._effFilter='';
       this.drawerProv=prov;
     },
     closeProviderDrawer(){
       this.drawerProv=null;
     },
     clearProvFilters(){
-      this.provSearch=''; this.provNameFilter=''; this.provProtocolFilter='';
-      this.provEffortFilter='';
+      this.provSearch='';
     },
     async loadProvidersForm() {
        try {
@@ -1714,7 +2182,12 @@ function dashboard() {
                 _selected: {},
                 _bulkEffort: '',
                 _bulkFmt: '',
-                _bulkFree: false,
+                  _bulkFree: false,
+                  _keyDraft: '',
+                  _keySaving: false,
+                  _keyMsg: '',
+                  _keyOk: false,
+                  _fetching: false,
                 models: Object.entries(p.models||{}).map(([id, cfg]) => ({
                   model_id: id,
                   upstream_model: cfg.upstream_model||'',
@@ -1726,6 +2199,7 @@ function dashboard() {
                   _removed: false,
                   _freeTouched: false,
                   _fmtTouched: false,
+                  _metaExpanded: false,
                   }))
               }));
               this.isDirty = false;
@@ -1736,11 +2210,21 @@ function dashboard() {
         } catch(e){}
       },
       addModel(pi) {
-       this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,origin:'manual',_isNew:false,_removed:false,_freeTouched:false,_fmtTouched:false});
+       this.providersFormData[pi].models.push({model_id:'',upstream_model:'',reasoning_effort:'',api_format:'',free:false,origin:'manual',_isNew:false,_removed:false,_freeTouched:false,_fmtTouched:false,_metaExpanded:false});
         this.markDirty();
       },
      deleteModel(pi, mi) {
         this.providersFormData[pi].models.splice(mi,1);
+        this.markDirty();
+      },
+      deleteSelectedModels() {
+        const prov = this.drawerProv;
+        if (!prov || !prov._selected) return;
+        const toRemove = [];
+        Object.keys(prov._selected).forEach(k => { if (prov._selected[k]) toRemove.push(parseInt(k)); });
+        if (!toRemove.length) return;
+        toRemove.sort((a,b) => b - a).forEach(i => prov.models.splice(i, 1));
+        prov._selected = {};
         this.markDirty();
       },
       markDirty(){ this.isDirty = true; },
@@ -1795,7 +2279,7 @@ function dashboard() {
         const prov=this.providersFormData[pi];
         const idxs=Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(Number).sort((a,b)=>b-a);
         if(!idxs.length) return;
-        if(!confirm('确认删除选中的 '+idxs.length+' 个模型？')) return;
+        if(!confirm(t('confirm_delete_models',idxs.length))) return;
         idxs.forEach(i=> prov.models.splice(i,1));
         prov._selected={};
         this.markDirty();
@@ -1804,10 +2288,10 @@ function dashboard() {
         const prov=this.providersFormData[pi];
         const idxs=prov.models.map((m,i)=> m._removed ? i : -1).filter(i=>i>=0).sort((a,b)=>b-a);
         if(!idxs.length) return;
-        if(!confirm('确认清理 '+idxs.length+' 个已下架模型？')) return;
+        if(!confirm(t('confirm_clear_removed_models',idxs.length))) return;
         idxs.forEach(i=> prov.models.splice(i,1));
         this.markDirty();
-        toast('已清理 '+idxs.length+' 个下架模型', 'success');
+        toast(t('removed_models_cleaned',idxs.length), 'success');
       },
       importModels(pi, event){
         const prov=this.providersFormData[pi];
@@ -1831,7 +2315,7 @@ function dashboard() {
             added++;
           }
           this.markDirty();
-          toast('已导入 '+added+' 个模型', 'success');
+          toast(t('models_imported',added), 'success');
         };
         reader.readAsText(file);
         event.target.value='';
@@ -1854,6 +2338,10 @@ function dashboard() {
          if(r.ok) prov._testResult = await r.json();
          else prov._testResult = {success:false,status:t('request_failed'),latency_ms:0};
        } catch(e){ prov._testResult = {success:false,status:t('network_error'),latency_ms:0}; }
+       const result=prov._testResult||{};
+       const current=this.health.find(h=>h.provider===prov.name);
+       if(current){ current.status_level=result.success?'ok':'error'; current.status_text=result.status||''; current.latency_ms=result.latency_ms||0; }
+       else this.health.push({provider:prov.name,endpoint:prov.endpoint,status_level:result.success?'ok':'error',status_text:result.status||'',latency_ms:result.latency_ms||0,circuit:'closed',circuit_text:''});
        prov._testing = false;
      },
      // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
@@ -1892,7 +2380,7 @@ function dashboard() {
             setTimeout(()=>{ for(const m of prov.models) m._isNew=false; }, 8000);
           }
           this.providersFormOk = true;
-          this.providersFormMsg = d.message + (removedSet.size ? ' | 下架 ' + removedSet.size + ' 个' : '');
+          this.providersFormMsg = d.message + (removedSet.size ? t('removed_models_suffix',removedSet.size) : '');
         } else {
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
@@ -1907,8 +2395,8 @@ function dashboard() {
       const names = this.providersFormData.map(p=>(p.name||'').trim());
       const seen = new Set();
       for (const n of names) {
-        if (!n) { this.providersFormMsg='供应商 name 不能为空'; this.providersFormOk=false; return; }
-        if (seen.has(n)) { this.providersFormMsg='供应商 name 重复: '+n; this.providersFormOk=false; return; }
+        if (!n) { this.providersFormMsg=t('provider_name_required'); this.providersFormOk=false; return; }
+        if (seen.has(n)) { this.providersFormMsg=t('provider_name_duplicate',n); this.providersFormOk=false; return; }
         seen.add(n);
       }
       try {
@@ -1953,7 +2441,6 @@ function dashboard() {
           if(d.message) {
             // 配置保存成功后, 同步保存所有有草稿的 key
             await this.saveAllProviderKeys();
-            this.fetchRoutes();
             this.isDirty=false;
             setTimeout(()=>this.providersFormMsg='',3000);
           }
@@ -1989,12 +2476,12 @@ function dashboard() {
          }
        }
        if (saved > 0) {
-         this.keyMsg = `已保存 ${saved} 个供应商的密钥`;
+         this.keyMsg = t('provider_keys_saved',saved);
          this.fetchKeys();
          setTimeout(() => this.keyMsg = '', 3000);
        }
        if (failed > 0) {
-         this.keyMsg = `${failed} 个供应商的密钥保存失败`;
+         this.keyMsg = t('provider_keys_save_failed',failed);
          setTimeout(() => this.keyMsg = '', 3000);
        }
        },
@@ -2029,6 +2516,7 @@ function dashboard() {
       if(!this.stats||this.stats.today_requests===0) return 100;
       return Math.round(this.stats.today_success/this.stats.today_requests*100);
     },
+    get avgGenSpeed() { return Number(this.stats&&this.stats.gen_speed||0); },
     get todayCacheRate() {
       if(!this.stats) return '0.0';
       // 命中率口径: 命中 / 总输入 token (与 opencode-visual-cache 一致: 缓存读 / prompt_tokens).
@@ -2040,28 +2528,28 @@ function dashboard() {
     get maxModelReqs() { if(!this.stats||!this.stats.top_models.length) return 1; return this.stats.top_models[0].requests; },
     get maxDailyReqs() { if(!this.stats||!this.stats.trends.length) return 1; return Math.max(...this.stats.trends.map(t=>t.requests),1); },
     get donutSvg() {
-      if(!this.stats||this.stats.per_model.length===0) return '';
+      if(!this.stats||!this.stats.per_model.length) return '';
       const total=this.stats.total_requests||1;
-      const r=55, w=20, cx=70, cy=70;
-      const C=2*Math.PI*r;
-      let offset=0;
-      let segs='';
-      const models=this.stats.per_model.slice(0,8);
-      models.forEach((m,i)=>{
-        const pct=m.requests/total;
-        const len=pct*C;
-        const color=this.donutColors[i%this.donutColors.length];
-        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${w}" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
+      const r=55, w=20, cx=70, cy=70, C=2*Math.PI*r;
+      const top=this.stats.per_model.slice(0,8);
+      const shown=top.reduce((sum,m)=>sum+(m.requests||0),0);
+      const parts=top.map((m,i)=>({value:m.requests||0,color:this.donutColors[i%this.donutColors.length]}));
+      if(this.stats.per_model.length>8 && total>shown) parts.push({value:total-shown,color:'#3b3d48'});
+      let offset=0, segs='';
+      parts.forEach(p=>{
+        const len=p.value/total*C;
+        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${p.color}" stroke-width="${w}" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
         offset+=len;
       });
       return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2a2d37" stroke-width="${w}"/>${segs}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="#cdd0d4" font-size="16" font-weight="700">${total}</text><text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#6b7280" font-size="10">${t('unit_requests')}</text>`;
     },
 
+    openLogDetail(log) { this.selectedLog=log; },
     get filteredLogs() {
       let r = this.logs;
       if (this.logProviderFilter) r = r.filter(l=>l.provider===this.logProviderFilter);
-      if (this.logStatusFilter==='success') r = r.filter(l=>l.status<400);
-      if (this.logStatusFilter==='error') r = r.filter(l=>l.status>=400);
+      if (this.logStatusFilter==='success') r = r.filter(l=>!this.isLogError(l));
+      if (this.logStatusFilter==='error') r = r.filter(l=>this.isLogError(l));
       if (this.logTimeFilter) {
         const win = {'1h':3600,'24h':86400,'7d':604800}[this.logTimeFilter]||0;
         if (win) { const cutoff = Date.now()/1000 - win; r = r.filter(l=>l.timestamp>=cutoff); }
@@ -2072,31 +2560,16 @@ function dashboard() {
       }
       return r;
     },
-    resetLogView() { this.logPage = 0; this.expandedLog = -1; },
+    resetLogView() { this.logPage = 0; },
     get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
     // 独立错误列表: 直接来自 /admin/api/errors (已按时间倒序 + 仅错误), 与请求窗口解耦.
     get errorList() { return this.errors || []; },
+    get recordErrorCount() { return this.logs.filter(l=>Number(l.status)>=400 || !!l.error).length; },
+    get recordSuccessRate() { return this.logs.length ? Math.round((this.logs.length-this.recordErrorCount)/this.logs.length*100) : 0; },
+    get recordTokenCount() { return this.logs.reduce((s,l)=>s+(Number(l.prompt_tokens)||0)+(Number(l.completion_tokens)||0),0); },
 
-    // Daily trends chart points (requests / latency / tokens)
-    get dailyTp() {
-      if(!this.stats||this.stats.trends.length<2) return [];
-      const t=this.stats.trends,n=t.length;
-      let vals;
-      if(this.dailyMode==='cost') vals=t.map(d=>d.total_cost||0);
-      else if(this.dailyMode==='latency') vals=t.map(d=>d.avg_latency||0);
-      else if(this.dailyMode==='tokens') vals=t.map(d=>(d.total_prompt_tokens||0)+(d.total_completion_tokens||0));
-      else vals=t.map(d=>d.requests);
-      const mv=Math.max(...vals,1);
-      const w=n*70,h=120,pX=35,pY=12;
-      return t.map((d,i)=>({x:pX+i*(w-2*pX)/(n-1||1),y:h-pY-(vals[i]/mv)*(h-2*pY)}));
-    },
-    get dailyTps() { return this.dailyTp.map(p=>p.x+','+p.y).join(' '); },
-    get dailyArea() {
-      const p=this.dailyTp; if(p.length<2) return '';
-      return `M${p[0].x},108L${p[0].x},${p[0].y} ${p.slice(1).map(x=>`L${x.x},${x.y}`).join(' ')}L${p[p.length-1].x},108Z`;
-    },
 
     // Formatters
     fmtMoney(v) {
