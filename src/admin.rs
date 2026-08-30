@@ -492,39 +492,50 @@ const ALPINE_JS: &str = include_str!("admin_static/alpine.min.js");
 /// Tailwind 运行时 JIT (随包内联, 替代 cdn.tailwindcss.com) — 负责工具类样式生成.
 const TAILWIND_JS: &str = include_str!("admin_static/tailwind.js");
 
-/// 给展示用日志附加 `free` 标记 (免费模型), 判定与路由配置页完全一致 (注册表 is_free),
-/// 不污染磁盘持久化的 RequestLog 结构, 仅在 API 响应层注入.
-fn request_logs_with_free(
+/// 给展示用日志附加 `free` / `reasoning_effort` 标记 (免费模型 / 思考强度配置),
+/// 判定与路由配置页完全一致 (注册表配置), 不污染磁盘持久化的 RequestLog 结构,
+/// 仅在 API 响应层注入.
+fn request_logs_with_enrichment(
     logs: Vec<RequestLog>,
     free_ids: &std::collections::HashSet<String>,
+    reasoning_map: &std::collections::HashMap<String, Option<String>>,
 ) -> Vec<serde_json::Value> {
     logs.into_iter()
         .map(|l| {
             let mut v = serde_json::to_value(&l).unwrap_or(serde_json::Value::Null);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("free".into(), serde_json::Value::Bool(free_ids.contains(&l.model)));
+                obj.insert(
+                    "reasoning_effort".into(),
+                    serde_json::Value::String(
+                        reasoning_map.get(&l.model).and_then(|r| r.clone()).unwrap_or_default(),
+                    ),
+                );
             }
             v
         })
         .collect()
 }
 
-/// GET /admin/api/logs — 返回最近 100 条请求日志 (展示用, 内存限长), 附带免费标记.
+/// GET /admin/api/logs — 返回最近 100 条请求日志 (展示用, 内存限长), 附带免费/思考强度标记.
 pub async fn api_logs(
     State(state): State<super::proxy::AppState>,
 ) -> Json<Vec<serde_json::Value>> {
     let logs = state.log_buffer.recent(LOG_CAPACITY).await;
     let registry = state.registry.read().await;
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
+            reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
         }
     }
     drop(registry);
-    Json(request_logs_with_free(logs, &free_ids))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map))
 }
 
 /// DELETE /admin/api/logs — 清空日志缓冲区.
@@ -546,15 +557,18 @@ pub async fn api_errors(
     let logs = state.log_buffer.recent_errors(ERROR_CAPACITY).await;
     let registry = state.registry.read().await;
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
+            reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
         }
     }
     drop(registry);
-    Json(request_logs_with_free(logs, &free_ids))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map))
 }
 
 /// 路由配置的脱敏视图.
