@@ -711,7 +711,13 @@ fn main() {
     );
 
     // ── WebView (wry 0.38: new/with_url 均不返回 Result) ──
-    let admin_url = format!("http://127.0.0.1:{port}/admin");
+    // URL 携带版本号查询串作为缓存破除: WebView2 默认持久 HTTP 缓存会命中
+    // 旧版 /admin 页面, 导致新构建仍显示旧版本号; 版本变化后查询串随之变化,
+    // 缓存键不同, 强制拉取新页面.
+    let admin_url = format!(
+        "http://127.0.0.1:{port}/admin?v={}",
+        crate::version::VERSION
+    );
     let webview = WebViewBuilder::new(window.as_ref())
         .with_url(&admin_url)
         .build()

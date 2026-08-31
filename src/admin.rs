@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse};
+use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
 use axum::body::Bytes;
 use axum::Json;
 use futures::future::join_all;
@@ -445,7 +445,9 @@ pub async fn record_request_with_tokens(
 ///
 /// 将 API 鉴权令牌注入页面 (仅同源 WebView 可见), 使本地面板能带令牌调用受保护的
 /// /admin/api/* 接口; 未配置 AIGATE_ADMIN_TOKEN 时注入 `null`, 不鉴权.
-pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<String> {
+/// 响应强制 `no-store`: wry/WebView2 默认持久的 HTTP 缓存会把旧版页面 (含旧版本号)
+/// 在重启后继续命中, 造成"新版面上还显示旧版本"的假象.
+pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Response {
     let token_json = serde_json::to_string(&state.admin_token).unwrap_or_else(|_| "null".to_string());
     let html = ADMIN_HTML
         .replace("/*__AIGATE_TOKEN__*/", &format!("window.AIGATE_TOKEN = {token_json};"))
@@ -457,7 +459,16 @@ pub async fn admin_page(State(state): State<super::proxy::AppState>) -> Html<Str
             "/*__AIGATE_VERSION__*/",
             &format!("window.AIGATE_VERSION = {};", crate::version::to_json()),
         );
-    Html(html)
+    let mut resp = Html(html).into_response();
+    resp.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+    );
+    resp.headers_mut().insert(
+        HeaderName::from_static("expires"),
+        HeaderValue::from_static("0"),
+    );
+    resp
 }
 
 /// GET /admin/static/:file — 返回随包内联的前端依赖 (Alpine.js / Tailwind),
