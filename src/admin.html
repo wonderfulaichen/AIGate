@@ -509,7 +509,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div></template>
 </div>
 <div x-show="activeTab==='records'" class="page-enter page-wide">
-  <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs();fetchErrors()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" @click="clearAllLogs()" x-text="t('clear')"></button></div></div>
+  <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" @click="clearAllLogs()" x-text="t('clear')"></button></div></div>
   <div class="rec-stats">
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
@@ -517,10 +517,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
   </div>
   <div class="rec-layout">
-    <div class="pnl rec-errors" x-show="errorList.length">
-      <div class="pnl-h"><div><span class="pnl-ht" x-text="t('errors_summary')"></span><span class="txs tm" style="margin-left:8px" x-text="t('entry_count',errorList.length)"></span></div><button class="btn btn-g" style="font-size:11px" @click="errorExpanded=!errorExpanded" x-text="errorExpanded?t('collapse_action'):t('expand_action')"></button></div>
-      <div class="pnl-b" x-show="errorExpanded" style="padding:8px 16px"><template x-for="(log,i) in errorList.slice(0,8)" :key="i"><div class="rec-error-row" role="button" tabindex="0" @click="openLogDetail(log)" @keydown.enter="openLogDetail(log)" @keydown.space.prevent="openLogDetail(log)" :title="t('log_details_hint')"><span class="bdg bdg-e" x-text="log.status"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="log.model"></span><span class="txs tm" x-text="log.provider"></span><span class="txs tm" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="log.error||t('request_failed')"></span></div></template></div>
-    </div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_records')"></span><span class="txs tm" style="margin-left:8px" x-text="filteredLogs.length+' / '+logs.length"></span></div></div>
       <div class="an-filter"><input type="text" class="inp" style="width:220px" :placeholder="t('search_placeholder')" x-model="logSearch" @input="resetLogView()"><select class="sel" x-model="logProviderFilter" @change="resetLogView()"><option value="" x-text="t('opt.all_providers')"></option><template x-for="p in logProviders" :key="p"><option :value="p" x-text="p"></option></template></select><div class="seg"><span class="seg-i" :class="{'a':logStatusFilter===''}" @click="logStatusFilter='';resetLogView()" x-text="t('opt_all')"></span><span class="seg-i" :class="{'a':logStatusFilter==='success'}" @click="logStatusFilter='success';resetLogView()" x-text="t('opt.success')"></span><span class="seg-i" :class="{'a':logStatusFilter==='error'}" @click="logStatusFilter='error';resetLogView()" x-text="t('opt.error')"></span></div><select class="sel" x-model="logTimeFilter" @change="resetLogView()"><option value="" x-text="t('time_all')"></option><option value="1h" x-text="t('time_1h')"></option><option value="24h" x-text="t('time_24h')"></option><option value="7d" x-text="t('time_7d')"></option></select><button class="btn btn-g" style="font-size:11px" @click="logSearch='';logProviderFilter='';logStatusFilter='';logTimeFilter='';resetLogView()" x-text="t('filter_reset')"></button></div>
       <div style="overflow-x:auto"><table><thead><tr><th x-text="t('detail.time')"></th><th x-text="t('status')"></th><th x-text="t('detail.model')"></th><th x-text="t('detail.reasoning')"></th><th x-text="t('detail.provider')"></th><th x-text="t('unit_tokens')"></th><th x-text="t('detail.cache_hit_rate')"></th><th x-text="t('latency')"></th></tr></thead><tbody><template x-for="(log,i) in paginatedLogs" :key="i"><tr @click="openLogDetail(log)" style="cursor:pointer"><td class="mono txs tm" x-text="fmtTs(log.timestamp)"></td><td><span class="bdg" :class="log.status<400?'bdg-s':'bdg-e'" x-text="log.status"></span></td><td><div class="mono txs fw6" x-text="log.model"></div><div class="txs tm" x-text="log.upstream_model&&log.upstream_model!==log.model?log.upstream_model:''"></div></td><td><template x-if="log.reasoning_effort"><span class="bdg bdg-p" x-text="log.reasoning_effort"></span></template><span class="txs tm" x-show="!log.reasoning_effort">—</span></td><td class="txs" x-text="log.provider"></td><td class="mono txs" x-text="fmtT(log.prompt_tokens||0)+' → '+fmtT(log.completion_tokens||0)"></td><td><span class="bdg bdg-g" x-show="log.cached" x-text="t('badge.cached')"></span><span class="mono txs" x-show="!log.cached" x-text="logCacheRate(log)"></span></td><td class="mono txs" x-text="fmtMs(log.latency_ms)+' / '+(log.first_token_ms?fmtMs(log.first_token_ms):'—')"></td></tr></template><template x-if="!filteredLogs.length"><tr><td colspan="8" style="text-align:center;padding:40px" class="tm" x-text="logs.length?t('no_match'):t('no_logs')"></td></tr></template></tbody></table></div>
@@ -1343,7 +1339,7 @@ function dashboard() {
     copyTimer: null,
 
     // Data
-    logs: [], errors: [], errorExpanded: true, selectedLog: null, health: [], stats: null, cache: null,
+    logs: [], selectedLog: null, health: [], stats: null, cache: null,
     healthLoading: false,
     balanceData: null, balanceLoading: false,
     balanceEditProvider: null, balanceEditValue: '',
@@ -1524,7 +1520,7 @@ function dashboard() {
       this.logPage = 0;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); }
-      if (tabId==='records') { this.fetchLogs(); this.fetchErrors(); }
+      if (tabId==='records') { this.fetchLogs(); }
       if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
     },
 
@@ -1532,7 +1528,6 @@ function dashboard() {
       clearInterval(this.pollTimer);
       this.pollTimer = setInterval(() => {
         this.fetchLogs();
-        this.fetchErrors();
         if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
         if (this.activeTab==='analytics') { this.fetchStats(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
       }, 3000);
@@ -1548,7 +1543,6 @@ function dashboard() {
       try { await fetch('/admin/api/seen-version', { method:'POST', headers:authHeaders(), body: JSON.stringify({ version: cur }) }); } catch(e){}
     },
     async fetchLogs()    { try { const r=await fetch('/admin/api/logs', {headers:authHeaders()}); if(r.ok) this.logs=await r.json(); } catch(e){} },
-    async fetchErrors()  { try { const r=await fetch('/admin/api/errors', {headers:authHeaders()}); if(r.ok) this.errors=await r.json(); } catch(e){} },
     async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
     healthOf(name) { const h=(this.health||[]).find(x=>x.provider===name); return h?(h.status_level||''):''; },
     // 品牌徽章: 从上游模型名/供应商名识别品牌, 返回 {label, color}
@@ -2624,7 +2618,6 @@ function dashboard() {
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
     // 独立错误列表: 直接来自 /admin/api/errors (已按时间倒序 + 仅错误), 与请求窗口解耦.
-    get errorList() { return this.errors || []; },
     get recordErrorCount() { return this.logs.filter(l=>Number(l.status)>=400 || !!l.error).length; },
     get recordSuccessRate() { return this.logs.length ? Math.round((this.logs.length-this.recordErrorCount)/this.logs.length*100) : 0; },
     get recordTokenCount() { return this.logs.reduce((s,l)=>s+(Number(l.prompt_tokens)||0)+(Number(l.completion_tokens)||0),0); },
