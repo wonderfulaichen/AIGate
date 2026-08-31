@@ -166,6 +166,12 @@ impl DailyRollup {
     }
 }
 
+/// std::sync::Mutex 毒化容错: 一次 panic 后锁被标记 poisoned, 直接 unwrap 会连环 panic
+/// 把整个统计接口打挂; 吞掉毒化状态取内值, 保证后续请求可恢复.
+fn lock_days<'a>(m: &'a Mutex<BTreeMap<u64, DailyRollup>>) -> std::sync::MutexGuard<'a, BTreeMap<u64, DailyRollup>> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// 落盘行格式 (一行一天).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct RollupDayLine {
@@ -202,7 +208,7 @@ impl RollupBook {
         let Ok(content) = std::fs::read_to_string(&self.file_path) else {
             return;
         };
-        let mut days = self.days.lock().unwrap();
+        let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         for line in content.lines() {
             if let Ok(l) = serde_json::from_str::<RollupDayLine>(line) {
                 days.insert(l.d, DailyRollup {
@@ -273,7 +279,7 @@ impl RollupBook {
                 .unwrap_or_else(|| log.model.clone());
             rebuilt.entry(day).or_default().record(log, &upstream);
         }
-        let mut days = self.days.lock().unwrap();
+        let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         for (day, rollup) in rebuilt {
             days.insert(day, rollup);
         }
@@ -282,17 +288,21 @@ impl RollupBook {
     }
 
     /// 取 [start, end] 范围内 (按 day_start) 的天, 按时间升序.
+    /// 空范围 (start > end, 如查询范围起点晚于账本最早天) 返回空, 绝不 panic.
     pub fn days_between(&self, start: u64, end: u64) -> Vec<DailyRollup> {
-        let days = self.days.lock().unwrap();
+        if start > end {
+            return Vec::new();
+        }
+        let days = lock_days(&self.days);
         days.range(start..=end).map(|(_, d)| d.clone()).collect()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.days.lock().unwrap().is_empty()
+        self.days.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     fn serialize(&self) -> String {
-        let days = self.days.lock().unwrap();
+        let days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = String::with_capacity(4096);
         for d in days.values() {
             let line = RollupDayLine {
@@ -329,8 +339,25 @@ impl RollupBook {
 
     /// 清空 (与清空日志联动, 保持统计口径一致).
     pub async fn clear(&self) {
-        self.days.lock().unwrap().clear();
+        self.days.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.dirty.store(false, Ordering::Release);
         let _ = tokio::fs::remove_file(&self.file_path).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归: 查询范围起点晚于账本最早天 (start > end) 时必须返回空而不是 BTreeMap panic.
+    #[test]
+    fn days_between_empty_range_returns_empty() {
+        let book = RollupBook::new("data-test-rollup");
+        // start > end 的空范围
+        assert!(book.days_between(2000, 1000).is_empty());
+        // 空账本 + 任意合法范围
+        assert!(book.days_between(1000, 2000).is_empty());
+        // 干净清理, 不留文件
+        let _ = std::fs::remove_dir_all("data-test-rollup");
     }
 }
