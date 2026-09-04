@@ -233,30 +233,10 @@ fn lower_user_content(msg: &Value) -> Vec<Value> {
                         }
                     }
                     Some("image_url") => {
-                        // OpenAI image_url → Anthropic image block (url / base64 data URI)
-                        let url = p
-                            .pointer("/image_url/url")
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("");
-                        if let Some(data_uri) = url.strip_prefix("data:") {
-                            if let Some((mime_part, b64)) = data_uri.split_once(',') {
-                                if !b64.is_empty() {
-                                    let mime = mime_part
-                                        .split(';')
-                                        .next()
-                                        .unwrap_or("image/png")
-                                        .to_string();
-                                    out.push(json!({
-                                        "type": "image",
-                                        "source": {"type": "base64", "media_type": mime, "data": b64}
-                                    }));
-                                }
-                            }
-                        } else if !url.is_empty() {
-                            out.push(json!({
-                                "type": "image",
-                                "source": {"type": "url", "url": url}
-                            }));
+                        // OpenAI image_url → Anthropic image block (url / base64 data URI,
+                        // 兼容 image_url 为对象或裸字符串两种形态).
+                        if let Some(b) = openai_image_to_anthropic_block(p) {
+                            out.push(b);
                         }
                     }
                     _ => {}
@@ -303,26 +283,83 @@ fn lower_assistant_content(msg: &Value) -> Vec<Value> {
     blocks
 }
 
+/// OpenAI image_url 部件 → Anthropic image block (url / base64 data URI 两种形态).
+/// 无法识别的返回 None (调用方决定丢弃或降级).
+fn openai_image_to_anthropic_block(p: &Value) -> Option<Value> {
+    let url = match p.get("image_url") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Object(o)) => o.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+        _ => String::new(),
+    };
+    if url.is_empty() {
+        return None;
+    }
+    if let Some(data_uri) = url.strip_prefix("data:") {
+        let (mime_part, b64) = data_uri.split_once(',')?;
+        if b64.is_empty() {
+            return None;
+        }
+        let mime = mime_part.split(';').next().unwrap_or("image/png").to_string();
+        Some(json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}))
+    } else {
+        Some(json!({"type": "image", "source": {"type": "url", "url": url}}))
+    }
+}
+
 /// tool 消息 → Anthropic tool_result block.
+///
+/// 中转保真: content 为数组时, text 与 image 块都必须保留 (视觉 agent 用工具返回截图,
+/// 只拼 text 会静默丢图, 上游"失明"). 纯字符串 content 保持字符串形态.
 fn tool_result_block(msg: &Value) -> Value {
     let id = msg
         .get("tool_call_id")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    // content 字符串或数组 → 字符串
     let content = match msg.get("content") {
-        Some(Value::String(s)) => s.clone(),
+        Some(Value::String(s)) => Value::from(s.clone()),
         Some(Value::Array(parts)) => {
-            let mut buf = String::new();
+            let mut blocks: Vec<Value> = vec![];
+            let mut has_image = false;
             for p in parts {
-                if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
-                    buf.push_str(t);
+                match p.get("type").and_then(|t| t.as_str()) {
+                    Some("text") => {
+                        if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
+                            if !t.is_empty() {
+                                blocks.push(json!({"type": "text", "text": t}));
+                            }
+                        }
+                    }
+                    Some("image_url") => {
+                        if let Some(b) = openai_image_to_anthropic_block(p) {
+                            blocks.push(b);
+                            has_image = true;
+                        }
+                    }
+                    // 未知部件: 有图片时保留数组形态避免连带丢失; 纯文本数组仍降级为字符串.
+                    _ => {
+                        if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
+                            if !t.is_empty() {
+                                blocks.push(json!({"type": "text", "text": t}));
+                            }
+                        }
+                    }
                 }
             }
-            buf
+            // 无图片且全部是文本 → 折叠为字符串 (Anthropic 兼容, 更省字节);
+            // 含图片 → 保留块数组 (否则图丢).
+            if has_image {
+                Value::Array(blocks)
+            } else {
+                let joined: String = blocks
+                    .iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("");
+                Value::from(joined)
+            }
         }
-        _ => String::new(),
+        _ => Value::String(String::new()),
     };
     let is_error = msg
         .get("is_error")
@@ -709,10 +746,45 @@ pub fn anthropic_to_openai_request(body: &Value) -> Value {
                                         let content = match b.get("content") {
                                             Some(Value::String(s)) => Value::from(s.clone()),
                                             Some(Value::Array(arr)) => {
-                                                let text = arr.iter()
-                                                    .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
-                                                    .collect::<Vec<_>>().join("");
-                                                Value::from(text)
+                                                // 中转保真: tool_result 数组里的 text 与 image 块都保留,
+                                                // 转成 OpenAI content 数组; 纯文本则折叠为字符串.
+                                                let mut parts: Vec<Value> = vec![];
+                                                let mut has_image = false;
+                                                for x in arr {
+                                                    match x.get("type").and_then(|t| t.as_str()) {
+                                                        Some("text") => {
+                                                            if let Some(t) = x.get("text").and_then(|v| v.as_str()) {
+                                                                if !t.is_empty() {
+                                                                    parts.push(json!({"type": "text", "text": t}));
+                                                                }
+                                                            }
+                                                        }
+                                                        Some("image") => {
+                                                            if let Some(src) = x.get("source") {
+                                                                let is_url = src.get("type").and_then(|t| t.as_str()) == Some("url");
+                                                                let url = src.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                                                                let media = src.get("media_type").and_then(|m| m.as_str()).unwrap_or("image/png");
+                                                                let data = src.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                                                                if is_url && !url.is_empty() {
+                                                                    parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                                                                    has_image = true;
+                                                                } else if !data.is_empty() {
+                                                                    parts.push(json!({"type": "image_url", "image_url": {"url": format!("data:{media};base64,{data}")}}));
+                                                                    has_image = true;
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                if has_image {
+                                                    Value::Array(parts)
+                                                } else {
+                                                    let text: String = parts.iter()
+                                                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                                                        .collect::<Vec<_>>().join("");
+                                                    Value::from(text)
+                                                }
                                             }
                                             _ => Value::Null,
                                         };
@@ -1439,7 +1511,56 @@ mod tests {
         assert_eq!(out["error"]["type"], "overloaded_error");
     }
 
-    // ─── 反向转换 (对外 /messages 入口) 测试 ───
+    /// 中转保真回归: tool 消息返回截图 (content 数组含 image_url) 时,
+    /// 转 Anthropic tool_result 必须保留 image 块, 不得只拼 text 静默丢图.
+    #[test]
+    fn tool_result_preserves_image_block() {
+        let msg = json!({
+            "role": "tool", "tool_call_id": "c1",
+            "content": [
+                {"type": "text", "text": "截图如下"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ]
+        });
+        let block = tool_result_block(&msg);
+        let content = block["content"].as_array().expect("含图必须保留数组形态");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["data"], "AAAA");
+    }
+
+    /// 纯文本 tool 结果仍折叠为字符串 (Anthropic 兼容, 省字节).
+    #[test]
+    fn tool_result_text_only_collapses_to_string() {
+        let msg = json!({
+            "role": "tool", "tool_call_id": "c1",
+            "content": [{"type": "text", "text": "ok"}]
+        });
+        let block = tool_result_block(&msg);
+        assert_eq!(block["content"], "ok");
+    }
+
+    /// 反向: Anthropic tool_result 含 image 块 → OpenAI tool 消息 content 数组保留 image_url.
+    #[test]
+    fn back_tool_result_preserves_image() {
+        let body = json!({
+            "model": "m",
+            "messages": [
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1",
+                    "content": [
+                        {"type": "text", "text": "截图"},
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "BBBB"}}
+                    ]}]}
+            ]
+        });
+        let out = anthropic_to_openai_request(&body);
+        let msgs = out["messages"].as_array().unwrap();
+        let tool_msg = msgs.iter().find(|m| m["role"] == "tool").expect("应有 tool 消息");
+        let content = tool_msg["content"].as_array().expect("含图应为数组");
+        assert!(content.iter().any(|p| p["type"] == "image_url"
+            && p["image_url"]["url"].as_str().map(|u| u.contains("BBBB")).unwrap_or(false)),
+            "tool_result 图片被丢弃: {tool_msg}");
+    }
 
     #[test]
     fn back_request_system_and_messages() {
