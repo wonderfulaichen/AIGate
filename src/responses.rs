@@ -683,13 +683,34 @@ impl ResponsesStreamConv {
                 vec![json!({"error": {"message": full, "type": "upstream_error"}}).to_string()]
             }
             // response.incomplete 是"正常截断"而非失败 (如 max_output_tokens 用尽),
-            // 不向客户端发错误帧 — 收尾的 finish_reason=length 已表达截断语义;
-            // 但 reason 仍记入 last_error 供日志定位.
+            // 不向客户端发错误帧 — 但它是流的【终止事件】, 必须补发 finish_reason=length
+            // + usage + [DONE], 否则客户端收不到终止帧 (表现为 finish_reason:null / 卡死等待),
+            // 且 proxy 会误判为"非干净断流"触发自动续写 (对 max_tokens 截断续写是错的).
             "response.incomplete" => {
                 let reason = extract_upstream_error_detail(val)
                     .unwrap_or_else(|| "max_output_tokens".to_string());
                 self.last_error = Some(reason);
-                vec![]
+                let mut out = vec![];
+                if let Some(usage) = val.get("response").and_then(|r| r.get("usage")) {
+                    out.push(openai_usage_from_responses(usage));
+                }
+                out.push(
+                    json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]})
+                        .to_string(),
+                );
+                out.push("[DONE]".to_string());
+                out
+            }
+            // response.cancelled: 请求被取消, 同样作为终止事件补发收尾帧 (finish_reason=stop),
+            // 避免客户端等待不存在的 completed.
+            "response.cancelled" => {
+                let mut out = vec![];
+                out.push(
+                    json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+                        .to_string(),
+                );
+                out.push("[DONE]".to_string());
+                out
             }
 
             _ => vec![], // 其他事件忽略
@@ -787,7 +808,7 @@ pub fn responses_to_openai_nonstream(body: &Value) -> Value {
         _ => "stop",
     };
 
-    let usage = body.get("usage").cloned().unwrap_or_else(|| json!({}));
+    let usage = map_responses_usage_to_openai(body.get("usage").unwrap_or(&Value::Null));
 
     let finish_reason = if !tool_calls.is_empty() && finish_reason == "stop" {
         "tool_calls".to_string()
@@ -832,6 +853,49 @@ pub fn responses_error_to_openai(body: &Value) -> Value {
 
 // ─── 辅助函数 ───
 
+/// Responses API usage → OpenAI usage 对象 (非流式响应体用).
+///
+/// 上游按 Responses 规范用 `input_tokens` / `output_tokens` (+ `input_tokens_details.cached_tokens`
+/// / `output_tokens_details.reasoning_tokens`), 而 OpenAI 客户端与本地日志按
+/// `prompt_tokens` / `completion_tokens` 读取 — 不映射会导致非流式响应 token 计数为 0.
+/// 若上游已返回 OpenAI 风格字段 (含 prompt_tokens), 原样透传.
+fn map_responses_usage_to_openai(u: &Value) -> Value {
+    let obj = match u.as_object() {
+        Some(o) if !o.is_empty() => o,
+        _ => return json!({}),
+    };
+    // 已是 OpenAI 风格 → 透传.
+    if obj.contains_key("prompt_tokens") || obj.contains_key("completion_tokens") {
+        return u.clone();
+    }
+    let input = obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let output = obj.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let mut out = json!({
+        "prompt_tokens": input,
+        "completion_tokens": output,
+        "total_tokens": input + output,
+    });
+    if let Some(cached) = obj
+        .get("input_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+    {
+        if cached > 0 {
+            out["prompt_tokens_details"] = json!({"cached_tokens": cached});
+        }
+    }
+    if let Some(reasoning) = obj
+        .get("output_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_u64())
+    {
+        if reasoning > 0 {
+            out["completion_tokens_details"] = json!({"reasoning_tokens": reasoning});
+        }
+    }
+    out
+}
+
 /// Responses API usage → OpenAI usage payload.
 fn openai_usage_from_responses(u: &Value) -> String {
     let input = u
@@ -857,20 +921,12 @@ fn openai_usage_from_responses(u: &Value) -> String {
         "prompt_tokens": input,
         "completion_tokens": output,
     });
-    let mut details = Map::new();
+    // 分别构造 prompt/completion 的 details, 避免同一对象交叉污染两个字段.
     if cached > 0 {
-        details.insert("cached_tokens".to_string(), json!(cached));
+        usage["prompt_tokens_details"] = json!({"cached_tokens": cached});
     }
     if reasoning > 0 {
-        details.insert("reasoning_tokens".to_string(), json!(reasoning));
-    }
-    if !details.is_empty() {
-        if cached > 0 {
-            usage["prompt_tokens_details"] = Value::Object(details.clone());
-        }
-        if reasoning > 0 {
-            usage["completion_tokens_details"] = Value::Object(details);
-        }
+        usage["completion_tokens_details"] = json!({"reasoning_tokens": reasoning});
     }
     json!({ "choices": [], "usage": usage }).to_string()
 }
@@ -1019,16 +1075,76 @@ mod tests {
         assert!(last.contains("generation limit exceeded") && last.contains("status=failed"), "last_error={last}");
     }
 
-    /// response.incomplete 是正常截断 (如 max_output_tokens 用尽): 记录原因供日志,
-    /// 但不发错误帧 — 收尾的 finish_reason=length 已表达截断语义.
+    /// response.incomplete 是正常截断 (如 max_output_tokens 用尽): 不发错误帧,
+    /// 但必须作为终止事件补发 finish_reason=length + [DONE] (否则客户端收不到收尾帧),
+    /// 并把 reason 记入 last_error 供日志定位.
     #[test]
-    fn response_incomplete_records_reason_without_error_frame() {
+    fn response_incomplete_emits_length_finish_and_done() {
         let mut conv = ResponsesStreamConv::new();
         let out = conv.feed_line(
-            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":100,"output_tokens":50}}}"#,
         );
-        assert!(out.is_empty(), "截断不应发错误帧: {out:?}");
+        // 无错误帧, 但必须有 length 收尾帧 + [DONE]
+        assert!(!out.iter().any(|s| s.contains("\"error\"")), "截断不应发错误帧: {out:?}");
+        assert!(out.iter().any(|s| s.contains("\"finish_reason\":\"length\"")), "缺 length 收尾帧: {out:?}");
+        assert_eq!(out.last().map(|s| s.as_str()), Some("[DONE]"), "缺 [DONE] 终止帧");
+        assert!(out.iter().any(|s| s.contains("\"prompt_tokens\":100")), "缺 usage 帧: {out:?}");
         assert_eq!(conv.last_error.as_deref(), Some("max_output_tokens"));
+    }
+
+    /// response.cancelled 也作为终止事件补发 stop 收尾帧 + [DONE].
+    #[test]
+    fn response_cancelled_emits_stop_finish() {
+        let mut conv = ResponsesStreamConv::new();
+        let out = conv.feed_line(r#"data: {"type":"response.cancelled","response":{"status":"cancelled"}}"#);
+        assert!(out.iter().any(|s| s.contains("\"finish_reason\":\"stop\"")), "缺 stop 收尾: {out:?}");
+        assert_eq!(out.last().map(|s| s.as_str()), Some("[DONE]"));
+    }
+
+    /// 非流式 usage 字段名映射: Responses 的 input_tokens/output_tokens 必须转成
+    /// OpenAI 的 prompt_tokens/completion_tokens, 否则客户端与本地日志计数为 0.
+    #[test]
+    fn nonstream_usage_field_names_mapped() {
+        let body = json!({
+            "id": "resp_1", "status": "completed",
+            "output": [{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],
+            "usage": {"input_tokens": 50, "output_tokens": 10,
+                      "input_tokens_details": {"cached_tokens": 8},
+                      "output_tokens_details": {"reasoning_tokens": 4}}
+        });
+        let out = responses_to_openai_nonstream(&body);
+        assert_eq!(out["usage"]["prompt_tokens"], 50);
+        assert_eq!(out["usage"]["completion_tokens"], 10);
+        assert_eq!(out["usage"]["total_tokens"], 60);
+        assert_eq!(out["usage"]["prompt_tokens_details"]["cached_tokens"], 8);
+        assert_eq!(out["usage"]["completion_tokens_details"]["reasoning_tokens"], 4);
+    }
+
+    /// 已是 OpenAI 风格 usage 时原样透传, 不重复映射.
+    #[test]
+    fn nonstream_usage_openai_style_passthrough() {
+        let u = json!({"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7});
+        let mapped = map_responses_usage_to_openai(&u);
+        assert_eq!(mapped, u);
+    }
+
+    /// 流式 usage details 不交叉污染: cached 只进 prompt_tokens_details,
+    /// reasoning 只进 completion_tokens_details.
+    #[test]
+    fn stream_usage_details_not_cross_contaminated() {
+        let u = json!({"input_tokens": 100, "output_tokens": 20,
+                       "input_tokens_details": {"cached_tokens": 30},
+                       "output_tokens_details": {"reasoning_tokens": 8}});
+        let s = openai_usage_from_responses(&u);
+        let v: Value = serde_json::from_str(&s).unwrap();
+        // prompt_tokens_details 只含 cached_tokens
+        assert_eq!(v["usage"]["prompt_tokens_details"]["cached_tokens"], 30);
+        assert!(v["usage"]["prompt_tokens_details"].get("reasoning_tokens").is_none(),
+            "reasoning 不应出现在 prompt_tokens_details");
+        // completion_tokens_details 只含 reasoning_tokens
+        assert_eq!(v["usage"]["completion_tokens_details"]["reasoning_tokens"], 8);
+        assert!(v["usage"]["completion_tokens_details"].get("cached_tokens").is_none(),
+            "cached 不应出现在 completion_tokens_details");
     }
 
     /// 顶层 error 事件的 message 直接提取.
