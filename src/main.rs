@@ -658,6 +658,7 @@ fn main() {
     let app = Router::new()
         .route("/v1/chat/completions", post(proxy::chat_completions))
         .route("/v1/messages", post(proxy::messages_completions))
+        .route("/v1/responses", post(proxy::responses_completions))
         .route("/v1/models", get(handle_models))
         .route("/health", get(|| async { "ok" }))
         .route("/admin", get(admin::admin_page))

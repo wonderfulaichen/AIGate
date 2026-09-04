@@ -2,11 +2,22 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.4] - 2026-09-04
+
+### 新增
+- **对外 Responses `/v1/responses` 入口（含原生直通）**：客户端可直接以 Responses API 格式接入（Codex 等）。上游同为 Responses 协议时**原生直通**——请求体仅换模型名/合 extra_body 原样转发，响应 SSE 字节级透传，reasoning/多模态/工具结构零转换损耗；上游为 OpenAI/Anthropic 时转换为 chat 规范复用现有管线（含熔断/缓存/自动续写），响应译回 Responses（官方事件序列：`response.created → output_item.added → delta → done → response.completed`，含 reasoning 与工具调用事件；length 截断发 `response.incomplete`）。usage 按 Responses 口径记账（input_tokens 含缓存读，cached/miss 拆分）。
+- **原生直通泛化**：`/v1/messages` 与 `/v1/responses` 的同协议直通统一为一个中继（`relay_native_passthrough`），按上游协议自动解析端点（独立协议端点优先，否则改写 /chat/completions）、错误体风格与记账口径。
+- **有状态引用显式拒绝**：`/v1/responses` 的 `previous_response_id` / `item_reference` 依赖服务端会话存储，中转网关无状态——显式返回 400 说明，不静默忽略（避免客户端误以为历史生效）。
+- **面板 API 信息更新**：概览页 API 信息与关于页端点列表补齐 `/v1/messages`、`/v1/responses` 入口（含中英文描述）。
+
+### 修复
+- （本轮无独立修复项；冒烟覆盖：直通保真比对、双协议转换、错误路径、`/v1/chat/completions` 回归，零 panic）
+
 ## [0.5.3] - 2026-08-31
 
 ### 新增
 - **日级统计持久化 (rollup)**：按「日 × 供应商 × 上游模型」实时聚合请求/tokens/费用/优化省量并落盘 `data/daily_stats.jsonl`，日志 5000 条滚动窗口不再封顶月级统计——分析页「月 (12)/天 (30)」视图可回看日志窗口之外的全量历史，费用按高峰/空闲拆分存储、查询期按最新费率重算（改价可追溯）。
-- **对外 Anthropic `/v1/messages` 入口**：Claude Code、opencode（Anthropic 模式）等客户端可直接指向网关。请求译为 OpenAI 规范后复用现有路由/熔断/重试/统计管线，响应译回 Anthropic（含流式 SSE、思考块、工具调用），上游协议任意（openai/anthropic/responses）均兼容。
+- **对外 Anthropic `/v1/messages` 入口（含原生直通）**：Claude Code、opencode（Anthropic 模式）等客户端可直接指向网关。上游同为 Anthropic 协议时**原生直通**——请求体仅换模型名/合 extra_body 原样转发，响应 SSE 字节级透传，thinking 块 signature、多模态与工具结构零转换损耗；上游为其他协议时译为 OpenAI 规范复用现有路由/熔断/重试/统计管线，响应译回 Anthropic（含流式 SSE、思考块、工具调用）。
 - **概览页优化省量卡片**：新增「优化省量」面板，展示今日/本月省 Tokens 与累计起算点；API 信息面板移至右侧栏。
 - **记录页详细信息增强**：记录表新增「思考强度」「缓存命中率」列；详情弹窗补缓存命中率/思考强度/生成速度/优化省量。
 - **中转 ID 自动生成**：拉取/导入模型时自动按「供应商/模型ID」命名，免手动填写，不满意可改；模型行新增一键复制中转 ID。
