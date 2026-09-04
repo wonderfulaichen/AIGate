@@ -740,36 +740,474 @@ pub async fn chat_completions(
 
 /// 处理 POST /v1/messages — 对外 Anthropic 协议入口.
 ///
-/// 流程: 读 Anthropic /messages 请求 → 译为 OpenAI chat/completions 规范 → 复用
-/// [`chat_completions`] 整条管线 (模型路由/参数注入/上游协议转换/熔断/重试/统计) →
-/// 把 OpenAI 格式响应在出口译回 Anthropic 返回客户端.
+/// 按【上游协议】分流, 保证中转保真:
+/// - 上游也是 Anthropic → **原生直通**: 请求体几乎原样转发 (仅换 model / 合 extra_body),
+///   响应流原样回传. thinking 块与 signature、多模态、工具结构全程不被 OpenAI 规范往返
+///   有损转换, Claude Code 等原生客户端的多轮思考/工具链不丢字段.
+/// - 上游是 OpenAI / Responses → 先 Anthropic→OpenAI 规范, 复用 [`chat_completions`]
+///   整条管线, 出口再译回 Anthropic.
 pub async fn messages_completions(
     State(state): State<AppState>,
     headers: HeaderMap,
     req: Request<Body>,
 ) -> Result<Response, Response> {
+    let start = std::time::Instant::now();
     let (_, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(b) => b,
-        Err(e) => return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string())),
+        Err(e) => return Err(anthropic_error(StatusCode::BAD_REQUEST, &e.to_string())),
     };
-    let oai = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(v) => crate::anthropic::anthropic_to_openai_request(&v),
-        Err(e) => return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string())),
+    let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return Err(anthropic_error(StatusCode::BAD_REQUEST, &e.to_string())),
     };
+    let model = parsed
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 路由查表 + 判定上游协议.
+    let route = match state.registry.read().await.lookup(&model) {
+        Some(r) => r,
+        None => {
+            crate::admin::record_request(
+                &state.log_buffer, &model, "-", "-", None, 404, start, bytes.len(),
+                Some("unknown model".to_string()),
+            ).await;
+            return Err(anthropic_error(
+                StatusCode::NOT_FOUND,
+                &format!("unknown model '{model}' - not in providers.json"),
+            ));
+        }
+    };
+    let provider_name = route.provider.name.clone();
+    let model_cfg = route.model.clone();
+    let provider = route.provider.clone();
+    drop(route);
+    let resolved_format = model_cfg
+        .resolve_api_format(&provider, &model)
+        .unwrap_or_else(|| "openai".to_string());
+
+    // ── 上游 Anthropic → 原生直通 ──
+    if resolved_format == "anthropic" {
+        return relay_native_anthropic(
+            state, headers, bytes, model, provider_name, provider, model_cfg, start,
+        )
+        .await;
+    }
+
+    // ── 上游 OpenAI / Responses → 转 OpenAI 规范复用现有管线 ──
+    let oai = crate::anthropic::anthropic_to_openai_request(&parsed);
     let oai_bytes = match serde_json::to_vec(&oai) {
         Ok(b) => bytes::Bytes::from(b),
-        Err(e) => return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
+        Err(e) => return Err(anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())),
     };
-    // 以 OpenAI 请求形态复用 chat_completions (headers 原样透传, 保持鉴权/代理语义).
     let oai_req = Request::builder()
         .method("POST")
         .uri("/v1/chat/completions")
         .body(Body::from(oai_bytes))
-        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        .map_err(|e| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
     let oai_resp = chat_completions(State(state), headers, oai_req).await?;
     Ok(anthropize_response(oai_resp).await)
 }
+
+/// Anthropic 风格错误响应 `{"type":"error","error":{...}}`.
+fn anthropic_error(status: StatusCode, message: &str) -> Response {
+    let body = serde_json::json!({
+        "type": "error",
+        "error": { "type": "invalid_request_error", "message": message }
+    });
+    (status, axum::Json(body)).into_response()
+}
+
+/// 原生 Anthropic 直通中继: 客户端 Anthropic → 上游 Anthropic, 不经 OpenAI 规范.
+///
+/// 仅做必要的转发处理 (模型名替换 / extra_body 合并 / 鉴权头 / 熔断 / 重试 / 用量记账),
+/// 请求与响应体保持 Anthropic 原样, 从而无损保留 thinking 块的 signature、多模态与工具结构.
+async fn relay_native_anthropic(
+    state: AppState,
+    headers: HeaderMap,
+    body: Bytes,
+    model: String,
+    provider_name: String,
+    provider: crate::providers::ProviderConfig,
+    model_cfg: crate::providers::ModelConfig,
+    start: std::time::Instant,
+) -> Result<Response, Response> {
+    // 端点: 优先供应商独立 endpoint_anthropic, 否则改写 /chat/completions → /messages.
+    let mut endpoint = provider.endpoint.clone();
+    if let Some(ep) = &provider.endpoint_anthropic {
+        if !ep.trim().is_empty() {
+            endpoint = ep.clone();
+        }
+    } else if endpoint.ends_with("/chat/completions") {
+        endpoint = endpoint.replace("/chat/completions", "/messages");
+    }
+
+    // 熔断检查.
+    if !check_breaker(&state.breakers, &provider_name) {
+        warn!("proxy(native-anthropic): circuit open for provider={provider_name}, fast-fail 503");
+        crate::admin::record_request(
+            &state.log_buffer, &model, &provider_name, &endpoint,
+            model_cfg.upstream_model.as_deref(), 503, start, body.len(),
+            Some("circuit breaker open".to_string()),
+        ).await;
+        return Err(anthropic_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
+        ));
+    }
+
+    // API key.
+    let key = match state.registry.read().await.api_key(&provider, &state.key_store).await {
+        Ok(k) => k,
+        Err(e) => {
+            crate::admin::record_request(
+                &state.log_buffer, &model, &provider_name, &endpoint,
+                model_cfg.upstream_model.as_deref(), 500, start, body.len(), Some(e.clone()),
+            ).await;
+            return Err(anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e));
+        }
+    };
+
+    // 请求体最小改写: 换 upstream_model + 合 extra_body, 其余字段原样保留 (保真).
+    let mut bytes = body;
+    if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        if let Some(up) = model_cfg.upstream_model.as_deref().filter(|s| !s.is_empty()) {
+            v["model"] = serde_json::json!(up);
+        }
+        if let Some(extra) = &model_cfg.extra_body {
+            if let (Some(obj), Some(map)) = (v.as_object_mut(), extra.as_object()) {
+                for (k, val) in map {
+                    obj.insert(k.clone(), val.clone());
+                }
+            }
+        }
+        if let Ok(nb) = serde_json::to_vec(&v) {
+            bytes = Bytes::from(nb);
+        }
+    }
+    let body_len_val = bytes.len();
+    let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
+        == Some(true);
+
+    // 转发头: 过滤客户端头 + Bearer 鉴权 + 供应商额外头 (如 anthropic-version).
+    let mut req_headers = filter_headers(&headers);
+    req_headers.insert(
+        HeaderName::from_static("authorization"),
+        HeaderValue::from_str(&format!("Bearer {key}"))
+            .map_err(|e| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?,
+    );
+    if let Some(extra) = &provider.headers {
+        for (k, val) in extra {
+            if let (Ok(name), Ok(hv)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(val),
+            ) {
+                req_headers.insert(name, hv);
+            }
+        }
+    }
+
+    // 发送 (瞬态重试, 口径与 chat_completions 一致: 5xx/连接错误重试, 4xx 终态).
+    let total_attempts = state.retry_max.load(Ordering::Relaxed).saturating_add(1);
+    let backoff_base = Duration::from_millis(state.retry_backoff_ms.load(Ordering::Relaxed));
+    let mut upstream: Option<reqwest::Response> = None;
+    let mut send_err: Option<String> = None;
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        if !check_breaker(&state.breakers, &provider_name) {
+            crate::admin::record_request(
+                &state.log_buffer, &model, &provider_name, &endpoint,
+                model_cfg.upstream_model.as_deref(), 503, start, body_len_val,
+                Some("circuit breaker open".to_string()),
+            ).await;
+            return Err(anthropic_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "provider circuit open",
+            ));
+        }
+        match state
+            .client
+            .request(Method::POST, &endpoint)
+            .headers(req_headers.clone())
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .body(bytes.clone())
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if status >= 500 && attempt < total_attempts {
+                    warn!("proxy(native-anthropic): upstream {status} (attempt {attempt}/{total_attempts}), retrying");
+                    retry_backoff(attempt, backoff_base).await;
+                    continue;
+                }
+                upstream = Some(resp);
+                break;
+            }
+            Err(e) => {
+                let chain = format_error_chain(&e);
+                let retryable = e.is_connect() || e.is_timeout() || e.is_request();
+                if retryable && attempt < total_attempts {
+                    warn!("proxy(native-anthropic): send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
+                    retry_backoff(attempt, backoff_base).await;
+                    continue;
+                }
+                send_err = Some(chain);
+                break;
+            }
+        }
+    }
+
+    if let Some(chain) = send_err {
+        report_breaker(&state.breakers, &provider_name, false);
+        warn!("proxy(native-anthropic): send() failed for {endpoint}: {chain}");
+        let lb = state.log_buffer.clone();
+        let (m2, p2, ep2, up2) = (model.clone(), provider_name.clone(), endpoint.clone(), model_cfg.upstream_model.clone());
+        let err_msg = format!("upstream error: {chain}");
+        let chain_for_log = chain.clone();
+        tokio::spawn(async move {
+            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), 502, start, body_len_val, Some(chain_for_log)).await;
+        });
+        return Err(anthropic_error(StatusCode::BAD_GATEWAY, &err_msg));
+    }
+
+    let upstream = upstream.expect("upstream present after send loop");
+    let upstream_status = upstream.status().as_u16();
+
+    if upstream_status >= 400 {
+        let err_body = upstream.text().await.unwrap_or_default();
+        warn!("proxy(native-anthropic): upstream {upstream_status}: {}", &err_body[..err_body.len().min(500)]);
+        report_breaker(&state.breakers, &provider_name, upstream_status < 500);
+        let err_msg = format_upstream_error(upstream_status, &err_body);
+        let lb = state.log_buffer.clone();
+        let (m2, p2, ep2, up2) = (model.clone(), provider_name.clone(), endpoint.clone(), model_cfg.upstream_model.clone());
+        let err_clone = err_msg.clone();
+        tokio::spawn(async move {
+            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone)).await;
+        });
+        // 上游 Anthropic 错误体已是 {"type":"error","error":{...}} 形态, 原样透传最保真.
+        let code = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);
+        let body = axum::body::Body::from(err_body);
+        let mut resp = Response::builder().status(code).body(body).map_err(|_| anthropic_error(code, &err_msg))?;
+        resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+        return Ok(resp);
+    }
+
+    report_breaker(&state.breakers, &provider_name, true);
+    let resp_headers = upstream.headers().clone();
+    let status = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::OK);
+
+    if !is_stream {
+        // 非流式: 原样回传 JSON, 抽取 Anthropic usage 记账.
+        let text = match upstream.text().await {
+            Ok(t) => t,
+            Err(e) => return Err(anthropic_error(StatusCode::BAD_GATEWAY, &format!("failed to read upstream body: {e}"))),
+        };
+        let (pt, ct, hit, miss, creation) = extract_anthropic_usage(&text);
+        crate::admin::record_request_with_tokens(
+            &state.log_buffer, &model, &provider_name, &endpoint,
+            model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
+            false, hit, miss, creation, 0, 0, 0, None, None,
+        ).await;
+        let mut resp = (status, axum::body::Body::from(text)).into_response();
+        resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+        return Ok(resp);
+    }
+
+    // 流式: 原样透传 Anthropic SSE, 轻量 tap 抽取 usage 记账 (不转换字节).
+    let tap = NativeAnthropicStream::new(
+        upstream.bytes_stream(),
+        state.log_buffer.clone(),
+        model,
+        provider_name,
+        endpoint,
+        model_cfg.upstream_model.clone(),
+        start,
+    );
+    let mut resp = Response::builder()
+        .status(status)
+        .header("content-type", "text/event-stream")
+        .body(Body::from_stream(tap))
+        .map_err(|_| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, "stream build failed"))?;
+    for (name, value) in resp_headers.iter() {
+        let n = name.as_str();
+        if n != "content-length" && n != "transfer-encoding" && n != "content-type" {
+            resp.headers_mut().append(name.clone(), value.clone());
+        }
+    }
+    Ok(resp)
+}
+
+/// 从 Anthropic 非流式响应抽取 OpenAI 口径的 token 用量.
+///
+/// Anthropic usage: input_tokens(不含缓存读) + cache_read_input_tokens + cache_creation_input_tokens
+/// = 总输入; prompt_tokens 记三者之和 (与 usage_openai 口径一致), hit/creation 分别记账.
+fn extract_anthropic_usage(text: &str) -> (u32, u32, u32, u32, u32) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return (0, 0, 0, 0, 0);
+    };
+    let Some(u) = v.get("usage") else { return (0, 0, 0, 0, 0) };
+    let input = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let output = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let hit = u.get("cache_read_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let creation = u.get("cache_creation_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let prompt = input + hit + creation;
+    (prompt, output, hit, input, creation)
+}
+
+/// 原生 Anthropic 流式透传包装器: 字节原样转发, 同时从 message_start / message_delta
+/// 事件抽取 usage, 流结束时记账. 不做任何协议转换 (保真).
+struct NativeAnthropicStream {
+    inner: Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send>,
+    line_buf: Vec<u8>,
+    log_buffer: LogBuffer,
+    model: String,
+    provider: String,
+    endpoint: String,
+    upstream_model: Option<String>,
+    start: std::time::Instant,
+    // usage 累计
+    input_tokens: u32,
+    output_tokens: u32,
+    cache_read: u32,
+    cache_creation: u32,
+    response_bytes: usize,
+    logged: bool,
+}
+
+impl NativeAnthropicStream {
+    fn new<S>(
+        inner: S,
+        log_buffer: LogBuffer,
+        model: String,
+        provider: String,
+        endpoint: String,
+        upstream_model: Option<String>,
+        start: std::time::Instant,
+    ) -> Self
+    where
+        S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
+    {
+        Self {
+            inner: Box::new(inner),
+            line_buf: Vec::new(),
+            log_buffer,
+            model,
+            provider,
+            endpoint,
+            upstream_model,
+            start,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read: 0,
+            cache_creation: 0,
+            response_bytes: 0,
+            logged: false,
+        }
+    }
+
+    /// 从一行 SSE data 抽取 usage (message_start 带 input, message_delta 带 output).
+    fn scan_line(&mut self, line: &str) {
+        let payload = match line.strip_prefix("data:") {
+            Some(p) => p.trim(),
+            None => return,
+        };
+        if payload.is_empty() || !payload.starts_with('{') {
+            return;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else { return };
+        // message_start: {type, message:{usage:{input_tokens,...}}}
+        let usage = v
+            .get("usage")
+            .or_else(|| v.get("message").and_then(|m| m.get("usage")))
+            .or_else(|| v.get("delta").and_then(|d| d.get("usage")));
+        let Some(u) = usage else { return };
+        if let Some(x) = u.get("input_tokens").and_then(|t| t.as_u64()) {
+            self.input_tokens = x as u32;
+        }
+        if let Some(x) = u.get("output_tokens").and_then(|t| t.as_u64()) {
+            self.output_tokens = x as u32;
+        }
+        if let Some(x) = u.get("cache_read_input_tokens").and_then(|t| t.as_u64()) {
+            self.cache_read = x as u32;
+        }
+        if let Some(x) = u.get("cache_creation_input_tokens").and_then(|t| t.as_u64()) {
+            self.cache_creation = x as u32;
+        }
+    }
+
+    fn drain_lines(&mut self) {
+        while let Some(pos) = self.line_buf.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.line_buf[..pos].to_vec();
+            self.line_buf.drain(..=pos);
+            if let Ok(text) = std::str::from_utf8(&raw) {
+                self.scan_line(text.trim());
+            }
+        }
+    }
+}
+
+impl Stream for NativeAnthropicStream {
+    type Item = Result<Bytes, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                self.response_bytes += chunk.len();
+                self.line_buf.extend_from_slice(&chunk);
+                self.drain_lines();
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            Poll::Ready(Some(Err(e))) => {
+                // 上游流错误: 记一条错误日志后结束.
+                let err_str = format!("stream error: {e}");
+                let lb = self.log_buffer.clone();
+                let (m, p, ep, up) = (self.model.clone(), self.provider.clone(), self.endpoint.clone(), self.upstream_model.clone());
+                let start = self.start;
+                let len = self.response_bytes;
+                self.logged = true;
+                tokio::spawn(async move {
+                    crate::admin::record_request(&lb, &m, &p, &ep, up.as_deref(), 502, start, len, Some(err_str)).await;
+                });
+                Poll::Ready(Some(Err(std::io::Error::other(e))))
+            }
+            Poll::Ready(None) => {
+                // 流正常结束: 记账 usage.
+                if !self.logged {
+                    // log_final 是 async; 这里用 try 方式: 无法 await, 改为 spawn 记录已抽取的 usage.
+                    let lb = self.log_buffer.clone();
+                    let (m, p, ep, up) = (self.model.clone(), self.provider.clone(), self.endpoint.clone(), self.upstream_model.clone());
+                    let start = self.start;
+                    let resp_len = self.response_bytes;
+                    let (prompt, output, hit, miss, creation) = (
+                        self.input_tokens + self.cache_read + self.cache_creation,
+                        self.output_tokens,
+                        self.cache_read,
+                        self.input_tokens,
+                        self.cache_creation,
+                    );
+                    self.logged = true;
+                    tokio::spawn(async move {
+                        crate::admin::record_request_with_tokens(
+                            &lb, &m, &p, &ep, up.as_deref(), start,
+                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None,
+                        ).await;
+                    });
+                }
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 
 /// 把 OpenAI 格式响应 (chat_completions 管线产物) 译回 Anthropic /messages 响应.
 async fn anthropize_response(resp: Response) -> Response {
