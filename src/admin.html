@@ -836,6 +836,23 @@ tr:hover td{background:rgba(99,102,241,.04)}
                 <span class="m-chip" :class="{'on':drawerProv._effFilter==='high'}" @click="drawerProv._effFilter='high'" x-text="t('eff.high')"></span>
                 <span class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')"></span>
               </div>
+              <!-- Price/Status/Origin filter chips -->
+              <div class="m-card-bar" style="border-top:1px solid rgba(255,255,255,.04)">
+                <span class="txs tm" style="margin-right:4px" x-text="t('price')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._freeFilter}" @click="drawerProv._freeFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='paid'}" @click="drawerProv._freeFilter='paid'" x-text="t('paid')"></span>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('status')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._removedFilter}" @click="drawerProv._removedFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='active'}" @click="drawerProv._removedFilter='active'" x-text="t('status_active')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='removed'}" @click="drawerProv._removedFilter='removed'" x-text="t('status_removed')"></span>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('origin')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._originFilter}" @click="drawerProv._originFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._originFilter==='manual'}" @click="drawerProv._originFilter='manual'" x-text="t('origin_manual')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._originFilter==='fetched'}" @click="drawerProv._originFilter='fetched'" x-text="t('origin_fetched')"></span>
+              </div>
               <!-- Model table -->
               <div class="m-card-table-scroll"><table style="width:100%;min-width:760px;border-collapse:collapse;font-size:12px">
                 <thead>
@@ -1039,7 +1056,7 @@ const I18N = {
     'detail_body_size': 'Body 大小', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': '延迟 / TTFT',
     'provider_status': '状态', 'latency': '延迟', 'circuit': '熔断', 'key_label': 'Key', 'actions': '操作',
     'configured': '已配置', 'unconfigured': '未配置', 'endpoint_protocol_desc': 'API 基地址与协议专用端点',
-    'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：',
+    'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：', 'price': '价格：', 'paid': '付费', 'status': '状态：', 'status_active': '在用', 'status_removed': '已下架', 'origin': '来源：', 'origin_manual': '手动', 'origin_fetched': '获取',
     'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
     'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
     'confirm_clear_removed_models': '确认清理 {0} 个已下架模型？', 'removed_models_cleaned': '已清理 {0} 个下架模型',
@@ -1193,7 +1210,7 @@ const I18N = {
     'detail_body_size': 'Body size', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': 'Latency / TTFT',
     'provider_status': 'Status', 'latency': 'Latency', 'circuit': 'Circuit', 'key_label': 'Key', 'actions': 'Actions',
     'configured': 'Configured', 'unconfigured': 'Not configured', 'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
-    'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ',
+    'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ', 'price': 'Price: ', 'paid': 'Paid', 'status': 'Status: ', 'status_active': 'Active', 'status_removed': 'Removed', 'origin': 'Origin: ', 'origin_manual': 'Manual', 'origin_fetched': 'Fetched',
     'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
     'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
     'confirm_clear_removed_models': 'Remove {0} discontinued models?', 'removed_models_cleaned': 'Removed {0} discontinued models',
@@ -2130,7 +2147,28 @@ function dashboard() {
       }
       const eff=prov._effFilter||'';
       if(eff && (m.reasoning_effort||'')!==eff) return false;
+      // 价格筛选: 'free' 仅看免费 (用户标记 或 名称含 free/免费), 'paid' 仅看付费
+      const free=prov._freeFilter||'';
+      if(free==='free' && !this.isFree(m)) return false;
+      if(free==='paid' && this.isFree(m)) return false;
+      // 下架筛选: 'active' 仅未下架, 'removed' 仅下架. 缺省 (空) 行为
+      // 同 'active' — 已下架模型默认隐藏, 避免「拉取后被标下架」一直占视线.
+      const rm=prov._removedFilter||'active';
+      if(rm==='active' && m._removed) return false;
+      if(rm==='removed' && !m._removed) return false;
+      // 来源筛选: manual/fetched; fetched 含 origin 缺失 (兼容旧配置).
+      const og=prov._originFilter||'';
+      if(og==='manual' && m.origin!=='manual') return false;
+      if(og==='fetched' && m.origin==='manual') return false;
       return true;
+    },
+    isFree(m){
+      // 与 Rust is_free 一致: 显式 free:true → 免; free:false → 付; 否则
+      // 按 upstream_model / model_id 字符串 (小写) 是否含 'free' 或 '免费' 自动识别.
+      if(m && m.free===true) return true;
+      if(m && m.free===false) return false;
+      const s=((m&&m.upstream_model)||(m&&m.model_id)||'').toLowerCase();
+      return s.includes('free') || s.includes('免费');
     },
     drawerBrands(){
       if(!this.drawerProv) return [];
