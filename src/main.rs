@@ -615,6 +615,18 @@ fn main() {
         max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
         auto_continue: Arc::new(AtomicUsize::new(config.auto_continue)),
         model_meta: Arc::new(model_meta::MetaCache::new()),
+        // 进程级稳定 session id: 启动时生成一次, 用于 OpenCode Go 等
+        // 要求 x-opencode-session 头的上游做兜底注入. 不覆盖客户端自传.
+        // 用 PID + 启动时间戳 + 进程内单调计数器即可 — 这是路由标识不是
+        // 安全令牌, 上游只用来「同一来源走同一后端」, 碰撞概率可忽略.
+        instance_session: Arc::new(format!(
+            "aigate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        )),
         breakers,
     };
 

@@ -75,6 +75,11 @@ pub struct AppState {
     pub auto_continue: Arc<AtomicUsize>,
     /// 模型元信息缓存 (models.dev): 面板悬停展示上下文/输出限制与视觉标签.
     pub model_meta: Arc<crate::model_meta::MetaCache>,
+    /// 进程级稳定标识: 用于 OpenCode Go 等按 session 优化路由的上游自动注入
+    /// `x-opencode-session` 头 (客户端未传时兜底, 不覆盖客户端自传).
+    /// 同一 AIGate 实例的所有请求共享此 ID — 中转无用户/会话层, 进程级足够让
+    /// 上游「同一来源的连续请求」走 cache / 路由优化.
+    pub instance_session: Arc<String>,
 }
 
 /// 熔断器表类型别名.
@@ -500,6 +505,7 @@ pub async fn chat_completions(
             }
         }
     }
+    inject_opencode_session(&mut req_headers, &headers, &provider, &state.instance_session);
 
     // 8. 发送请求 (带瞬态重试) — 仅对连接/超时错误与流式开始前返回的 5xx 重试,
     //    不含 429 (视为终态). 熔断上报统一在"最终 attempt"结果上执行一次,
@@ -1030,6 +1036,8 @@ async fn relay_native_passthrough(
             }
         }
     }
+    inject_opencode_session(&mut req_headers, &headers, &provider, &state.instance_session);
+
 
     // 发送 (瞬态重试, 口径与 chat_completions 一致: 5xx/连接错误重试, 4xx 终态).
     let total_attempts = state.retry_max.load(Ordering::Relaxed).saturating_add(1);
@@ -3155,6 +3163,78 @@ fn filter_headers(headers: &HeaderMap) -> HeaderMap {
     out
 }
 
+/// 兜底注入 OpenCode Go 上游要求的 `x-opencode-session` 头.
+///
+/// 背景: 上游 zen-go 网关从 09/06 起强制要求每个请求携带 session 头做路由
+/// 优化, 缺头的请求会被拒. 中转侧 (我们) 不能要求所有客户端立即升级,
+/// 也没法穷举客户端类型 — 透明地在转发边界兜底是正确做法.
+///
+/// 触发条件 (三件 AND):
+///   1) 上游供应商是 opencode go (provider.name == "go" 或 endpoint 含 opencode.ai/zen/go)
+///   2) 客户端原始请求未携带 `x-opencode-session` (尊重客户端自传, 不覆盖)
+///   3) 上游响应要求 session 头的网关 (本 helper 只对 go 注入, 不污染其他供应商)
+///
+/// session id 取自 AppState.instance_session: 进程级稳定 UUID-like 串,
+/// 同一 AIGate 实例的所有请求共享 — 中转无用户/会话层, 进程级足够让
+/// 上游「同一来源的连续请求」走 cache / 路由优化. 客户端自传时透传客户端值.
+fn inject_opencode_session(
+    req_headers: &mut HeaderMap,
+    client_headers: &HeaderMap,
+    provider: &crate::providers::ProviderConfig,
+    instance_session: &str,
+) {
+    if !is_opencode_go(provider) {
+        return;
+    }
+    // axum::http::HeaderName::from_static 是 infallible (编译期校验);
+    // 若改用 reqwest::header::HeaderName 则会返 Result — 当前 proxy.rs 顶部
+    // 用的是 axum::http 版本, 与 filter_headers / 其它代码一致.
+    let name = HeaderName::from_static("x-opencode-session");
+    if req_headers.contains_key(&name) {
+        return; // 已存在 (供应商额外头已配置), 不覆盖
+    }
+    // 客户端原始请求里如果带了这个头, filter_headers 把它过滤掉了 — 这里
+    // 把它从 client_headers 取回, 透传到上游. 优先级: 客户端自传 > 实例兜底.
+    // 这样乌迪奇/赫兹客户端传的 session 不会被中转覆盖, 也避免 filter 后
+    // 出现「客户端有但请求头里没有」的丢字段 bug.
+    if let Some(client_val) = client_headers.get(&name) {
+        req_headers.insert(name, client_val.clone());
+        return;
+    }
+    let Ok(val) = HeaderValue::from_str(instance_session) else {
+        return;
+    };
+    req_headers.insert(name, val);
+}
+
+/// 判定供应商是否是 OpenCode Go (zen-go) 上游.
+///
+/// 双锚点识别:
+///   1) `provider.name == "go"` — 用户配置稳定约定, 自定义 endpoint 也覆盖
+///   2) endpoint (或 anthropic/responses 子端点) 路径含 `opencode.ai/zen/go`
+///
+/// 两条都 OR: 真实用户配置中 name="go" 几乎恒成立, 即便用户改 endpoint
+/// 自建反代也能兜底; 同时允许 mock/测试用任意 endpoint 配 name="go"。
+fn is_opencode_go(provider: &crate::providers::ProviderConfig) -> bool {
+    if provider.name == "go" {
+        return true;
+    }
+    if provider.endpoint.contains("opencode.ai/zen/go") {
+        return true;
+    }
+    if let Some(ep) = &provider.endpoint_anthropic {
+        if ep.contains("opencode.ai/zen/go") {
+            return true;
+        }
+    }
+    if let Some(ep) = &provider.endpoint_responses {
+        if ep.contains("opencode.ai/zen/go") {
+            return true;
+        }
+    }
+    false
+}
+
 /// 构造 JSON 错误响应 (OpenAI 兼容格式).
 fn error_response(status: StatusCode, message: &str) -> Response {
     let body = serde_json::json!({
@@ -3759,6 +3839,107 @@ mod tests {
         // 第二次 poll: 流已干净终止
         let second = futures::executor::block_on(ts.next());
         assert!(second.is_none());
+    }
+
+    // ── inject_opencode_session 兜底注入 ──
+
+    fn go_provider() -> crate::providers::ProviderConfig {
+        crate::providers::ProviderConfig {
+            name: "go".to_string(),
+            endpoint: "https://opencode.ai/zen/go/v1/chat/completions".to_string(),
+            api_key_env: "X".to_string(),
+            api_key_default: None,
+            balance_endpoint: None,
+            headers: None,
+            api_format: None,
+            endpoint_anthropic: None,
+            endpoint_responses: None,
+            prompt_cache: None,
+            openai_cache_control: None,
+            max_request_body_bytes: None,
+            models: std::collections::HashMap::new(),
+        }
+    }
+
+    fn deepseek_provider() -> crate::providers::ProviderConfig {
+        crate::providers::ProviderConfig {
+            name: "deepseek".to_string(),
+            endpoint: "https://api.deepseek.com/v1/chat/completions".to_string(),
+            api_key_env: "X".to_string(),
+            api_key_default: None,
+            balance_endpoint: None,
+            headers: None,
+            api_format: None,
+            endpoint_anthropic: None,
+            endpoint_responses: None,
+            prompt_cache: None,
+            openai_cache_control: None,
+            max_request_body_bytes: None,
+            models: std::collections::HashMap::new(),
+        }
+    }
+
+    /// 默认场景: go 上游 + 客户端无 session → 兜底注入 instance_session.
+    #[test]
+    fn inject_session_default_for_go() {
+        let prov = go_provider();
+        let mut req = axum::http::HeaderMap::new();
+        let client = axum::http::HeaderMap::new();
+        inject_opencode_session(&mut req, &client, &prov, "aigate-fixed-id");
+        let v = req.get("x-opencode-session").expect("应已注入");
+        assert_eq!(v.to_str().unwrap(), "aigate-fixed-id");
+    }
+
+    /// 客户端自传时 → 透传客户端值, 不被兜底覆盖.
+    /// filter_headers 会丢客户端头, 但本 helper 从 client_headers 取回
+    /// 透传到上游 — 这是为了避免「客户端有但请求头里没有」的丢字段 bug.
+    /// 乌迪奇/赫兹等已发 session 的客户端能保留其 session.
+    #[test]
+    fn inject_session_passes_through_client_value() {
+        let prov = go_provider();
+        let mut req = axum::http::HeaderMap::new();
+        let mut client = axum::http::HeaderMap::new();
+        client.insert(
+            axum::http::HeaderName::from_static("x-opencode-session"),
+            axum::http::HeaderValue::from_static("client-custom"),
+        );
+        inject_opencode_session(&mut req, &client, &prov, "aigate-fixed-id");
+        let v = req.get("x-opencode-session").expect("客户端值应透传");
+        assert_eq!(v.to_str().unwrap(), "client-custom", "不应被 instance 兜底覆盖");
+    }
+
+    /// 非 go 供应商 → 一律不注入, 避免污染其它上游.
+    #[test]
+    fn inject_session_skipped_for_other_providers() {
+        let prov = deepseek_provider();
+        let mut req = axum::http::HeaderMap::new();
+        let client = axum::http::HeaderMap::new();
+        inject_opencode_session(&mut req, &client, &prov, "aigate-fixed-id");
+        assert!(req.get("x-opencode-session").is_none(), "非 go 上游不应注入");
+    }
+
+    /// endpoint_anthropic 指向 go 时也要注入 (Anthropic 入口直通同上游场景).
+    #[test]
+    fn inject_session_works_when_anthropic_endpoint_is_go() {
+        let mut prov = go_provider();
+        prov.endpoint = "https://example.com/v1/chat/completions".to_string();
+        prov.endpoint_anthropic = Some("https://opencode.ai/zen/go/v1/messages".to_string());
+        let mut req = axum::http::HeaderMap::new();
+        let client = axum::http::HeaderMap::new();
+        inject_opencode_session(&mut req, &client, &prov, "id");
+        assert!(req.get("x-opencode-session").is_some());
+    }
+
+    /// name="go" + 任意 endpoint: 双锚点第一条, 用于 mock/自建反代场景.
+    #[test]
+    fn inject_session_works_when_name_is_go_with_arbitrary_endpoint() {
+        let mut prov = go_provider();
+        prov.endpoint = "http://127.0.0.1:8802/v1/chat/completions".to_string();
+        let mut req = axum::http::HeaderMap::new();
+        let client = axum::http::HeaderMap::new();
+        inject_opencode_session(&mut req, &client, &prov, "id-fixed");
+        let v = req.get("x-opencode-session").expect("name=go 应注入");
+        assert_eq!(v.to_str().unwrap(), "id-fixed");
     }
 }
 
