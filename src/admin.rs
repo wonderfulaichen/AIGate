@@ -688,7 +688,7 @@ pub async fn api_providers_save(
     // 2) 备份当前文件 (覆盖写盘前保留上一版, 便于回滚).
     let _ = std::fs::copy("providers.json", "providers.json.bak");
 
-    // 3) 取旧供应商名 (用于级联清理孤儿 key).
+    // 3) 取旧供应商名 (用于重命名迁移 + 级联清理孤儿 key).
     let old_names: Vec<String> = state
         .registry
         .read()
@@ -697,6 +697,17 @@ pub async fn api_providers_save(
         .iter()
         .map(|p| p.name.clone())
         .collect();
+
+    // 3.1) 前端传入 oldNames (与 providersFormData 位置对齐), 用于检测重命名.
+    let frontend_old_names: Vec<String> = payload
+        .get("oldNames")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
 
     // 4) 原子写盘: 临时文件 + rename, 避免写入中断留下半截文件.
     let tmp = "providers.json.tmp";
@@ -716,7 +727,26 @@ pub async fn api_providers_save(
     }
     sync_breakers_for(&state).await;
 
-    // 6) 级联清理: 删除已从配置中移除的供应商的密钥 (包含关系: key 随 provider 消失).
+    // 6) 重命名迁移: 前端 oldNames[i] → new_names[i] 按位置对齐, 若不同则迁移 API key.
+    if !frontend_old_names.is_empty() {
+        for (i, new_name) in new_names.iter().enumerate() {
+            if let Some(old_name) = frontend_old_names.get(i) {
+                if old_name != new_name {
+                    // 迁移 key: 读旧名 → 写新名 → 删旧名
+                    if let Some(key_val) = state.key_store.get_for_provider(old_name).await {
+                        let _ = state
+                            .key_store
+                            .set_for_provider(new_name, &key_val)
+                            .await;
+                        let _ = state.key_store.remove_for_provider(old_name).await;
+                    }
+                }
+            }
+        }
+    }
+
+    // 7) 级联清理: 删除已从配置中移除的供应商的密钥 (包含关系: key 随 provider 消失).
+    //    排除已在步骤 6 中迁移过的旧名 (已删除, 不需再清理).
     let removed: Vec<String> = old_names
         .iter()
         .filter(|n| !new_names.contains(n))

@@ -434,10 +434,18 @@ pub async fn fetch_models_from_upstream(
     key: &str,
 ) -> Result<Vec<String>, String> {
     // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
-    let models_url = provider
-        .endpoint
-        .replace("/chat/completions", "/models")
-        .replace("/messages", "/models");
+    // 若 endpoint 是裸 base URL (如 https://api.xxx.com/v1), 替换无命中时自动追加 /models.
+    let ep = provider.endpoint.trim_end_matches('/');
+    let models_url = {
+        let after = ep
+            .replace("/chat/completions", "/models")
+            .replace("/messages", "/models");
+        if after != ep {
+            after // 已从已知后缀转换
+        } else {
+            format!("{ep}/models") // 裸 base URL → 追加 /models
+        }
+    };
     let mut req = client.get(&models_url);
     if !key.is_empty() {
         req = req.header("Authorization", format!("Bearer {key}"));

@@ -741,7 +741,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <!-- Header -->
       <div class="dr-h">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:15px;font-weight:600;color:var(--fg)" x-text="drawerProv.name"></span>
+          <input type="text" class="inp" style="font-size:15px;font-weight:600;color:var(--fg);width:auto;min-width:80px;border:none;background:transparent;box-shadow:none;padding:0" x-model="drawerProv.name" @input="markDirty()">
           <span class="bdg bdg-p" style="font-size:10px" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
           <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg" style="background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.25);font-size:10px">● <span x-text="t('health_ok')"></span></span></template>
           <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25);font-size:10px">● <span x-text="t('health_err')"></span></span></template>
@@ -2239,6 +2239,7 @@ function dashboard() {
            if(d.parsed&&d.parsed.providers) {
               this.providersFormData = d.parsed.providers.map(p => ({
                 ...p,
+                _origName: p.name,
                 _expanded: false,
                 _testing: false,
                 _testResult: null,
@@ -2507,7 +2508,8 @@ function dashboard() {
             };
          });
          const json = JSON.stringify({providers:providers}, null, 2);
-         const r=await fetch('/admin/api/providers/save',{method:'POST',headers:authHeaders(),body:JSON.stringify({json:json})});
+         const oldNames = this.providersFormData.map(p => p._origName || p.name);
+         const r=await fetch('/admin/api/providers/save',{method:'POST',headers:authHeaders(),body:JSON.stringify({json:json,oldNames:oldNames})});
          const d=await r.json();
          this.providersFormOk = !!d.message;
          this.providersFormMsg=d.message||d.error||t('save_failed');
@@ -2515,8 +2517,8 @@ function dashboard() {
             // 配置保存成功后, 同步保存所有有草稿的 key
             await this.saveAllProviderKeys();
             this.isDirty=false;
-            // 保存即持久化, 清除各供应商"新模型"未保存提示
-            this.providersFormData.forEach(p=>p._newModels=0);
+            // 保存即持久化, 清除各供应商"新模型"未保存提示; 同步 _origName
+            this.providersFormData.forEach(p=>{ p._newModels=0; p._origName=p.name; });
             setTimeout(()=>this.providersFormMsg='',3000);
           }
        } catch(e){ this.providersFormMsg=t('network_error'); }
@@ -2565,6 +2567,7 @@ function dashboard() {
         if (!this.addProvName || !this.addProvEndpoint) return;
         this.providersFormData.push({
           name: this.addProvName,
+          _origName: this.addProvName,
           endpoint: this.addProvEndpoint,
           endpoint_anthropic: this.addProvAnthropicEndpoint||null,
           endpoint_responses: this.addProvResponsesEndpoint||null,
