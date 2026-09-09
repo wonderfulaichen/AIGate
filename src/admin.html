@@ -2408,10 +2408,12 @@ function dashboard() {
          else prov._testResult = {success:false,status:t('request_failed'),latency_ms:0};
        } catch(e){ prov._testResult = {success:false,status:t('network_error'),latency_ms:0}; }
        const result=prov._testResult||{};
+       // 仅更新连通性状态; circuit 字段由 fetchHealth 从 breakers 同步, 避免被覆盖成 'closed' 导致重置按钮消失.
        const current=this.health.find(h=>h.provider===prov.name);
        if(current){ current.status_level=result.success?'ok':'error'; current.status_text=result.status||''; current.latency_ms=result.latency_ms||0; }
-       else this.health.push({provider:prov.name,endpoint:prov.endpoint,status_level:result.success?'ok':'error',status_text:result.status||'',latency_ms:result.latency_ms||0,circuit:'closed',circuit_text:''});
        prov._testing = false;
+       // 测试完成后刷新健康数据, 确保 circuit 状态与后端 breakers 一致.
+       await this.fetchHealth();
      },
      // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
     // 待用户点"保存配置"才持久化 —— 避免直接写盘冲掉表单里其它未保存改动.
