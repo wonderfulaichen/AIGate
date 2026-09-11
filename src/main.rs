@@ -573,21 +573,28 @@ fn main() {
 
     // KeyStore 初始化需要 providers 列表做旧版 (按 env_var 索引) → 按 provider 索引的无损迁移.
     let providers_snapshot = registry.providers();
-    // 部署目录与构建目录 data 分裂导致历史丢失：若 AI中转/data 存在且当前 data 为空/极小，则回落到部署目录
-    let resolved_data_dir: String = {
-        let deploy = std::path::Path::new(r"D:\Office software\Development Project\AI中转\data");
-        if deploy.join("logs.jsonl").exists() {
-            let local_len = std::fs::metadata("data/logs.jsonl").map(|m| m.len()).unwrap_or(0);
-            let deploy_len = std::fs::metadata(deploy.join("logs.jsonl")).map(|m| m.len()).unwrap_or(0);
-            if deploy_len > local_len + 1024 {
-                deploy.to_string_lossy().to_string()
-            } else {
-                "data".to_string()
-            }
-        } else {
-            "data".to_string()
-        }
-    };
+    // 数据目录 (日志 / 日级 rollup / keys.json): 默认 exe 同级的 data/ (启动时 cwd 已切到 exe 目录).
+    //
+    // 需要从别处复用历史统计时, 用 AIGATE_DATA_DIR 显式指定, 例如构建目录跑二进制:
+    //   AIGATE_DATA_DIR="D:\...\AI中转\data" ./AIGate.exe
+    //
+    // 这里曾有一段"自动回落到硬编码部署目录"的逻辑 (本地 logs.jsonl 比部署目录小 1KB 就改用它).
+    // 已移除, 原因: 路径写死不可移植; 触发条件过宽 (本地 data 为空即命中);
+    // 且会静默改写部署实例的数据 —— 本地跑一次测试就可能污染线上统计.
+    let resolved_data_dir: String = std::env::var("AIGATE_DATA_DIR")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "data".to_string());
+    info!("main: data dir = {resolved_data_dir}");
+    // 本地无历史时给出可发现的提示 (而不是自动改目录): 从构建目录跑二进制想看历史统计,
+    // 用 AIGATE_DATA_DIR 指向部署目录即可.
+    let local_log_len = std::fs::metadata(std::path::Path::new(&resolved_data_dir).join("logs.jsonl"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if local_log_len == 0 {
+        info!("main: no log history in '{resolved_data_dir}'; set AIGATE_DATA_DIR to reuse another instance's data dir");
+    }
     let state = AppState {
         client,
         registry: Arc::new(RwLock::new(registry)),
