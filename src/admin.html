@@ -373,6 +373,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .plaza-ft{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
 /* ── drawer (centered modal) ── */
 .modal-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)}
+.modal-overlay-lg{z-index:80}
 .modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 32px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
 .modal-card-sm{max-width:480px}
 .modal-card-add{max-width:420px}
@@ -382,7 +383,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .modal-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border)}
 .dr-bk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
-.dr-card{pointer-events:auto;width:100%;max-width:780px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.dr-card{pointer-events:auto;width:min(100%,940px);max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
 .dr-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
 .dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
 .dr-model-table-scroll{min-width:0;overflow-x:auto}
@@ -906,7 +907,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </template>
 </div>
 <template x-if="priceEditorModel">
-  <div class="modal-overlay" @click.self="closePriceEditor()">
+  <div class="modal-overlay modal-overlay-lg" @click.self="closePriceEditor()">
     <div class="modal-card modal-card-sm">
       <div class="modal-head">
         <div class="modal-title" x-text="t('price_edit_title')"></div>
