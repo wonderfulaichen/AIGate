@@ -2279,16 +2279,20 @@ function dashboard() {
       if(!this.priceEditorModel) return;
       const {model} = this.priceEditorModel;
       const e = this.priceEditor;
-      // 仅全部为 0 时视为未配置
-      if(e.input_per_m===0 && e.output_per_m===0 && (e.cache_read_per_m||0)===0 && (e.input_per_m_offpeak||0)===0 && (e.output_per_m_offpeak||0)===0){
+      // 防御空字符串 / 非数字输入，统一兜底为 0
+      const n = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+      const input_per_m = n(e.input_per_m);
+      const output_per_m = n(e.output_per_m);
+      const cache_read_per_m = n(e.cache_read_per_m);
+      const input_per_m_offpeak = n(e.input_per_m_offpeak);
+      const output_per_m_offpeak = n(e.output_per_m_offpeak);
+      if(input_per_m===0 && output_per_m===0 && cache_read_per_m===0 && input_per_m_offpeak===0 && output_per_m_offpeak===0){
         model.price = null;
       } else {
         model.price = {
-          input_per_m: e.input_per_m,
-          output_per_m: e.output_per_m,
-          cache_read_per_m: e.cache_read_per_m||null,
-          input_per_m_offpeak: e.input_per_m_offpeak||0,
-          output_per_m_offpeak: e.output_per_m_offpeak||0,
+          input_per_m, output_per_m,
+          cache_read_per_m: cache_read_per_m||null,
+          input_per_m_offpeak, output_per_m_offpeak,
         };
       }
       this.markDirty();
