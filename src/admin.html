@@ -381,7 +381,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .modal-title{font-size:14px;font-weight:600;color:var(--fg)}
 .modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px}
 .modal-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border)}
-.price-panel{position:fixed;right:0;top:0;bottom:0;width:360px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shm);overflow:hidden}
+.price-panel{position:fixed;right:0;top:0;bottom:0;width:430px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shm);overflow:hidden}
 .price-panel-bk{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:69}
 .dr-bk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
@@ -926,7 +926,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
                     <td style="padding:6px 10px;white-space:nowrap">
-                      <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?t('price_clear'):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
+                      <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?fmtPriceDetail(m.price):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
                     </td>
                     <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)">✕</button></td>
                   </tr>
@@ -956,24 +956,37 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
     <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0">✕</button>
   </div>
-  <div class="dr-body" style="display:flex;flex-direction:column;gap:14px;padding:16px 20px">
-    <div>
-      <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_peak_section')"></div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-        <div class="f-row"><label x-text="t('price_input_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m"></div>
-        <div class="f-row"><label x-text="t('price_output_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m"></div>
-        <div class="f-row"><label x-text="t('cache_label')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.cache_read_per_m"></div>
-      </div>
+  <div class="dr-body" style="display:flex;flex-direction:column;gap:12px;padding:16px 20px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px"></th>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px" x-text="t('price_col_offpeak')"></th>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px" x-text="t('price_col_peak')"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_cache_hit')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.cache_read_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.cache_read_per_m"></td>
+        </tr>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_cache_miss')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.input_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.input_per_m"></td>
+        </tr>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_output')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.output_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:11px" x-model.number="pricePanel.output_per_m"></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="border-top:1px solid var(--border);padding-top:10px">
+      <div class="f-row"><label x-text="t('price_row_cache_write')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:110px" x-model.number="pricePanel.cache_creation_per_m"></div>
     </div>
-    <div style="border-top:1px solid var(--border);padding-top:12px">
-      <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_offpeak_section')"></div>
-      <div class="txs tm" style="color:var(--muted);margin-bottom:8px" x-text="t('price_offpeak_hint')"></div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div class="f-row"><label x-text="t('price_input_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m_offpeak"></div>
-        <div class="f-row"><label x-text="t('price_output_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m_offpeak"></div>
-      </div>
-    </div>
-    <p class="txs tm" style="color:var(--muted)" x-show="pricePanelModel && !pricePanelModel.price" x-text="t('price_hint')"></p>
+    <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
   </div>
   <div class="dr-foot" style="border-top:1px solid var(--border)">
     <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
@@ -1013,7 +1026,9 @@ const I18N = {
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价(元/1M)', 'price_output_offpeak': '输出单价(元/1M)', 'price_peak_section': '标准价', 'price_offpeak_section': '空闲时段价（可选）', 'price_offpeak_hint': '留空则与标准价相同；DeepSeek 等分时段计费的供应商需填写', 'price_clear': '清除自定义价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
+    'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
+    'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
     'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
     'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。',
@@ -1171,7 +1186,9 @@ const I18N = {
     'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_input_peak': 'Input (CNY/1M)', 'price_output_peak': 'Output (CNY/1M)', 'price_input_offpeak': 'Input (CNY/1M)', 'price_output_offpeak': 'Output (CNY/1M)', 'price_peak_section': 'Standard price', 'price_offpeak_section': 'Off-peak price (optional)', 'price_offpeak_hint': 'Leave blank to use the standard price; required for providers with time-based pricing like DeepSeek', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
+    'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
+    'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
     'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
     'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.',
@@ -2353,15 +2370,18 @@ function dashboard() {
     closeProviderDrawer(){
       this.drawerProv=null;
     },
-    // 单价编辑面板
+    // 单价编辑面板 (行列与供应商官方价目表一致: 项目 × 空闲/高峰时段)
     openPricePanel(model){
       const p = model.price || {};
+      const nz = v => (typeof v === 'number' && v !== 0) ? v : null;
       this.pricePanel = {
-        input_per_m: p.input_per_m ?? null,
-        output_per_m: p.output_per_m ?? null,
         cache_read_per_m: p.cache_read_per_m ?? null,
-        input_per_m_offpeak: p.input_per_m_offpeak || null,
-        output_per_m_offpeak: p.output_per_m_offpeak || null,
+        cache_read_per_m_offpeak: nz(p.cache_read_per_m_offpeak),
+        input_per_m: p.input_per_m ?? null,
+        input_per_m_offpeak: nz(p.input_per_m_offpeak),
+        output_per_m: p.output_per_m ?? null,
+        output_per_m_offpeak: nz(p.output_per_m_offpeak),
+        cache_creation_per_m: p.cache_creation_per_m ?? null,
       };
       this.pricePanelModel = model;
     },
@@ -2371,19 +2391,25 @@ function dashboard() {
     savePricePanel(){
       if(!this.pricePanelModel) return;
       const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
-      const input_per_m = n(this.pricePanel.input_per_m);
-      const output_per_m = n(this.pricePanel.output_per_m);
       const cache_read_per_m = n(this.pricePanel.cache_read_per_m);
+      const cache_read_per_m_offpeak = n(this.pricePanel.cache_read_per_m_offpeak);
+      const input_per_m = n(this.pricePanel.input_per_m);
       const input_per_m_offpeak = n(this.pricePanel.input_per_m_offpeak);
+      const output_per_m = n(this.pricePanel.output_per_m);
       const output_per_m_offpeak = n(this.pricePanel.output_per_m_offpeak);
-      if(input_per_m===0 && output_per_m===0 && cache_read_per_m===0
-         && input_per_m_offpeak===0 && output_per_m_offpeak===0){
+      const cache_creation_per_m = n(this.pricePanel.cache_creation_per_m);
+      const allZero = cache_read_per_m===0 && cache_read_per_m_offpeak===0
+        && input_per_m===0 && input_per_m_offpeak===0
+        && output_per_m===0 && output_per_m_offpeak===0 && cache_creation_per_m===0;
+      if(allZero){
         this.pricePanelModel.price = null;
       } else {
         this.pricePanelModel.price = {
           input_per_m, output_per_m,
           cache_read_per_m: cache_read_per_m||null,
+          cache_creation_per_m: cache_creation_per_m||null,
           input_per_m_offpeak, output_per_m_offpeak,
+          cache_read_per_m_offpeak,
         };
       }
       this.markDirty();
@@ -2848,8 +2874,8 @@ function dashboard() {
       const sym = this.moneySymbol(this.currencyConfig.currency);
       return sym + this.convertCny(v).toFixed(2);
     },
-    // 单价格式化: 输入/输出 (缓存价), 未配置显示「未配置」. p 来自 ModelStats.price (可能为 null).
-    // 若配置了空闲时段价, 一并展示「高峰/空闲」两档, 反映 DeepSeek 等分时段计费.
+    // 单价格式化 (表格单元格用): 紧凑展示「未命中/输出 (命中)」, 未配置显示「未配置」.
+    // 鼠标悬停由 fmtPriceDetail 给出逐项明细.
     fmtPrice(p) {
       if (!p) return t('price_not_set');
       const sym = this.moneySymbol(this.currencyConfig.currency);
@@ -2862,6 +2888,25 @@ function dashboard() {
         if (p.cache_read_per_m_offpeak > 0) s += ' · ' + t('cache_label') + sym + c(p.cache_read_per_m_offpeak);
       }
       return s;
+    },
+    // 单价明细 (按钮 tooltip 用): 与面板/官方价目表同构, 逐行列出高峰与空闲两档.
+    fmtPriceDetail(p) {
+      if (!p) return t('price_not_set');
+      const sym = this.moneySymbol(this.currencyConfig.currency);
+      const c = x => sym + this.convertCny(x || 0);
+      const rows = [
+        t('price_col_peak'),
+        '  ' + t('price_row_cache_hit') + ' ' + c(p.cache_read_per_m != null ? p.cache_read_per_m : p.input_per_m),
+        '  ' + t('price_row_cache_miss') + ' ' + c(p.input_per_m),
+        '  ' + t('price_row_output') + ' ' + c(p.output_per_m),
+      ];
+      if (p.input_per_m_offpeak > 0 || p.output_per_m_offpeak > 0 || p.cache_read_per_m_offpeak > 0) {
+        rows.push(t('price_col_offpeak'));
+        rows.push('  ' + t('price_row_cache_hit') + ' ' + c(p.cache_read_per_m_offpeak != null ? p.cache_read_per_m_offpeak : p.input_per_m_offpeak));
+        rows.push('  ' + t('price_row_cache_miss') + ' ' + c(p.input_per_m_offpeak));
+        rows.push('  ' + t('price_row_output') + ' ' + c(p.output_per_m_offpeak));
+      }
+      return rows.join('\n');
     },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).
     providerLogo(p) {

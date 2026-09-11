@@ -440,6 +440,25 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// 构造隔离的缓存实例: 开关状态 flag 落在每次调用独立的临时目录,
+    /// 避免并行测试共享 `data/cache_enabled.flag` 互相覆盖 (set_enabled 会写盘).
+    fn isolated_cache(enabled: bool) -> ResponseCache {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "aigate_cache_test_{}_{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        ResponseCache::new(
+            enabled,
+            Duration::from_secs(60),
+            100,
+            Some(dir.join("response_cache.json")),
+        )
+    }
+
     #[test]
     fn make_key_normalizes_noise_fields() {
         let base = json!({"model":"x","messages":[{"role":"user","content":"hi"}],"temperature":0.7});
@@ -465,7 +484,7 @@ mod tests {
     /// 双口径命中率: 本轮累计 vs 本次开启以来 (重新开启清零 enabled 口径).
     #[test]
     fn session_vs_enabled_hit_rates() {
-        let c = ResponseCache::new(true, Duration::from_secs(60), 100, None);
+        let c = isolated_cache(true);
         // 命中 2 次, 未命中 1 次 → 本轮 66.7%, 开启后 66.7%
         let key = "k";
         c.put(key, "b1", (10, 20));
@@ -494,7 +513,7 @@ mod tests {
     /// 省量统计: record_hit_saved 双口径累计, 重新开启清零 enabled 口径.
     #[test]
     fn saved_tokens_dual_tracking() {
-        let c = ResponseCache::new(true, Duration::from_secs(60), 100, None);
+        let c = isolated_cache(true);
         c.record_hit_saved(500);
         c.record_hit_saved(1500);
         let s = c.stats();
