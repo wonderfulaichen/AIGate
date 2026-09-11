@@ -6,7 +6,7 @@
 <title>AIGate</title>
 <script>
 window.__errs=[];
-var __flt=function(m){return !/cdn.tailwindcss|should not be used in production/.test(m)};
+var __flt=function(m){return !/cdn.tailwindcss|should not be used in production|\[RUM\]/.test(m)};
 window.addEventListener('error', function(e){ var m='ERR: '+e.message+' @'+String(e.lineno); if(__flt(m)) window.__errs.push(m); });
 window.addEventListener('unhandledrejection', function(e){ var m='REJ: '+((e.reason&&e.reason.message)||e.reason); if(__flt(m)) window.__errs.push(m); });
 (function(){ var ow=console.warn, oe=console.error;
@@ -300,7 +300,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .row-d{font-size:12px;color:var(--muted);margin-top:2px;max-width:560px}
 .cg{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;flex-wrap:wrap}
 .chkbox{accent-color:var(--primary);width:14px;height:14px;cursor:pointer}
-#dbgbar{position:fixed;left:0;bottom:0;right:0;background:#3a0d0d;color:#ffb4b4;font-size:11px;padding:4px 8px;z-index:99999;white-space:pre-wrap;display:none;max-height:180px;overflow:auto}
+#dbgbar{position:fixed;left:0;bottom:0;right:0;background:#3a0d0d;color:#ffb4b4;font-size:11px;padding:4px 8px;z-index:99999;white-space:pre-wrap;display:none;max-height:180px;overflow:auto;pointer-events:none}
 
 /* ── new-api header + sidebar ── */
 .hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:rgba(12,12,16,.92);flex-shrink:0}
@@ -385,7 +385,8 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .price-panel-bk{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:69}
 .dr-bk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
-.dr-card{pointer-events:auto;width:min(100%,940px);max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.dr-card{pointer-events:auto;width:100%;max-width:1500px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+@media(min-width:1600px){.dr{padding:20px 40px}}
 .dr-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
 .dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
 .dr-model-table-scroll{min-width:0;overflow-x:auto}
@@ -909,42 +910,40 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
 </div>
 </template>
-<template x-if="pricePanelModel">
-  <div class="price-panel-bk" @click="closePricePanel()"></div>
-  <div class="price-panel">
-    <div class="dr-h">
-      <div style="display:flex;align-items:center;gap:8px;min-width:0">
-        <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>
-        <span class="txsm fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pricePanelModel.upstream_model||pricePanelModel.model_id"></span>
-      </div>
-      <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0">✕</button>
+<div class="price-panel-bk" x-show="pricePanelModel" x-cloak @click="closePricePanel()"></div>
+<div class="price-panel" x-show="pricePanelModel" x-cloak>
+  <div class="dr-h">
+    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>
+      <span class="txsm fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pricePanelModel?(pricePanelModel.upstream_model||pricePanelModel.model_id):''"></span>
     </div>
-    <div class="dr-body" style="display:flex;flex-direction:column;gap:14px;padding:16px 20px">
-      <div>
-        <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_peak_section')"></div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-          <div class="f-row"><label x-text="t('price_input_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m"></div>
-          <div class="f-row"><label x-text="t('price_output_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m"></div>
-          <div class="f-row"><label x-text="t('cache_label')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.cache_read_per_m"></div>
-        </div>
-      </div>
-      <div style="border-top:1px solid var(--border);padding-top:12px">
-        <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_offpeak_section')"></div>
-        <div class="txs tm" style="color:var(--muted);margin-bottom:8px" x-text="t('price_offpeak_hint')"></div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div class="f-row"><label x-text="t('price_input_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m_offpeak"></div>
-          <div class="f-row"><label x-text="t('price_output_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m_offpeak"></div>
-        </div>
-      </div>
-      <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
-    </div>
-    <div class="dr-foot" style="border-top:1px solid var(--border)">
-      <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
-      <button class="btn btn-g" @click="closePricePanel()" x-text="t('cancel')"></button>
-      <button class="btn btn-p" @click="savePricePanel()" x-text="t('save')"></button>
-    </div>
+    <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0">✕</button>
   </div>
-</template>
+  <div class="dr-body" style="display:flex;flex-direction:column;gap:14px;padding:16px 20px">
+    <div>
+      <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_peak_section')"></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+        <div class="f-row"><label x-text="t('price_input_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m"></div>
+        <div class="f-row"><label x-text="t('price_output_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m"></div>
+        <div class="f-row"><label x-text="t('cache_label')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.cache_read_per_m"></div>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px">
+      <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_offpeak_section')"></div>
+      <div class="txs tm" style="color:var(--muted);margin-bottom:8px" x-text="t('price_offpeak_hint')"></div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="f-row"><label x-text="t('price_input_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m_offpeak"></div>
+        <div class="f-row"><label x-text="t('price_output_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m_offpeak"></div>
+      </div>
+    </div>
+    <p class="txs tm" style="color:var(--muted)" x-show="pricePanelModel && !pricePanelModel.price" x-text="t('price_hint')"></p>
+  </div>
+  <div class="dr-foot" style="border-top:1px solid var(--border)">
+    <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
+    <button class="btn btn-g" @click="closePricePanel()" x-text="t('cancel')"></button>
+    <button class="btn btn-p" @click="savePricePanel()" x-text="t('save')"></button>
+  </div>
+</div>
 <script>
 setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; var n=(window.__errs||[]).length; if(n===window.__lastN) return; window.__lastN=n; if(!n){ d.style.display='none'; return; } d.style.display='block'; d.textContent=window.__errs.join(String.fromCharCode(10)).slice(0,1500); }, 600);
 </script>
@@ -2344,6 +2343,7 @@ function dashboard() {
                   reasoning_effort: cfg.reasoning_effort||'',
                   api_format: cfg.api_format||'',
                   origin: cfg.origin||'',
+                  price: cfg.price||null,
                   free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
                   _isNew: false,
                   _removed: false,
@@ -2576,6 +2576,16 @@ function dashboard() {
               if (m.free && !autoFree) cfg.free = true;
               else if (!m.free && autoFree && m._freeTouched) cfg.free = false;
               if (m.origin) cfg.origin = m.origin;
+              // 单价 (元/百万 tokens): 仅写入非空字段, 避免污染配置.
+              if (m.price) {
+                const pr = { input_per_m: m.price.input_per_m||0, output_per_m: m.price.output_per_m||0 };
+                if (m.price.cache_read_per_m != null) pr.cache_read_per_m = m.price.cache_read_per_m;
+                if (m.price.cache_creation_per_m != null) pr.cache_creation_per_m = m.price.cache_creation_per_m;
+                if (m.price.input_per_m_offpeak) pr.input_per_m_offpeak = m.price.input_per_m_offpeak;
+                if (m.price.output_per_m_offpeak) pr.output_per_m_offpeak = m.price.output_per_m_offpeak;
+                if (m.price.cache_read_per_m_offpeak) pr.cache_read_per_m_offpeak = m.price.cache_read_per_m_offpeak;
+                cfg.price = pr;
+              }
               models[m.model_id] = Object.keys(cfg).length ? cfg : {};
            }
             return {
