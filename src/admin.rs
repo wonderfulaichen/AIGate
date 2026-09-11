@@ -214,7 +214,18 @@ impl LogBuffer {
         }
     }
 
-    pub async fn push(&self, log: RequestLog) {
+    pub async fn push(&self, mut log: RequestLog) {
+        // 不变式: 命中本地响应缓存的请求未真实调用上游, 不产生任何上游 token 消耗.
+        // 统一在此清零 (而非依赖各调用点), 否则这些 token 会被重复计入总量与命中率分母,
+        // 也与 resp_cache_saved_tokens(省量口径) 重复; 并发去重时同一请求还会被 N 个等待者各记一遍.
+        // 省下的量仍由 resp_cache_saved_tokens 单独记账, 面板"优化省量"不受影响.
+        if log.cached {
+            log.prompt_tokens = 0;
+            log.completion_tokens = 0;
+            log.prompt_cache_hit_tokens = 0;
+            log.prompt_cache_miss_tokens = 0;
+            log.prompt_cache_creation_tokens = 0;
+        }
         let mut buf = self.inner.lock().await;
         if buf.len() >= crate::store::MAX_LINES {
             buf.pop_front();
@@ -415,12 +426,62 @@ pub async fn record_request_with_tokens(
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
+    record_request_with_tokens_status(
+        log_buffer,
+        model,
+        provider,
+        endpoint,
+        upstream_model,
+        200,
+        start,
+        prompt_tokens,
+        completion_tokens,
+        response_body_len,
+        cached,
+        cache_hit_tokens,
+        cache_miss_tokens,
+        cache_creation_tokens,
+        strip_saved_tokens,
+        trim_saved_tokens,
+        resp_cache_saved_tokens,
+        first_token_ms,
+        error,
+    )
+    .await;
+}
+
+/// 同 [`record_request_with_tokens`], 但可指定 HTTP 状态码.
+///
+/// 用于流中途失败等场景: 原先一律记 200 且清零 token, 导致已生成用量与真实
+/// 失败状态双双丢失 (面板看起来是成功请求).
+#[allow(clippy::too_many_arguments)]
+pub async fn record_request_with_tokens_status(
+    log_buffer: &LogBuffer,
+    model: &str,
+    provider: &str,
+    endpoint: &str,
+    upstream_model: Option<&str>,
+    status: u16,
+    start: Instant,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    response_body_len: usize,
+    cached: bool,
+    cache_hit_tokens: u32,
+    cache_miss_tokens: u32,
+    cache_creation_tokens: u32,
+    strip_saved_tokens: u32,
+    trim_saved_tokens: u32,
+    resp_cache_saved_tokens: u32,
+    first_token_ms: Option<u64>,
+    error: Option<String>,
+) {
     let log = RequestLog {
         timestamp: now_ts(),
         model: model.to_string(),
         provider: provider.to_string(),
         endpoint: endpoint.to_string(),
-        status: 200,
+        status,
         latency_ms: start.elapsed().as_millis() as u64,
         body_len: response_body_len,
         error,
@@ -1866,8 +1927,8 @@ pub struct UsageStats {
     pub today_success: usize,
     pub today_errors: usize,
     pub today_avg_latency_ms: f64,
-    pub today_total_prompt_tokens: u32,
-    pub today_total_completion_tokens: u32,
+    pub today_total_prompt_tokens: u64,
+    pub today_total_completion_tokens: u64,
     pub today_total_cache_hit_tokens: u64,
     pub today_total_cache_miss_tokens: u64,
     /// 今日窗口费用 (元, 东八区日界).
@@ -1997,18 +2058,16 @@ pub async fn api_stats(
     let mut merged_days: Vec<crate::rollup::DailyRollup> = Vec::new();
     // 小时粒度只看近 24 小时 (总在日志窗口内), 且 rollup 无小时拆分, 不参与合并.
     if granularity != "hour" && range_start.is_some() {
-        let today_start =
-            (((now as i64) + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
         // rollup() 返回临时引用 &Arc; 必须 clone Arc 才能在 if let 块外安全使用.
         if let Some(book_arc) = state.log_buffer.rollup().cloned() {
             if let Some(cover_ts) = state.log_buffer.oldest_ts().await {
-                let cover_day = bucket_start(cover_ts, "day");
-                if cover_day < today_start {
-                    let rstart = range_start.unwrap_or(0);
-                    merged_days = book_arc.days_between(rstart, cover_day);
+                if let Some((merge_end, rstart_day)) =
+                    rollup_merge_bounds(now, range_start.unwrap_or(0), cover_ts)
+                {
+                    merged_days = book_arc.days_between(rstart_day, merge_end);
                     if !merged_days.is_empty() {
-                        // 边界天 (cover_day) 在日志里的尾部数据已含于 rollup 的完整天中, 剔除防重复计数.
-                        log_side.retain(|log| bucket_start(log.timestamp, "day") > cover_day);
+                        // 边界天内已在 rollup 的天从日志侧剔除, 防重复计数.
+                        log_side.retain(|log| bucket_start(log.timestamp, "day") > merge_end);
                     }
                 }
             }
@@ -2330,8 +2389,9 @@ fn compute_stats(
     } else {
         0.0
     };
-    let today_total_prompt_tokens: u32 = today_logs.iter().map(|l| l.prompt_tokens).sum();
-    let today_total_completion_tokens: u32 = today_logs.iter().map(|l| l.completion_tokens).sum();
+    // 用 u64 累加: 单日 5000 条大上下文请求可轻易超过 u32 上限 (release 下静默回绕).
+    let today_total_prompt_tokens: u64 = today_logs.iter().map(|l| l.prompt_tokens as u64).sum();
+    let today_total_completion_tokens: u64 = today_logs.iter().map(|l| l.completion_tokens as u64).sum();
     let today_total_cache_hit_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
     let today_total_cache_miss_tokens: u64 = today_logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
     let today_total_cost: f64 = today_logs.iter().map(|l| log_cost(&memo, l)).sum();
@@ -2989,26 +3049,53 @@ fn merge_rollup_days(
     }
     stats.trends = buckets.into_values().collect();
 
-    // ── 模型趋势合并 (仅累加到已存在的桶; BTreeMap 键保持时间序) ──
-    let mut mt: BTreeMap<(u64, String, String), ModelTrend> = std::mem::take(&mut stats.model_trends)
+    // ── 模型趋势合并 (键为 (桶, 供应商, 上游模型)) ──
+    stats.model_trends = merge_rollup_model_trends(
+        std::mem::take(&mut stats.model_trends),
+        days,
+        granularity,
+    );
+}
+
+/// 把 rollup 天的模型维度数据并入模型趋势.
+///
+/// 历史天在日志侧已被剔除, 其模型桶不存在, 因此必须能「新建」桶;
+/// 否则 rollup 的模型趋势会被静默丢弃 (长跨度图表缺历史曲线).
+fn merge_rollup_model_trends(
+    existing: Vec<ModelTrend>,
+    days: &[crate::rollup::DailyRollup],
+    granularity: &str,
+) -> Vec<ModelTrend> {
+    let mut mt: BTreeMap<(u64, String, String), ModelTrend> = existing
         .into_iter()
         .map(|t| ((t.ts, t.provider.clone(), t.upstream_model.clone()), t))
         .collect();
+    let key_fn = trend_key_fn(granularity);
     for day in days {
         let ts = bucket_start(day.day_start, granularity);
         for e in &day.entries {
             if e.provider.is_empty() || e.provider == "-" {
                 continue;
             }
-            if let Some(t) = mt.get_mut(&(ts, e.provider.clone(), e.upstream.clone())) {
-                t.prompt_tokens += e.prompt_tokens;
-                t.completion_tokens += e.completion_tokens;
-                t.requests += e.requests as usize;
-                t.errors += e.errors as usize;
-            }
+            let t = mt
+                .entry((ts, e.provider.clone(), e.upstream.clone()))
+                .or_insert_with(|| ModelTrend {
+                    date: key_fn(ts),
+                    ts,
+                    provider: e.provider.clone(),
+                    upstream_model: e.upstream.clone(),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    requests: 0,
+                    errors: 0,
+                });
+            t.prompt_tokens += e.prompt_tokens;
+            t.completion_tokens += e.completion_tokens;
+            t.requests += e.requests as usize;
+            t.errors += e.errors as usize;
         }
     }
-    stats.model_trends = mt.into_values().collect();
+    mt.into_values().collect()
 }
 
 /// 按指定粒度聚合趋势数据.
@@ -3120,17 +3207,53 @@ fn compute_model_trends(logs: &[RequestLog], granularity: &str) -> Vec<ModelTren
     compute_model_trends_window(logs, granularity, None, None)
 }
 
+/// 计算 rollup 合并区间与日志侧保留边界.
+///
+/// 输入 `cover_ts` = 内存日志缓冲区最老一条的时间戳. 返回 `(merge_end, rstart_day)`:
+/// 合并 rollup 的 `[rstart_day, merge_end]` 天, 且日志侧只保留 `day > merge_end` 的部分.
+/// 返回 `None` 表示无需合并 (查询起点不早于可合并上界).
+///
+/// 上界取舍:
+/// - `cover_day` 早于今天 → 该天 rollup 已完整, 采用它 (日志里只剩尾部), 上界取 `cover_day`;
+/// - `cover_day` 就是今天 → 今天的 rollup 仍在累加 (不完整), 不能采用, 上界退到昨天,
+///   今天的日志全部保留.
+///
+/// 旧实现仅在 `cover_day < today` 时才合并, 一旦单日请求数超过日志滚动窗口
+/// (缓冲区只含今天) 就完全不合并 rollup, 使 29d/365d 长跨度查询退化为只有今天的数据.
+fn rollup_merge_bounds(now: u64, range_start: u64, cover_ts: u64) -> Option<(u64, u64)> {
+    let today_start = (((now as i64) + TZ_OFFSET_SECS) / 86400 * 86400 - TZ_OFFSET_SECS) as u64;
+    let cover_day = bucket_start(cover_ts, "day");
+    let merge_end = if cover_day < today_start {
+        cover_day
+    } else {
+        prev_bucket(cover_day, "day")
+    };
+    // 下界对齐到查询起点所在天的 0 点, 与 compute_trends_window 首桶口径一致
+    // (rollup 是日粒度, 无法只取半天; 不对齐会让范围首日整段丢失).
+    let rstart_day = bucket_start(range_start, "day");
+    if rstart_day <= merge_end {
+        Some((merge_end, rstart_day))
+    } else {
+        None
+    }
+}
+
+/// 趋势桶的日期键生成函数: 按粒度选 时/日/月 三种格式.
+fn trend_key_fn(granularity: &str) -> fn(u64) -> String {
+    match granularity {
+        "hour" => ts_to_hour,
+        "month" => ts_to_month,
+        _ => ts_to_date,
+    }
+}
+
 fn compute_model_trends_window(
     logs: &[RequestLog],
     granularity: &str,
     explicit_start: Option<u64>,
     explicit_end: Option<u64>,
 ) -> Vec<ModelTrend> {
-    let key_fn: fn(u64) -> String = match granularity {
-        "hour" => ts_to_hour,
-        "month" => ts_to_month,
-        _ => ts_to_date,
-    };
+    let key_fn = trend_key_fn(granularity);
     let mut map: BTreeMap<(u64, String, String), (u64, u64, usize, usize)> = BTreeMap::new();
     for log in logs {
         if log.provider.is_empty() || log.provider == "-" {
@@ -3371,6 +3494,77 @@ mod tests {
             assert!(d.date >= prev, "月桶必须按时间递增: {} < {}", d.date, prev);
             prev = d.date.clone();
         }
+    }
+
+    /// rollup 合并边界: 单日流量撑满日志窗口 (缓冲区最老日志就在今天) 时,
+    /// 仍须合并今天之前的 rollup 天, 且今天的日志不得被剔除.
+    #[test]
+    fn rollup_merge_bounds_covers_history_when_buffer_holds_only_today() {
+        // 取一个北京时区白天时刻作为 now, 便于构造跨天样本.
+        let now = 1_700_000_000u64;
+        let today = bucket_start(now, "day");
+        let range_start = now - 29 * 86400;
+
+        // 情形 A: 缓冲区最老日志就在今天 (单日 >5000 条被滚动覆盖)
+        let (merge_end, rstart) = rollup_merge_bounds(now, range_start, now - 60).unwrap();
+        assert_eq!(merge_end, today - 86400, "上界应退到昨天, 今天交给日志侧");
+        assert_eq!(rstart, bucket_start(range_start, "day"), "下界对齐到范围首日");
+        assert!(rstart < merge_end, "历史区间必须被合并, 不能退化成只有今天");
+
+        // 情形 B: 缓冲区最老日志在更早的天 → 该天 rollup 已完整, 上界取该天
+        let older = today - 5 * 86400;
+        let (merge_end_b, _) = rollup_merge_bounds(now, range_start, older).unwrap();
+        assert_eq!(merge_end_b, older);
+
+        // 情形 C: 查询起点不早于上界 → 无需合并
+        assert!(rollup_merge_bounds(now, now - 60, now - 60).is_none());
+    }
+
+    /// rollup 的模型趋势必须能为历史天新建桶 (否则长跨度图表缺历史曲线).
+    #[test]
+    fn merge_rollup_days_creates_model_trend_buckets() {
+        use crate::rollup::{DailyRollup, RollupEntry};
+        let day_start = bucket_start(1_700_000_000, "day") - 86400;
+        let mut entry = RollupEntry::default();
+        entry.provider = "ds".to_string();
+        entry.upstream = "deepseek-v4-pro".to_string();
+        entry.requests = 7;
+        entry.prompt_tokens = 700;
+        entry.completion_tokens = 70;
+        let day = DailyRollup { day_start, entries: vec![entry] };
+
+        let trends = merge_rollup_model_trends(Vec::new(), &[day], "day");
+        assert_eq!(trends.len(), 1, "历史天的模型桶应被新建");
+        let t = &trends[0];
+        assert_eq!(t.ts, day_start);
+        assert_eq!(t.provider, "ds");
+        assert_eq!(t.upstream_model, "deepseek-v4-pro");
+        assert_eq!(t.prompt_tokens, 700);
+        assert_eq!(t.requests, 7);
+        assert!(!t.date.is_empty(), "日期键不能为空");
+    }
+
+    /// 命中本地响应缓存的日志不得贡献上游 token: 不计入总量/命中率分母, 只保留省量.
+    #[test]
+    fn cached_replay_contributes_no_upstream_tokens() {
+        let buf = LogBuffer::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut log = mk("m", "p", 0, 0);
+            log.prompt_tokens = 6000;
+            log.completion_tokens = 50;
+            log.cached = true;
+            log.resp_cache_saved_tokens = 6050;
+            buf.push(log).await;
+        });
+        let s = buf.session_stats();
+        assert_eq!(s.requests, 1, "命中回放仍是一次请求");
+        assert_eq!(s.prompt_tokens, 0, "命中回放无上游输入消耗");
+        assert_eq!(s.completion_tokens, 0, "命中回放无上游输出消耗");
+        // 省量必须保留, 否则面板"优化省量"会丢数据
+        let logs = rt.block_on(buf.drain_all());
+        assert_eq!(logs[0].resp_cache_saved_tokens, 6050);
+        assert_eq!(logs[0].prompt_tokens, 0);
     }
 
     /// 本轮 (进程级) 累计: push 时原子累加, 请求/成功/输入/输出/KV 命中均正确.

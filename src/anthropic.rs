@@ -546,20 +546,32 @@ impl Default for AnthropicStreamConv {
 /// 误算 `miss = prompt_tokens - 0 = input_tokens` (详见该函数), 污染"未使用缓存"请求的命中率统计.
 /// 缺失/为零的 cache 字段则依靠分支 1/3 判 (0,0), 不污染.
 fn usage_openai(u: &Value) -> String {
-    let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let cache_read = u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let cache_creation = u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let prompt = input + cache_read + cache_creation;
-    let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-    let mut usage = json!({
-        "prompt_tokens": prompt,
-        "completion_tokens": output,
-    });
-    if cache_read > 0 || cache_creation > 0 {
-        usage["prompt_tokens_details"] = json!({
-            "cached_tokens": cache_read,
-            "cache_creation_tokens": cache_creation
-        });
+    let mut usage = serde_json::Map::new();
+    // 仅当帧内确有输入类字段时才输出 prompt_tokens.
+    // `message_delta` 的 usage 只带 output_tokens, 若此处补齐为 prompt_tokens:0,
+    // 下游 TokenStream 会用它覆盖掉 `message_start` 已解析出的正确输入量 (→ 退化成字节估算),
+    // 输入 token 与按输入计费的费用都会算错. 缺失即不输出, 让既有值保留.
+    let has_input = u.get("input_tokens").is_some()
+        || u.get("cache_read_input_tokens").is_some()
+        || u.get("cache_creation_input_tokens").is_some();
+    if has_input {
+        let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_read = u.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_creation = u.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let prompt = input + cache_read + cache_creation;
+        usage.insert("prompt_tokens".to_string(), json!(prompt));
+        if cache_read > 0 || cache_creation > 0 {
+            usage.insert(
+                "prompt_tokens_details".to_string(),
+                json!({
+                    "cached_tokens": cache_read,
+                    "cache_creation_tokens": cache_creation
+                }),
+            );
+        }
+    }
+    if let Some(output) = u.get("output_tokens").and_then(|v| v.as_u64()) {
+        usage.insert("completion_tokens".to_string(), json!(output));
     }
     json!({ "choices": [], "usage": usage }).to_string()
 }
@@ -1465,8 +1477,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_no_cache_no_details() {
-        // 回归测试: 仅含 input_tokens (无缓存, 对应 message_start) 时绝不能输出
+    fn usage_no_cache_no_details() {        // 回归测试: 仅含 input_tokens (无缓存, 对应 message_start) 时绝不能输出
         // prompt_tokens_details, 否则 usage_cache 第2分支会误算 miss=input_tokens, 污染
         // "未使用缓存"请求的命中率统计.
         let u = json!({"input_tokens": 1000, "output_tokens": 0});
@@ -1478,6 +1489,21 @@ mod tests {
         // 下游 usage_cache 应判为 (0,0)
         let (hit, miss, creation) = crate::proxy::usage_cache(&v["usage"]);
         assert_eq!((hit, miss, creation), (0, 0, 0));
+    }
+
+    #[test]
+    fn usage_without_input_fields_omits_prompt_tokens() {
+        // 回归: message_delta 的 usage 只含 output_tokens. 若补齐成 prompt_tokens:0,
+        // 下游 TokenStream 会覆盖掉 message_start 已解析的正确输入量 (退化为字节估算),
+        // 输入 token 与按输入计费的费用都会算错. 缺失即不输出.
+        let u = json!({"output_tokens": 50});
+        let s = usage_openai(&u);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(
+            v["usage"].get("prompt_tokens").is_none(),
+            "frame without input fields must not emit prompt_tokens, got: {s}"
+        );
+        assert_eq!(v["usage"]["completion_tokens"], 50);
     }
 
     #[test]

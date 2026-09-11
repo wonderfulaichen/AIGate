@@ -668,10 +668,14 @@ pub async fn chat_completions(
                     ).into_response());
                 }
                 Err(e) => {
-                    return Err(error_response(
-                        StatusCode::BAD_GATEWAY,
-                        &format!("failed to read upstream response body: {e}"),
-                    ));
+                    // 上游已返回 2xx 但读取 body 失败: 必须留痕, 否则该请求从日志/错误面板中凭空消失
+                    // (与连接失败路径一致; 见 chat_completions 顶部对 502 的记录).
+                    let msg = format!("failed to read upstream response body: {e}");
+                    crate::admin::record_request(
+                        &state.log_buffer, &model, &provider_name, &endpoint,
+                        model_cfg.upstream_model.as_deref(), 502, start, 0, Some(msg.clone()),
+                    ).await;
+                    return Err(error_response(StatusCode::BAD_GATEWAY, &msg));
                 }
             }
         } else {
@@ -701,10 +705,13 @@ pub async fn chat_completions(
                     ).into_response());
                 }
                 Err(e) => {
-                    return Err(error_response(
-                        StatusCode::BAD_GATEWAY,
-                        &format!("failed to read upstream response body: {e}"),
-                    ));
+                    // 同上: 上游 2xx 但 body 读取失败, 必须留痕.
+                    let msg = format!("failed to read upstream response body: {e}");
+                    crate::admin::record_request(
+                        &state.log_buffer, &model, &provider_name, &endpoint,
+                        model_cfg.upstream_model.as_deref(), 502, start, 0, Some(msg.clone()),
+                    ).await;
+                    return Err(error_response(StatusCode::BAD_GATEWAY, &msg));
                 }
             }
         }
@@ -1865,7 +1872,8 @@ async fn try_replay_cache(
 ) -> Option<Response> {
     let (cached, stored_usage) = state.cache.get(key)?;
     // 命中回放的 token 统计优先用缓存时回填的精确 usage; 无精确值时退回从缓存体解析.
-    let (pt, mut ct, hit, miss, creation) = if stored_usage != (0, 0) {
+    // 仅用于计算"省下多少"(saved), 不再写回日志的 prompt/completion (见下方说明).
+    let (pt, mut ct, ..) = if stored_usage != (0, 0) {
         let (p, c) = stored_usage;
         (p, c, 0u32, 0u32, 0u32)
     } else {
@@ -1879,6 +1887,11 @@ async fn try_replay_cache(
     }
     let saved = (pt + ct) as u64;
     state.cache.record_hit_saved(saved);
+    // 命中本地响应缓存 = 完全没打上游, 本次请求真实消耗的上游 token 为 0.
+    // prompt/completion 必须记 0: 否则这些 token 会被重复计入总量 ——
+    // 既与下方 resp_cache_saved_tokens(省量口径) 重复, 又会在并发去重时被 N 个等待者各记一遍
+    // (实测 10 个相同并发请求只打 1 次上游, token 总量却接近 10 倍).
+    // 省下的量单独通过 resp_cache_saved_tokens 记账, 面板"优化省量"仍可展示.
     crate::admin::record_request_with_tokens(
         &state.log_buffer,
         model,
@@ -1886,13 +1899,13 @@ async fn try_replay_cache(
         endpoint,
         upstream_model,
         start,
-        pt,
-        ct,
+        0,
+        0,
         cached.len(),
         true,
-        hit,
-        miss,
-        creation,
+        0,
+        0,
+        0,
         strip_saved,
         trim_saved,
         saved as u32,
@@ -2210,7 +2223,16 @@ impl TokenStream {
         let is_cont_seg = self.cont_segment > 0;
         if let Some(usage) = val.get("usage") {
             if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                self.tokens_pt = if is_cont_seg { self.tokens_pt.max(pt as u32) } else { pt as u32 };
+                let pt = pt as u32;
+                // 非续写段仅在帧内确带正数时覆盖: 只含 output 的收尾 usage 帧
+                // (如 Anthropic message_delta) 不得把已解析的输入量抹成 0.
+                self.tokens_pt = if is_cont_seg {
+                    self.tokens_pt.max(pt)
+                } else if pt > 0 {
+                    pt
+                } else {
+                    self.tokens_pt
+                };
             }
             if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                 self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
@@ -2229,7 +2251,15 @@ impl TokenStream {
             if let Some(choice) = choices.first() {
                 if let Some(inner_usage) = choice.get("usage") {
                     if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
-                        self.tokens_pt = if is_cont_seg { self.tokens_pt.max(pt as u32) } else { pt as u32 };
+                        let pt = pt as u32;
+                        // 同上: 非续写段不让 0 覆盖既有输入量.
+                        self.tokens_pt = if is_cont_seg {
+                            self.tokens_pt.max(pt)
+                        } else if pt > 0 {
+                            pt
+                        } else {
+                            self.tokens_pt
+                        };
                     }
                     if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                         self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
@@ -2297,6 +2327,48 @@ impl TokenStream {
         self.out_buf.extend_from_slice(b"data: ");
         self.out_buf.extend_from_slice(json_str.as_bytes());
         self.out_buf.extend_from_slice(b"\n\n");
+    }
+
+    /// 流异常终止时写日志: 保留已解析到的 token / 首 token 延迟, 并按真实失败状态码记录.
+    ///
+    /// 原实现在这两条分支上用 `record_request`, 一律记 status=200 且 token 全 0 ——
+    /// 日志表格按 status<400 显示成功配色, 于是失败请求既丢了用量又显示成绿色成功.
+    /// 此处用实际解析值而非字节估算: 失败请求不宜凭空放大用量.
+    fn log_stream_failure(&mut self, mut ld: TokenLogData, status: u16, err: String) {
+        ld.response_body_len = self.response_bytes;
+        let (pt, ct) = (self.tokens_pt, self.tokens_ct);
+        let (hit, miss, creation) = (
+            self.tokens_cache_hit,
+            self.tokens_cache_miss,
+            self.tokens_cache_creation,
+        );
+        let first_token_ms = self
+            .first_token_at
+            .map(|t| t.duration_since(ld.start).as_millis() as u64);
+        tokio::spawn(async move {
+            crate::admin::record_request_with_tokens_status(
+                &ld.log_buffer,
+                &ld.model,
+                &ld.provider,
+                &ld.endpoint,
+                ld.upstream_model.as_deref(),
+                status,
+                ld.start,
+                pt,
+                ct,
+                ld.response_body_len,
+                false,
+                hit,
+                miss,
+                creation,
+                ld.strip_saved_tokens,
+                ld.trim_saved_tokens,
+                0,
+                first_token_ms,
+                Some(err),
+            )
+            .await;
+        });
     }
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
@@ -2412,16 +2484,11 @@ impl Stream for TokenStream {
                     // 翻译后的 error 事件已转发, 直接终止流 (丢弃上游剩余数据).
                     // Fix B2: 写一条带 error 标记的完成日志, 否则该请求会从请求日志中凭空消失
                     // (与旧 Err 分支的盲区一致; 正是 10004 在 logs.jsonl 看不到的原因).
-                    if let Some(mut ld) = this.log_buffer.take() {
-                        ld.response_body_len = this.response_bytes;
+                    if let Some(ld) = this.log_buffer.take() {
                         let err_msg = this.errored_msg.clone()
-                            .or_else(|| this.finish_reason.clone().map(|f| format!("finish_reason={f}")));
-                        tokio::spawn(async move {
-                            crate::admin::record_request(
-                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                                200, ld.start, ld.response_body_len, err_msg,
-                            ).await;
-                        });
+                            .or_else(|| this.finish_reason.clone().map(|f| format!("finish_reason={f}")))
+                            .unwrap_or_else(|| "upstream error event".to_string());
+                        this.log_stream_failure(ld, 502, err_msg);
                     }
                     return Poll::Ready(None);
                 }
@@ -2487,16 +2554,10 @@ impl Stream for TokenStream {
                     this.done = true;
                     this.error_closed = true;
                     // 上游断连 / 空闲超时兜底: 响应多半不完整 (本就不参与缓存, 仅记录错误).
-                    if let Some(mut ld) = this.log_buffer.take() {
-                        ld.response_body_len = this.response_bytes;
+                    if let Some(ld) = this.log_buffer.take() {
                         // 先把错误信息格式化为 String (Send) 再进入 spawn, 否则 E 不 Send 会让 future 无法跨线程.
                         let err_msg = format!("{e:?}");
-                        tokio::spawn(async move {
-                            crate::admin::record_request(
-                                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                                200, ld.start, ld.response_body_len, Some(err_msg),
-                            ).await;
-                        });
+                        this.log_stream_failure(ld, 502, err_msg);
                     }
                     let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                 data: [DONE]\n\n";
@@ -2575,10 +2636,13 @@ impl Stream for TokenStream {
                             ld.response_body_len = this.response_bytes;
                             // 首 token 延迟必须在 async 块外计算 (this 是 &mut 不能跨线程), 仅持有一个 Copy 的 Option<u64> 进 spawn.
                             let first_token_ms = this.first_token_at.map(|t| t.duration_since(ld.start).as_millis() as u64);
+                            // 带 error 的收尾 (截断/死循环/上游错误) 记 502, 否则日志表格会按 status<400
+                            // 显示成功配色, 与 error 判定 (is_log_error) 自相矛盾.
+                            let status = if err_for_log.is_some() { 502 } else { 200 };
                             tokio::spawn(async move {
-                                crate::admin::record_request_with_tokens(
+                                crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                                    ld.start, pt, ct,                                     ld.response_body_len, false,
+                                    status, ld.start, pt, ct, ld.response_body_len, false,
                                     hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0,
                                     first_token_ms,
                                     err_for_log,
@@ -3756,6 +3820,65 @@ mod tests {
         assert_eq!(ts.tokens_cache_hit, 200);
         assert_eq!(ts.tokens_cache_miss, 50);
         assert_eq!(ts.tokens_cache_creation, 30);
+    }
+
+    /// 回归: 收尾 usage 帧只含 output 时, 不得把已解析的输入量覆盖成 0.
+    ///
+    /// 对应 Anthropic 上游: message_start 给出 prompt(含 cache), message_delta 仅带
+    /// output_tokens. 修复前 tokens_pt 被抹成 0, 最终退化为「请求字节/4」估算值,
+    /// 输入 token 与按输入计费的费用同时算错.
+    #[test]
+    fn test_usage_without_prompt_does_not_clobber_prompt_tokens() {
+        use futures::stream;
+        let mut ts = TokenStream {
+            inner: Box::pin(stream::empty::<Result<Bytes, StreamErr>>()),
+            done: false,
+            tokens_pt: 0,
+            tokens_ct: 0,
+            tokens_cache_hit: 0,
+            tokens_cache_miss: 0,
+            tokens_cache_creation: 0,
+            response_bytes: 0,
+            loop_guard: None,
+            loop_aborted: false,
+            error_closed: false,
+            stream_errored: false,
+            pending_error_sse: None,
+            finish_reason: None,
+            clean_finish: false,
+            errored_msg: None,
+            keepalive: None,
+            recent_lines: std::collections::VecDeque::new(),
+            out_buf: Vec::new(),
+            line_buf: Vec::new(),
+            first_token_at: None,
+            anthropic_conv: None,
+            responses_conv: None,
+            cont_ctx: None,
+            cont_left: 0,
+            accumulated_content: String::new(),
+            emitted_tool_calls: false,
+            cont_pending: None,
+            cont_segment: 0,
+            cont_fail_note: None,
+            anthropic_mode: true,
+            responses_mode: false,
+            loop_params: None,
+            log_buffer: None,
+        };
+        // message_start 帧: 输入 1000 + 缓存读 5000 → prompt 6000
+        ts.parse_sse_chunk(
+            b"data: {\"usage\":{\"prompt_tokens\":6000,\"completion_tokens\":1,\"prompt_tokens_details\":{\"cached_tokens\":5000}}}\n\n",
+        );
+        assert_eq!(ts.tokens_pt, 6000);
+        // message_delta 帧: 只带 completion_tokens (无 prompt_tokens) → 不得清零
+        ts.parse_sse_chunk(b"data: {\"usage\":{\"completion_tokens\":50}}\n\n");
+        assert_eq!(ts.tokens_pt, 6000, "收尾帧不得覆盖已解析的输入 token");
+        assert_eq!(ts.tokens_ct, 50);
+        // 无 usage 时仍走估算兜底 (保持既有行为)
+        let (pt, ct, ..) = ts.final_tokens(40_000);
+        assert_eq!(pt, 6000);
+        assert_eq!(ct, 50);
     }
 
     /// 流式错误事件翻译: 标准 error 事件 / 顶层 message / 顶层 detail / 正常数据返回 None.
