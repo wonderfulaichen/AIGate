@@ -381,6 +381,8 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .modal-title{font-size:14px;font-weight:600;color:var(--fg)}
 .modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px}
 .modal-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border)}
+.price-panel{position:fixed;right:0;top:0;bottom:0;width:360px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shm);overflow:hidden}
+.price-panel-bk{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:69}
 .dr-bk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
 .dr-card{pointer-events:auto;width:min(100%,940px);max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
@@ -886,18 +888,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
                     <td style="padding:6px 10px;white-space:nowrap">
-                      <template x-if="!m._editingPrice">
-                        <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?t('price_clear'):t('price_not_set')" @click="m._editingPrice=true" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
-                      </template>
-                      <template x-if="m._editingPrice">
-                        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
-                          <input type="number" step="0.01" min="0" class="inp mono" style="width:64px;font-size:11px" x-model.number="m._priceInput" :placeholder="m.price?m.price.input_per_m:''">
-                          <input type="number" step="0.01" min="0" class="inp mono" style="width:64px;font-size:11px" x-model.number="m._priceOutput" :placeholder="m.price?m.price.output_per_m:''">
-                          <button class="btn btn-p" style="font-size:10px;padding:2px 5px" @click="saveModelPrice(m)" x-text="t('save')"></button>
-                          <button class="btn btn-g" style="font-size:10px;padding:2px 5px" @click="m._editingPrice=false" x-text="t('cancel')"></button>
-                        </div>
-                      </template>
-                      <template x-if="m._priceMsg" x-show="m._priceMsg" style="font-size:10px;color:var(--ok)" x-text="m._priceMsg"></template>
+                      <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?t('price_clear'):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
                     </td>
                     <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)">✕</button></td>
                   </tr>
@@ -918,7 +909,42 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
 </div>
 </template>
-</div>
+<template x-if="pricePanelModel">
+  <div class="price-panel-bk" @click="closePricePanel()"></div>
+  <div class="price-panel">
+    <div class="dr-h">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>
+        <span class="txsm fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pricePanelModel.upstream_model||pricePanelModel.model_id"></span>
+      </div>
+      <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0">✕</button>
+    </div>
+    <div class="dr-body" style="display:flex;flex-direction:column;gap:14px;padding:16px 20px">
+      <div>
+        <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_peak_section')"></div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          <div class="f-row"><label x-text="t('price_input_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m"></div>
+          <div class="f-row"><label x-text="t('price_output_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m"></div>
+          <div class="f-row"><label x-text="t('cache_label')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.cache_read_per_m"></div>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:12px">
+        <div class="txs fw7 mb2" style="color:var(--fg)" x-text="t('price_offpeak_section')"></div>
+        <div class="txs tm" style="color:var(--muted);margin-bottom:8px" x-text="t('price_offpeak_hint')"></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="f-row"><label x-text="t('price_input_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.input_per_m_offpeak"></div>
+          <div class="f-row"><label x-text="t('price_output_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:140px" x-model.number="pricePanel.output_per_m_offpeak"></div>
+        </div>
+      </div>
+      <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
+    </div>
+    <div class="dr-foot" style="border-top:1px solid var(--border)">
+      <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
+      <button class="btn btn-g" @click="closePricePanel()" x-text="t('cancel')"></button>
+      <button class="btn btn-p" @click="savePricePanel()" x-text="t('save')"></button>
+    </div>
+  </div>
+</template>
 <script>
 setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; var n=(window.__errs||[]).length; if(n===window.__lastN) return; window.__lastN=n; if(!n){ d.style.display='none'; return; } d.style.display='block'; d.textContent=window.__errs.join(String.fromCharCode(10)).slice(0,1500); }, 600);
 </script>
@@ -951,7 +977,7 @@ const I18N = {
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_title': '编辑单价', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价-空闲(元/1M)', 'price_output_offpeak': '输出单价-空闲(元/1M)', 'price_builtin_hint': '内置价: DeepSeek v4 flash 输入3/输出9/缓存0.1(空闲半价); v4 pro 输入9/输出27/缓存0.3', 'price_clear': '清除自定义价', 'price_reset_builtin': '重置为内置价', 'price_err': '请输入数字', 'saved': '已保存', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价(元/1M)', 'price_output_offpeak': '输出单价(元/1M)', 'price_peak_section': '标准价', 'price_offpeak_section': '空闲时段价（可选）', 'price_offpeak_hint': '留空则与标准价相同；DeepSeek 等分时段计费的供应商需填写', 'price_clear': '清除自定义价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'expand_all': '展开全部', 'collapse': '收起',
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
@@ -1105,7 +1131,7 @@ const I18N = {
     'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_title': 'Edit Price', 'price_edit_model': 'Model', 'price_input_peak': 'Input (CNY/1M)', 'price_output_peak': 'Output (CNY/1M)', 'price_input_offpeak': 'Input off-peak (CNY/1M)', 'price_output_offpeak': 'Output off-peak (CNY/1M)', 'price_builtin_hint': 'Builtin: DeepSeek v4 flash input 3/output 9/cache 0.1 (offpeak half); v4 pro input 9/output 27/cache 0.3', 'price_clear': 'Clear custom price', 'price_reset_builtin': 'Reset to builtin', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_input_peak': 'Input (CNY/1M)', 'price_output_peak': 'Output (CNY/1M)', 'price_input_offpeak': 'Input (CNY/1M)', 'price_output_offpeak': 'Output (CNY/1M)', 'price_peak_section': 'Standard price', 'price_offpeak_section': 'Off-peak price (optional)', 'price_offpeak_hint': 'Leave blank to use the standard price; required for providers with time-based pricing like DeepSeek', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'expand_all': 'Expand all', 'collapse': 'Collapse',
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
@@ -1418,6 +1444,7 @@ function dashboard() {
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provNameFilter: '', provProtocolFilter: '', provEffortFilter: '', provFreeOnly: false, provNoKeyOnly: false, provViewMode: 'table', drawerProv: null,
+    pricePanelModel: null, pricePanel: {},
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
@@ -2244,44 +2271,47 @@ function dashboard() {
     closeProviderDrawer(){
       this.drawerProv=null;
     },
-    // 单价编辑
-    openPriceEditor(prov, model){
-      const p = model.price || {input_per_m:0, output_per_m:0};
-      this.priceEditor = {
-        input_per_m: p.input_per_m||0,
-        output_per_m: p.output_per_m||0,
-        cache_read_per_m: p.cache_read_per_m??0,
-        input_per_m_offpeak: p.input_per_m_offpeak||0,
-        output_per_m_offpeak: p.output_per_m_offpeak||0,
+    // 单价编辑面板
+    openPricePanel(model){
+      const p = model.price || {};
+      this.pricePanel = {
+        input_per_m: p.input_per_m ?? null,
+        output_per_m: p.output_per_m ?? null,
+        cache_read_per_m: p.cache_read_per_m ?? null,
+        input_per_m_offpeak: p.input_per_m_offpeak || null,
+        output_per_m_offpeak: p.output_per_m_offpeak || null,
       };
-      this.priceEditorModel = {provider: prov, model};
+      this.pricePanelModel = model;
     },
-    // 行内保存模型价格
-    saveModelPrice(m){
-      const input = parseFloat(m._priceInput);
-      const output = parseFloat(m._priceOutput);
-      if(!Number.isFinite(input) && !Number.isFinite(output)){
-        m._priceMsg = t('price_err');
-        return;
+    closePricePanel(){
+      this.pricePanelModel = null;
+    },
+    savePricePanel(){
+      if(!this.pricePanelModel) return;
+      const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
+      const input_per_m = n(this.pricePanel.input_per_m);
+      const output_per_m = n(this.pricePanel.output_per_m);
+      const cache_read_per_m = n(this.pricePanel.cache_read_per_m);
+      const input_per_m_offpeak = n(this.pricePanel.input_per_m_offpeak);
+      const output_per_m_offpeak = n(this.pricePanel.output_per_m_offpeak);
+      if(input_per_m===0 && output_per_m===0 && cache_read_per_m===0
+         && input_per_m_offpeak===0 && output_per_m_offpeak===0){
+        this.pricePanelModel.price = null;
+      } else {
+        this.pricePanelModel.price = {
+          input_per_m, output_per_m,
+          cache_read_per_m: cache_read_per_m||null,
+          input_per_m_offpeak, output_per_m_offpeak,
+        };
       }
-      if(input===0 && output===0){ m.price = null; }
-      else { m.price = { input_per_m: input||0, output_per_m: output||0, cache_read_per_m: null, input_per_m_offpeak:0, output_per_m_offpeak:0 }; }
-      m._editingPrice = false;
-      m._priceMsg = t('saved');
       this.markDirty();
-      setTimeout(() => { m._priceMsg = ''; }, 2000);
+      this.closePricePanel();
     },
-    // 内置价表（与 pricing.rs builtin_table 同步）
-    builtinPrice(upstream){
-      const table = {
-        'deepseek-v4-flash': {input_per_m:3, output_per_m:9, cache_read_per_m:0.1, input_per_m_offpeak:1.5, output_per_m_offpeak:4.5},
-        'deepseek-v4-pro':   {input_per_m:9, output_per_m:27, cache_read_per_m:0.3, input_per_m_offpeak:4.5, output_per_m_offpeak:13.5},
-      };
-      if(!upstream) return null;
-      if(table[upstream.toLowerCase()]) return table[upstream.toLowerCase()];
-      // 去除 -free / -Free 等后缀匹配
-      const norm = upstream.replace(/-free$/i,'').replace(/-Free$/i,'');
-      return table[norm.toLowerCase()]||null;
+    clearPricePanel(){
+      if(!this.pricePanelModel) return;
+      this.pricePanelModel.price = null;
+      this.markDirty();
+      this.closePricePanel();
     },
     clearProvFilters(){
       this.provSearch='';

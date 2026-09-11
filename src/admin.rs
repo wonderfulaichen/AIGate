@@ -1964,8 +1964,6 @@ pub async fn api_stats(
             if let Some(price) = mcfg.price {
                 price_overrides.insert(model_id, price);
                 has_price_config = true;
-            } else if pricing::resolve_price(None, mcfg.upstream_model.as_deref()).is_some() {
-                has_price_config = true;
             }
         }
     }
@@ -2149,11 +2147,11 @@ fn ts_to_hour(ts: u64) -> String {
     format!("{date} {hour:02}:00")
 }
 
-/// 价格解析结果记忆化键: (中转 model, endpoint). upstream_model 已并入 resolve_price 内部逻辑,
-/// 但同一 (model, endpoint) 组合的解析结果稳定, 可安全复用 (详见 `PriceMemo`).
+/// 价格解析结果记忆化键: (中转 model, endpoint). 同一 (model, endpoint) 组合
+/// 的解析结果稳定, 可安全复用 (详见 `PriceMemo`).
 type PriceMemoKey = (String, String);
 
-/// 请求级价格解析记忆化表: 避免 5000 条日志各自重复调用 `resolve_price` (内含内置表/回退查找).
+/// 请求级价格解析记忆化表: 避免 5000 条日志各自重复查面板配置的价格表.
 /// 仅在单次 `compute_stats`/`compute_trends` 调用生命周期内有效, 不入全局.
 struct PriceMemo<'a> {
     overrides: &'a HashMap<String, ModelPrice>,
@@ -2174,10 +2172,7 @@ impl<'a> PriceMemo<'a> {
         if let Some(v) = self.cache.borrow().get(&key).copied() {
             return v;
         }
-        let p = pricing::resolve_price(
-            self.overrides.get(&log.model).copied(),
-            log.upstream_model.as_deref(),
-        );
+        let p = pricing::resolve_price(self.overrides.get(&log.model).copied());
         self.cache.borrow_mut().insert(key, p);
         p
     }
@@ -2429,12 +2424,9 @@ fn compute_stats(
                 .collect();
             aliases.sort();
 
-            // 单价取组内首条日志解析的结果（覆盖优先, 仅官方 DS 供应商回退内置表）,
+            // 单价取组内首条日志解析的结果（仅面板配置的价格）,
             // 供前端单价列展示.
-            let price = pricing::resolve_price(
-                price_overrides.get(&logs[0].model).copied(),
-                logs[0].upstream_model.as_deref(),
-            );
+            let price = pricing::resolve_price(price_overrides.get(&logs[0].model).copied());
 
             let provider_name = logs[0].provider.clone();
             let upstream_name = logs[0]
@@ -2623,7 +2615,7 @@ fn compute_stats(
 }
 
 /// 解析 rollup 条目的生效价格: 中转 ID 覆盖优先 (组内任一别名命中即用), 否则按上游模型回退内置表.
-/// 与日志口径 (memo.resolve 按 relay id 覆盖 → upstream 内置表) 语义一致.
+/// 与日志口径 (memo.resolve 按 relay id 查面板配置的价格) 语义一致.
 fn entry_price(
     price_overrides: &HashMap<String, ModelPrice>,
     e: &crate::rollup::RollupEntry,
@@ -2633,7 +2625,7 @@ fn entry_price(
             return Some(*p);
         }
     }
-    pricing::resolve_price(None, Some(&e.upstream))
+    None
 }
 
 /// rollup 条目费用 (元): 按高峰/空闲拆分的计费 token 以当前费率重算.

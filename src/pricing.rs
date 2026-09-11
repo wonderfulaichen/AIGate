@@ -1,13 +1,7 @@
 //! 模型价格表 — 费用统计用.
 //!
-//! 背景: 国内大模型供应商（DeepSeek / 阿里百炼 / 智谱 / 月之暗面 / 硅基流动等）
-//! **均不提供价格查询 API**; 价格仅在官方定价文档页公开, 且会变动
-//! （促销 / 阶梯 / 高峰倍率 / 版本升级）. 因此无法程序化实时拉取.
-//!
-//! 做法: 本模块内置一份**官方公开价的默认值**（仅 DeepSeek, 抓取于 2026-08-13,
-//! 更新于 2026-08-18 以反映分时段定价, 来源
-//! <https://api-docs.deepseek.com/zh-cn/quick_start/pricing>）, 其余供应商
-//! 请在 `providers.json` 的 model 条目配置 `price` 覆盖（优先级最高）.
+//! 价格完全由用户在 `providers.json` 的 model 条目配置 `price` 覆盖（面板可编辑）.
+//! 未配置价格的模型费用记为 0（"未配置价格"）, 不再回退任何内置默认价.
 //!
 //! 计价单位: 元 / 百万 tokens. 部分供应商（DeepSeek）按**时段**翻倍计费:
 //! 高峰（北京时间 09:00–12:00、14:00–18:00）价为 `*_per_m`, 其余时段为空闲价
@@ -41,44 +35,6 @@ pub struct ModelPrice {
     /// 空闲时段 KV Cache 命中价（元 / 百万 tokens）. 缺省回退 `cache_read_per_m`（高峰价）.
     #[serde(default)]
     pub cache_read_per_m_offpeak: f64,
-}
-
-/// 内置默认价格表（按 `upstream_model` 匹配）.
-///
-/// ⚠️ 价格会变动! 以官方文档为准; 若与实际不符, 在 `providers.json` 覆盖.
-/// 表格中 `*_per_m` 为**高峰价**, `*_per_m_offpeak` 为**空闲价**（DeepSeek 分时段,
-/// 高峰 09:00–12:00 / 14:00–18:00 北京时间为高峰价的 2 倍）.
-fn builtin_table() -> &'static [(&'static str, ModelPrice)] {
-    &[
-        (
-            "deepseek-v4-flash",
-            ModelPrice {
-                // 高峰价（元/百万 token）: 输入 3.0 / 输出 9.0 / 缓存命中 0.10.
-                input_per_m: 3.0,
-                output_per_m: 9.0,
-                cache_read_per_m: Some(0.10),
-                cache_creation_per_m: None,
-                // 空闲价（高峰 1/2）: 输入 1.5 / 输出 4.5 / 缓存命中 0.05.
-                input_per_m_offpeak: 1.5,
-                output_per_m_offpeak: 4.5,
-                cache_read_per_m_offpeak: 0.05,
-            },
-        ),
-        (
-            "deepseek-v4-pro",
-            ModelPrice {
-                // 高峰价（元/百万 token）: 输入 9.0 / 输出 27.0 / 缓存命中 0.30.
-                input_per_m: 9.0,
-                output_per_m: 27.0,
-                cache_read_per_m: Some(0.30),
-                cache_creation_per_m: None,
-                // 空闲价（高峰 1/2）: 输入 4.5 / 输出 13.5 / 缓存命中 0.15.
-                input_per_m_offpeak: 4.5,
-                output_per_m_offpeak: 13.5,
-                cache_read_per_m_offpeak: 0.15,
-            },
-        ),
-    ]
 }
 
 /// DeepSeek 高峰时段（北京时间）: 09:00–12:00 与 14:00–18:00.
@@ -121,36 +77,11 @@ pub fn effective_parts(p: ModelPrice) -> ((f64, f64, f64), (f64, f64, f64)) {
     (peak, offpeak)
 }
 
-/// 去除常见免费 / 试用后缀（如 `-free`）, 用于更宽松地匹配内置表.
-fn normalize_upstream(s: &str) -> String {
-    let s = s.trim();
-    for suf in ["-free", "-Free", "-FREE", "-trial"] {
-        if let Some(stripped) = s.strip_suffix(suf) {
-            return stripped.to_string();
-        }
-    }
-    s.to_string()
-}
-
-/// 按 `upstream_model` 查内置表. 先精确匹配, 再尝试去除免费 / 试用后缀匹配.
-pub fn builtin_price(upstream: &str) -> Option<ModelPrice> {
-    let table = builtin_table();
-    if let Some((_, p)) = table.iter().find(|(k, _)| *k == upstream) {
-        return Some(*p);
-    }
-    let norm = normalize_upstream(upstream);
-    table.iter().find(|(k, _)| *k == norm).map(|(_, p)| *p)
-}
-
-/// 解析最终价格: `providers.json` 的 model.price 覆盖优先, 否则用内置表.
-pub fn resolve_price(
-    override_price: Option<ModelPrice>,
-    upstream: Option<&str>,
-) -> Option<ModelPrice> {
-    if let Some(p) = override_price {
-        return Some(p);
-    }
-    upstream.and_then(builtin_price)
+/// 解析最终价格: 仅使用 `providers.json` 的 model.price（面板配置）.
+///
+/// 未配置时返回 `None`, 调用方按 0 处理（该模型费用不计入统计）.
+pub fn resolve_price(override_price: Option<ModelPrice>) -> Option<ModelPrice> {
+    override_price
 }
 
 /// 计算单条请求费用（元）.
