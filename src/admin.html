@@ -856,6 +856,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                   <button class="btn btn-g" style="font-size:11px" @click="toggleAll(drawerProv,true)" x-text="t('select_all')"></button>
                   <button class="btn btn-g" style="font-size:11px" @click="toggleAll(drawerProv,false)" x-text="t('deselect_all')"></button>
                   <button class="btn btn-g" style="font-size:11px;color:var(--err)" @click="deleteSelectedModels()" x-text="t('delete_selected')"></button>
+                  <button class="btn btn-g" style="font-size:11px" :disabled="!priceClipboardSet||selectedIndexes(drawerProv).length===0" :title="t('price_apply_selected_hint')" @click="applyPriceToSelected(providersFormData.indexOf(drawerProv))" x-text="t('price_apply_selected',selectedIndexes(drawerProv).length)"></button>
                   <button class="btn btn-p" style="font-size:11px" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
                 </div>
               </div>
@@ -987,6 +988,11 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div class="f-row"><label x-text="t('price_row_cache_write')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:110px" x-model.number="pricePanel.cache_creation_per_m"></div>
     </div>
     <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:10px">
+      <button class="btn btn-g" style="font-size:11px" @click="copyPriceFromPanel()" x-text="t('price_copy')"></button>
+      <button class="btn btn-g" style="font-size:11px" :disabled="!priceClipboardSet" @click="pastePriceToPanel()" x-text="t('price_paste')"></button>
+      <span class="txs" x-show="priceClipMsg" style="color:var(--ok)" x-text="priceClipMsg"></span>
+    </div>
   </div>
   <div class="dr-foot" style="border-top:1px solid var(--border)">
     <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
@@ -1028,7 +1034,9 @@ const I18N = {
     'enabled': '启用', 'disabled': '停用',
     'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
-    'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种',
+    'price_copy': '复制价格', 'price_paste': '粘贴价格', 'price_copied': '已复制', 'price_applied': '已应用到 {0} 个模型',
+    'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
     'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
     'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。',
@@ -1188,7 +1196,9 @@ const I18N = {
     'enabled': 'Enabled', 'disabled': 'Disabled',
     'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
     'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
-    'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
+    'price_copy': 'Copy price', 'price_paste': 'Paste price', 'price_copied': 'Copied', 'price_applied': 'Applied to {0} model(s)',
+    'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
     'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
     'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.',
@@ -1506,6 +1516,8 @@ function dashboard() {
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provNameFilter: '', provProtocolFilter: '', provEffortFilter: '', provFreeOnly: false, provNoKeyOnly: false, provViewMode: 'table', drawerProv: null,
     pricePanelModel: null, pricePanel: {},
+    // 价格剪贴板: 复制后可在其他模型面板"粘贴", 或批量应用到勾选的模型.
+    priceClipboard: null, priceClipboardSet: false, priceClipMsg: '',
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
@@ -2371,18 +2383,44 @@ function dashboard() {
       this.drawerProv=null;
     },
     // 单价编辑面板 (行列与供应商官方价目表一致: 项目 × 空闲/高峰时段)
-    openPricePanel(model){
-      const p = model.price || {};
+    // 面板表单 → price 对象. 七项全为 0 视为「无价」, 返回 null.
+    priceFromPanel(){
+      const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
+      const f = {
+        cache_read_per_m: n(this.pricePanel.cache_read_per_m),
+        cache_read_per_m_offpeak: n(this.pricePanel.cache_read_per_m_offpeak),
+        input_per_m: n(this.pricePanel.input_per_m),
+        input_per_m_offpeak: n(this.pricePanel.input_per_m_offpeak),
+        output_per_m: n(this.pricePanel.output_per_m),
+        output_per_m_offpeak: n(this.pricePanel.output_per_m_offpeak),
+        cache_creation_per_m: n(this.pricePanel.cache_creation_per_m),
+      };
+      if(Object.values(f).every(v => v === 0)) return null;
+      return {
+        input_per_m: f.input_per_m, output_per_m: f.output_per_m,
+        cache_read_per_m: f.cache_read_per_m || null,
+        cache_creation_per_m: f.cache_creation_per_m || null,
+        input_per_m_offpeak: f.input_per_m_offpeak,
+        output_per_m_offpeak: f.output_per_m_offpeak,
+        cache_read_per_m_offpeak: f.cache_read_per_m_offpeak,
+      };
+    },
+    // price 对象 → 面板表单 (0 / 缺失统一显示为空, 便于区分"未填"与"填 0").
+    priceToPanel(p){
+      const q = p || {};
       const nz = v => (typeof v === 'number' && v !== 0) ? v : null;
       this.pricePanel = {
-        cache_read_per_m: p.cache_read_per_m ?? null,
-        cache_read_per_m_offpeak: nz(p.cache_read_per_m_offpeak),
-        input_per_m: p.input_per_m ?? null,
-        input_per_m_offpeak: nz(p.input_per_m_offpeak),
-        output_per_m: p.output_per_m ?? null,
-        output_per_m_offpeak: nz(p.output_per_m_offpeak),
-        cache_creation_per_m: p.cache_creation_per_m ?? null,
+        cache_read_per_m: q.cache_read_per_m ?? null,
+        cache_read_per_m_offpeak: nz(q.cache_read_per_m_offpeak),
+        input_per_m: q.input_per_m ?? null,
+        input_per_m_offpeak: nz(q.input_per_m_offpeak),
+        output_per_m: q.output_per_m ?? null,
+        output_per_m_offpeak: nz(q.output_per_m_offpeak),
+        cache_creation_per_m: q.cache_creation_per_m ?? null,
       };
+    },
+    openPricePanel(model){
+      this.priceToPanel(model.price);
       this.pricePanelModel = model;
     },
     closePricePanel(){
@@ -2390,30 +2428,38 @@ function dashboard() {
     },
     savePricePanel(){
       if(!this.pricePanelModel) return;
-      const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
-      const cache_read_per_m = n(this.pricePanel.cache_read_per_m);
-      const cache_read_per_m_offpeak = n(this.pricePanel.cache_read_per_m_offpeak);
-      const input_per_m = n(this.pricePanel.input_per_m);
-      const input_per_m_offpeak = n(this.pricePanel.input_per_m_offpeak);
-      const output_per_m = n(this.pricePanel.output_per_m);
-      const output_per_m_offpeak = n(this.pricePanel.output_per_m_offpeak);
-      const cache_creation_per_m = n(this.pricePanel.cache_creation_per_m);
-      const allZero = cache_read_per_m===0 && cache_read_per_m_offpeak===0
-        && input_per_m===0 && input_per_m_offpeak===0
-        && output_per_m===0 && output_per_m_offpeak===0 && cache_creation_per_m===0;
-      if(allZero){
-        this.pricePanelModel.price = null;
-      } else {
-        this.pricePanelModel.price = {
-          input_per_m, output_per_m,
-          cache_read_per_m: cache_read_per_m||null,
-          cache_creation_per_m: cache_creation_per_m||null,
-          input_per_m_offpeak, output_per_m_offpeak,
-          cache_read_per_m_offpeak,
-        };
-      }
+      this.pricePanelModel.price = this.priceFromPanel();
       this.markDirty();
       this.closePricePanel();
+    },
+    // 复制当前面板价格到剪贴板 (内存缓冲区, 跨模型/跨供应商可用; null 亦为有效值=无价).
+    copyPriceFromPanel(){
+      this.priceClipboard = this.priceFromPanel();
+      this.priceClipboardSet = true;
+      this.priceClipMsg = t('price_copied');
+      setTimeout(()=>{ this.priceClipMsg=''; }, 2000);
+    },
+    // 把剪贴板价格填回面板 (不落盘, 仍需点"保存"确认).
+    pastePriceToPanel(){
+      if(!this.priceClipboardSet) return;
+      this.priceToPanel(this.priceClipboard);
+    },
+    // 把剪贴板价格应用到当前勾选的模型 (整批覆盖).
+    applyPriceToSelected(pi){
+      const prov = this.providersFormData[pi];
+      if(!prov || !this.priceClipboardSet) return;
+      const idxs = Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(Number);
+      if(!idxs.length) return;
+      for(const i of idxs){
+        if(!prov.models[i]) continue;
+        prov.models[i].price = this.priceClipboard ? JSON.parse(JSON.stringify(this.priceClipboard)) : null;
+      }
+      this.markDirty();
+      toast(t('price_applied', idxs.length), 'success');
+    },
+    selectedIndexes(prov){
+      if(!prov || !prov._selected) return [];
+      return Object.keys(prov._selected).filter(k=>prov._selected[k]).map(Number);
     },
     clearPricePanel(){
       if(!this.pricePanelModel) return;
