@@ -598,6 +598,43 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
   </div>
 </div>
+<div class="st mb3" x-text="t('section.peak')"></div>
+<div class="pnl mb4">
+  <div class="set-row">
+    <div style="min-width:0"><div class="row-t" x-text="t('peak_enable')"></div><div class="row-d" x-text="t('peak_enable_desc')"></div></div>
+    <button class="tgl" :class="peakSchedule.enabled?'on':'off'" @click="peakSchedule.enabled=!peakSchedule.enabled"></button>
+  </div>
+  <div x-show="peakSchedule.enabled" style="padding:0 16px 14px;display:flex;flex-direction:column;gap:14px">
+    <div class="cg" style="align-self:flex-start">
+      <span class="txs tm" x-text="t('peak_tz')"></span>
+      <input type="number" class="inp" style="width:80px" x-model.number="peakSchedule.tz_offset_hours">
+      <span class="txs tm" x-text="t('peak_tz_unit')"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span class="txs tm" x-text="t('peak_weekdays')"></span>
+      <template x-for="d in [1,2,3,4,5,6,7]" :key="d">
+        <span class="m-chip" :class="{'on':peakSchedule.weekdays.includes(d)}" @click="togglePeakWeekday(d)" x-text="t('wd.'+d)"></span>
+      </template>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <span class="txs tm" x-text="t('peak_windows')"></span>
+      <template x-for="(w,i) in peakSchedule.windows" :key="i">
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="time" class="inp mono" style="width:120px" x-model="w.start">
+          <span class="tm">—</span>
+          <input type="time" class="inp mono" style="width:120px" x-model="w.end">
+          <button class="btn btn-g" style="color:var(--err);padding:2px 8px" @click="removePeakWindow(i)">✕</button>
+        </div>
+      </template>
+      <div><button class="btn btn-g" style="font-size:11px" @click="addPeakWindow()" x-text="t('peak_add_window')"></button></div>
+    </div>
+    <div class="txs tm" style="color:var(--muted)" x-text="t('peak_hint')"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn btn-p" style="font-size:11px" @click="savePeakSchedule()" x-text="t('save')"></button>
+      <span class="txs" x-show="peakMsg" :style="peakMsgOk?'color:var(--ok)':'color:var(--err)'" x-text="peakMsg"></span>
+    </div>
+  </div>
+</div>
 <div class="st mb3" x-text="t('section.conn')"></div>
 <div class="pnl mb4">
   <div class="set-row">
@@ -977,6 +1014,10 @@ const I18N = {
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
     'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价(元/1M)', 'price_output_offpeak': '输出单价(元/1M)', 'price_peak_section': '标准价', 'price_offpeak_section': '空闲时段价（可选）', 'price_offpeak_hint': '留空则与标准价相同；DeepSeek 等分时段计费的供应商需填写', 'price_clear': '清除自定义价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
+    'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
+    'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。',
+    'wd.1': '一', 'wd.2': '二', 'wd.3': '三', 'wd.4': '四', 'wd.5': '五', 'wd.6': '六', 'wd.7': '日',
     'expand_all': '展开全部', 'collapse': '收起',
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
@@ -1131,6 +1172,10 @@ const I18N = {
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
     'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_input_peak': 'Input (CNY/1M)', 'price_output_peak': 'Output (CNY/1M)', 'price_input_offpeak': 'Input (CNY/1M)', 'price_output_offpeak': 'Output (CNY/1M)', 'price_peak_section': 'Standard price', 'price_offpeak_section': 'Off-peak price (optional)', 'price_offpeak_hint': 'Leave blank to use the standard price; required for providers with time-based pricing like DeepSeek', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
+    'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
+    'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.',
+    'wd.1': 'Mon', 'wd.2': 'Tue', 'wd.3': 'Wed', 'wd.4': 'Thu', 'wd.5': 'Fri', 'wd.6': 'Sat', 'wd.7': 'Sun',
     'expand_all': 'Expand all', 'collapse': 'Collapse',
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
@@ -1450,6 +1495,9 @@ function dashboard() {
     // 费用显示币种: 内部费用以 CNY 为基准, 仅展示层换算.
     currencyConfig: { currency: 'CNY', rates: { CNY: 1, USD: 7.2, EUR: 7.8, JPY: 0.048, GBP: 9.1, HKD: 0.92 } },
     currencyRateEdit: 7.2, currencyMsg: '',
+    // 分时段计费: 高峰日 / 高峰时段 / 时区 (后端 peak_schedule.json).
+    peakSchedule: { enabled: true, tz_offset_hours: 8, weekdays: [1,2,3,4,5,6,7], windows: [{start:'09:00',end:'12:00'},{start:'14:00',end:'18:00'}] },
+    peakMsg: '', peakMsgOk: false,
 
     // Dashboard trend chart mode: 'requests' | 'latency' | 'tokens'
     dailyMode: 'requests',
@@ -1511,6 +1559,7 @@ function dashboard() {
       }
       document.title = t('app_title');
       await this.fetchCurrencyConfig();
+      await this.fetchPeakSchedule();
       await this.switchTab('dashboard');
       await this.fetchChangelog();
       await this.fetchSeenVersion();
@@ -1579,7 +1628,7 @@ function dashboard() {
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
+      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
     },
 
     startPoll() {
@@ -2133,6 +2182,40 @@ function dashboard() {
         this.currencyConfig.rates[this.currencyConfig.currency]=v;
         this.saveCurrencyConfig();
       }
+    },
+    // 分时段计费配置 (高峰日 / 高峰时段 / 时区).
+    async fetchPeakSchedule() {
+      try {
+        const r = await fetch('/admin/api/peak-schedule', {headers:authHeaders()});
+        if (r.ok) {
+          const d = await r.json();
+          if (d && Array.isArray(d.windows)) {
+            this.peakSchedule = {
+              enabled: d.enabled !== false,
+              tz_offset_hours: (typeof d.tz_offset_hours === 'number') ? d.tz_offset_hours : 8,
+              weekdays: Array.isArray(d.weekdays) ? d.weekdays : [1,2,3,4,5,6,7],
+              windows: d.windows.map(w => ({start:w.start||'', end:w.end||''})),
+            };
+          }
+        }
+      } catch(e){}
+    },
+    togglePeakWeekday(d) {
+      const i = this.peakSchedule.weekdays.indexOf(d);
+      if (i >= 0) this.peakSchedule.weekdays.splice(i, 1);
+      else { this.peakSchedule.weekdays.push(d); this.peakSchedule.weekdays.sort((a,b)=>a-b); }
+    },
+    addPeakWindow() { this.peakSchedule.windows.push({start:'09:00', end:'12:00'}); },
+    removePeakWindow(i) { this.peakSchedule.windows.splice(i, 1); },
+    async savePeakSchedule() {
+      this.peakMsg='';
+      try {
+        const r = await fetch('/admin/api/peak-schedule', {method:'POST', headers:authHeaders(), body:JSON.stringify({config:this.peakSchedule})});
+        const d = await r.json();
+        this.peakMsgOk = !!(r.ok && d.success !== false);
+        this.peakMsg = this.peakMsgOk ? t('saved') : (d.error || t('save_failed'));
+        setTimeout(()=>this.peakMsg='', 3000);
+      } catch(e){ this.peakMsgOk=false; this.peakMsg=t('network_error'); }
     },
     // CNY 金额换算到当前显示币种 (rates[code] = 1 单位该币种 = 多少 CNY).
     convertCny(v) {

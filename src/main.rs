@@ -43,6 +43,7 @@ mod thinking;
 mod keys;
 mod providers;
 mod pricing;
+mod peak;
 mod proxy;
 mod loop_guard;
 mod store;
@@ -661,6 +662,7 @@ fn main() {
         .route("/admin/api/realtime", get(admin::api_realtime))
         .route("/admin/api/tooltip-config", get(admin::api_tooltip_config_get).post(admin::api_tooltip_config_set))
         .route("/admin/api/currency", get(admin::api_currency_get).post(admin::api_currency_set))
+        .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
         .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));
     if config.admin_token.is_some() {

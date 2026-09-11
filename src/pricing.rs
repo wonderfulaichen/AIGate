@@ -4,8 +4,9 @@
 //! 未配置价格的模型费用记为 0（"未配置价格"）, 不再回退任何内置默认价.
 //!
 //! 计价单位: 元 / 百万 tokens. 部分供应商（DeepSeek）按**时段**翻倍计费:
-//! 高峰（北京时间 09:00–12:00、14:00–18:00）价为 `*_per_m`, 其余时段为空闲价
-//! `*_per_m_offpeak`（缺失时回退到高峰价, 使无分时段概念的供应商不受影响）.
+//! 高峰时段价为 `*_per_m`, 其余时段为空闲价 `*_per_m_offpeak`
+//! （缺失时回退到高峰价, 使无分时段概念的供应商不受影响）.
+//! 高峰时段（周几 / 时间段 / 时区）由 `crate::peak` 配置, 可在面板「设置」中调整.
 
 use serde::{Deserialize, Serialize};
 
@@ -37,16 +38,12 @@ pub struct ModelPrice {
     pub cache_read_per_m_offpeak: f64,
 }
 
-/// DeepSeek 高峰时段（北京时间）: 09:00–12:00 与 14:00–18:00.
-/// 返回 `true` 表示给定时间戳（秒, Unix）落在高峰窗口内.
+/// 给定时间戳（秒, Unix）是否落在高峰时段.
 ///
-/// 仅依赖东八区偏移, 不引入 chrono 依赖; 周末/节假日不分时段, 一律按空闲计.
+/// 规则由 `crate::peak` 的配置决定（周几 + 时间段 + 时区, 面板可改）;
+/// 关闭分时段计费时恒为 `false`, 即全天走标准价.
 pub fn is_peak(ts: u64) -> bool {
-    const TZ_OFFSET_SECS: i64 = 8 * 3600;
-    let local = (ts as i64) + TZ_OFFSET_SECS;
-    let secs_of_day = (local % 86400) as i64;
-    // 09:00:00 (32400) ≤ t < 12:00:00 (43200) 或 14:00:00 (50400) ≤ t < 18:00:00 (64800).
-    (secs_of_day >= 32400 && secs_of_day < 43200) || (secs_of_day >= 50400 && secs_of_day < 64800)
+    crate::peak::is_peak(ts)
 }
 
 /// 按时间戳选择生效的价格（高峰用 `*_per_m`, 空闲用 `*_per_m_offpeak`, 缺失回退高峰）.

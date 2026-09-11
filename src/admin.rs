@@ -1336,6 +1336,26 @@ pub async fn api_currency_set(
     }
 }
 
+/// GET /admin/api/peak-schedule — 返回高峰时段配置 (周几 / 时间段 / 时区).
+pub async fn api_peak_schedule_get() -> Json<serde_json::Value> {
+    Json(serde_json::to_value(crate::peak::current()).unwrap_or_default())
+}
+
+/// POST /admin/api/peak-schedule — 保存并热更新高峰时段配置.
+#[derive(serde::Deserialize)]
+pub struct PeakScheduleReq {
+    pub config: crate::peak::PeakSchedule,
+}
+
+pub async fn api_peak_schedule_set(
+    Json(payload): Json<PeakScheduleReq>,
+) -> Json<serde_json::Value> {
+    match crate::peak::save_config(&payload.config) {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => Json(serde_json::json!({ "error": format!("保存失败: {}", e) })),
+    }
+}
+
 /// GET /admin/api/balance — 返回各供应商余额信息 (API 查询 + 手动余额合并).
 pub async fn api_balance(
     State(state): State<super::proxy::AppState>,
