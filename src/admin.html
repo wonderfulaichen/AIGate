@@ -885,7 +885,20 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
-                    <td style="padding:6px 10px"><button class="btn btn-g" style="font-size:11px;padding:2px 6px;white-space:nowrap" :title="m.price?t('price_clear'):t('price_not_set')" @click="openPriceEditor(drawerProv,m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button></td>
+                    <td style="padding:6px 10px;white-space:nowrap">
+                      <template x-if="!m._editingPrice">
+                        <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?t('price_clear'):t('price_not_set')" @click="m._editingPrice=true" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
+                      </template>
+                      <template x-if="m._editingPrice">
+                        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+                          <input type="number" step="0.01" min="0" class="inp mono" style="width:64px;font-size:11px" x-model.number="m._priceInput" :placeholder="m.price?m.price.input_per_m:''">
+                          <input type="number" step="0.01" min="0" class="inp mono" style="width:64px;font-size:11px" x-model.number="m._priceOutput" :placeholder="m.price?m.price.output_per_m:''">
+                          <button class="btn btn-p" style="font-size:10px;padding:2px 5px" @click="saveModelPrice(m)" x-text="t('save')"></button>
+                          <button class="btn btn-g" style="font-size:10px;padding:2px 5px" @click="m._editingPrice=false" x-text="t('cancel')"></button>
+                        </div>
+                      </template>
+                      <template x-if="m._priceMsg" x-show="m._priceMsg" style="font-size:10px;color:var(--ok)" x-text="m._priceMsg"></template>
+                    </td>
                     <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)">✕</button></td>
                   </tr>
                   </template>
@@ -906,34 +919,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </div>
 </template>
 </div>
-<template x-if="priceEditorModel">
-  <div class="modal-overlay modal-overlay-lg" @click.self="closePriceEditor()">
-    <div class="modal-card modal-card-sm">
-      <div class="modal-head">
-        <div class="modal-title" x-text="t('price_edit_title')"></div>
-        <button class="btn btn-g" @click="closePriceEditor()" style="padding:4px 8px">✕</button>
-      </div>
-      <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
-        <div class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></div>
-        <div class="f-row"><label x-text="t('price_input_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:120px" x-model="priceEditor.input_per_m"></div>
-        <div class="f-row"><label x-text="t('price_output_peak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:120px" x-model="priceEditor.output_per_m"></div>
-        <div class="f-row"><label x-text="t('cache_label')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:120px" x-model="priceEditor.cache_read_per_m"></div>
-        <div style="border-top:1px solid var(--border);padding-top:8px">
-          <span class="txs fw7" x-text="t('offpeak_label')"></span>
-          <div class="f-row"><label x-text="t('price_input_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:120px" x-model="priceEditor.input_per_m_offpeak"></div>
-          <div class="f-row"><label x-text="t('price_output_offpeak')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:120px" x-model="priceEditor.output_per_m_offpeak"></div>
-        </div>
-        <div class="txs tm" style="color:var(--muted)" x-html="t('price_builtin_hint')"></div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn btn-g" style="color:var(--err)" @click="clearPrice()" x-text="t('price_clear')"></button>
-        <button class="btn btn-g" @click="resetPriceToBuiltin()" x-text="t('price_reset_builtin')"></button>
-        <button class="btn btn-g" @click="closePriceEditor()" x-text="t('cancel')"></button>
-        <button class="btn btn-p" @click="savePriceEditor()" x-text="t('save')"></button>
-      </div>
-    </div>
-  </div>
-</template>
 <script>
 setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; var n=(window.__errs||[]).length; if(n===window.__lastN) return; window.__lastN=n; if(!n){ d.style.display='none'; return; } d.style.display='block'; d.textContent=window.__errs.join(String.fromCharCode(10)).slice(0,1500); }, 600);
 </script>
@@ -966,7 +951,7 @@ const I18N = {
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_title': '编辑单价', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价-空闲(元/1M)', 'price_output_offpeak': '输出单价-空闲(元/1M)', 'price_builtin_hint': '内置价: DeepSeek v4 flash 输入3/输出9/缓存0.1(空闲半价); v4 pro 输入9/输出27/缓存0.3', 'price_clear': '清除自定义价', 'price_reset_builtin': '重置为内置价', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_title': '编辑单价', 'price_edit_model': '模型', 'price_input_peak': '输入单价(元/1M)', 'price_output_peak': '输出单价(元/1M)', 'price_input_offpeak': '输入单价-空闲(元/1M)', 'price_output_offpeak': '输出单价-空闲(元/1M)', 'price_builtin_hint': '内置价: DeepSeek v4 flash 输入3/输出9/缓存0.1(空闲半价); v4 pro 输入9/输出27/缓存0.3', 'price_clear': '清除自定义价', 'price_reset_builtin': '重置为内置价', 'price_err': '请输入数字', 'saved': '已保存', 'display_currency': '显示币种', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'expand_all': '展开全部', 'collapse': '收起',
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
@@ -1433,7 +1418,6 @@ function dashboard() {
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provNameFilter: '', provProtocolFilter: '', provEffortFilter: '', provFreeOnly: false, provNoKeyOnly: false, provViewMode: 'table', drawerProv: null,
-    priceEditorModel: null, priceEditor: {},
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
     tooltipConfig: null, tooltipMsg: '',
 
@@ -2272,52 +2256,20 @@ function dashboard() {
       };
       this.priceEditorModel = {provider: prov, model};
     },
-    closePriceEditor(){
-      this.priceEditorModel = null;
-    },
-    savePriceEditor(){
-      if(!this.priceEditorModel) return;
-      const {model} = this.priceEditorModel;
-      const e = this.priceEditor;
-      // 防御空字符串 / 非数字输入，统一兜底为 0
-      const n = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-      const input_per_m = n(e.input_per_m);
-      const output_per_m = n(e.output_per_m);
-      const cache_read_per_m = n(e.cache_read_per_m);
-      const input_per_m_offpeak = n(e.input_per_m_offpeak);
-      const output_per_m_offpeak = n(e.output_per_m_offpeak);
-      if(input_per_m===0 && output_per_m===0 && cache_read_per_m===0 && input_per_m_offpeak===0 && output_per_m_offpeak===0){
-        model.price = null;
-      } else {
-        model.price = {
-          input_per_m, output_per_m,
-          cache_read_per_m: cache_read_per_m||null,
-          input_per_m_offpeak, output_per_m_offpeak,
-        };
+    // 行内保存模型价格
+    saveModelPrice(m){
+      const input = parseFloat(m._priceInput);
+      const output = parseFloat(m._priceOutput);
+      if(!Number.isFinite(input) && !Number.isFinite(output)){
+        m._priceMsg = t('price_err');
+        return;
       }
+      if(input===0 && output===0){ m.price = null; }
+      else { m.price = { input_per_m: input||0, output_per_m: output||0, cache_read_per_m: null, input_per_m_offpeak:0, output_per_m_offpeak:0 }; }
+      m._editingPrice = false;
+      m._priceMsg = t('saved');
       this.markDirty();
-      this.closePriceEditor();
-    },
-    resetPriceToBuiltin(){
-      if(!this.priceEditorModel) return;
-      const {model} = this.priceEditorModel;
-      const key = model.upstream_model || model.model_id || '';
-      const builtin = this.builtinPrice(key);
-      if(builtin){
-        this.priceEditor = {
-          input_per_m: builtin.input_per_m,
-          output_per_m: builtin.output_per_m,
-          cache_read_per_m: builtin.cache_read_per_m??0,
-          input_per_m_offpeak: builtin.input_per_m_offpeak||0,
-          output_per_m_offpeak: builtin.output_per_m_offpeak||0,
-        };
-      }
-    },
-    clearPrice(){
-      if(!this.priceEditorModel) return;
-      this.priceEditorModel.model.price = null;
-      this.markDirty();
-      this.closePriceEditor();
+      setTimeout(() => { m._priceMsg = ''; }, 2000);
     },
     // 内置价表（与 pricing.rs builtin_table 同步）
     builtinPrice(upstream){
