@@ -1922,10 +1922,13 @@ pub struct AuditSummary {
     pub dup_block_tokens: u64,
     /// 上述重复块的个数.
     pub dup_block_count: u64,
-    /// 上游 KV 缓存写入 token (写溢价). 远大于读取量说明显式断点没命中, 在反复付写入费.
+    /// 上游 KV 缓存写入 token (写溢价). **仅 Anthropic 原生协议上报**;
+    /// OpenAI 兼容网关用扁平的 hit/miss 口径, 此处恒为 0 —— 不要据此判断缓存是否工作.
     pub cache_creation_tokens: u64,
     /// 上游 KV 缓存读取 token (命中收益).
     pub cache_read_tokens: u64,
+    /// 未命中缓存的输入 token (= 输入总量 − 命中量): 这部分按全价计费, 才是可优化空间.
+    pub cache_miss_tokens: u64,
     /// 输入 token 总量 (各项占比的分母).
     pub input_tokens: u64,
     /// 已生效的省量 (剥离推理链 + 历史裁剪 + 响应缓存命中), 作为对照基准.
@@ -2410,6 +2413,7 @@ fn compute_stats(
         dup_block_count: logs.iter().map(|l| l.audit_dup_block_count as u64).sum(),
         cache_creation_tokens: logs.iter().map(|l| l.prompt_cache_creation_tokens as u64).sum(),
         cache_read_tokens: total_cache_hit_tokens,
+        cache_miss_tokens: total_prompt_tokens.saturating_sub(total_cache_hit_tokens),
         input_tokens: total_prompt_tokens,
         applied_saved_tokens: total_strip_saved_tokens
             + total_trim_saved_tokens

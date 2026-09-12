@@ -509,7 +509,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="t('audit_basis',(stats.audit||{}).requests||0)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditPct((stats.audit||{}).applied_saved_tokens)"></span></div>
-        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_kv_write')"></span><span class="txsm mono fw6" x-text="fmtT((stats.audit||{}).cache_creation_tokens||0)"></span><span class="txs tm" x-text="t('audit_kv_read')+' '+fmtT((stats.audit||{}).cache_read_tokens||0)"></span></div>
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_kv_hit')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="kvHitRate()"></span><span class="txs tm" x-text="t('audit_kv_miss')+' '+fmtT((stats.audit||{}).cache_miss_tokens||0)+' · '+t('audit_kv_read')+' '+fmtT((stats.audit||{}).cache_read_tokens||0)"></span></div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_potential')"></div>
@@ -1060,7 +1060,7 @@ const I18N = {
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
     'model_usage_detail': '模型用量明细',
     'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '基于当前窗口 {0} 次请求',
-    'audit_applied': '已生效省量', 'audit_kv_write': 'KV 缓存写入', 'audit_kv_read': '读取',
+    'audit_applied': '已生效省量', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
     'audit_potential': '潜在可省（尚未启用）',
     'audit_exempt_reasoning': '豁免推理链', 'audit_exempt_reasoning_hint': '带工具调用的历史推理链当前未剥离',
     'audit_dup_blocks': '重复内容块', 'audit_dup_count': '{0} 块', 'audit_dup_hint': '同一内容重复出现，保留首次即可（需改写，行为可能偏移）',
@@ -1229,7 +1229,7 @@ const I18N = {
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
     'model_usage_detail': 'Model Details',
     'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': 'over {0} requests in the current window',
-    'audit_applied': 'Applied savings', 'audit_kv_write': 'KV cache write', 'audit_kv_read': 'read',
+    'audit_applied': 'Applied savings', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
     'audit_potential': 'Potential (not yet enabled)',
     'audit_exempt_reasoning': 'Exempt reasoning', 'audit_exempt_reasoning_hint': 'history reasoning on tool-calling turns is not stripped today',
     'audit_dup_blocks': 'Duplicate blocks', 'audit_dup_count': '{0} blocks', 'audit_dup_hint': 'identical content repeated; keeping the first suffices (requires rewriting, behaviour may shift)',
@@ -2990,6 +2990,13 @@ function dashboard() {
     fmtDateTime(ts){ const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleString(loc); },
     fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
     fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
+    // 省量审计: KV 缓存命中率 = 命中 token / 输入总量 (比"写入量"普适, 后者仅 Anthropic 上报).
+    kvHitRate() {
+      const a = (this.stats && this.stats.audit) || {};
+      const base = a.input_tokens || 0;
+      if (!base) return '—';
+      return ((a.cache_read_tokens || 0) / base * 100).toFixed(1) + '%';
+    },
     // 省量审计: 某潜在省量占当前窗口总输入 token 的百分比 (分母缺失时显示占位).
     auditPct(v) {
       const a = (this.stats && this.stats.audit) || {};
