@@ -661,7 +661,7 @@ pub async fn chat_completions(
                     state.cache.put(key, &body_text, (pt, ct));
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, audit, None, None,
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -698,7 +698,7 @@ pub async fn chat_completions(
                     let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, audit, None, None,
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1152,7 +1152,7 @@ async fn relay_native_passthrough(
         crate::admin::record_request_with_tokens(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
-            false, hit, miss, creation, 0, 0, 0, TokenAudit::default(), None, None,
+            false, hit, miss, creation, 0, 0, 0, None, None, None,
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1378,7 +1378,7 @@ impl Stream for NativeTapStream {
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens(
                             &lb, &m, &p, &ep, up.as_deref(), start,
-                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, TokenAudit::default(), None, None,
+                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None, None,
                         ).await;
                     });
                 }
@@ -1912,7 +1912,7 @@ async fn try_replay_cache(
         strip_saved,
         trim_saved,
         saved as u32,
-        TokenAudit::default(),
+        None,
         None,
         None,
     )
@@ -2370,7 +2370,7 @@ impl TokenStream {
                 ld.strip_saved_tokens,
                 ld.trim_saved_tokens,
                 0,
-                ld.audit,
+                Some(ld.audit),
                 first_token_ms,
                 Some(err),
             )
@@ -2650,7 +2650,7 @@ impl Stream for TokenStream {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
                                     status, ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, ld.audit,
+                                    hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                                     first_token_ms,
                                     err_for_log,
                                 ).await;

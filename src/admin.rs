@@ -108,6 +108,11 @@ pub struct RequestLog {
     /// 省量审计: 上述重复块的个数.
     #[serde(default)]
     pub audit_dup_block_count: u32,
+    /// 本条日志是否真的做过省量审计.
+    /// 旧日志 (升级前) 与未经过请求体分析的路径 (响应缓存回放 / 原生直通) 为 false ——
+    /// 此时上面三个 audit_* 字段是"未测量", 不是"测得为 0", 聚合时须区分开.
+    #[serde(default)]
+    pub audit_observed: bool,
 }
 
 #[inline]
@@ -410,6 +415,7 @@ pub async fn record_request(
         audit_exempt_reasoning_tokens: 0,
         audit_dup_block_tokens: 0,
         audit_dup_block_count: 0,
+        audit_observed: false,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -436,7 +442,7 @@ pub async fn record_request_with_tokens(
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
     resp_cache_saved_tokens: u32,
-    audit: crate::proxy::TokenAudit,
+    audit: Option<crate::proxy::TokenAudit>,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
@@ -488,10 +494,12 @@ pub async fn record_request_with_tokens_status(
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
     resp_cache_saved_tokens: u32,
-    audit: crate::proxy::TokenAudit,
+    audit: Option<crate::proxy::TokenAudit>,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
+    let audit_is_observed = audit.is_some();
+    let audit = audit.unwrap_or_default();
     let log = RequestLog {
         timestamp: now_ts(),
         model: model.to_string(),
@@ -513,6 +521,7 @@ pub async fn record_request_with_tokens_status(
         audit_exempt_reasoning_tokens: audit.exempt_reasoning_tokens,
         audit_dup_block_tokens: audit.dup_block_tokens,
         audit_dup_block_count: audit.dup_block_count,
+        audit_observed: audit_is_observed,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -1122,6 +1131,7 @@ pub async fn api_mock(
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            audit_observed: false,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1157,6 +1167,7 @@ pub async fn api_mock(
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            audit_observed: false,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1933,8 +1944,14 @@ pub struct AuditSummary {
     pub input_tokens: u64,
     /// 已生效的省量 (剥离推理链 + 历史裁剪 + 响应缓存命中), 作为对照基准.
     pub applied_saved_tokens: u64,
-    /// 参与审计的请求数 (有审计数据的请求才计数).
+    /// 窗口内非缓存请求总数.
     pub requests: u64,
+    /// 其中真正做过审计的请求数 (升级前的老日志与直通/回放路径不计).
+    /// 远小于 `requests` 时, 各项潜在可省量会被低估, 需积累更多新请求再看.
+    pub sampled_requests: u64,
+    /// 审计窗口的起止时间戳 (秒): 即实际纳入统计的最早/最晚日志时间.
+    pub window_start: u64,
+    pub window_end: u64,
 }
 
 /// 使用统计聚合结果.
@@ -2419,6 +2436,9 @@ fn compute_stats(
             + total_trim_saved_tokens
             + total_resp_cache_saved_tokens,
         requests: logs.iter().filter(|l| !l.cached).count() as u64,
+        sampled_requests: logs.iter().filter(|l| l.audit_observed).count() as u64,
+        window_start: logs.iter().map(|l| l.timestamp).min().unwrap_or(0),
+        window_end: logs.iter().map(|l| l.timestamp).max().unwrap_or(0),
     };
     let total_opt_saved_fee: f64 = logs
         .iter()
@@ -3400,6 +3420,7 @@ mod tests {
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            audit_observed: false,
             first_token_ms: None,
             upstream_model: None,
         }
