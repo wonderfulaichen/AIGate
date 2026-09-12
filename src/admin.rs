@@ -98,6 +98,16 @@ pub struct RequestLog {
     /// 仅 cached=true 时有值; 命中时 prompt_tokens 已是缓存体, 不与计费基数重复.
     #[serde(default)]
     pub resp_cache_saved_tokens: u32,
+    /// 省量审计: 带 tool_calls 的 assistant 消息中被豁免剥离的推理链 token 估算.
+    /// 只统计不改写, 用于评估放开豁免还能省多少.
+    #[serde(default)]
+    pub audit_exempt_reasoning_tokens: u32,
+    /// 省量审计: 历史中字节级重复的大块内容可省略的 token 估算 (保留首次).
+    #[serde(default)]
+    pub audit_dup_block_tokens: u32,
+    /// 省量审计: 上述重复块的个数.
+    #[serde(default)]
+    pub audit_dup_block_count: u32,
 }
 
 #[inline]
@@ -397,6 +407,9 @@ pub async fn record_request(
         strip_saved_tokens: 0,
         trim_saved_tokens: 0,
         resp_cache_saved_tokens: 0,
+        audit_exempt_reasoning_tokens: 0,
+        audit_dup_block_tokens: 0,
+        audit_dup_block_count: 0,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -423,6 +436,7 @@ pub async fn record_request_with_tokens(
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
     resp_cache_saved_tokens: u32,
+    audit: crate::proxy::TokenAudit,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
@@ -444,6 +458,7 @@ pub async fn record_request_with_tokens(
         strip_saved_tokens,
         trim_saved_tokens,
         resp_cache_saved_tokens,
+        audit,
         first_token_ms,
         error,
     )
@@ -473,6 +488,7 @@ pub async fn record_request_with_tokens_status(
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
     resp_cache_saved_tokens: u32,
+    audit: crate::proxy::TokenAudit,
     first_token_ms: Option<u64>,
     error: Option<String>,
 ) {
@@ -494,6 +510,9 @@ pub async fn record_request_with_tokens_status(
         strip_saved_tokens,
         trim_saved_tokens,
         resp_cache_saved_tokens,
+        audit_exempt_reasoning_tokens: audit.exempt_reasoning_tokens,
+        audit_dup_block_tokens: audit.dup_block_tokens,
+        audit_dup_block_count: audit.dup_block_count,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -1100,6 +1119,9 @@ pub async fn api_mock(
             strip_saved_tokens: 0,
             trim_saved_tokens: 0,
             resp_cache_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0,
+            audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1132,6 +1154,9 @@ pub async fn api_mock(
             strip_saved_tokens: 0,
             trim_saved_tokens: 0,
             resp_cache_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0,
+            audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1883,6 +1908,32 @@ pub struct DailyTrend {
     pub total_cost: f64,
 }
 
+/// 省量审计汇总: 潜在可省量的分布 (只读统计, **不代表已生效的优化**).
+///
+/// 目的是回答"还能从哪儿省 token": 每一项都对应一种尚未启用的改写策略,
+/// 以及它在这批请求里能省下的量级. 全部为估算 (字符/4 ≈ token).
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct AuditSummary {
+    /// 带 tool_calls 的 assistant 消息里被豁免剥离的推理链 token.
+    /// 当前 `strip_history_reasoning` 对这类消息不剥离, 而 agent 循环中它们占多数.
+    pub exempt_reasoning_tokens: u64,
+    /// 历史中字节级重复的大块内容 (tool 结果 / user 粘贴) 可省略的 token (保留首次).
+    /// 属"信息无损但模型行为可能偏移", 启用前需评估.
+    pub dup_block_tokens: u64,
+    /// 上述重复块的个数.
+    pub dup_block_count: u64,
+    /// 上游 KV 缓存写入 token (写溢价). 远大于读取量说明显式断点没命中, 在反复付写入费.
+    pub cache_creation_tokens: u64,
+    /// 上游 KV 缓存读取 token (命中收益).
+    pub cache_read_tokens: u64,
+    /// 输入 token 总量 (各项占比的分母).
+    pub input_tokens: u64,
+    /// 已生效的省量 (剥离推理链 + 历史裁剪 + 响应缓存命中), 作为对照基准.
+    pub applied_saved_tokens: u64,
+    /// 参与审计的请求数 (有审计数据的请求才计数).
+    pub requests: u64,
+}
+
 /// 使用统计聚合结果.
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageStats {
@@ -1945,6 +1996,8 @@ pub struct UsageStats {
     pub today_resp_cache_saved_tokens: u64,
     /// 累计优化省量的最早记录日期 (MM/DD), 给"累计"标注时间起算点, 避免无意义地 forever 累计; 无优化记录时为空串.
     pub opt_saved_since: String,
+    /// 省量审计汇总 (只读, 见 [`AuditSummary`]).
+    pub audit: AuditSummary,
     /// 是否有任意模型配置了价格 (providers.json 的 model.price).
     /// 前端据此决定是否显示费用相关卡片/列, 避免无价格时显示 ¥0.00 误导.
     pub has_price_config: bool,
@@ -2350,6 +2403,19 @@ fn compute_stats(
     let total_resp_cache_saved_tokens: u64 = logs.iter().map(|l| l.resp_cache_saved_tokens as u64).sum();
     // 累计优化省量 = 剥离推理链 + 历史裁剪 + 响应缓存命中 (三者均来自日志, 跨重启累计).
     let total_opt_saved_tokens: u64 = total_strip_saved_tokens + total_trim_saved_tokens + total_resp_cache_saved_tokens;
+    // 省量审计: 只读汇总, 不改动任何转发内容.
+    let audit = AuditSummary {
+        exempt_reasoning_tokens: logs.iter().map(|l| l.audit_exempt_reasoning_tokens as u64).sum(),
+        dup_block_tokens: logs.iter().map(|l| l.audit_dup_block_tokens as u64).sum(),
+        dup_block_count: logs.iter().map(|l| l.audit_dup_block_count as u64).sum(),
+        cache_creation_tokens: logs.iter().map(|l| l.prompt_cache_creation_tokens as u64).sum(),
+        cache_read_tokens: total_cache_hit_tokens,
+        input_tokens: total_prompt_tokens,
+        applied_saved_tokens: total_strip_saved_tokens
+            + total_trim_saved_tokens
+            + total_resp_cache_saved_tokens,
+        requests: logs.iter().filter(|l| !l.cached).count() as u64,
+    };
     let total_opt_saved_fee: f64 = logs
         .iter()
         .map(|l| {
@@ -2669,6 +2735,7 @@ fn compute_stats(
         total_strip_saved_tokens,
         total_trim_saved_tokens,
         total_resp_cache_saved_tokens,
+        audit,
         month_opt_saved_tokens,
         opt_saved_series,
         today_total_cost,
@@ -3326,6 +3393,9 @@ mod tests {
             strip_saved_tokens: 0,
             trim_saved_tokens: 0,
             resp_cache_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0,
+            audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0,
             first_token_ms: None,
             upstream_model: None,
         }

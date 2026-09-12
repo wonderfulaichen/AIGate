@@ -255,7 +255,7 @@ pub async fn chat_completions(
     // 5. 注入模型级参数 (reasoning_effort / extra_body): 固定按 providers.json 配置档注入,
     //    不做自适应探测/降级 —— 思考强度完全由配置档决定 (客户端显式关闭/自带档位时尊重客户端).
     let orig_body_len = bytes.len(); // 注入前原始请求体大小 (诊断用)
-    let (bytes, _injected, strip_saved, trim_saved) = inject_model_params(
+    let (bytes, _injected, strip_saved, trim_saved, audit) = inject_model_params(
         bytes,
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
@@ -661,7 +661,7 @@ pub async fn chat_completions(
                     state.cache.put(key, &body_text, (pt, ct));
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, audit, None, None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -698,7 +698,7 @@ pub async fn chat_completions(
                     let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
-                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, None, None,
+                        false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, audit, None, None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -745,6 +745,7 @@ pub async fn chat_completions(
         anthropic_mode,
         responses_mode,
         strip_saved_tokens, trim_saved_tokens,
+        audit,
         cont_max,
         cont_ctx,
     );
@@ -1151,7 +1152,7 @@ async fn relay_native_passthrough(
         crate::admin::record_request_with_tokens(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
-            false, hit, miss, creation, 0, 0, 0, None, None,
+            false, hit, miss, creation, 0, 0, 0, TokenAudit::default(), None, None,
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1377,7 +1378,7 @@ impl Stream for NativeTapStream {
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens(
                             &lb, &m, &p, &ep, up.as_deref(), start,
-                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None,
+                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, TokenAudit::default(), None, None,
                         ).await;
                     });
                 }
@@ -1747,6 +1748,7 @@ fn stream_response_with_tokens(
     responses: bool,
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
+    audit: TokenAudit,
     auto_continue_max: u32,
     cont_ctx: Option<ContinuationCtx>,
 ) -> Response {
@@ -1831,6 +1833,7 @@ fn stream_response_with_tokens(
                 req_body_len,
                 strip_saved_tokens,
                 trim_saved_tokens,
+                audit,
                 response_body_len: 0,
             }),
     };
@@ -1909,6 +1912,7 @@ async fn try_replay_cache(
         strip_saved,
         trim_saved,
         saved as u32,
+        TokenAudit::default(),
         None,
         None,
     )
@@ -1928,6 +1932,8 @@ struct TokenLogData {
     response_body_len: usize,
     strip_saved_tokens: u32,
     trim_saved_tokens: u32,
+    /// 省量审计 (只读统计): 随日志落盘, 供面板「省量审计」聚合展示.
+    audit: TokenAudit,
 }
 
 /// 装箱后的上游字节流错误: 生产为 IdleError<reqwest::Error>, 测试可注入任意 Error.
@@ -2364,6 +2370,7 @@ impl TokenStream {
                 ld.strip_saved_tokens,
                 ld.trim_saved_tokens,
                 0,
+                ld.audit,
                 first_token_ms,
                 Some(err),
             )
@@ -2643,7 +2650,7 @@ impl Stream for TokenStream {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
                                     status, ld.start, pt, ct, ld.response_body_len, false,
-                                    hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0,
+                                    hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, ld.audit,
                                     first_token_ms,
                                     err_for_log,
                                 ).await;
@@ -2852,20 +2859,104 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
     (pt, ct, hit, miss, creation)
 }
 
+/// 省量潜力审计结果 (只读统计, 不改变任何转发内容).
+///
+/// 用于回答"还能从哪儿省 token", 由面板「省量审计」展示. 全部为估算值
+/// (字符数 / 4 ≈ token), 与既有的 strip/trim/响应缓存省量口径一致.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenAudit {
+    /// 带 `tool_calls` 的 assistant 消息里的推理链: 当前实现豁免剥离,
+    /// 在 agent 循环中这类消息占多数, 是最大的潜在省量池.
+    pub exempt_reasoning_tokens: u32,
+    /// 历史中字节级重复的大块内容 (tool 结果 / user 粘贴) 的可省部分:
+    /// 保留首次出现即可, 后续重复块信息未丢. 需要改写内容, 属"信息无损但行为可能偏移".
+    pub dup_block_tokens: u32,
+    /// 上述重复块的个数.
+    pub dup_block_count: u32,
+}
+
+/// 低于此长度的块不参与重复检测 (避免 "ok" / "{}" 之类噪声).
+const AUDIT_MIN_BLOCK_CHARS: usize = 64;
+
+/// 审计: 统计 messages 中字节级重复的大块内容 (保留首次后的可省量).
+///
+/// 覆盖 `role=tool` 的结果体与 `role=user` 的纯文本 (客户端常把同一份文件/日志
+/// 在多个轮次里重复粘贴). 返回 `(重复字符数, 重复块个数)`.
+fn audit_duplicate_blocks(body: &serde_json::Value) -> (usize, usize) {
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
+
+    let Some(messages) = body.get("messages").and_then(|m| m.as_array()) else {
+        return (0, 0);
+    };
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut dup_chars = 0usize;
+    let mut dup_count = 0usize;
+
+    for msg in messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role != "tool" && role != "user" {
+            continue;
+        }
+        let text = match msg.get("content") {
+            Some(serde_json::Value::String(s)) => s.as_str(),
+            // 多模态 / parts 形式: 仅取其中的 text 部件拼接判断.
+            Some(serde_json::Value::Array(parts)) => {
+                // 借用问题: 这里只做长度与哈希, 用一个临时字符串.
+                // (为控制内存, parts 逐个喂给哈希, 不整体拼接.)
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                let mut total = 0usize;
+                for p in parts {
+                    if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+                        t.hash(&mut h);
+                        total += t.len();
+                    } else if let Some(t) = p.as_str() {
+                        t.hash(&mut h);
+                        total += t.len();
+                    }
+                }
+                if total < AUDIT_MIN_BLOCK_CHARS {
+                    continue;
+                }
+                let key = h.finish();
+                if seen.insert(key) {
+                    continue;
+                }
+                dup_chars += total;
+                dup_count += 1;
+                continue;
+            }
+            _ => continue,
+        };
+        if text.len() < AUDIT_MIN_BLOCK_CHARS {
+            continue;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        if seen.insert(h.finish()) {
+            continue; // 首次出现, 保留
+        }
+        dup_chars += text.len();
+        dup_count += 1;
+    }
+    (dup_chars, dup_count)
+}
+
 /// 转发上游前瘦身历史: 移除不含 tool_calls 的 assistant 消息中的推理链.
 ///
 /// 上游回传的 `reasoning_content` / `reasoning` 会随多轮历史累积, 既浪费输入 token
 /// 又无推理价值 (推理链不应被"喂回"模型), 还会干扰 KV 缓存命中. 带 tool_calls 的
 /// assistant 消息保留推理链 (部分客户端规范要求 reasoning 与 tool_calls 并存).
-/// 返回被剥离的推理链字符数 (供面板"转发优化省量"统计).
-fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> usize {
+/// 返回 `(被剥离字符数, 被豁免字符数)`; 后者供「省量审计」评估放开豁免能省多少.
+fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> (usize, usize) {
     let Some(obj) = body.as_object_mut() else {
-        return 0;
+        return (0, 0);
     };
     let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) else {
-        return 0;
+        return (0, 0);
     };
     let mut saved_chars = 0usize;
+    let mut exempt_chars = 0usize;
     for msg in messages.iter_mut() {
         let Some(m) = msg.as_object_mut() else {
             continue;
@@ -2880,6 +2971,12 @@ fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> usize {
             .map(|a| !a.is_empty())
             .unwrap_or(false);
         if has_tool_calls {
+            // 审计: 统计被豁免部分的体量, 不修改内容.
+            for key in ["reasoning_content", "reasoning"] {
+                if let Some(v) = m.get(key) {
+                    exempt_chars += serde_json::to_string(v).map(|s| s.len()).unwrap_or(0);
+                }
+            }
             continue;
         }
         for key in ["reasoning_content", "reasoning"] {
@@ -2889,7 +2986,7 @@ fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> usize {
             }
         }
     }
-    saved_chars
+    (saved_chars, exempt_chars)
 }
 
 /// 长会话历史裁剪: 仅保留最近 `n` 条 user 轮, 更早的历史整体丢弃, 降低每轮 input token.
@@ -3125,16 +3222,26 @@ fn inject_model_params(
     model_cfg: &crate::providers::ModelConfig,
     strip_history_reasoning: bool,
     max_history_turns: usize,
-) -> (bytes::Bytes, bool, usize, usize) {
+) -> (bytes::Bytes, bool, usize, usize, TokenAudit) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return (bytes, false, 0, 0); // 解析失败, 原样返回
+        return (bytes, false, 0, 0, TokenAudit::default()); // 解析失败, 原样返回
     };
     let had_effort = v.get("reasoning_effort").is_some();
+
+    // 省量审计: 在剥离/裁剪之前统计, 反映客户端真实负载 (裁剪会改变 messages 结构).
+    let (dup_chars, dup_count) = audit_duplicate_blocks(&v);
+    let mut audit = TokenAudit {
+        exempt_reasoning_tokens: 0,
+        dup_block_tokens: (dup_chars / 4) as u32,
+        dup_block_count: dup_count as u32,
+    };
 
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
     let mut strip_saved = 0usize;
     if strip_history_reasoning {
-        strip_saved = strip_history_reasoning_messages(&mut v);
+        let (saved, exempt) = strip_history_reasoning_messages(&mut v);
+        strip_saved = saved;
+        audit.exempt_reasoning_tokens = (exempt / 4) as u32;
     }
 
     // 长会话历史裁剪: 仅保留最近 N 条 user 轮, 更早的整体丢弃 (默认 0 = 不裁剪).
@@ -3161,6 +3268,7 @@ fn inject_model_params(
             false,
             strip_saved,
             trim_saved,
+            audit,
         );
     };
 
@@ -3205,6 +3313,7 @@ fn inject_model_params(
         injected,
         strip_saved,
         trim_saved,
+        audit,
     )
 }
 
@@ -3480,7 +3589,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -3491,7 +3600,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -3501,7 +3610,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -3511,7 +3620,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -3527,7 +3636,7 @@ mod tests {
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
             ]
         });
-        let saved = strip_history_reasoning_messages(&mut body);
+        let (saved, exempt) = strip_history_reasoning_messages(&mut body);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[1].get("reasoning_content").is_none());
         assert!(msgs[1].get("reasoning").is_none());
@@ -3535,6 +3644,56 @@ mod tests {
         assert_eq!(msgs[2]["reasoning_content"], "keep");
         // 省量统计: 剥离了 "long chain" + "r" 两个字段的序列化字节数 (>0, 且带 tool_calls 的不计)
         assert!(saved > 0, "应统计到被剥离推理链的字符数");
+        // 审计: 被豁免 (带 tool_calls) 的那条推理链长度须单独计入, 不得混入 saved
+        assert!(exempt > 0, "应统计到被豁免推理链的字符数");
+        assert_eq!(exempt, serde_json::to_string("keep").unwrap().len());
+    }
+
+    /// 审计: 重复的大块 tool/user 内容被识别为可省 (保留首次), 小块与不同内容不误报.
+    #[test]
+    fn audit_detects_duplicate_blocks() {
+        let big = "x".repeat(200);
+        let other = "y".repeat(200);
+        let body = serde_json::json!({
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "tool", "content": big },
+                { "role": "tool", "content": other },
+                { "role": "tool", "content": big },          // 重复 → 可省
+                { "role": "tool", "content": "tiny" },        // 太小, 忽略
+                { "role": "tool", "content": "tiny" },        // 太小, 忽略
+            ]
+        });
+        let (chars, count) = audit_duplicate_blocks(&body);
+        assert_eq!(count, 1, "只应识别出 1 个重复块");
+        assert_eq!(chars, big.len(), "可省字符数 = 重复块长度");
+    }
+
+    /// 审计: parts 形式 (多模态) 的重复文本同样被识别.
+    #[test]
+    fn audit_detects_duplicate_parts() {
+        let t = "z".repeat(120);
+        let body = serde_json::json!({
+            "messages": [
+                { "role": "user", "content": [{ "type": "text", "text": t }] },
+                { "role": "user", "content": [{ "type": "text", "text": t }] },
+            ]
+        });
+        let (chars, count) = audit_duplicate_blocks(&body);
+        assert_eq!(count, 1);
+        assert_eq!(chars, t.len());
+    }
+
+    /// 审计: 无重复时不报可省量.
+    #[test]
+    fn audit_no_duplicates_reports_zero() {
+        let body = serde_json::json!({
+            "messages": [
+                { "role": "tool", "content": "a".repeat(100) },
+                { "role": "tool", "content": "b".repeat(100) },
+            ]
+        });
+        assert_eq!(audit_duplicate_blocks(&body), (0, 0));
     }
 
     /// trim_history_turns: 仅保留最近 N 条 user 轮, system 始终保留, tool 链随所属轮保留.
