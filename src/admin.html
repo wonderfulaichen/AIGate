@@ -514,9 +514,18 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_potential')"></div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_exempt_reasoning')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).exempt_reasoning_tokens||0)"></span><span class="txs tm" x-text="auditPct((stats.audit||{}).exempt_reasoning_tokens)"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_exempt_reasoning_hint')"></span></div>
-          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_dup_blocks')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).dup_block_tokens||0)"></span><span class="txs tm" x-text="auditPct((stats.audit||{}).dup_block_tokens)+((stats.audit||{}).dup_block_count?(' · '+t('audit_dup_count',(stats.audit||{}).dup_block_count)):'')"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_dup_hint')"></span></div>
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_exempt_reasoning')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).exempt_reasoning_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).exempt_reasoning_tokens)"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_exempt_reasoning_hint')"></span></div>
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_dup_blocks')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).dup_block_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).dup_block_tokens)+((stats.audit||{}).dup_block_count?(' · '+t('audit_dup_count',(stats.audit||{}).dup_block_count)):'')"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_dup_hint')"></span></div>
         </div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:10px">
+        <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_output_title')"></div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:150px"><span class="txs tm" x-text="t('audit_out_total')"></span><span class="txsm mono fw6" x-text="fmtT((stats.audit.output||{}).output_tokens||0)"></span><span class="txs tm" x-text="t('audit_out_per_req',((stats.audit.output||{}).requests?Math.round(((stats.audit.output||{}).output_tokens||0)/(stats.audit.output||{}).requests):0))"></span></div>
+          <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:150px"><span class="txs tm" x-text="t('audit_out_ratio')"></span><span class="txsm mono fw6" x-text="outInRatio()"></span><span class="txs tm" x-text="t('audit_out_max',fmtT((stats.audit.output||{}).max_tokens||0))"></span></div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_out_long')"></span><span class="txsm mono fw6" x-text="(stats.audit.output||{}).long_requests||0"></span><span class="txs tm" x-text="t('audit_out_long_share',outLongShare())"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_out_long_hint')"></span></div>
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:6px" x-show="((stats.audit.output||{}).loop_truncated||0)>0"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_out_loop')"></span><span class="txsm mono fw6" style="color:var(--err)" x-text="(stats.audit.output||{}).loop_truncated||0"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_out_loop_hint')"></span></div>
       </div>
       <div class="txs tm" style="color:var(--muted)" x-text="t('audit_footer')"></div>
     </div></div>
@@ -1064,6 +1073,11 @@ const I18N = {
     'audit_potential': '潜在可省（尚未启用）',
     'audit_exempt_reasoning': '豁免推理链', 'audit_exempt_reasoning_hint': '带工具调用的历史推理链当前未剥离',
     'audit_dup_blocks': '重复内容块', 'audit_dup_count': '{0} 块', 'audit_dup_hint': '同一内容重复出现，保留首次即可（需改写，行为可能偏移）',
+    'audit_output_title': '输出侧', 'audit_out_total': '输出总量', 'audit_out_per_req': '每请求均 {0}',
+    'audit_out_ratio': '输出/输入', 'audit_out_max': '单请求最大 {0}',
+    'audit_out_long': '长输出请求', 'audit_out_long_share': '占全部输出 {0}',
+    'audit_out_long_hint': '单请求输出 >8192 token；若占比高说明输出高度集中',
+    'audit_out_loop': '死循环截断', 'audit_out_loop_hint': '模型重复生成至被网关掐断，这部分输出是纯浪费',
     'audit_footer': '窗口 = 内存日志缓冲区（启动时含磁盘历史），故请求数与输入量是「请求数 × 单次上下文」的累加，绝大部分为重复上下文（见 KV 命中率）。「潜在可省」只统计做过审计的请求，采样不足时会偏低。',
     'audit_pct_of_input': '占总输入 {0}%',
     'tbl.model': '模型', 'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.cache_saved': 'KV缓存省', 'tbl.unit_price': '单价(元/1M)',
@@ -1233,6 +1247,11 @@ const I18N = {
     'audit_potential': 'Potential (not yet enabled)',
     'audit_exempt_reasoning': 'Exempt reasoning', 'audit_exempt_reasoning_hint': 'history reasoning on tool-calling turns is not stripped today',
     'audit_dup_blocks': 'Duplicate blocks', 'audit_dup_count': '{0} blocks', 'audit_dup_hint': 'identical content repeated; keeping the first suffices (requires rewriting, behaviour may shift)',
+    'audit_output_title': 'Output side', 'audit_out_total': 'Total output', 'audit_out_per_req': '{0} avg/request',
+    'audit_out_ratio': 'Output/input', 'audit_out_max': 'max {0}/request',
+    'audit_out_long': 'Long-output requests', 'audit_out_long_share': '{0} of all output',
+    'audit_out_long_hint': 'requests emitting >8192 tokens; a high share means output is concentrated',
+    'audit_out_loop': 'Loop truncations', 'audit_out_loop_hint': 'model repeated until cut off by the gateway — pure waste',
     'audit_footer': 'The window is the in-memory log buffer (loaded from disk at startup), so request counts and input tokens accumulate context across turns — most of it repeated context (see KV hit rate). Potential savings only cover audited requests and are understated until enough samples accumulate.',
     'audit_pct_of_input': '{0}% of total input',
     'tbl.model': 'Model', 'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.cache_saved': 'KV Cache', 'tbl.unit_price': 'Unit (CNY/1M)',
@@ -3007,6 +3026,28 @@ function dashboard() {
       const d = new Date(ts * 1000);
       const p = n => String(n).padStart(2, '0');
       return p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    },
+    // 潜在可省占比: 分母必须是「已采样请求的输入」而非窗口总输入 ——
+    // 潜在项只来自做过审计的请求, 用总输入会把占比按采样比例稀释 (老日志越多压得越低).
+    auditPctSampled(v) {
+      const a = (this.stats && this.stats.audit) || {};
+      const base = a.sampled_input_tokens || 0;
+      if (!v || !base) return '—';
+      return ((v / base) * 100).toFixed(1) + '%';
+    },
+    // 输出/输入 token 比 (看输出相对规模).
+    outInRatio() {
+      const a = (this.stats && this.stats.audit) || {};
+      const inp = a.input_tokens || 0;
+      const out = (a.output || {}).output_tokens || 0;
+      if (!inp) return '—';
+      return (out / inp * 100).toFixed(2) + '%';
+    },
+    // 长输出请求贡献了全部输出的百分之多少 (输出是否集中在少数请求).
+    outLongShare() {
+      const o = ((this.stats && this.stats.audit) || {}).output || {};
+      if (!o.output_tokens) return '—';
+      return ((o.long_tokens || 0) / o.output_tokens * 100).toFixed(1) + '%';
     },
     // 已生效省量占比: 分母用「反事实基线」= 实际发送 + 已省, 而非只算实际发送.
     // 省下的 token 本就不在 input_tokens 内 (响应缓存回放的 prompt_tokens 记为 0),

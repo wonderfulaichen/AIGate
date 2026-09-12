@@ -1952,7 +1952,34 @@ pub struct AuditSummary {
     /// 审计窗口的起止时间戳 (秒): 即实际纳入统计的最早/最晚日志时间.
     pub window_start: u64,
     pub window_end: u64,
+    /// **已采样请求**的输入 token 合计.
+    /// 潜在可省量只来自做过审计的请求, 占比必须以它为分母 ——
+    /// 用窗口总输入会把占比按"采样比例"稀释掉 (实测用户 4999 条里仅少数有审计数据,
+    /// 使重复块占比从真实的约 2% 被压成 0.0%).
+    pub sampled_input_tokens: u64,
+    /// 输出侧汇总 (全部来自既有日志字段, 无需新增请求路径埋点).
+    pub output: OutputAudit,
 }
+
+/// 输出侧审计: 输出单价通常是输入的数倍, 这里看输出花在哪.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct OutputAudit {
+    /// 输出 token 总量.
+    pub output_tokens: u64,
+    /// 有输出的请求数.
+    pub requests: u64,
+    /// 单请求输出超过 [`LONG_OUTPUT_TOKENS`] 的请求数.
+    pub long_requests: u64,
+    /// 上述长请求贡献的输出 token 数 (看输出是否高度集中在少数请求).
+    pub long_tokens: u64,
+    /// 单请求最大输出 token.
+    pub max_tokens: u32,
+    /// 死循环检测截断次数: 这部分输出是纯浪费 (模型重复直到被网关掐断).
+    pub loop_truncated: u64,
+}
+
+/// 长输出判定阈值 (token). 约等于一次 8K 输出的上限.
+pub const LONG_OUTPUT_TOKENS: u32 = 8192;
 
 /// 使用统计聚合结果.
 #[derive(Debug, Clone, Serialize)]
@@ -2439,6 +2466,34 @@ fn compute_stats(
         sampled_requests: logs.iter().filter(|l| l.audit_observed).count() as u64,
         window_start: logs.iter().map(|l| l.timestamp).min().unwrap_or(0),
         window_end: logs.iter().map(|l| l.timestamp).max().unwrap_or(0),
+        sampled_input_tokens: logs
+            .iter()
+            .filter(|l| l.audit_observed)
+            .map(|l| l.prompt_tokens as u64)
+            .sum(),
+        output: {
+            let non_empty = logs.iter().filter(|l| l.completion_tokens > 0);
+            let long: Vec<&RequestLog> = logs
+                .iter()
+                .filter(|l| l.completion_tokens > LONG_OUTPUT_TOKENS)
+                .collect();
+            OutputAudit {
+                output_tokens: logs.iter().map(|l| l.completion_tokens as u64).sum(),
+                requests: non_empty.count() as u64,
+                long_requests: long.len() as u64,
+                long_tokens: long.iter().map(|l| l.completion_tokens as u64).sum(),
+                max_tokens: logs.iter().map(|l| l.completion_tokens).max().unwrap_or(0),
+                loop_truncated: logs
+                    .iter()
+                    .filter(|l| {
+                        l.error
+                            .as_deref()
+                            .map(|e| e.contains("model loop detected"))
+                            .unwrap_or(false)
+                    })
+                    .count() as u64,
+            }
+        },
     };
     let total_opt_saved_fee: f64 = logs
         .iter()
