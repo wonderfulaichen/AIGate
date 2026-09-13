@@ -2302,7 +2302,7 @@ impl TokenStream {
                 // 曾导致 deepseek-v4-flash-GO 等 max 思考档模型 7% 请求被误截断 (2026-08-11 实机证据).
                 if let Some(delta) = choice.get("delta") {
                     let mut has_token = false;
-                    for key in ["content", "reasoning_content", "reasoning"] {
+                    for key in ["content", "reasoning_content", "reasoning", "reasoning_details"] {
                         if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
                             if !s.is_empty() {
                                 has_token = true;
@@ -2644,9 +2644,25 @@ impl Stream for TokenStream {
                                 .map(|l| l.as_str())
                                 .collect::<Vec<_>>()
                                 .join(" ⏎ ");
+                            // 区分"能否续写": 续写素材是可见正文 (accumulated_content 只累积
+                            // content 字段). 模型若全程只输出推理 (reasoning) 而未有可见正文,
+                            // maybe_start_continuation 会因素材为空而跳过, 此时不能提示"可让模型续写",
+                            // 否则用户反复重试也无用 —— 应直接建议提高 max_tokens.
+                            let can_continue = !this.accumulated_content.is_empty()
+                                && this.cont_left > 0
+                                && !this.emitted_tool_calls;
+                            let tail_hint = if can_continue {
+                                "可让模型续写"
+                            } else if this.emitted_tool_calls {
+                                "已在工具调用中途断开, 续写会产生损坏的调用, 请客户端重试"
+                            } else if this.accumulated_content.is_empty() {
+                                "本段仅有思考内容、无可见正文, 无法自动续写; 建议提高 max_tokens 或降低思考强度"
+                            } else {
+                                "续写次数已用尽, 请客户端重试"
+                            };
                             let mut msg = format!(
-                                "上游在生成中途断流（非网关截断；已输出 {} tok / 输入 {} tok，客户端已收到 length 终止帧，可让模型续写）",
-                                ct, pt
+                                "上游在生成中途断流（非网关截断；已输出 {} tok / 输入 {} tok，客户端已收到 length 终止帧，{}）",
+                                ct, pt, tail_hint
                             );
                             if !tail.is_empty() {
                                 msg.push_str(&format!(" [末帧: {tail}]"));
@@ -2965,6 +2981,34 @@ fn audit_duplicate_blocks(body: &serde_json::Value) -> (usize, usize) {
     (dup_chars, dup_count)
 }
 
+/// 上游会用来承载"推理链"的字段名.
+///
+/// 集中一处, 避免像 `reasoning_details` 那样被漏掉 —— 它由 opencode /
+/// openrouter 系网关与 `reasoning` 并列下发 (实测末帧:
+/// `{"delta":{"reasoning":":","reasoning_details":[...]}}`), 漏掉会导致
+/// 开启剥离后推理链仍残留在历史里, 既费 token 又可能被上游判为非法结构.
+const REASONING_FIELDS: [&str; 3] = ["reasoning_content", "reasoning", "reasoning_details"];
+
+/// 取出一条消息里全部推理字段的**序列化文本长度** (用于省量估算), 不修改内容.
+fn reasoning_chars(m: &serde_json::Map<String, serde_json::Value>) -> usize {
+    REASONING_FIELDS
+        .iter()
+        .filter_map(|k| m.get(*k))
+        .map(|v| serde_json::to_string(v).map(|s| s.len()).unwrap_or(0))
+        .sum()
+}
+
+/// 移除一条消息里全部推理字段, 返回其序列化文本长度之和.
+fn remove_reasoning_fields(m: &mut serde_json::Map<String, serde_json::Value>) -> usize {
+    let mut n = 0usize;
+    for k in REASONING_FIELDS {
+        if let Some(v) = m.remove(k) {
+            n += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
+        }
+    }
+    n
+}
+
 /// 转发上游前瘦身历史: 移除不含 tool_calls 的 assistant 消息中的推理链.
 ///
 /// 上游回传的 `reasoning_content` / `reasoning` 会随多轮历史累积, 既浪费输入 token
@@ -2999,21 +3043,17 @@ fn strip_history_reasoning_messages(
             .unwrap_or(false);
         if has_tool_calls && !strip_with_tool_calls {
             // 审计: 统计被豁免部分的体量, 不修改内容.
-            for key in ["reasoning_content", "reasoning"] {
-                if let Some(v) = m.get(key) {
-                    exempt_chars += serde_json::to_string(v).map(|s| s.len()).unwrap_or(0);
-                }
-            }
+            exempt_chars += reasoning_chars(m);
             continue;
         }
         // 按来源分别记账: 工具调用轮次的剥离来自 strip_toolcall_reasoning 开关,
         // 单列出来用户才看得到这个开关到底省了多少.
-        let bucket = if has_tool_calls { &mut saved_toolcall_chars } else { &mut saved_chars };
-        for key in ["reasoning_content", "reasoning"] {
-            if let Some(v) = m.remove(key) {
-                // 估算省量: 字段序列化文本的字节数 (JSON 转义后长度, 与上游 input 计费同源).
-                *bucket += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
-            }
+        // 估算省量: 字段序列化文本的字节数 (JSON 转义后长度, 与上游 input 计费同源).
+        let removed = remove_reasoning_fields(m);
+        if has_tool_calls {
+            saved_toolcall_chars += removed;
+        } else {
+            saved_chars += removed;
         }
     }
     (saved_chars, saved_toolcall_chars, exempt_chars)
@@ -3817,6 +3857,54 @@ mod tests {
         // 审计: 被豁免 (带 tool_calls) 的那条推理链长度须单独计入, 不得混入 saved
         assert!(exempt > 0, "应统计到被豁免推理链的字符数");
         assert_eq!(exempt, serde_json::to_string("keep").unwrap().len());
+    }
+
+    /// 回归: reasoning_details (opencode/openrouter 系与 reasoning 并列下发) 也必须被剥离,
+    /// 否则开启开关后推理链仍残留 —— 实测末帧形态 {"delta":{"reasoning":":","reasoning_details":[...]}}.
+    #[test]
+    fn strip_reasoning_covers_reasoning_details() {
+        let mut body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                { "role": "assistant", "content": "a",
+                  "reasoning_content": "rc",
+                  "reasoning": "r",
+                  "reasoning_details": [ {"type":"reasoning.text","text":"rd"} ] }
+            ]
+        });
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false);
+        let m = &body["messages"][0];
+        for k in ["reasoning_content", "reasoning", "reasoning_details"] {
+            assert!(m.get(k).is_none(), "{k} 应被剥离");
+        }
+        assert!(saved > 0, "三个字段的省量都应计入");
+        assert_eq!(saved_tc, 0);
+        assert_eq!(exempt, 0);
+        // content 不受影响
+        assert_eq!(m["content"], "a");
+    }
+
+    /// reasoning_details 在带 tool_calls 时也要能被正确豁免/剥离 (与非 tool_calls 路径一致).
+    #[test]
+    fn strip_reasoning_details_respects_toolcall_flag() {
+        let mk = || serde_json::json!({
+            "model": "x",
+            "messages": [ { "role": "assistant", "content": "a",
+                "tool_calls": [{"id":"1"}],
+                "reasoning_details": [ {"type":"reasoning.text","text":"long enough"} ] } ]
+        });
+        // 豁免: 保留且计入 exempt
+        let mut b1 = mk();
+        let (sv, tc, ex) = strip_history_reasoning_messages(&mut b1, false);
+        assert!(b1["messages"][0].get("reasoning_details").is_some(), "未开启应保留");
+        assert_eq!((sv, tc), (0, 0));
+        assert!(ex > 0, "豁免量应计入");
+        // 剥离: 归入 tool_calls 桶
+        let mut b2 = mk();
+        let (sv2, tc2, ex2) = strip_history_reasoning_messages(&mut b2, true);
+        assert!(b2["messages"][0].get("reasoning_details").is_none(), "开启应剥离");
+        assert_eq!((sv2, ex2), (0, 0));
+        assert!(tc2 > 0, "应归入 tool_calls 桶以在面板单列");
     }
 
     /// 开关打开时, 带 tool_calls 的 assistant 消息推理链也被剥离 (默认保留).
