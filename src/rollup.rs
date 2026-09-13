@@ -227,12 +227,14 @@ impl RollupBook {
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| log.model.clone());
-        self.days
-            .lock()
-            .unwrap()
-            .entry(day)
-            .or_default()
-            .record(log, &upstream);
+        let mut days = self.days.lock().unwrap();
+        let entry = days.entry(day).or_default();
+        // 关键: or_default() 产生的 DailyRollup.day_start 是 0, 必须回填为 map 的 key,
+        // 否则 serialize() 写出的 `d` 恒为 0 —— 落盘后所有历史天塌缩成 1970-01-01,
+        // 重启加载后按天检索/长跨度统计全部失真 (实测部署实例的 daily_stats.jsonl
+        // 三行 d 全为 0 即此因).
+        entry.day_start = day;
+        entry.record(log, &upstream);
         self.dirty.store(true, Ordering::Release);
     }
 
@@ -304,9 +306,11 @@ impl RollupBook {
     fn serialize(&self) -> String {
         let days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = String::with_capacity(4096);
-        for d in days.values() {
+        // 用 BTreeMap 的 key 作为权威日期, 而非结构体字段 —— 字段可能因历史 bug 为 0.
+        for (day_key, d) in days.iter() {
+            let effective_day = if d.day_start == 0 { *day_key } else { d.day_start };
             let line = RollupDayLine {
-                d: d.day_start,
+                d: effective_day,
                 e: d.entries.clone(),
             };
             if let Ok(s) = serde_json::to_string(&line) {
@@ -348,6 +352,76 @@ impl RollupBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 构造一条最小可用的请求日志 (仅 record 路径需要的字段有意义).
+    fn mk_log(ts: u64, provider: &str, upstream: &str) -> crate::admin::RequestLog {
+        crate::admin::RequestLog {
+            timestamp: ts,
+            model: upstream.to_string(),
+            provider: provider.to_string(),
+            endpoint: String::new(),
+            status: 200,
+            latency_ms: 0,
+            body_len: 0,
+            error: None,
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            cached: false,
+            prompt_cache_hit_tokens: 0,
+            prompt_cache_miss_tokens: 0,
+            prompt_cache_creation_tokens: 0,
+            strip_saved_tokens: 0,
+            trim_saved_tokens: 0,
+            resp_cache_saved_tokens: 0,
+            strip_toolcall_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0,
+            audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0,
+            audit_observed: false,
+            first_token_ms: None,
+            upstream_model: Some(upstream.to_string()),
+        }
+    }
+
+    /// 关键回归: 落盘的 `d` (day_start) 必须是真实日界, 不得为 0.
+    ///
+    /// 历史 bug: `record()` 用 `entry(day).or_default()` 建 DailyRollup, 而
+    /// `day_start` 字段保持 Default 的 0, 且从未回填 —— serialize 写出的 `d` 恒为 0,
+    /// 落盘后所有历史天塌缩成 1970-01-01, 重启加载后按天检索与长跨度统计全部失真
+    /// (实测部署实例 daily_stats.jsonl 三行 d 全为 0). 只有"写入→落盘→加载"全程才暴露.
+    #[test]
+    fn persisted_day_start_is_real_day_boundary() {
+        let dir = "data-test-rollup-day";
+        let _ = std::fs::remove_dir_all(dir);
+        let book = RollupBook::new(dir);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // 两个不同天的日志
+        let day1 = crate::admin::bucket_start(1_789_318_171, "day");
+        let day2 = crate::admin::bucket_start(1_789_405_171, "day");
+        assert_ne!(day1, day2, "测试前提: 两个时间戳应属不同天");
+        book.record(&mk_log(1_789_318_171, "p", "m"));
+        book.record(&mk_log(1_789_405_171, "p", "m"));
+        rt.block_on(book.flush());
+
+        // 落盘内容: 两行, d 必须是真实日界而非 0
+        let content = std::fs::read_to_string(std::path::Path::new(dir).join("daily_stats.jsonl")).unwrap();
+        let days: Vec<u64> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<RollupDayLine>(l).unwrap().d)
+            .collect();
+        assert_eq!(days.len(), 2, "应落盘两天");
+        assert!(days.contains(&day1) && days.contains(&day2), "d 应为真实日界, 实得 {days:?}");
+        assert!(!days.contains(&0), "d 不得为 0 (历史 bug 特征)");
+
+        // 重新加载后按天仍可检索 (而非塌缩成一天)
+        let book2 = RollupBook::new(dir);
+        book2.load_from_file();
+        assert!(book2.days_between(day1, day1).len() == 1, "day1 应可单独检索");
+        assert!(book2.days_between(day2, day2).len() == 1, "day2 应可单独检索");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// 回归: 查询范围起点晚于账本最早天 (start > end) 时必须返回空而不是 BTreeMap panic.
     #[test]
