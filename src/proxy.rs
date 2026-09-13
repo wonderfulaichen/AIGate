@@ -260,6 +260,7 @@ pub async fn chat_completions(
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
+        provider.strip_toolcall_reasoning.unwrap_or(false),
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
@@ -2948,7 +2949,10 @@ fn audit_duplicate_blocks(body: &serde_json::Value) -> (usize, usize) {
 /// 又无推理价值 (推理链不应被"喂回"模型), 还会干扰 KV 缓存命中. 带 tool_calls 的
 /// assistant 消息保留推理链 (部分客户端规范要求 reasoning 与 tool_calls 并存).
 /// 返回 `(被剥离字符数, 被豁免字符数)`; 后者供「省量审计」评估放开豁免能省多少.
-fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> (usize, usize) {
+fn strip_history_reasoning_messages(
+    body: &mut serde_json::Value,
+    strip_with_tool_calls: bool,
+) -> (usize, usize) {
     let Some(obj) = body.as_object_mut() else {
         return (0, 0);
     };
@@ -2970,7 +2974,7 @@ fn strip_history_reasoning_messages(body: &mut serde_json::Value) -> (usize, usi
             .and_then(|t| t.as_array())
             .map(|a| !a.is_empty())
             .unwrap_or(false);
-        if has_tool_calls {
+        if has_tool_calls && !strip_with_tool_calls {
             // 审计: 统计被豁免部分的体量, 不修改内容.
             for key in ["reasoning_content", "reasoning"] {
                 if let Some(v) = m.get(key) {
@@ -3222,6 +3226,7 @@ fn inject_model_params(
     model_cfg: &crate::providers::ModelConfig,
     strip_history_reasoning: bool,
     max_history_turns: usize,
+    strip_toolcall_reasoning: bool,
 ) -> (bytes::Bytes, bool, usize, usize, TokenAudit) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return (bytes, false, 0, 0, TokenAudit::default()); // 解析失败, 原样返回
@@ -3239,7 +3244,7 @@ fn inject_model_params(
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
     let mut strip_saved = 0usize;
     if strip_history_reasoning {
-        let (saved, exempt) = strip_history_reasoning_messages(&mut v);
+        let (saved, exempt) = strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning);
         strip_saved = saved;
         audit.exempt_reasoning_tokens = (exempt / 4) as u32;
     }
@@ -3589,7 +3594,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -3600,7 +3605,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -3610,7 +3615,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -3620,7 +3625,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -3636,7 +3641,7 @@ mod tests {
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
             ]
         });
-        let (saved, exempt) = strip_history_reasoning_messages(&mut body);
+        let (saved, exempt) = strip_history_reasoning_messages(&mut body, false);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[1].get("reasoning_content").is_none());
         assert!(msgs[1].get("reasoning").is_none());
@@ -3647,6 +3652,23 @@ mod tests {
         // 审计: 被豁免 (带 tool_calls) 的那条推理链长度须单独计入, 不得混入 saved
         assert!(exempt > 0, "应统计到被豁免推理链的字符数");
         assert_eq!(exempt, serde_json::to_string("keep").unwrap().len());
+    }
+
+    /// 开关打开时, 带 tool_calls 的 assistant 消息推理链也被剥离 (默认保留).
+    #[test]
+    fn strip_toolcall_reasoning_when_enabled() {
+        let mut body = serde_json::json!({
+            "model": "x",
+            "messages": [
+                { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }],
+                  "reasoning_content": "R".repeat(300) }
+            ]
+        });
+        let (saved, exempt) = strip_history_reasoning_messages(&mut body, true);
+        let msgs = body["messages"].as_array().unwrap();
+        assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
+        assert!(saved > 0, "剥离量应计入 saved");
+        assert_eq!(exempt, 0, "已剥离的不再算作豁免");
     }
 
     /// 审计: 重复的大块 tool/user 内容被识别为可省 (保留首次), 小块与不同内容不误报.
@@ -4139,6 +4161,7 @@ mod tests {
             prompt_cache: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
+            strip_toolcall_reasoning: None,
             models: std::collections::HashMap::new(),
         }
     }
@@ -4157,6 +4180,7 @@ mod tests {
             prompt_cache: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
+            strip_toolcall_reasoning: None,
             models: std::collections::HashMap::new(),
         }
     }

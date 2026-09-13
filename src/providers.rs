@@ -179,6 +179,17 @@ pub struct ProviderConfig {
     /// 避免不被支持的网关因未知字段报错); 显式开启即表示上游支持该字段. 仅对走 OpenAI 协议的模型生效.
     #[serde(default)]
     pub openai_cache_control: Option<bool>,
+    /// 是否同时剥离「带 tool_calls 的 assistant 消息」里的推理链 (默认 false = 保留).
+    ///
+    /// 默认关闭的原因: 该约束**因上游而异** ——
+    /// - Anthropic: 开启 extended thinking + tool use 时, thinking 块必须原样回传 (含签名), 剥掉会 400;
+    /// - DeepSeek reasoner 系: 多轮工具调用时要求 reasoning_content 与 tool_calls 并存;
+    /// - 多数 OpenAI 兼容网关: 忽略该字段, 剥掉纯赚输入 token.
+    ///
+    /// 省量可观 (实测某用户占已采样输入 38.5%), 但必须**逐个上游确认**后再开:
+    /// 先对单一供应商开启, 观察请求错误率, 无 400 再推广.
+    #[serde(default)]
+    pub strip_toolcall_reasoning: Option<bool>,
     /// 该供应商支持的模型, key 是 model id.
     pub models: HashMap<String, ModelConfig>,
     /// 上游请求体大小上限 (字节, 可选). 超过则网关在转发前直接返回 413 中文提示,
@@ -723,6 +734,7 @@ mod tests {
             endpoint_responses: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
+            strip_toolcall_reasoning: None,
             models: HashMap::new(),
         };
         // 供应商 openai + 模型未标注 → openai

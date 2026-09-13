@@ -840,6 +840,13 @@ tr:hover td{background:rgba(99,102,241,.04)}
               <div class="f-row"><label x-text="t('anthropic_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" @input="markDirty()"></div>
               <div class="f-row"><label x-text="t('responses_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_responses" :placeholder="t('responses_endpoint_ph')" @input="markDirty()"></div>
               <div class="f-row"><label x-text="t('balance_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.balance_endpoint" :placeholder="t('balance_endpoint_ph')" @input="markDirty()"></div>
+              <div class="f-row" style="align-items:flex-start">
+                <label x-text="t('strip_toolcall_reasoning_label')"></label>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" x-model="drawerProv.strip_toolcall_reasoning" @change="markDirty()"><span class="txs" x-text="t('strip_toolcall_reasoning_on')"></span></label>
+                  <span class="txs tm" style="max-width:420px" x-text="t('strip_toolcall_reasoning_hint')"></span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1054,6 +1061,8 @@ const I18N = {
     'balance_manual': '手动设置', 'balance_manual_ph': '输入余额 (元)', 'balance_manual_save': '保存', 'balance_clear': '清除手动',
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
+    'strip_toolcall_reasoning_label': '历史推理链', 'strip_toolcall_reasoning_on': '同时剥离带工具调用的推理链',
+    'strip_toolcall_reasoning_hint': '省量可观（审计面板可看占比），但约束因上游而异：Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。请先只对单一供应商开启并观察错误率。',
     'enabled': '启用', 'disabled': '停用',
     'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
@@ -2801,6 +2810,7 @@ function dashboard() {
               api_format: p.api_format||undefined,
               prompt_cache: p.prompt_cache,
               openai_cache_control: p.openai_cache_control,
+              strip_toolcall_reasoning: p.strip_toolcall_reasoning||undefined,
               max_request_body_bytes: p.max_request_body_bytes,
               headers: p.headers||undefined,
               models: models,
