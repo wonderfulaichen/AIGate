@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tracing::warn;
+
 use crate::admin::{bucket_start, RequestLog};
 
 /// 单个「供应商 × 上游模型」单日聚合条目.
@@ -211,6 +213,14 @@ impl RollupBook {
         let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         for line in content.lines() {
             if let Ok(l) = serde_json::from_str::<RollupDayLine>(line) {
+                // 日界恒为真实本地 0 点 (>= 2020 年), 不可能是 0. `d:0` 是历史 bug 写出的
+                // 化石行 (day_start 字段未回填): 它的真实日期已不可考, 若照单全收会以 key=0
+                // 长期驻留 —— 既无法被 record() 更新, 又会让「1970-01-01」出现在按天查询里,
+                // 并在每次落盘时原样复写. 直接丢弃并告警, 让它随下次落盘彻底消失.
+                if l.d == 0 {
+                    warn!("rollup: drop malformed day line (d=0, {} entries)", l.e.len());
+                    continue;
+                }
                 days.insert(l.d, DailyRollup {
                     day_start: l.d,
                     entries: l.e,
@@ -260,18 +270,26 @@ impl RollupBook {
     }
 
     /// 启动回填: 日志缓冲区完整覆盖的天 (> 边界天) 以日志为准重建, 修正崩溃丢失的增量;
-    /// 边界天 (最早日志所在天, 缓冲区只有其尾部) 仅在账本为空 (首次启用) 时尽力回填,
-    /// 否则保留账本中的完整数据. 只在启动时调用一次, 之后日志与 rollup 按天天然互斥.
+    /// 边界天 (最早日志所在天, 缓冲区只有其尾部) 仅在账本已持有该天时保留账本数据,
+    /// 否则同样尽力回填. 只在启动时调用一次, 之后日志与 rollup 按天天然互斥.
+    ///
+    /// 保留账本的前提是「账本真的有那一天」: 若账本缺该天 (历史 bug / 首次启用 / 被清空),
+    /// 跳过就等于整天数据在两侧同时缺席 (日志侧被 merge_end 排除, rollup 侧无条目) ——
+    /// 实测部署实例因此整日丢失 09-12 的统计. 缺天时宁可用「只有尾部」的日志补上部分数据.
     pub fn backfill_from_logs(&self, logs: &[RequestLog]) {
         let Some(cover_ts) = logs.iter().map(|l| l.timestamp).min() else {
             return;
         };
         let cover_day = bucket_start(cover_ts, "day");
-        let book_was_empty = self.is_empty();
+        let has_cover_day = self
+            .days
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&cover_day);
         let mut rebuilt: BTreeMap<u64, DailyRollup> = BTreeMap::new();
         for log in logs {
             let day = bucket_start(log.timestamp, "day");
-            if day == cover_day && !book_was_empty {
+            if day == cover_day && has_cover_day {
                 continue;
             }
             let upstream = log
@@ -279,7 +297,10 @@ impl RollupBook {
                 .clone()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| log.model.clone());
-            rebuilt.entry(day).or_default().record(log, &upstream);
+            let entry = rebuilt.entry(day).or_default();
+            // 与 record() 同理: or_default() 的 day_start 是 0, 必须回填为 map 的 key.
+            entry.day_start = day;
+            entry.record(log, &upstream);
         }
         let mut days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         for (day, rollup) in rebuilt {
@@ -297,10 +318,6 @@ impl RollupBook {
         }
         let days = lock_days(&self.days);
         days.range(start..=end).map(|(_, d)| d.clone()).collect()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.days.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     fn serialize(&self) -> String {
@@ -433,5 +450,133 @@ mod tests {
         assert!(book.days_between(1000, 2000).is_empty());
         // 干净清理, 不留文件
         let _ = std::fs::remove_dir_all("data-test-rollup");
+    }
+
+    /// 回归: 载入时必须丢弃 `d:0` 化石行, 且下次落盘不再复写它.
+    ///
+    /// 历史 bug 写出的 `d:0` 行以 key=0 驻留账本: 既无法被 record() 更新 (真实日界不会等于 0),
+    /// 又会让 1970-01-01 出现在按天查询里, 并在每次 flush 时原样复写 —— 永久污染.
+    #[test]
+    fn load_drops_fossil_day_zero_line() {
+        let dir = "data-test-rollup-fossil";
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let day = crate::admin::bucket_start(1_789_318_171, "day");
+        let fossil = serde_json::to_string(&RollupDayLine {
+            d: 0,
+            e: vec![RollupEntry { provider: "p".into(), upstream: "m".into(), requests: 7, ..Default::default() }],
+        })
+        .unwrap();
+        let real = serde_json::to_string(&RollupDayLine {
+            d: day,
+            e: vec![RollupEntry { provider: "p".into(), upstream: "m".into(), requests: 3, ..Default::default() }],
+        })
+        .unwrap();
+        std::fs::write(std::path::Path::new(dir).join("daily_stats.jsonl"), format!("{fossil}\n{real}\n")).unwrap();
+
+        let book = RollupBook::new(dir);
+        book.load_from_file();
+        assert!(book.days_between(0, 0).is_empty(), "d=0 化石行必须被丢弃");
+        assert_eq!(book.days_between(day, day).len(), 1, "真实天必须保留");
+
+        // 落盘后化石行彻底消失 (不再被复写)
+        book.flush_blocking();
+        let content = std::fs::read_to_string(std::path::Path::new(dir).join("daily_stats.jsonl")).unwrap();
+        let days: Vec<u64> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str::<RollupDayLine>(l).unwrap().d)
+            .collect();
+        assert_eq!(days, vec![day], "落盘只应剩真实天");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归: 空账本启动时, 边界天 (最早日志所在天) 也必须由 backfill 重建.
+    ///
+    /// 部署实例曾整日丢失 09-12 的统计 (165 请求 / 2900 万输入 token): 该天恰是日志窗口的
+    /// 最早天, backfill 在「账本非空」时跳过它 —— 而账本里又没有它, 于是它既不进日志侧
+    /// (被 merge_end 排除) 也不进 rollup 侧, 在统计里彻底隐形. 账本为空 (首次启用/重建)
+    /// 时必须把它一并回填.
+    #[test]
+    fn backfill_on_empty_book_rebuilds_cover_day() {
+        let dir = "data-test-rollup-cover";
+        let _ = std::fs::remove_dir_all(dir);
+        let day1 = crate::admin::bucket_start(1_789_318_171, "day");
+        let day2 = crate::admin::bucket_start(1_789_405_171, "day");
+        assert_ne!(day1, day2);
+        let logs = vec![
+            mk_log(1_789_318_171, "p", "m"),
+            mk_log(1_789_318_172, "p", "m"),
+            mk_log(1_789_405_171, "p", "m"),
+        ];
+
+        let book = RollupBook::new(dir);
+        assert!(book.days_between(day1, day2).is_empty(), "测试前提: 账本初始为空");
+        book.backfill_from_logs(&logs);
+        book.flush_blocking();
+
+        let book2 = RollupBook::new(dir);
+        book2.load_from_file();
+        let d1 = book2.days_between(day1, day1);
+        assert_eq!(d1.len(), 1, "边界天 day1 必须被重建");
+        assert_eq!(d1[0].day_start, day1, "重建的 day_start 必须是真实日界");
+        assert_eq!(d1[0].entries.iter().map(|e| e.requests).sum::<u64>(), 2, "day1 应含 2 条请求");
+        assert_eq!(book2.days_between(day2, day2).len(), 1, "day2 亦应重建");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归: 账本非空但**缺**边界天时, 该天仍须由日志回填 (不得静默丢数据).
+    ///
+    /// 「边界天只有尾部日志, 账本更完整」这一保留前提, 仅在账本确实持有该天时成立.
+    /// 账本缺该天时跳过它 = 整天在日志侧 (被 merge_end 排除) 与 rollup 侧同时缺席,
+    /// 正是部署实例 09-12 整天消失的成因.
+    #[test]
+    fn backfill_fills_cover_day_missing_from_book() {
+        let dir = "data-test-rollup-cover-missing";
+        let _ = std::fs::remove_dir_all(dir);
+        let day1 = crate::admin::bucket_start(1_789_318_171, "day");
+        let day2 = crate::admin::bucket_start(1_789_405_171, "day");
+        assert_ne!(day1, day2);
+        let logs = vec![
+            mk_log(1_789_318_171, "p", "m"),
+            mk_log(1_789_405_171, "p", "m"),
+        ];
+
+        // 账本已有「更晚的天」(非空), 但没有边界天 day1
+        let book = RollupBook::new(dir);
+        book.record(&mk_log(1_789_405_171, "p", "m"));
+        book.flush_blocking();
+        assert!(book.days_between(day1, day1).is_empty(), "测试前提: 账本缺 day1");
+
+        book.backfill_from_logs(&logs);
+        assert_eq!(book.days_between(day1, day1).len(), 1, "缺的边界天必须由日志回填");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归: 账本已持有边界天时必须保留其数据 (不被「只有尾部」的日志覆盖).
+    ///
+    /// 边界天的日志窗口只含该天尾部, 账本才是全天累计 —— 这是保留规则的本意, 不能被
+    /// 「缺天则回填」的新逻辑破坏.
+    #[test]
+    fn backfill_preserves_cover_day_when_book_has_it() {
+        let dir = "data-test-rollup-cover-keep";
+        let _ = std::fs::remove_dir_all(dir);
+        let day1 = crate::admin::bucket_start(1_789_318_171, "day");
+        let book = RollupBook::new(dir);
+        // 账本里 day1 有 5 条 (全天累计), 日志里 day1 只剩 1 条 (窗口尾部)
+        for i in 0..5 {
+            book.record(&mk_log(1_789_318_171 + i, "p", "m"));
+        }
+        book.flush_blocking();
+
+        book.backfill_from_logs(&[mk_log(1_789_318_171, "p", "m")]);
+        let d1 = book.days_between(day1, day1);
+        assert_eq!(d1.len(), 1);
+        assert_eq!(
+            d1[0].entries.iter().map(|e| e.requests).sum::<u64>(),
+            5,
+            "账本持有的边界天不得被日志尾部覆盖"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
