@@ -510,13 +510,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
           <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
-            <span class="txs tm" x-text="t('audit_applied_strip')+' '+fmtT((stats.audit||{}).applied_strip_tokens||0)"></span>
-            <span class="txs tm" :style="((stats.audit||{}).applied_strip_toolcall_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="t('audit_applied_strip_tc')+' '+fmtT((stats.audit||{}).applied_strip_toolcall_tokens||0)"></span>
-            <span class="txs tm" x-text="t('audit_applied_trim')+' '+fmtT((stats.audit||{}).applied_trim_tokens||0)"></span>
-            <span class="txs tm" x-text="t('audit_applied_resp')+' '+fmtT((stats.audit||{}).applied_resp_cache_tokens||0)"></span>
+            <span class="txs tm" x-text="auditLine('audit_applied_strip',(stats.audit||{}).applied_strip_tokens,(stats.audit||{}).applied_strip_fee)"></span>
+            <span class="txs tm" :style="((stats.audit||{}).applied_strip_toolcall_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="auditLine('audit_applied_strip_tc',(stats.audit||{}).applied_strip_toolcall_tokens,(stats.audit||{}).applied_strip_toolcall_fee)"></span>
+            <span class="txs tm" x-text="auditLine('audit_applied_trim',(stats.audit||{}).applied_trim_tokens,(stats.audit||{}).applied_trim_fee)"></span>
+            <span class="txs tm" x-text="auditLine('audit_applied_resp',(stats.audit||{}).applied_resp_cache_tokens,(stats.audit||{}).applied_resp_cache_fee)"></span>
           </div>
         </div>
-        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_kv_hit')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="kvHitRate()"></span><span class="txs tm" x-text="t('audit_kv_miss')+' '+fmtT((stats.audit||{}).cache_miss_tokens||0)+' · '+t('audit_kv_read')+' '+fmtT((stats.audit||{}).cache_read_tokens||0)"></span></div>
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_kv_hit')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="kvHitRate()"></span><span class="txs tm" x-text="t('audit_kv_miss')+' '+fmtT((stats.audit||{}).cache_miss_tokens||0)+' · '+t('audit_kv_read')+' '+fmtT((stats.audit||{}).cache_read_tokens||0)"></span>
+          <span class="txs tm" style="color:var(--ok)" x-show="((stats.audit||{}).cache_saved_fee||0)!==0" x-text="t('audit_kv_saved_fee')+' '+fmtMoney((stats.audit||{}).cache_saved_fee||0)"></span></div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_potential')"></div>
@@ -557,7 +558,17 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div class="fb" style="padding:10px 16px;border-top:1px solid var(--border)"><span class="txs tm" x-text="t('total_count',filteredLogs.length)"></span><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-g" :disabled="logPage===0" @click="logPage--" x-text="t('prev_page')"></button><span class="txs tm" x-text="(logPage+1)+'/'+totalLogPages"></span><button class="btn btn-g" :disabled="logPage>=totalLogPages-1" @click="logPage++" x-text="t('next_page')"></button></div></div>
     </div>
   </div>
-  <template x-if="selectedLog"><div class="log-modal" @click.self="selectedLog=null"><div class="log-modal-card"><div class="log-modal-head"><div><span class="pnl-ht" x-text="t('request_details')"></span><span class="bdg" style="margin-left:8px" :class="selectedLog.status<400?'bdg-s':'bdg-e'" x-text="selectedLog.status"></span></div><button class="btn btn-g" @click="selectedLog=null">✕</button></div><div class="log-modal-body"><div class="log-detail-grid"><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.time')"></div><div class="log-detail-val mono" x-text="fmtDateTime(selectedLog.timestamp)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.model')"></div><div class="log-detail-val mono" x-text="selectedLog.model"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('tbl.upstream_model')"></div><div class="log-detail-val mono" x-text="selectedLog.upstream_model||'—'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.provider')"></div><div class="log-detail-val" x-text="selectedLog.provider"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.endpoint')"></div><div class="log-detail-val mono" x-text="selectedLog.endpoint"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_body_size')"></div><div class="log-detail-val mono" x-text="fmtB(selectedLog.body_len)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_prompt_completion')"></div><div class="log-detail-val mono" x-text="fmtT(selectedLog.prompt_tokens||0)+' / '+fmtT(selectedLog.completion_tokens||0)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_latency_ttft')"></div><div class="log-detail-val mono" x-text="fmtMs(selectedLog.latency_ms)+' / '+(selectedLog.first_token_ms?fmtMs(selectedLog.first_token_ms):'—')"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.kv_cache')"></div><div class="log-detail-val mono" x-text="fmtT(selectedLog.prompt_cache_hit_tokens||0)+' hit / '+fmtT(selectedLog.prompt_cache_miss_tokens||0)+' miss'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.cache_hit_rate')"></div><div class="log-detail-val mono" x-text="logCacheRate(selectedLog)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.reasoning')"></div><div class="log-detail-val" x-text="selectedLog.reasoning_effort||'—'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.gen_speed')"></div><div class="log-detail-val mono" x-text="logGenSpeed(selectedLog)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.opt_saved')"></div><div class="log-detail-val mono" x-text="fmtT((selectedLog.strip_saved_tokens||0)+(selectedLog.trim_saved_tokens||0)+(selectedLog.resp_cache_saved_tokens||0))" style="color:var(--ok)"></div></div><template x-if="selectedLog.error"><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.error')"></div><div class="log-detail-val" style="color:var(--err)" x-text="selectedLog.error"></div></div></template></div></div></div></div></template>
+  <template x-if="selectedLog"><div class="log-modal" @click.self="selectedLog=null"><div class="log-modal-card"><div class="log-modal-head"><div><span class="pnl-ht" x-text="t('request_details')"></span><span class="bdg" style="margin-left:8px" :class="selectedLog.status<400?'bdg-s':'bdg-e'" x-text="selectedLog.status"></span></div><button class="btn btn-g" @click="selectedLog=null">✕</button></div><div class="log-modal-body"><div class="log-detail-grid"><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.time')"></div><div class="log-detail-val mono" x-text="fmtDateTime(selectedLog.timestamp)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.model')"></div><div class="log-detail-val mono" x-text="selectedLog.model"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('tbl.upstream_model')"></div><div class="log-detail-val mono" x-text="selectedLog.upstream_model||'—'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.provider')"></div><div class="log-detail-val" x-text="selectedLog.provider"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.endpoint')"></div><div class="log-detail-val mono" x-text="selectedLog.endpoint"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_body_size')"></div><div class="log-detail-val mono" x-text="fmtB(selectedLog.body_len)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_prompt_completion')"></div><div class="log-detail-val mono" x-text="t('detail_in_out')+' '+fmtT(selectedLog.prompt_tokens||0)+' / '+t('detail_out')+' '+fmtT(selectedLog.completion_tokens||0)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_latency_ttft')"></div><div class="log-detail-val mono" x-text="fmtMs(selectedLog.latency_ms)+' / '+(selectedLog.first_token_ms?fmtMs(selectedLog.first_token_ms):'—')"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.kv_cache')"></div><div class="log-detail-val mono" x-text="t('detail_hit_n',fmtT(selectedLog.prompt_cache_hit_tokens||0))+' / '+t('detail_miss_n',fmtT(selectedLog.prompt_cache_miss_tokens||0))"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.cache_hit_rate')"></div><div class="log-detail-val mono" x-text="logCacheRate(selectedLog)"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.reasoning')"></div><div class="log-detail-val" x-text="selectedLog.reasoning_effort||'—'"></div></div><div class="log-detail-item"><div class="log-detail-key" x-text="t('detail.gen_speed')"></div><div class="log-detail-val mono" x-text="logGenSpeed(selectedLog)"></div></div>
+        <div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_cost')"></div><div class="log-detail-val mono" :style="selectedLog.cached?'color:var(--muted)':''" x-text="selectedLog.cached?t('detail_cost_cached'):fmtMoney(selectedLog.cost||0)"></div></div>
+        <div class="log-detail-item"><div class="log-detail-key" x-text="t('detail_cache_saved')"></div><div class="log-detail-val mono" style="color:var(--ok)" x-text="(selectedLog.cache_saved?fmtMoneyTiny(selectedLog.cache_saved):'—')"></div></div><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.opt_saved')"></div><div class="log-detail-val" style="color:var(--ok)">
+          <div class="mono" x-text="fmtT(logSavedTotal(selectedLog))+(selectedLog.opt_saved_fee?('  ≈ '+fmtMoneyTiny(selectedLog.opt_saved_fee)):'')"></div>
+          <div class="txs tm" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px">
+            <span x-text="t('saved_strip')+' '+fmtT((selectedLog.saved_breakdown||{}).strip||0)"></span>
+            <span x-show="((selectedLog.saved_breakdown||{}).strip_toolcall||0)>0" x-text="t('saved_strip_tc')+' '+fmtT((selectedLog.saved_breakdown||{}).strip_toolcall||0)"></span>
+            <span x-text="t('saved_trim')+' '+fmtT((selectedLog.saved_breakdown||{}).trim||0)"></span>
+            <span x-text="t('saved_resp')+' '+fmtT((selectedLog.saved_breakdown||{}).resp_cache||0)"></span>
+          </div>
+        </div></div><template x-if="selectedLog.error"><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.error')"></div><div class="log-detail-val" style="color:var(--err)" x-text="selectedLog.error"></div></div></template></div></div></div></div></template>
 </div>
 <div x-show="activeTab==='settings'" class="page-enter page-wide">
 <div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
@@ -1083,7 +1094,8 @@ const I18N = {
     'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据',
     'audit_applied': '已生效省量',
     'audit_applied_strip': '· 剥离推理链', 'audit_applied_strip_tc': '· 其中 tool_calls 轮次', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
-    'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"其中 tool_calls 轮次"）', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
+    'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"其中 tool_calls 轮次"）',
+    'audit_kv_saved_fee': '缓存净省', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
     'audit_potential': '潜在可省（尚未启用）',
     'audit_exempt_reasoning': '豁免推理链', 'audit_exempt_reasoning_hint': '带工具调用的历史推理链当前未剥离',
     'audit_dup_blocks': '重复内容块', 'audit_dup_count': '{0} 块', 'audit_dup_hint': '同一内容重复出现，保留首次即可（需改写，行为可能偏移）',
@@ -1207,7 +1219,10 @@ const I18N = {
     'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_status': '密钥状态', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '当前窗口请求',
     'error_requests': '错误请求', 'errors_summary': '错误摘要', 'entry_count': '{0} 条', 'expand_action': '展开',
     'collapse_action': '收起', 'call_records': '调用记录', 'request_details': '请求详情', 'log_details_hint': '点击查看详情',
-    'detail_body_size': 'Body 大小', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': '延迟 / TTFT',
+    'detail_body_size': '请求体大小', 'detail_prompt_completion': '输入 / 输出 Token', 'detail_latency_ttft': '延迟 / 首字延迟',
+    'detail_in_out': '输入', 'detail_out': '输出', 'detail_hit_n': '命中 {0}', 'detail_miss_n': '未命中 {0}',
+    'detail_cost': '本次费用', 'detail_cost_cached': '缓存命中（未计费）', 'detail_cache_saved': 'KV 缓存净省',
+    'saved_strip': '剥离推理链', 'saved_strip_tc': '其中工具轮次', 'saved_trim': '历史裁剪', 'saved_resp': '响应缓存',
     'provider_status': '状态', 'latency': '延迟', 'circuit': '熔断', 'key_label': 'Key', 'actions': '操作',
     'configured': '已配置', 'unconfigured': '未配置', 'endpoint_protocol_desc': 'API 基地址与协议专用端点',
     'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：', 'price': '价格：', 'paid': '付费', 'status': '状态：', 'status_active': '在用', 'status_removed': '已下架', 'origin': '来源：', 'origin_manual': '手动', 'origin_fetched': '获取',
@@ -1259,7 +1274,8 @@ const I18N = {
     'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data',
     'audit_applied': 'Applied savings',
     'audit_applied_strip': '· strip reasoning', 'audit_applied_strip_tc': '· of which tool-call turns', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
-    'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "of which tool-call turns" above)', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
+    'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "of which tool-call turns" above)',
+    'audit_kv_saved_fee': 'net saved', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
     'audit_potential': 'Potential (not yet enabled)',
     'audit_exempt_reasoning': 'Exempt reasoning', 'audit_exempt_reasoning_hint': 'history reasoning on tool-calling turns is not stripped today',
     'audit_dup_blocks': 'Duplicate blocks', 'audit_dup_count': '{0} blocks', 'audit_dup_hint': 'identical content repeated; keeping the first suffices (requires rewriting, behaviour may shift)',
@@ -1383,7 +1399,10 @@ const I18N = {
     'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_status': 'Key status', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Requests in window',
     'error_requests': 'Error requests', 'errors_summary': 'Error summary', 'entry_count': '{0} entries', 'expand_action': 'Expand',
     'collapse_action': 'Collapse', 'call_records': 'Call records', 'request_details': 'Request details', 'log_details_hint': 'Click to view details',
-    'detail_body_size': 'Body size', 'detail_prompt_completion': 'Prompt / Completion', 'detail_latency_ttft': 'Latency / TTFT',
+    'detail_body_size': 'Request size', 'detail_prompt_completion': 'Input / Output token', 'detail_latency_ttft': 'Latency / TTFT',
+    'detail_in_out': 'in', 'detail_out': 'out', 'detail_hit_n': '{0} hit', 'detail_miss_n': '{0} miss',
+    'detail_cost': 'Cost', 'detail_cost_cached': 'cache hit (not billed)', 'detail_cache_saved': 'KV cache net saved',
+    'saved_strip': 'strip reasoning', 'saved_strip_tc': 'of which tool turns', 'saved_trim': 'history trim', 'saved_resp': 'response cache',
     'provider_status': 'Status', 'latency': 'Latency', 'circuit': 'Circuit', 'key_label': 'Key', 'actions': 'Actions',
     'configured': 'Configured', 'unconfigured': 'Not configured', 'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
     'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ', 'price': 'Price: ', 'paid': 'Paid', 'status': 'Status: ', 'status_active': 'Active', 'status_removed': 'Removed', 'origin': 'Origin: ', 'origin_manual': 'Manual', 'origin_fetched': 'Fetched',
@@ -2986,6 +3005,13 @@ function dashboard() {
       const sym = this.moneySymbol(this.currencyConfig.currency);
       return sym + this.convertCny(v).toFixed(2);
     },
+    // 极小金额友好显示: 换算后不足最小分位时给出 "<¥0.01", 而不是 0.00.
+    // 省量费用常远小于 1 分 (单请求 1009 tok × 2元/1M ≈ 0.002), 一律 ¥0.00 会让人误以为没生效.
+    fmtMoneyTiny(v) {
+      const c = this.convertCny(v);
+      if (v > 0 && c < 0.005) return '<' + this.moneySymbol(this.currencyConfig.currency) + '0.01';
+      return this.fmtMoney(v);
+    },
     // 单价格式化 (表格单元格用): 紧凑展示「未命中/输出 (命中)」, 未配置显示「未配置」.
     // 鼠标悬停由 fmtPriceDetail 给出逐项明细.
     fmtPrice(p) {
@@ -3028,6 +3054,18 @@ function dashboard() {
     fmtDateTime(ts){ const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleString(loc); },
     fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
     fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
+    // 省量明细行: "标签 <tokens> ≈ <费用>". 费用为 0 (未配置价格/免费) 时省略.
+    auditLine(labelKey, tokens, fee) {
+      const tk = this.fmtT(tokens || 0);
+      const f = fee || 0;
+      return t(labelKey) + ' ' + tk + (f > 0 ? ' ≈ ' + this.fmtMoneyTiny(f) : '');
+    },
+    // 单条日志的优化省量合计 (tokens). 优先用后端下发的拆分, 回退到三个字段直加.
+    logSavedTotal(log) {
+      const b = log && log.saved_breakdown;
+      if (b) return (b.strip||0)+(b.strip_toolcall||0)+(b.trim||0)+(b.resp_cache||0);
+      return (log.strip_saved_tokens||0)+(log.trim_saved_tokens||0)+(log.resp_cache_saved_tokens||0);
+    },
     // 更新日志条目的行内 markdown 渲染: 仅支持 **粗体** 与 `代码`.
     // 先 HTML 转义再套标签 —— CHANGELOG 是本地文件, 但仍按不可信文本处理.
     renderMdInline(s) {

@@ -604,7 +604,9 @@ fn request_logs_with_enrichment(
     logs: Vec<RequestLog>,
     free_ids: &std::collections::HashSet<String>,
     reasoning_map: &std::collections::HashMap<String, Option<String>>,
+    price_overrides: &HashMap<String, ModelPrice>,
 ) -> Vec<serde_json::Value> {
+    let memo = PriceMemo::new(price_overrides);
     logs.into_iter()
         .map(|l| {
             let mut v = serde_json::to_value(&l).unwrap_or(serde_json::Value::Null);
@@ -615,6 +617,42 @@ fn request_logs_with_enrichment(
                     serde_json::Value::String(
                         reasoning_map.get(&l.model).and_then(|r| r.clone()).unwrap_or_default(),
                     ),
+                );
+                // 单条费用与省量: 前端请求详情要展示"这次花了多少 / 省了多少",
+                // 不能让前端自己算 (价格表在后端, 且需与统计页同口径).
+                let cost = log_cost(&memo, &l);
+                obj.insert("cost".into(), serde_json::json!(cost));
+                let cache_saved = log_cache_saved(&memo, &l);
+                obj.insert("cache_saved".into(), serde_json::json!(cache_saved));
+                // 优化省量折算费用 (剥离推理链 + 历史裁剪 + 响应缓存命中).
+                let opt_tokens = (l.strip_saved_tokens as u64)
+                    + (l.trim_saved_tokens as u64)
+                    + (l.resp_cache_saved_tokens as u64);
+                let opt_fee = match memo.resolve(&l) {
+                    Some(p) if opt_tokens > 0 => {
+                        let (input_price, _, _) = pricing::effective(p, l.timestamp);
+                        if input_price > 0.0 {
+                            opt_tokens as f64 / 1e6 * input_price
+                        } else {
+                            0.0
+                        }
+                    }
+                    _ => 0.0,
+                };
+                obj.insert("opt_saved_fee".into(), serde_json::json!(opt_fee));
+                // 省量来源拆分 (tokens): 前端据此列出"省了哪些类型".
+                // 注意: strip_saved_tokens 已包含 tool_calls 轮次的部分, 故 "strip" 须扣除,
+                // 否则前端合计会把它重复计入 (1009 显示成 2018).
+                obj.insert(
+                    "saved_breakdown".into(),
+                    serde_json::json!({
+                        "strip": l
+                            .strip_saved_tokens
+                            .saturating_sub(l.strip_toolcall_saved_tokens),
+                        "strip_toolcall": l.strip_toolcall_saved_tokens,
+                        "trim": l.trim_saved_tokens,
+                        "resp_cache": l.resp_cache_saved_tokens,
+                    }),
                 );
             }
             v
@@ -631,16 +669,20 @@ pub async fn api_logs(
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
         std::collections::HashMap::new();
+    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
             reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
+            if let Some(p) = mcfg.price {
+                price_overrides.insert(model_id.clone(), p);
+            }
         }
     }
     drop(registry);
-    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_overrides))
 }
 
 /// DELETE /admin/api/logs — 清空日志缓冲区.
@@ -664,16 +706,20 @@ pub async fn api_errors(
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
         std::collections::HashMap::new();
+    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
             reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
+            if let Some(p) = mcfg.price {
+                price_overrides.insert(model_id.clone(), p);
+            }
         }
     }
     drop(registry);
-    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_overrides))
 }
 
 /// 路由配置的脱敏视图.
@@ -1962,6 +2008,13 @@ pub struct AuditSummary {
     pub applied_resp_cache_tokens: u64,
     /// 有多少个请求开启了「剥离 tool_calls 推理链」(用于提示开关是否已生效).
     pub strip_toolcall_requests: u64,
+    /// 已生效省量折算的费用明细 (元), 与 total_opt_saved_fee 同口径.
+    pub applied_strip_fee: f64,
+    pub applied_strip_toolcall_fee: f64,
+    pub applied_trim_fee: f64,
+    pub applied_resp_cache_fee: f64,
+    /// KV 缓存净省费用 (元): Σ(命中折扣 − 写入溢价), 即 total_cache_saved.
+    pub cache_saved_fee: f64,
     /// 窗口内非缓存请求总数.
     pub requests: u64,
     /// 其中真正做过审计的请求数 (升级前的老日志与直通/回放路径不计).
@@ -2492,6 +2545,16 @@ fn compute_stats(
             .iter()
             .filter(|l| l.strip_toolcall_saved_tokens > 0)
             .count() as u64,
+        // 省量费用: 按各模型生效的 input 单价折算, 与 log_cost / total_opt_saved_fee 同口径.
+        applied_strip_fee: sum_saved_fee(&memo, logs, |l| {
+            (l.strip_saved_tokens as u64).saturating_sub(l.strip_toolcall_saved_tokens as u64)
+        }),
+        applied_strip_toolcall_fee: sum_saved_fee(&memo, logs, |l| {
+            l.strip_toolcall_saved_tokens as u64
+        }),
+        applied_trim_fee: sum_saved_fee(&memo, logs, |l| l.trim_saved_tokens as u64),
+        applied_resp_cache_fee: sum_saved_fee(&memo, logs, |l| l.resp_cache_saved_tokens as u64),
+        cache_saved_fee: total_cache_saved,
         requests: logs.iter().filter(|l| !l.cached).count() as u64,
         sampled_requests: logs.iter().filter(|l| l.audit_observed).count() as u64,
         window_start: logs.iter().map(|l| l.timestamp).min().unwrap_or(0),
@@ -3381,6 +3444,36 @@ fn compute_trends_window(
 /// 按模型和时间桶聚合 Token 趋势，供分析页多系列图表使用。
 fn compute_model_trends(logs: &[RequestLog], granularity: &str) -> Vec<ModelTrend> {
     compute_model_trends_window(logs, granularity, None, None)
+}
+
+/// 按各条日志的模型生效 input 单价, 把 `pick` 选出的省量 token 折算为费用 (元).
+///
+/// 口径与 `compute_stats` 的 `total_opt_saved_fee` 一致: 按请求时段选 input 价,
+/// 单价为 0 (未配置/免费) 时记 0. 用于把"已生效省量"拆成各项费用.
+fn sum_saved_fee(
+    memo: &PriceMemo,
+    logs: &[RequestLog],
+    pick: impl Fn(&RequestLog) -> u64,
+) -> f64 {
+    logs.iter()
+        .map(|l| {
+            let tokens = pick(l);
+            if tokens == 0 {
+                return 0.0;
+            }
+            match memo.resolve(l) {
+                Some(p) => {
+                    let (input_price, _, _) = pricing::effective(p, l.timestamp);
+                    if input_price > 0.0 {
+                        tokens as f64 / 1e6 * input_price
+                    } else {
+                        0.0
+                    }
+                }
+                None => 0.0,
+            }
+        })
+        .sum()
 }
 
 /// 计算 rollup 合并区间与日志侧保留边界.
