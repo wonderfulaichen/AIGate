@@ -600,6 +600,17 @@ pub async fn chat_completions(
             "proxy: upstream {upstream_status} for {endpoint}: {err}",
             err = &err_body[..err_body.len().min(500)]
         );
+        // 诊断: 上游点名 messages.N.content 时, 把该条消息的结构打出来.
+        // 客户端 (如 CodeBuddy) 发的多模态 parts 形态各异, 上游会对某些 content 结构
+        // 报 "Invalid input" 而只看错误体无法定位 - 这里直接把出错消息的形态落到日志.
+        if let Some(idx) = parse_messages_param_index(&err_body) {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(msg) = v.get("messages").and_then(|m| m.as_array()).and_then(|a| a.get(idx)) {
+                    let shape = describe_content_shape(msg);
+                    warn!("proxy: upstream rejected messages[{idx}].content -> {shape}");
+                }
+            }
+        }
         // Anthropic 错误体格式 {"type":"error","error":{...}} → OpenAI {"error":{...}},
         // Responses 错误体格式与 OpenAI 一致, 也做转换以防格式不一致.
         // 使 format_upstream_error 的中文解析 (读 error.message/type) 正常工作.
@@ -3322,6 +3333,67 @@ fn inject_model_params(
     )
 }
 
+/// 从上游错误体里解析 `messages.<N>.content` 形式的出错下标.
+///
+/// 兼容 OpenAI 风格 `{"error":{"param":"messages.172.content"}}` 与
+/// 其它把 param 放在别处的变体; 解析不到返回 None.
+fn parse_messages_param_index(err_body: &str) -> Option<usize> {
+    let v: serde_json::Value = serde_json::from_str(err_body).ok()?;
+    // param 可能位于顶层 / error.param / error.details.param
+    let param = v
+        .pointer("/error/param")
+        .or_else(|| v.get("param"))
+        .or_else(|| v.pointer("/error/details/param"))
+        .and_then(|p| p.as_str())?;
+    let rest = param.strip_prefix("messages.")?;
+    let idx = rest.split('.').next()?;
+    idx.parse().ok()
+}
+
+/// 描述一条消息的结构形态 (不含正文内容), 供诊断日志使用.
+///
+/// 输出形如 `role=user content=array[text,image_url] len=2` /
+/// `role=assistant content=string len=1234` / `role=tool content=array[] len=0`,
+/// 既能定位问题形态, 又不会把用户正文写进日志.
+fn describe_content_shape(msg: &serde_json::Value) -> String {
+    let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("?");
+    let content = match msg.get("content") {
+        None => "MISSING".to_string(),
+        Some(serde_json::Value::Null) => "null".to_string(),
+        Some(serde_json::Value::String(s)) => format!("string(len={})", s.len()),
+        Some(serde_json::Value::Array(parts)) => {
+            let kinds: Vec<&str> = parts
+                .iter()
+                .map(|p| {
+                    p.get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or(if p.is_string() { "raw_string" } else { "no_type" })
+                })
+                .collect();
+            format!("array(len={})[{}]", parts.len(), kinds.join(","))
+        }
+        Some(other) => {
+            let t = match other {
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::Object(_) => "object",
+                _ => "other",
+            };
+            t.to_string()
+        }
+    };
+    let extra = {
+        let mut f = Vec::new();
+        for k in ["tool_calls", "tool_call_id", "name", "reasoning_content"] {
+            if msg.get(k).is_some() {
+                f.push(k);
+            }
+        }
+        if f.is_empty() { String::new() } else { format!(" +{}", f.join(",")) }
+    };
+    format!("role={role} content={content}{extra}")
+}
+
 /// 过滤客户端 headers: 白名单模式, 只转发安全的标准 headers.
 ///
 /// 客户端 (如 CodeBuddy) 会发送大量非标准 headers (x-ide-type, x-domain 等),
@@ -3671,6 +3743,47 @@ mod tests {
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
         assert!(saved > 0, "剥离量应计入 saved");
         assert_eq!(exempt, 0, "已剥离的不再算作豁免");
+    }
+
+    /// 解析上游错误体里的 messages.N.content 下标 (多种 param 位置).
+    #[test]
+    fn parse_messages_param_index_variants() {
+        assert_eq!(
+            parse_messages_param_index(r#"{"error":{"message":"Invalid input","type":"invalid_request_error","param":"messages.172.content"}}"#),
+            Some(172)
+        );
+        assert_eq!(parse_messages_param_index(r#"{"param":"messages.699.content"}"#), Some(699));
+        assert_eq!(
+            parse_messages_param_index(r#"{"error":{"details":{"param":"messages.5.content"}}}"#),
+            Some(5)
+        );
+        // 非 messages 前缀 / 无 param / 非法 JSON → None
+        assert_eq!(parse_messages_param_index(r#"{"error":{"param":"model"}}"#), None);
+        assert_eq!(parse_messages_param_index(r#"{"error":{"message":"boom"}}"#), None);
+        assert_eq!(parse_messages_param_index("not json"), None);
+    }
+
+    /// 消息结构描述: 覆盖 string / array / 缺失 / null, 且不泄露正文.
+    #[test]
+    fn describe_content_shape_reports_form_without_body() {
+        let s = serde_json::json!({"role":"user","content":"secret text"});
+        let d = describe_content_shape(&s);
+        assert!(d.contains("role=user") && d.contains("string(len=11)"), "{d}");
+        assert!(!d.contains("secret"), "不得把正文写进诊断: {d}");
+
+        let a = serde_json::json!({"role":"user","content":[{"type":"text","text":"x"},{"type":"image_url","image_url":{}}]});
+        let da = describe_content_shape(&a);
+        assert!(da.contains("array(len=2)[text,image_url]"), "{da}");
+
+        let empty = serde_json::json!({"role":"tool","content":[],"tool_call_id":"t1"});
+        let de = describe_content_shape(&empty);
+        assert!(de.contains("array(len=0)[]") && de.contains("tool_call_id"), "{de}");
+
+        let missing = serde_json::json!({"role":"assistant"});
+        assert!(describe_content_shape(&missing).contains("content=MISSING"));
+
+        let null = serde_json::json!({"role":"assistant","content":null});
+        assert!(describe_content_shape(&null).contains("content=null"));
     }
 
     /// 审计: 重复的大块 tool/user 内容被识别为可省 (保留首次), 小块与不同内容不误报.
