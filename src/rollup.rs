@@ -9,6 +9,13 @@
 //!
 //! 费用语义: 计费相关 token 按「高峰/空闲」时段拆分存储, 查询期用当前费率重算
 //! 费用 — 与日志口径一致 (providers.json 改价可追溯历史), 不预存金额.
+//!
+//! 注意「拆分」与「费率」的重算边界不同: **拆分在记录时按当时的高峰表定死**
+//! (`is_peak(log.timestamp)` 逐条判定后落桶), 查询期只重读费率, **不会**按新高峰表
+//! 重新分桶. 因此改高峰时段/星期/时区后, 日志窗口内的天会立即按新表重算, 已落盘
+//! 的历史天则保留记录当时的口径 —— 这是刻意的: 日聚合只存总量, 没有逐条时间戳,
+//! 事后无法还原"某天哪些请求落在高峰". 改配置若想让历史也一致, 需重算历史天
+//! (从日志回填, 见 `backfill_from_logs`).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -106,8 +113,7 @@ impl RollupEntry {
                 self.gen_samples += 1;
             }
         }
-        let peak = crate::pricing::is_peak(log.timestamp);
-        let saved = log.strip_saved_tokens as u64
+        let peak = crate::pricing::is_peak(log.timestamp);        let saved = log.strip_saved_tokens as u64
             + log.trim_saved_tokens as u64
             + log.resp_cache_saved_tokens as u64;
         self.strip_saved_tokens += log.strip_saved_tokens as u64;
@@ -117,6 +123,7 @@ impl RollupEntry {
             self.saved_peak_tokens += saved;
         }
         // 计费拆分: 命中本地缓存的请求未真实消费上游 token, 不计费.
+        // 高峰/空闲在此定桶 (记录当时的高峰表), 查询期只重读费率、不重新分桶 —— 见模块头.
         if !log.cached {
             let prompt = log.prompt_tokens as u64;
             let hit = (log.prompt_cache_hit_tokens as u64).min(prompt);
