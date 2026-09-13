@@ -2407,9 +2407,15 @@ impl TokenStream {
         };
         let ct = if self.tokens_ct > 0 {
             self.tokens_ct
+        } else if !self.accumulated_content.is_empty() {
+            // 上游未给 usage: 按**可见正文**估算 (4 字节 ≈ 1 token).
+            // 不能用 response_bytes —— SSE 帧含大量协议开销, 且部分上游 (opencode 系)
+            // 同时下发 reasoning 与 reasoning_details (同内容双份), 实测单条响应体可达 2MB,
+            // 按字节估算得出 50 万 completion token (远超输入), 直接导致输出费用虚高十余倍.
+            std::cmp::max(1, (self.accumulated_content.len() / 4) as u32)
         } else {
-            // 估算: 响应 body 字节 / 4 ≈ completion token 数
-            std::cmp::max(1, (self.response_bytes / 4) as u32)
+            // 全程无可见正文 (纯思考后被截断): completion 记 0, 不做字节估算放大.
+            0
         };
         // 缓存命中/未命中/首次写入: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
         (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss, self.tokens_cache_creation)
@@ -4463,6 +4469,50 @@ mod tests {
         assert_eq!(ts.tokens_cache_hit, 200);
         assert_eq!(ts.tokens_cache_miss, 50);
         assert_eq!(ts.tokens_cache_creation, 30);
+    }
+
+    /// 回归: 上游未给 usage 时, completion 估算必须基于**可见正文**而非响应字节.
+    ///
+    /// 实测事故: opencode 系上游同时下发 reasoning 与 reasoning_details (同内容双份),
+    /// 纯思考场景响应体可达 2MB, 按字节/4 估算得出 501580 completion token (远超输入
+    /// 303766), 输出费用虚高十余倍.
+    #[test]
+    fn completion_fallback_uses_visible_content_not_response_bytes() {
+        use futures::stream;
+        let mk = || TokenStream {
+            inner: Box::pin(stream::empty::<Result<Bytes, StreamErr>>()),
+            done: false, tokens_pt: 0, tokens_ct: 0,
+            tokens_cache_hit: 0, tokens_cache_miss: 0, tokens_cache_creation: 0,
+            response_bytes: 0,   // 稍后设置
+            loop_guard: None, loop_aborted: false, error_closed: false, stream_errored: false,
+            pending_error_sse: None, finish_reason: None, clean_finish: false, errored_msg: None,
+            keepalive: None, recent_lines: std::collections::VecDeque::new(),
+            out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
+            anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
+            accumulated_content: String::new(), emitted_tool_calls: false, cont_pending: None,
+            cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
+            loop_params: None, log_buffer: None,
+        };
+
+        // 场景 A: 纯思考无正文, 但响应体巨大 → completion 应为 0, 不按 2MB/4 放大
+        let mut ts = mk();
+        ts.response_bytes = 2_000_000;
+        let (_, ct, ..) = ts.final_tokens(1000);
+        assert_eq!(ct, 0, "纯思考截断不得按响应字节估算 completion (实测曾得 50 万)");
+
+        // 场景 B: 有可见正文 400 字节 → 估算 100 token, 与响应体大小无关
+        let mut ts2 = mk();
+        ts2.response_bytes = 2_000_000;
+        ts2.accumulated_content = "x".repeat(400);
+        let (_, ct2, ..) = ts2.final_tokens(1000);
+        assert_eq!(ct2, 100, "应按可见正文 400/4 估算");
+
+        // 场景 C: 上游给了精确 usage → 优先用精确值
+        let mut ts3 = mk();
+        ts3.response_bytes = 2_000_000;
+        ts3.tokens_ct = 4650;
+        let (_, ct3, ..) = ts3.final_tokens(1000);
+        assert_eq!(ct3, 4650, "有精确 usage 时不得估算");
     }
 
     /// 回归: 收尾 usage 帧只含 output 时, 不得把已解析的输入量覆盖成 0.
