@@ -3222,73 +3222,56 @@ fn hoist_tool_images(body: &mut serde_json::Value) -> usize {
     };
     let mut hoisted = 0usize;
     let mut out: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
-    for msg in messages.drain(..) {
-        let mut msg = msg;
+    // 待插入的图片: 必须等「整串 tool 消息」结束再落成 user 消息.
+    // OpenAI 要求 assistant 的 tool_calls 后紧跟其全部 tool 响应, 中间不得插入任何消息;
+    // 逐个 tool 后立刻插 user 会在多 tool_calls 时把 t1/t2 隔开, 触发
+    // "An assistant message with 'tool_calls' must be followed by tool messages..."
+    let mut pending: Vec<serde_json::Value> = Vec::new();
+
+    for mut msg in messages.drain(..) {
         let is_tool = msg.get("role").and_then(|r| r.as_str()) == Some("tool");
-        let mut images: Vec<serde_json::Value> = Vec::new();
         if is_tool {
-            if let Some(serde_json::Value::Array(parts)) =
-                msg.get_mut("content").map(|c| c as &mut serde_json::Value)
-            {
+            if let Some(serde_json::Value::Array(parts)) = msg.get_mut("content") {
                 let mut text_parts: Vec<serde_json::Value> = Vec::new();
                 for p in parts.drain(..) {
                     match p.get("type").and_then(|t| t.as_str()) {
                         Some("image_url") => {
-                            images.push(p);
+                            pending.push(p);
                             hoisted += 1;
                         }
-                        // 其它形态 (text / 裸字符串) 原样保留, 不动语义.
                         _ => text_parts.push(p),
                     }
                 }
-                // 只含图片时给出空文本, 保持 tool 消息可被上游接受.
+                // 只含图片时给空字符串 (而非空数组), 满足 schema 且不改变语义.
                 if text_parts.is_empty() {
-                    let had_text = false;
-                    let _ = had_text;
                     msg["content"] = serde_json::Value::String(String::new());
                 } else {
                     *parts = text_parts;
                 }
             }
+            out.push(msg);
+            continue;
+        }
+        // 非 tool 消息 → tool 串已结束, 先把图片落成一条 user 消息, 再放本条.
+        if !pending.is_empty() {
+            out.push(hoisted_images_message(std::mem::take(&mut pending)));
         }
         out.push(msg);
-        if !images.is_empty() {
-            // 合并到前一条同样由提升产生的 user 消息, 避免多条相邻 user 触发部分上游的
-            // "consecutive user messages" 校验.
-            let can_merge = out
-                .last()
-                .and_then(|m| m.get("_hoisted_images"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if can_merge {
-                if let Some(arr) = out
-                    .last_mut()
-                    .and_then(|m| m.get_mut("content"))
-                    .and_then(|c| c.as_array_mut())
-                {
-                    arr.extend(images);
-                }
-            } else {
-                let mut content: Vec<serde_json::Value> = Vec::new();
-                content.push(serde_json::json!({
-                    "type": "text",
-                    "text": "[tool result image]"
-                }));
-                content.extend(images);
-                let mut m = serde_json::json!({ "role": "user", "content": content });
-                m["_hoisted_images"] = serde_json::json!(true);
-                out.push(m);
-            }
-        }
     }
-    // 去掉内部标记, 不污染发往上游的请求体.
-    for m in out.iter_mut() {
-        if let Some(o) = m.as_object_mut() {
-            o.remove("_hoisted_images");
-        }
+    // 末尾仍挂着图片 (tool 串一直延续到结束) → 补在最后.
+    if !pending.is_empty() {
+        out.push(hoisted_images_message(pending));
     }
     *messages = out;
     hoisted
+}
+
+/// 把提升出来的图片构造成一条 user 消息 (带一行说明文本, 避免纯图消息被部分上游拒).
+fn hoisted_images_message(images: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut content: Vec<serde_json::Value> = Vec::with_capacity(images.len() + 1);
+    content.push(serde_json::json!({ "type": "text", "text": "[tool result image]" }));
+    content.extend(images);
+    serde_json::json!({ "role": "user", "content": content })
 }
 
 /// 为 OpenAI 兼容请求体注入显式前缀缓存断点 (`cache_control: {type: ephemeral}`).
@@ -3838,6 +3821,101 @@ mod tests {
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
         assert!(saved > 0, "剥离量应计入 saved");
         assert_eq!(exempt, 0, "已剥离的不再算作豁免");
+    }
+
+    /// 关键回归: 多个 tool_calls 且其中一个 tool 含图时, 图片必须插在**整串 tool 之后**,
+    /// 否则 assistant.tool_calls 与 tool 响应之间被隔开, 上游报
+    /// "must be followed by tool messages responding to each 'tool_call_id'".
+    #[test]
+    fn hoist_preserves_tool_pairing_with_multiple_tool_calls() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "user", "content": "start" },
+                { "role": "assistant", "content": "", "tool_calls": [
+                    { "id": "t1", "type": "function", "function": { "name": "shot", "arguments": "{}" } },
+                    { "id": "t2", "type": "function", "function": { "name": "read", "arguments": "{}" } }
+                ]},
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "text", "text": "shot ok" },
+                    { "type": "image_url", "image_url": { "url": "https://x/a.png" } }
+                ]},
+                { "role": "tool", "tool_call_id": "t2", "content": "file body" }
+            ]
+        });
+        assert_eq!(hoist_tool_images(&mut body), 1);
+        let msgs = body["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        // 期望: user, assistant(with tool_calls), tool(t1), tool(t2), user(图片)
+        assert_eq!(roles, vec!["user", "assistant", "tool", "tool", "user"], "roles={roles:?}");
+        // t1 → t2 之间不得有任何非 tool 消息
+        let i_asst = 1usize;
+        assert_eq!(msgs[i_asst]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(msgs[2]["tool_call_id"], "t1");
+        assert_eq!(msgs[3]["tool_call_id"], "t2");
+        // 图片落在配对串之后
+        assert_eq!(msgs[4]["role"], "user");
+        assert!(msgs[4]["content"].as_array().unwrap().iter().any(|p| p["type"] == "image_url"));
+    }
+
+    /// 每个 tool 都带图: 图片合并为**一条** user 消息, 且仍在整串 tool 之后.
+    #[test]
+    fn hoist_merges_images_from_consecutive_tools() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "assistant", "content": "", "tool_calls": [
+                    { "id": "t1" }, { "id": "t2" }, { "id": "t3" }
+                ]},
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "image_url", "image_url": { "url": "https://x/1.png" } }]},
+                { "role": "tool", "tool_call_id": "t2", "content": [
+                    { "type": "image_url", "image_url": { "url": "https://x/2.png" } }]},
+                { "role": "tool", "tool_call_id": "t3", "content": "text only" }
+            ]
+        });
+        assert_eq!(hoist_tool_images(&mut body), 2);
+        let msgs = body["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, vec!["assistant", "tool", "tool", "tool", "user"], "roles={roles:?}");
+        let imgs: Vec<&str> = msgs[4]["content"].as_array().unwrap().iter()
+            .filter(|p| p["type"] == "image_url")
+            .filter_map(|p| p["image_url"]["url"].as_str()).collect();
+        assert_eq!(imgs, vec!["https://x/1.png", "https://x/2.png"], "两张图应合并");
+    }
+
+    /// tool 串位于末尾 (其后无消息) 时, 图片补在最后.
+    #[test]
+    fn hoist_appends_at_end_when_no_following_message() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "assistant", "content": "", "tool_calls": [{ "id": "t1" }] },
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "image_url", "image_url": { "url": "https://x/z.png" } }]}
+            ]
+        });
+        assert_eq!(hoist_tool_images(&mut body), 1);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[2]["role"], "user");
+    }
+
+    /// 含图的 tool 与 user 消息之间不再额外插入 (合并进同一条), 避免 consecutive user.
+    #[test]
+    fn hoist_does_not_create_consecutive_user_after_user_message() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "assistant", "content": "", "tool_calls": [{ "id": "t1" }] },
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "image_url", "image_url": { "url": "https://x/a.png" } }]},
+                { "role": "user", "content": "next" }
+            ]
+        });
+        assert_eq!(hoist_tool_images(&mut body), 1);
+        let msgs = body["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        // user(图片) 后紧跟原本的 user → 允许, 但不得出现图片 user 被挤到别处
+        assert_eq!(roles, vec!["assistant", "tool", "user", "user"], "roles={roles:?}");
+        assert!(msgs[2]["content"].as_array().unwrap().iter().any(|p| p["type"] == "image_url"));
     }
 
     /// tool 消息里的图片被提升为 user 消息, 图不丢且 tool 消息变合法.
