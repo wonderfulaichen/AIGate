@@ -11,7 +11,10 @@
 use serde::{Deserialize, Serialize};
 
 /// 单个模型的价格（元 / 百万 tokens）.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+///
+/// 派生 `PartialEq`: 价格表需要判断同一 model_id 在不同供应商下是否同价
+/// (同价才允许在供应商缺失时回退匹配).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct ModelPrice {
     /// 输入 token 价格（元 / 百万 tokens）, 不含 KV Cache 命中部分. 同时作为**高峰价**.
     pub input_per_m: f64,

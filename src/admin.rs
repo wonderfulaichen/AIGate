@@ -604,9 +604,9 @@ fn request_logs_with_enrichment(
     logs: Vec<RequestLog>,
     free_ids: &std::collections::HashSet<String>,
     reasoning_map: &std::collections::HashMap<String, Option<String>>,
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
 ) -> Vec<serde_json::Value> {
-    let memo = PriceMemo::new(price_overrides);
+    let memo = PriceMemo::new(price_table);
     logs.into_iter()
         .map(|l| {
             let mut v = serde_json::to_value(&l).unwrap_or(serde_json::Value::Null);
@@ -669,20 +669,17 @@ pub async fn api_logs(
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
         std::collections::HashMap::new();
-    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
             reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
-            if let Some(p) = mcfg.price {
-                price_overrides.insert(model_id.clone(), p);
-            }
         }
     }
+    let price_table = PriceTable::from_registry(&registry.providers());
     drop(registry);
-    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_overrides))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_table))
 }
 
 /// DELETE /admin/api/logs — 清空日志缓冲区.
@@ -706,20 +703,17 @@ pub async fn api_errors(
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut reasoning_map: std::collections::HashMap<String, Option<String>> =
         std::collections::HashMap::new();
-    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
     for provider in registry.providers() {
         for (model_id, mcfg) in provider.models {
             if mcfg.is_free(&model_id) {
                 free_ids.insert(model_id.to_string());
             }
             reasoning_map.insert(model_id.clone(), mcfg.reasoning_effort.clone());
-            if let Some(p) = mcfg.price {
-                price_overrides.insert(model_id.clone(), p);
-            }
         }
     }
+    let price_table = PriceTable::from_registry(&registry.providers());
     drop(registry);
-    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_overrides))
+    Json(request_logs_with_enrichment(logs, &free_ids, &reasoning_map, &price_table))
 }
 
 /// 路由配置的脱敏视图.
@@ -2205,7 +2199,6 @@ pub async fn api_stats(
         .collect();
 
     let registry = state.registry.read().await;
-    let mut price_overrides: HashMap<String, ModelPrice> = HashMap::new();
     let mut has_price_config = false;
     let mut free_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for provider in registry.providers() {
@@ -2213,12 +2206,13 @@ pub async fn api_stats(
             if mcfg.is_free(model_id.as_str()) {
                 free_ids.insert(model_id.clone());
             }
-            if let Some(price) = mcfg.price {
-                price_overrides.insert(model_id, price);
+            if mcfg.price.is_some() {
                 has_price_config = true;
             }
         }
     }
+    // registry.providers() 返回借用切片, 需在 drop 前构建价格表 (内部只读, 不持有借用).
+    let price_table = PriceTable::from_registry(&registry.providers());
     drop(registry);
 
     // ─── 日级 rollup 合并: 日志滚动窗口之外、且今天之前的天从 rollup 读取,
@@ -2245,12 +2239,12 @@ pub async fn api_stats(
         }
     }
 
-    let mut stats = compute_stats(&log_side, &price_overrides, &free_ids);
+    let mut stats = compute_stats(&log_side, &price_table, &free_ids);
     stats.has_price_config = has_price_config;
     let effective_start = range_start.unwrap_or_else(|| log_side.iter().map(|log| log.timestamp).min().unwrap_or(now));
-    stats.trends = compute_trends_window(&log_side, granularity, &price_overrides, Some(effective_start), Some(range_end));
+    stats.trends = compute_trends_window(&log_side, granularity, &price_table, Some(effective_start), Some(range_end));
     stats.model_trends = compute_model_trends_window(&log_side, granularity, Some(effective_start), Some(range_end));
-    merge_rollup_days(&mut stats, &merged_days, granularity, &price_overrides, &free_ids);
+    merge_rollup_days(&mut stats, &merged_days, granularity, &price_table, &free_ids);
     stats.window_start = effective_start;
     stats.window_end = range_end;
     stats.window_minutes = ((range_end.saturating_sub(effective_start)) as f64 / 60.0).max(1.0);
@@ -2397,32 +2391,82 @@ fn ts_to_hour(ts: u64) -> String {
     format!("{date} {hour:02}:00")
 }
 
-/// 价格解析结果记忆化键: (中转 model, endpoint). 同一 (model, endpoint) 组合
-/// 的解析结果稳定, 可安全复用 (详见 `PriceMemo`).
-type PriceMemoKey = (String, String);
+/// 价格表: 以 **(供应商, 中转 model id)** 为键.
+///
+/// 为何必须带供应商: 中转供应商下同名 model_id 可能出现在多个供应商条目里
+/// (如两家都配 `deepseek/v4-flash`) 且价格不同. 早期实现只以 model_id 为键,
+/// 后者覆盖前者 —— 实测路由侧对重复 model_id 已会告警且只保留一条, 费用侧同样
+/// 只应跟随生效的那条, 否则会出现"按 A 家价格给 B 家请求记账".
+#[derive(Default)]
+struct PriceTable {
+    by_provider_model: HashMap<(String, String), ModelPrice>,
+    /// model_id → 价格; 仅当该 model_id 出现在多个供应商下且**价格全部相同**时写入.
+    /// 用于日志里 provider 为空/已改名时的回退匹配 (保持历史统计可读).
+    by_model_unique: HashMap<String, ModelPrice>,
+}
+
+impl PriceTable {
+    fn from_registry(providers: &[crate::providers::ProviderConfig]) -> Self {
+        let mut t = PriceTable::default();
+        // model_id → 出现过的价格集合 (用于判定是否唯一价)
+        let mut seen: HashMap<String, Vec<ModelPrice>> = HashMap::new();
+        for p in providers {
+            for (model_id, mcfg) in &p.models {
+                let Some(price) = mcfg.price else { continue };
+                t.by_provider_model
+                    .insert((p.name.clone(), model_id.clone()), price);
+                seen.entry(model_id.clone()).or_default().push(price);
+            }
+        }
+        for (model_id, prices) in seen {
+            if let Some(first) = prices.first() {
+                if prices.iter().all(|p| p == first) {
+                    t.by_model_unique.insert(model_id, *first);
+                }
+            }
+        }
+        t
+    }
+
+    /// 查价: 先按 (供应商, model) 精确匹配, 再回退到全局唯一价.
+    fn lookup(&self, provider: &str, model: &str) -> Option<ModelPrice> {
+        if let Some(p) = self.by_provider_model.get(&(provider.to_string(), model.to_string())) {
+            return Some(*p);
+        }
+        self.by_model_unique.get(model).copied()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.by_provider_model.is_empty()
+    }
+}
+
+/// 价格解析结果记忆化键: (供应商, 中转 model, endpoint).
+/// 同一组合的解析结果稳定, 可安全复用 (详见 `PriceMemo`).
+type PriceMemoKey = (String, String, String);
 
 /// 请求级价格解析记忆化表: 避免 5000 条日志各自重复查面板配置的价格表.
 /// 仅在单次 `compute_stats`/`compute_trends` 调用生命周期内有效, 不入全局.
 struct PriceMemo<'a> {
-    overrides: &'a HashMap<String, ModelPrice>,
+    table: &'a PriceTable,
     cache: std::cell::RefCell<HashMap<PriceMemoKey, Option<ModelPrice>>>,
 }
 
 impl<'a> PriceMemo<'a> {
-    fn new(overrides: &'a HashMap<String, ModelPrice>) -> Self {
+    fn new(table: &'a PriceTable) -> Self {
         Self {
-            overrides,
+            table,
             cache: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
     /// 解析单条日志的价格 (记忆化): 命中则直接返回缓存的 `Option<ModelPrice>`.
     fn resolve(&self, log: &RequestLog) -> Option<ModelPrice> {
-        let key = (log.model.clone(), log.endpoint.clone());
+        let key = (log.provider.clone(), log.model.clone(), log.endpoint.clone());
         if let Some(v) = self.cache.borrow().get(&key).copied() {
             return v;
         }
-        let p = pricing::resolve_price(self.overrides.get(&log.model).copied());
+        let p = pricing::resolve_price(self.table.lookup(&log.provider, &log.model));
         self.cache.borrow_mut().insert(key, p);
         p
     }
@@ -2489,11 +2533,11 @@ fn log_cache_saved(memo: &PriceMemo, log: &RequestLog) -> f64 {
 /// `free_ids`: 免费中转 ID 集合（来自注册表 is_free 判定）, 组内任一中转 ID 命中即标记免费.
 fn compute_stats(
     logs: &[RequestLog],
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
     free_ids: &std::collections::HashSet<String>,
 ) -> UsageStats {
     // 价格解析记忆化: 本次聚合生命周期内复用 resolve_price 结果 (避免 5000 条重复解析).
-    let memo = PriceMemo::new(price_overrides);
+    let memo = PriceMemo::new(price_table);
     let total = logs.len();
     let error_count = logs.iter().filter(|l| is_log_error(l)).count();
     let success_count = total.saturating_sub(error_count);
@@ -2744,7 +2788,7 @@ fn compute_stats(
 
             // 单价取组内首条日志解析的结果（仅面板配置的价格）,
             // 供前端单价列展示.
-            let price = pricing::resolve_price(price_overrides.get(&logs[0].model).copied());
+            let price = pricing::resolve_price(price_table.lookup(&logs[0].provider, &logs[0].model));
 
             let provider_name = logs[0].provider.clone();
             let upstream_name = logs[0]
@@ -2870,7 +2914,7 @@ fn compute_stats(
     per_provider.sort_by(|a, b| b.requests.cmp(&a.requests));
 
     // 按天分组趋势 (默认)
-    let trends = compute_trends(logs, "day", price_overrides);
+    let trends = compute_trends(logs, "day", price_table);
     let model_trends = compute_model_trends(logs, "day");
 
     // Top 5 模型
@@ -2936,11 +2980,24 @@ fn compute_stats(
 /// 解析 rollup 条目的生效价格: 中转 ID 覆盖优先 (组内任一别名命中即用), 否则按上游模型回退内置表.
 /// 与日志口径 (memo.resolve 按 relay id 查面板配置的价格) 语义一致.
 fn entry_price(
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
     e: &crate::rollup::RollupEntry,
 ) -> Option<ModelPrice> {
+    // 优先用 entry 自带的供应商做精确匹配 —— 同名 model_id 在不同供应商下价格可能不同,
+    // 只取"第一个能匹配到的别名"会把整条按错价记账.
+    if !e.provider.is_empty() && e.provider != "-" {
+        for alias in &e.aliases {
+            if let Some(p) = price_table
+                .by_provider_model
+                .get(&(e.provider.clone(), alias.clone()))
+            {
+                return Some(*p);
+            }
+        }
+    }
+    // 回退: 全局唯一价 (该 model_id 在所有供应商下同价, 或 provider 缺失的老数据).
     for alias in &e.aliases {
-        if let Some(p) = price_overrides.get(alias) {
+        if let Some(p) = price_table.by_model_unique.get(alias) {
             return Some(*p);
         }
     }
@@ -2987,7 +3044,7 @@ fn merge_rollup_days(
     stats: &mut UsageStats,
     days: &[crate::rollup::DailyRollup],
     granularity: &str,
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
     free_ids: &std::collections::HashSet<String>,
 ) {
     if days.is_empty() {
@@ -3043,7 +3100,7 @@ fn merge_rollup_days(
                 saved_since_day = Some(day.day_start);
             }
             // 金额: 价格缺失按 0 计 (与 log_cost 同口径).
-            if let Some(p) = entry_price(price_overrides, e) {
+            if let Some(p) = entry_price(price_table, e) {
                 total_cost += entry_cost(p, e);
                 if !e.aliases.iter().any(|a| free_ids.contains(a)) {
                     total_cache_saved += entry_cache_saved(p, e);
@@ -3123,7 +3180,7 @@ fn merge_rollup_days(
                 continue;
             }
             let entry_free = e.aliases.iter().any(|a| free_ids.contains(a));
-            let cost = entry_price(price_overrides, e).map(|p| entry_cost(p, e)).unwrap_or(0.0);
+            let cost = entry_price(price_table, e).map(|p| entry_cost(p, e)).unwrap_or(0.0);
             if let Some(m) = stats
                 .per_model
                 .iter_mut()
@@ -3155,7 +3212,7 @@ fn merge_rollup_days(
                 m.total_cost += cost;
                 m.free = m.free || entry_free;
             } else {
-                let price = entry_price(price_overrides, e);
+                let price = entry_price(price_table, e);
                 stats.per_model.push(ModelStats {
                     model: e.upstream.clone(),
                     provider: e.provider.clone(),
@@ -3201,7 +3258,7 @@ fn merge_rollup_days(
                 continue;
             }
             let entry_free = e.aliases.iter().any(|a| free_ids.contains(a));
-            let price = entry_price(price_overrides, e);
+            let price = entry_price(price_table, e);
             let cost = price.map(|p| entry_cost(p, e)).unwrap_or(0.0);
             let cache_saved = price
                 .filter(|_| !entry_free)
@@ -3280,7 +3337,7 @@ fn merge_rollup_days(
                 b.total_completion_tokens += e.completion_tokens;
                 b.total_cache_hit_tokens += e.cache_hit_tokens;
                 b.total_cache_miss_tokens += e.cache_miss_tokens;
-                if let Some(p) = entry_price(price_overrides, e) {
+                if let Some(p) = entry_price(price_table, e) {
                     b.total_cost += entry_cost(p, e);
                 }
             }
@@ -3346,20 +3403,20 @@ fn merge_rollup_model_trends(
 fn compute_trends(
     logs: &[RequestLog],
     granularity: &str,
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
 ) -> Vec<DailyTrend> {
-    compute_trends_window(logs, granularity, price_overrides, None, None)
+    compute_trends_window(logs, granularity, price_table, None, None)
 }
 
 fn compute_trends_window(
     logs: &[RequestLog],
     granularity: &str,
-    price_overrides: &HashMap<String, ModelPrice>,
+    price_table: &PriceTable,
     explicit_start: Option<u64>,
     explicit_end: Option<u64>,
 ) -> Vec<DailyTrend> {
     // 趋势桶内每条日志仍走 log_cost, 复用记忆化避免重复解析价格.
-    let memo = PriceMemo::new(price_overrides);
+    let memo = PriceMemo::new(price_table);
     let key_fn: fn(u64) -> String = match granularity {
         "hour" => ts_to_hour,
         "month" => ts_to_month,
@@ -3605,6 +3662,97 @@ mod tests {
         }
     }
 
+    /// 核心回归: 同一中转 ID 出现在两个供应商下且价格不同时, 必须各按各家价格计费,
+    /// 不得互相覆盖 (早期实现只以 model_id 为键, 后者覆盖前者 → 按错价记账).
+    #[test]
+    fn same_model_id_different_provider_prices_are_not_conflated() {
+        let cheap = ModelPrice { input_per_m: 1.0, output_per_m: 1.0, ..Default::default() };
+        let pricey = ModelPrice { input_per_m: 50.0, output_per_m: 50.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        // 两家都提供 "shared/model", 但价格差 50 倍
+        t.by_provider_model.insert(("provA".into(), "shared/model".into()), cheap);
+        t.by_provider_model.insert(("provB".into(), "shared/model".into()), pricey);
+        // 同名不同价 → 不写入全局唯一价, 避免供应商缺失时误用
+        assert!(t.by_model_unique.get("shared/model").is_none(), "同名不同价不得进入唯一回退表");
+        let memo = PriceMemo::new(&t);
+
+        let mut a = mk("shared/model", "provA", 0, 0);
+        a.prompt_tokens = 1_000_000;
+        a.completion_tokens = 0;
+        let mut b = mk("shared/model", "provB", 0, 0);
+        b.prompt_tokens = 1_000_000;
+        b.completion_tokens = 0;
+
+        assert!((log_cost(&memo, &a) - 1.0).abs() < 1e-9, "provA 应按 1 元/M");
+        assert!((log_cost(&memo, &b) - 50.0).abs() < 1e-9, "provB 应按 50 元/M");
+    }
+
+    /// 同名同价时写入唯一回退表, 供 provider 缺失的历史日志使用.
+    #[test]
+    fn same_model_id_same_price_allows_fallback() {
+        let p = ModelPrice { input_per_m: 3.0, output_per_m: 9.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("a".into(), "m".into()), p);
+        t.by_provider_model.insert(("b".into(), "m".into()), p);
+        // 同名同价 → 唯一回退可用
+        let mut seen: HashMap<String, Vec<ModelPrice>> = HashMap::new();
+        seen.entry("m".to_string()).or_default().push(p);
+        seen.entry("m".to_string()).or_default().push(p);
+        if let Some(first) = seen.get("m").and_then(|v| v.first()) {
+            if seen["m"].iter().all(|x| x == first) {
+                t.by_model_unique.insert("m".into(), *first);
+            }
+        }
+        assert_eq!(t.lookup("unknown-provider", "m"), Some(p), "provider 未知时应回退唯一价");
+        assert_eq!(t.lookup("a", "m"), Some(p), "已知 provider 精确匹配");
+        assert_eq!(t.lookup("a", "nope"), None);
+    }
+
+    /// 不同模型按各自价格计费 (核心口径): 同窗口内两个价格差异巨大的模型,
+    /// 费用必须是各自的 token × 各自单价, 不能串价.
+    #[test]
+    fn cost_is_per_model_not_shared() {
+        // cheap: 输入 1 元/M; pricey: 输入 100 元/M (100 倍差异)
+        let cheap = ModelPrice { input_per_m: 1.0, output_per_m: 2.0, ..Default::default() };
+        let pricey = ModelPrice { input_per_m: 100.0, output_per_m: 200.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("p1".into(), "cheap".into()), cheap);
+        t.by_provider_model.insert(("p2".into(), "pricey".into()), pricey);
+        let memo = PriceMemo::new(&t);
+
+        let mut a = mk("cheap", "p1", 0, 0);
+        a.prompt_tokens = 1_000_000;
+        a.completion_tokens = 0;
+        let mut b = mk("pricey", "p2", 0, 0);
+        b.prompt_tokens = 1_000_000;
+        b.completion_tokens = 0;
+
+        assert!((log_cost(&memo, &a) - 1.0).abs() < 1e-9, "cheap 应为 1 元");
+        assert!((log_cost(&memo, &b) - 100.0).abs() < 1e-9, "pricey 应为 100 元");
+        // 合计必须逐条相加, 不得任一价格覆盖另一价格
+        let total = log_cost(&memo, &a) + log_cost(&memo, &b);
+        assert!((total - 101.0).abs() < 1e-9, "合计 101 元, 实得 {total}");
+    }
+
+    /// 未配置价格的模型计费为 0, 且不污染同窗口其他模型的费用.
+    #[test]
+    fn unpriced_model_costs_zero_without_affecting_others() {
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("p".into(), "priced".into()), ModelPrice {
+            input_per_m: 10.0, output_per_m: 20.0, ..Default::default()
+        });
+        let memo = PriceMemo::new(&t);
+        let mut priced = mk("priced", "p", 0, 0);
+        priced.prompt_tokens = 1_000_000;
+        priced.completion_tokens = 0;
+        let mut unpriced = mk("nope", "p", 0, 0);
+        unpriced.prompt_tokens = 1_000_000;
+        unpriced.completion_tokens = 0;
+        assert!((log_cost(&memo, &priced) - 10.0).abs() < 1e-9);
+        assert_eq!(log_cost(&memo, &unpriced), 0.0, "未配置价格应为 0");
+        assert!((log_cost(&memo, &priced) - 10.0).abs() < 1e-9, "不受未定价模型影响");
+    }
+
     /// 聚合: 全局缓存命中/未命中 token 与命中率正确; 模型与供应商分组正确累加.
     #[test]
     fn test_cache_hit_rate_aggregation() {
@@ -3613,7 +3761,7 @@ mod tests {
             mk("deepseek", "ds", 60, 40),
             mk("gpt", "oa", 0, 100),
         ];
-        let s = compute_stats(&logs, &HashMap::new(), &std::collections::HashSet::new());
+        let s = compute_stats(&logs, &PriceTable::default(), &std::collections::HashSet::new());
         // 全局: 命中 80+60+0=140, 未命中 20+40+100=160
         assert_eq!(s.total_cache_hit_tokens, 140);
         assert_eq!(s.total_cache_miss_tokens, 160);
@@ -3634,7 +3782,7 @@ mod tests {
     #[test]
     fn test_cache_hit_rate_zero() {
         let logs = vec![mk("m", "p", 0, 0)];
-        let s = compute_stats(&logs, &HashMap::new(), &std::collections::HashSet::new());
+        let s = compute_stats(&logs, &PriceTable::default(), &std::collections::HashSet::new());
         assert_eq!(s.total_cache_hit_tokens, 0);
         assert_eq!(s.total_cache_miss_tokens, 0);
         assert_eq!(s.cache_hit_rate, 0.0);
@@ -3648,7 +3796,7 @@ mod tests {
         // 2026-08-02T01:00:00Z → 东八区 08-02 09:00, 仍属 08/02
         let t_next = 1_785_632_400;
         let logs = vec![mk_ts("m", "p", t_same_day), mk_ts("m", "p", t_next)];
-        let trends = compute_trends(&logs, "day", &HashMap::new());
+        let trends = compute_trends(&logs, "day", &PriceTable::default());
         // 补齐窗口后至少 30 个日桶 (含空桶); 两条日志都应归入东八区 08/02 同一桶.
         assert!(trends.len() >= 30, "日粒度应补齐最近 30 天窗口");
         let bucket = trends.iter().find(|d| d.date == "08/02").expect("应有 08/02 桶");
@@ -3700,13 +3848,13 @@ mod tests {
         let logs: Vec<RequestLog> = (0..3)
             .map(|i| mk_ts("m", "p", base + i * 5 * 86400))
             .collect();
-        let trends = compute_trends(&logs, "day", &HashMap::new());
+        let trends = compute_trends(&logs, "day", &PriceTable::default());
         assert!(trends.len() >= 30, "日粒度至少补齐 30 天窗口");
         // 非空桶应有 3 个 (跨 07-15 / 07-20 / 07-25), 其余为补齐的空桶.
         let non_empty = trends.iter().filter(|d| d.requests > 0).count();
         assert_eq!(non_empty, 3, "跨多日应生成 3 个非空趋势桶");
         // 按月聚合: 全部落在同一个月 (07 月), 仅 1 个非空桶; 窗口补齐 12 个月.
-        let month = compute_trends(&logs, "month", &HashMap::new());
+        let month = compute_trends(&logs, "month", &PriceTable::default());
         assert_eq!(month.len(), 12, "月粒度补齐 12 个月窗口");
         let m_non_empty = month.iter().filter(|d| d.requests > 0).count();
         assert_eq!(m_non_empty, 1);
@@ -3720,7 +3868,7 @@ mod tests {
         let now = now_ts();
         // 往当前小时内塞一条日志, 验证它归入「当前小时」桶.
         let logs = vec![mk_ts("m", "p", now)];
-        let trends = compute_trends(&logs, "hour", &HashMap::new());
+        let trends = compute_trends(&logs, "hour", &PriceTable::default());
         assert_eq!(trends.len(), 24, "小时粒度应补齐最近 24 个整点");
         // 时间轴严格递增.
         let mut prev = 0u64;
@@ -3753,7 +3901,7 @@ mod tests {
         // 2026-01-01T00:30:00Z → 东八区 2026-01-01 08:30, 属 2026/01 (非 2025/01).
         let ts = 1_768_185_000;
         let logs = vec![mk_ts("m", "p", ts)];
-        let month = compute_trends(&logs, "month", &HashMap::new());
+        let month = compute_trends(&logs, "month", &PriceTable::default());
         assert_eq!(month.len(), 12, "月粒度补齐 12 个月窗口");
         // 必须存在 "2026/01" 桶 (而非 "2025/01"), 且含 1 条请求.
         let jan = month
@@ -3880,9 +4028,9 @@ mod tests {
             output_per_m_offpeak: 0.0,
             cache_read_per_m_offpeak: 0.0,
         };
-        let mut ov = HashMap::new();
-        ov.insert("ds".to_string(), price);
-        let memo = PriceMemo::new(&ov);
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("ds".into(), "ds".into()), price);
+        let memo = PriceMemo::new(&t);
 
         // 1) 纯命中 1M token, 无写入 → 净省 = 1 × (2 − 0.2) = 1.8.
         let mut log = mk("ds", "ds", 1_000_000, 0);
@@ -3908,9 +4056,9 @@ mod tests {
 
         // 5) 输入价为 0 (月套餐/未配置) → 无计费基数, 净省记 0.
         let free = ModelPrice { input_per_m: 0.0, output_per_m: 0.0, cache_read_per_m: None, cache_creation_per_m: None, input_per_m_offpeak: 0.0, output_per_m_offpeak: 0.0, cache_read_per_m_offpeak: 0.0 };
-        let mut ov2 = HashMap::new();
-        ov2.insert("opencode".to_string(), free);
-        let memo2 = PriceMemo::new(&ov2);
+        let mut t2 = PriceTable::default();
+        t2.by_provider_model.insert(("oc".into(), "opencode".into()), free);
+        let memo2 = PriceMemo::new(&t2);
         let mut log5 = mk("opencode", "oc", 1_000_000, 0);
         log5.prompt_tokens = 1_000_000;
         assert_eq!(log_cache_saved(&memo2, &log5), 0.0);
