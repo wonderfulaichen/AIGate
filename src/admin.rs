@@ -2081,6 +2081,8 @@ pub struct UsageStats {
     pub total_resp_cache_saved_tokens: u64,
     /// 本月窗口 (东八区月首0点起) 转发优化省下的输入 token 数 (剥离推理链 + 历史裁剪 + 响应缓存命中).
     pub month_opt_saved_tokens: u64,
+    /// 本月窗口优化省量折算的费用 (元), 与 today_opt_saved_fee 同口径.
+    pub month_opt_saved_fee: f64,
     /// 近 30 天每日优化省量序列 (tokens, 按本地日界聚合, 末位=今日), 用于头条卡片 sparkline.
     pub opt_saved_series: Vec<u64>,
     /// 累计费用 (元), 价格缺失的模型按 0 计.
@@ -2400,6 +2402,9 @@ fn ts_to_hour(ts: u64) -> String {
 #[derive(Default)]
 struct PriceTable {
     by_provider_model: HashMap<(String, String), ModelPrice>,
+    /// 注册表中出现过的供应商名. lookup 回退前据此判定"供应商是否已知" ——
+    /// 已知供应商但该模型未配价时必须记 0, 不得串用别家同名模型的价格.
+    known_providers: std::collections::HashSet<String>,
     /// model_id → 价格; 仅当该 model_id 出现在多个供应商下且**价格全部相同**时写入.
     /// 用于日志里 provider 为空/已改名时的回退匹配 (保持历史统计可读).
     by_model_unique: HashMap<String, ModelPrice>,
@@ -2411,6 +2416,7 @@ impl PriceTable {
         // model_id → 出现过的价格集合 (用于判定是否唯一价)
         let mut seen: HashMap<String, Vec<ModelPrice>> = HashMap::new();
         for p in providers {
+            t.known_providers.insert(p.name.clone());
             for (model_id, mcfg) in &p.models {
                 let Some(price) = mcfg.price else { continue };
                 t.by_provider_model
@@ -2428,16 +2434,22 @@ impl PriceTable {
         t
     }
 
-    /// 查价: 先按 (供应商, model) 精确匹配, 再回退到全局唯一价.
+    /// 查价: 先按 (供应商, model) 精确匹配; 仅当**供应商未知** (空 / `-` / 已从配置移除,
+    /// 即历史日志场景) 时才回退到全局唯一价.
+    ///
+    /// 已知供应商但该模型未配价格 → 返回 `None` (费用记 0), 不得回退 ——
+    /// 否则会把别家同名模型的价格记到本供应商请求上.
     fn lookup(&self, provider: &str, model: &str) -> Option<ModelPrice> {
         if let Some(p) = self.by_provider_model.get(&(provider.to_string(), model.to_string())) {
             return Some(*p);
         }
+        let provider_known = !provider.is_empty()
+            && provider != "-"
+            && self.known_providers.contains(provider);
+        if provider_known {
+            return None;
+        }
         self.by_model_unique.get(model).copied()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.by_provider_model.is_empty()
     }
 }
 
@@ -2480,12 +2492,13 @@ fn log_cost(memo: &PriceMemo, log: &RequestLog) -> f64 {
         return 0.0;
     }
     let p = memo.resolve(log);
-    pricing::compute_cost(
+    pricing::compute_cost_with_creation(
         p,
         log.timestamp,
         log.prompt_tokens,
         log.completion_tokens,
         log.prompt_cache_hit_tokens,
+        log.prompt_cache_creation_tokens,
     )
     .unwrap_or(0.0)
 }
@@ -2717,6 +2730,10 @@ fn compute_stats(
         .iter()
         .map(|l| (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64)
         .sum();
+    // 月度省量折算费用: 与 today_opt_saved_fee / total_opt_saved_fee 同一折算方式.
+    let month_opt_saved_fee: f64 = sum_saved_fee(&memo, &month_logs.iter().map(|l| (*l).clone()).collect::<Vec<_>>(), |l| {
+        (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64
+    });
 
     // 近 30 天每日优化省量序列 (末位=今日), 用于头条卡片 sparkline.
     // 按本地日界分桶: 桶 key = 当日0点 ts; 遍历所有日志累加当日省量, 再按日界补齐最近30天空桶.
@@ -2953,6 +2970,7 @@ fn compute_stats(
         total_resp_cache_saved_tokens,
         audit,
         month_opt_saved_tokens,
+        month_opt_saved_fee,
         opt_saved_series,
         today_total_cost,
         today_opt_saved_tokens,
@@ -3008,13 +3026,18 @@ fn entry_price(
 /// 与逐条 `log_cost` 求和完全等价 (费用对 token 线性, 分段求和可交换).
 fn entry_cost(p: ModelPrice, e: &crate::rollup::RollupEntry) -> f64 {
     let (peak, offpeak) = pricing::effective_parts(p);
-    let part = |(ip, op, cp): (f64, f64, f64), prompt: u64, completion: u64, hit: u64| -> f64 {
-        let hit = (hit as f64).min(prompt as f64);
-        let miss = (prompt as f64 - hit).max(0.0);
-        hit / 1e6 * cp + miss / 1e6 * ip + completion as f64 / 1e6 * op
+    let creation_price = p.cache_creation_per_m;
+    // 与 log_cost 同口径: 输入拆三档 (命中 / 首次写入 / 其余), 写入用 cache_creation 价.
+    let part = |(ip, op, cp): (f64, f64, f64), prompt: u64, completion: u64, hit: u64, creation: u64| -> f64 {
+        let prompt = prompt as f64;
+        let hit = (hit as f64).min(prompt);
+        let creation = (creation as f64).min((prompt - hit).max(0.0));
+        let miss = (prompt - hit - creation).max(0.0);
+        let cprice = creation_price.unwrap_or(ip);
+        hit / 1e6 * cp + creation / 1e6 * cprice + miss / 1e6 * ip + completion as f64 / 1e6 * op
     };
-    part(peak, e.bill_prompt_peak, e.bill_completion_peak, e.bill_hit_peak)
-        + part(offpeak, e.bill_prompt_offpeak, e.bill_completion_offpeak, e.bill_hit_offpeak)
+    part(peak, e.bill_prompt_peak, e.bill_completion_peak, e.bill_hit_peak, e.bill_creation_peak)
+        + part(offpeak, e.bill_prompt_offpeak, e.bill_completion_offpeak, e.bill_hit_offpeak, e.bill_creation_offpeak)
 }
 
 /// rollup 条目 KV 缓存净省金额 (元), 口径与 `log_cache_saved` 一致
@@ -3660,6 +3683,58 @@ mod tests {
             first_token_ms: None,
             upstream_model: None,
         }
+    }
+
+    /// BUG 回归: 已知供应商但该模型**未配价格**时, 不得回退拿到别家同名模型的价格
+    /// (否则违反"未配置价格 = 费用 0", 会把 A 家价格记到 B 家请求上).
+    #[test]
+    fn lookup_does_not_fall_back_for_known_provider_without_price() {
+        let priced = ModelPrice { input_per_m: 10.0, output_per_m: 20.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        // p1 的 m 有价格; p2 也有 m 但未配价格
+        t.by_provider_model.insert(("p1".into(), "m".into()), priced);
+        t.known_providers.insert("p1".into());
+        t.known_providers.insert("p2".into());
+        // 模拟唯一价表里存在 m (p1 单次出现)
+        t.by_model_unique.insert("m".into(), priced);
+
+        // p2 已知但未配价 → 必须 None (记 0), 不能回退到 p1 的价格
+        assert_eq!(t.lookup("p2", "m"), None, "已知供应商未配价应为 0, 不得串用别家价");
+        // p1 精确命中
+        assert_eq!(t.lookup("p1", "m"), Some(priced));
+        // 完全未知的供应商 (老日志/已改名) → 允许回退
+        assert_eq!(t.lookup("gone", "m"), Some(priced), "未知供应商可回退");
+    }
+
+    /// BUG 回归: cache_creation token 必须按 cache_creation_per_m 计价, 而非并入 input 价.
+    /// (规范: Anthropic 写入缓存常为 input 的 1.25x; 原实现完全忽略该字段.)
+    #[test]
+    fn cost_charges_cache_creation_at_its_own_price() {
+        let p = ModelPrice {
+            input_per_m: 1.0, output_per_m: 1.0,
+            cache_creation_per_m: Some(10.0),
+            ..Default::default()
+        };
+        // 1M 输入全部是"首次写入缓存", 无命中
+        let cost = pricing::compute_cost_with_creation(Some(p), 0, 1_000_000, 0, 0, 1_000_000).unwrap();
+        assert!((cost - 10.0).abs() < 1e-9, "creation 应按 10 元/M, 实得 {cost}");
+
+        // 未配 creation 价 → 回退 input 价 (保持既有行为)
+        let p2 = ModelPrice { input_per_m: 2.0, output_per_m: 1.0, ..Default::default() };
+        let c2 = pricing::compute_cost_with_creation(Some(p2), 0, 1_000_000, 0, 0, 1_000_000).unwrap();
+        assert!((c2 - 2.0).abs() < 1e-9, "未配 creation 价应回退 input 价, 实得 {c2}");
+
+        // 命中 + 写入 + 未缓存 三者混合
+        let p3 = ModelPrice {
+            input_per_m: 1.0, output_per_m: 0.0,
+            cache_read_per_m: Some(0.1),
+            cache_creation_per_m: Some(10.0),
+            ..Default::default()
+        };
+        // prompt=1M: 命中 400k, 写入 100k, 其余 500k 按 input
+        let c3 = pricing::compute_cost_with_creation(Some(p3), 0, 1_000_000, 0, 400_000, 100_000).unwrap();
+        let expect = 0.4 * 0.1 + 0.1 * 10.0 + 0.5 * 1.0;
+        assert!((c3 - expect).abs() < 1e-9, "混合计费应为 {expect}, 实得 {c3}");
     }
 
     /// 核心回归: 同一中转 ID 出现在两个供应商下且价格不同时, 必须各按各家价格计费,

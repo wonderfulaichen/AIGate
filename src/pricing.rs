@@ -84,31 +84,34 @@ pub fn resolve_price(override_price: Option<ModelPrice>) -> Option<ModelPrice> {
     override_price
 }
 
-/// 计算单条请求费用（元）.
+/// 计算单条请求费用（元）, 含 KV Cache **首次写入**溢价.
 ///
-/// 计费拆分:
-/// - `prompt_tokens` 为输入总量（含 KV Cache 命中）;
-/// - 命中部分 = `prompt_cache_hit_tokens`, 按空闲/高峰生效的 cache 读价计;
-/// - 未命中部分 = `prompt_tokens - 命中`, 按生效的 input 价计;
-/// - `completion_tokens` 按生效的 output 价计.
+/// 输入按三档计价 (互不重叠, 三者之和应等于 `prompt_tokens`):
+/// - `hit`   = `prompt_cache_hit_tokens`  → cache 读价;
+/// - `creation` = `prompt_cache_creation_tokens` → **cache 写价**（未配置时回退 input 价）;
+/// - 其余     = `prompt - hit - creation`  → input 价.
 ///
-/// `ts` 为请求时间戳（秒, Unix）, 用于按供应商分时段规则选择高峰/空闲价
-/// （DeepSeek 高峰价为空闲 2 倍）; 无分时段概念的供应商 offpeak 字段缺失, 自动回退高峰价.
-///
-/// 价格缺失（未配置）时返回 `None`, 调用方按 0 处理（不计入费用）.
-pub fn compute_cost(
+/// 写入缓存常按输入价的溢价计费 (Anthropic 为 1.25x), 故此档必须单独计价 ——
+/// 早期实现把它并为"未命中输入"按 input 价计, 使 `cache_creation_per_m` 配置完全失效.
+pub fn compute_cost_with_creation(
     price: Option<ModelPrice>,
     ts: u64,
     prompt_tokens: u32,
     completion_tokens: u32,
     prompt_cache_hit_tokens: u32,
+    prompt_cache_creation_tokens: u32,
 ) -> Option<f64> {
     let p = price?;
     let (input_price, output_price, cache_price) = effective(p, ts);
     let prompt = prompt_tokens as f64;
     let completion = completion_tokens as f64;
     let hit = (prompt_cache_hit_tokens as f64).min(prompt);
-    let miss = (prompt - hit).max(0.0);
-    let cost = hit / 1e6 * cache_price + miss / 1e6 * input_price + completion / 1e6 * output_price;
+    let creation = (prompt_cache_creation_tokens as f64).min(prompt - hit).max(0.0);
+    let miss = (prompt - hit - creation).max(0.0);
+    let creation_price = p.cache_creation_per_m.unwrap_or(input_price);
+    let cost = hit / 1e6 * cache_price
+        + creation / 1e6 * creation_price
+        + miss / 1e6 * input_price
+        + completion / 1e6 * output_price;
     Some(cost)
 }
