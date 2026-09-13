@@ -508,13 +508,21 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div x-show="modelTrendSvgHtml" x-html="modelTrendSvgHtml"></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="(k,idx) in (modelTrendData&&modelTrendData.keys||[]).slice(0,6)" :key="k"><span class="model-trend-chip" :class="{dim:hiddenModels[k]}" @click="toggleModel(k)" style="cursor:pointer"><i :style="'background:'+['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'][idx%6]"></i><span x-text="k.split('/').slice(1).join('/')||k"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span></div>
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
+          <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
+            <span class="txs tm" x-text="t('audit_applied_strip')+' '+fmtT((stats.audit||{}).applied_strip_tokens||0)"></span>
+            <span class="txs tm" :style="((stats.audit||{}).applied_strip_toolcall_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="t('audit_applied_strip_tc')+' '+fmtT((stats.audit||{}).applied_strip_toolcall_tokens||0)"></span>
+            <span class="txs tm" x-text="t('audit_applied_trim')+' '+fmtT((stats.audit||{}).applied_trim_tokens||0)"></span>
+            <span class="txs tm" x-text="t('audit_applied_resp')+' '+fmtT((stats.audit||{}).applied_resp_cache_tokens||0)"></span>
+          </div>
+        </div>
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:180px"><span class="txs tm" x-text="t('audit_kv_hit')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="kvHitRate()"></span><span class="txs tm" x-text="t('audit_kv_miss')+' '+fmtT((stats.audit||{}).cache_miss_tokens||0)+' · '+t('audit_kv_read')+' '+fmtT((stats.audit||{}).cache_read_tokens||0)"></span></div>
       </div>
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_potential')"></div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_exempt_reasoning')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).exempt_reasoning_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).exempt_reasoning_tokens)"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_exempt_reasoning_hint')"></span></div>
+          <div x-show="((stats.audit||{}).strip_toolcall_requests||0)>0" style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:6px 8px;border-radius:6px;background:rgba(52,211,153,.08)"><span class="txs" style="color:var(--ok)" x-text="t('audit_toggle_active',(stats.audit||{}).strip_toolcall_requests||0)"></span></div>
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_exempt_reasoning')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).exempt_reasoning_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).exempt_reasoning_tokens)"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_exempt_reasoning_hint')"></span></div>
           <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_dup_blocks')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).dup_block_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).dup_block_tokens)+((stats.audit||{}).dup_block_count?(' · '+t('audit_dup_count',(stats.audit||{}).dup_block_count)):'')"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_dup_hint')"></span></div>
         </div>
       </div>
@@ -1073,7 +1081,9 @@ const I18N = {
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
     'model_usage_detail': '模型用量明细',
     'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据',
-    'audit_applied': '已生效省量', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
+    'audit_applied': '已生效省量',
+    'audit_applied_strip': '· 剥离推理链', 'audit_applied_strip_tc': '· 其中 tool_calls 轮次', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
+    'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"其中 tool_calls 轮次"）', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
     'audit_potential': '潜在可省（尚未启用）',
     'audit_exempt_reasoning': '豁免推理链', 'audit_exempt_reasoning_hint': '带工具调用的历史推理链当前未剥离',
     'audit_dup_blocks': '重复内容块', 'audit_dup_count': '{0} 块', 'audit_dup_hint': '同一内容重复出现，保留首次即可（需改写，行为可能偏移）',
@@ -1247,7 +1257,9 @@ const I18N = {
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
     'model_usage_detail': 'Model Details',
     'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data',
-    'audit_applied': 'Applied savings', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
+    'audit_applied': 'Applied savings',
+    'audit_applied_strip': '· strip reasoning', 'audit_applied_strip_tc': '· of which tool-call turns', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
+    'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "of which tool-call turns" above)', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
     'audit_potential': 'Potential (not yet enabled)',
     'audit_exempt_reasoning': 'Exempt reasoning', 'audit_exempt_reasoning_hint': 'history reasoning on tool-calling turns is not stripped today',
     'audit_dup_blocks': 'Duplicate blocks', 'audit_dup_count': '{0} blocks', 'audit_dup_hint': 'identical content repeated; keeping the first suffices (requires rewriting, behaviour may shift)',
@@ -3040,7 +3052,11 @@ function dashboard() {
       const a = (this.stats && this.stats.audit) || {};
       const base = a.sampled_input_tokens || 0;
       if (!v || !base) return '—';
-      return ((v / base) * 100).toFixed(1) + '%';
+      // 上限保护: 潜在量来自做过审计的请求, 而分母只累计已采样请求的输入;
+      // 两者口径在小样本下可能不一致, 会算出 >100% 的失真值. 封顶并标注.
+      const pct = v / base * 100;
+      if (pct > 100) return '>100%';
+      return pct.toFixed(1) + '%';
     },
     // 输出/输入 token 比 (看输出相对规模).
     outInRatio() {

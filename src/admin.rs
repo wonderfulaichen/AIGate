@@ -108,6 +108,9 @@ pub struct RequestLog {
     /// 省量审计: 上述重复块的个数.
     #[serde(default)]
     pub audit_dup_block_count: u32,
+    /// 本次实际剥离的「带 tool_calls 推理链」token 数 (仅开启该开关的模型非零).
+    #[serde(default)]
+    pub strip_toolcall_saved_tokens: u32,
     /// 本条日志是否真的做过省量审计.
     /// 旧日志 (升级前) 与未经过请求体分析的路径 (响应缓存回放 / 原生直通) 为 false ——
     /// 此时上面三个 audit_* 字段是"未测量", 不是"测得为 0", 聚合时须区分开.
@@ -412,6 +415,7 @@ pub async fn record_request(
         strip_saved_tokens: 0,
         trim_saved_tokens: 0,
         resp_cache_saved_tokens: 0,
+        strip_toolcall_saved_tokens: 0,
         audit_exempt_reasoning_tokens: 0,
         audit_dup_block_tokens: 0,
         audit_dup_block_count: 0,
@@ -518,6 +522,7 @@ pub async fn record_request_with_tokens_status(
         strip_saved_tokens,
         trim_saved_tokens,
         resp_cache_saved_tokens,
+        strip_toolcall_saved_tokens: audit.strip_toolcall_saved_tokens,
         audit_exempt_reasoning_tokens: audit.exempt_reasoning_tokens,
         audit_dup_block_tokens: audit.dup_block_tokens,
         audit_dup_block_count: audit.dup_block_count,
@@ -1131,6 +1136,7 @@ pub async fn api_mock(
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             first_token_ms: None,
             upstream_model: None,
@@ -1167,6 +1173,7 @@ pub async fn api_mock(
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             first_token_ms: None,
             upstream_model: None,
@@ -1944,6 +1951,17 @@ pub struct AuditSummary {
     pub input_tokens: u64,
     /// 已生效的省量 (剥离推理链 + 历史裁剪 + 响应缓存命中), 作为对照基准.
     pub applied_saved_tokens: u64,
+    /// 已生效省量的来源明细 —— 便于确认「剥离推理链」开关是否真的在起作用.
+    /// 剥离推理链中来自「带 tool_calls 的轮次」的部分 (即该开关的贡献).
+    pub applied_strip_toolcall_tokens: u64,
+    /// 已生效省量: 剥离推理链 (不含 tool_calls 轮次).
+    pub applied_strip_tokens: u64,
+    /// 已生效省量: 长会话历史裁剪.
+    pub applied_trim_tokens: u64,
+    /// 已生效省量: 本地响应缓存命中.
+    pub applied_resp_cache_tokens: u64,
+    /// 有多少个请求开启了「剥离 tool_calls 推理链」(用于提示开关是否已生效).
+    pub strip_toolcall_requests: u64,
     /// 窗口内非缓存请求总数.
     pub requests: u64,
     /// 其中真正做过审计的请求数 (升级前的老日志与直通/回放路径不计).
@@ -2462,6 +2480,18 @@ fn compute_stats(
         applied_saved_tokens: total_strip_saved_tokens
             + total_trim_saved_tokens
             + total_resp_cache_saved_tokens,
+        applied_strip_toolcall_tokens: logs
+            .iter()
+            .map(|l| l.strip_toolcall_saved_tokens as u64)
+            .sum(),
+        applied_strip_tokens: total_strip_saved_tokens
+            .saturating_sub(logs.iter().map(|l| l.strip_toolcall_saved_tokens as u64).sum()),
+        applied_trim_tokens: total_trim_saved_tokens,
+        applied_resp_cache_tokens: total_resp_cache_saved_tokens,
+        strip_toolcall_requests: logs
+            .iter()
+            .filter(|l| l.strip_toolcall_saved_tokens > 0)
+            .count() as u64,
         requests: logs.iter().filter(|l| !l.cached).count() as u64,
         sampled_requests: logs.iter().filter(|l| l.audit_observed).count() as u64,
         window_start: logs.iter().map(|l| l.timestamp).min().unwrap_or(0),
@@ -3475,6 +3505,7 @@ mod tests {
             audit_exempt_reasoning_tokens: 0,
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
+            strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             first_token_ms: None,
             upstream_model: None,

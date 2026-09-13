@@ -2891,6 +2891,11 @@ pub struct TokenAudit {
     pub dup_block_tokens: u32,
     /// 上述重复块的个数.
     pub dup_block_count: u32,
+    /// 本次**实际剥离**的「带 tool_calls 的推理链」token 数.
+    /// 仅当该模型开启 strip_toolcall_reasoning 时非零; 用于在面板上把这项省量
+    /// 从"已生效省量"总数里单独列出来 —— 否则开关打开后只是总数变大 (或潜在池归零),
+    /// 用户无法判断这个开关到底省了多少.
+    pub strip_toolcall_saved_tokens: u32,
 }
 
 /// 低于此长度的块不参与重复检测 (避免 "ok" / "{}" 之类噪声).
@@ -2969,14 +2974,15 @@ fn audit_duplicate_blocks(body: &serde_json::Value) -> (usize, usize) {
 fn strip_history_reasoning_messages(
     body: &mut serde_json::Value,
     strip_with_tool_calls: bool,
-) -> (usize, usize) {
+) -> (usize, usize, usize) {
     let Some(obj) = body.as_object_mut() else {
-        return (0, 0);
+        return (0, 0, 0);
     };
     let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) else {
-        return (0, 0);
+        return (0, 0, 0);
     };
     let mut saved_chars = 0usize;
+    let mut saved_toolcall_chars = 0usize;
     let mut exempt_chars = 0usize;
     for msg in messages.iter_mut() {
         let Some(m) = msg.as_object_mut() else {
@@ -3000,14 +3006,17 @@ fn strip_history_reasoning_messages(
             }
             continue;
         }
+        // 按来源分别记账: 工具调用轮次的剥离来自 strip_toolcall_reasoning 开关,
+        // 单列出来用户才看得到这个开关到底省了多少.
+        let bucket = if has_tool_calls { &mut saved_toolcall_chars } else { &mut saved_chars };
         for key in ["reasoning_content", "reasoning"] {
             if let Some(v) = m.remove(key) {
                 // 估算省量: 字段序列化文本的字节数 (JSON 转义后长度, 与上游 input 计费同源).
-                saved_chars += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
+                *bucket += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
             }
         }
     }
-    (saved_chars, exempt_chars)
+    (saved_chars, saved_toolcall_chars, exempt_chars)
 }
 
 /// 长会话历史裁剪: 仅保留最近 `n` 条 user 轮, 更早的历史整体丢弃, 降低每轮 input token.
@@ -3328,14 +3337,17 @@ fn inject_model_params(
         exempt_reasoning_tokens: 0,
         dup_block_tokens: (dup_chars / 4) as u32,
         dup_block_count: dup_count as u32,
+        strip_toolcall_saved_tokens: 0,
     };
 
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
     let mut strip_saved = 0usize;
     if strip_history_reasoning {
-        let (saved, exempt) = strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning);
-        strip_saved = saved;
+        let (saved, saved_tc, exempt) =
+            strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning);
+        strip_saved = saved + saved_tc;
         audit.exempt_reasoning_tokens = (exempt / 4) as u32;
+        audit.strip_toolcall_saved_tokens = (saved_tc / 4) as u32;
     }
 
     // 长会话历史裁剪: 仅保留最近 N 条 user 轮, 更早的整体丢弃 (默认 0 = 不裁剪).
@@ -3793,7 +3805,7 @@ mod tests {
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
             ]
         });
-        let (saved, exempt) = strip_history_reasoning_messages(&mut body, false);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[1].get("reasoning_content").is_none());
         assert!(msgs[1].get("reasoning").is_none());
@@ -3801,6 +3813,7 @@ mod tests {
         assert_eq!(msgs[2]["reasoning_content"], "keep");
         // 省量统计: 剥离了 "long chain" + "r" 两个字段的序列化字节数 (>0, 且带 tool_calls 的不计)
         assert!(saved > 0, "应统计到被剥离推理链的字符数");
+        assert_eq!(saved_tc, 0, "未开启时不应有 tool_calls 轮次省量");
         // 审计: 被豁免 (带 tool_calls) 的那条推理链长度须单独计入, 不得混入 saved
         assert!(exempt > 0, "应统计到被豁免推理链的字符数");
         assert_eq!(exempt, serde_json::to_string("keep").unwrap().len());
@@ -3816,10 +3829,13 @@ mod tests {
                   "reasoning_content": "R".repeat(300) }
             ]
         });
-        let (saved, exempt) = strip_history_reasoning_messages(&mut body, true);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, true);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
-        assert!(saved > 0, "剥离量应计入 saved");
+        assert_eq!(saved, 0, "非 tool_calls 轮次无省量");
+        // 关键: 开启后这部分必须单独归到 tool_calls 桶, 面板才能单独展示开关贡献
+        assert!(saved_tc > 0, "tool_calls 轮次省量应单独记账");
+        assert_eq!(saved_tc, 302, "300 字符 + JSON 引号");
         assert_eq!(exempt, 0, "已剥离的不再算作豁免");
     }
 
