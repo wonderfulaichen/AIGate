@@ -260,7 +260,7 @@ pub async fn chat_completions(
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
-        provider.strip_toolcall_reasoning.unwrap_or(false),
+        model_cfg.strip_toolcall_reasoning.unwrap_or(false),
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
@@ -3567,6 +3567,7 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
         }
@@ -3580,6 +3581,7 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
         }
@@ -4161,7 +4163,6 @@ mod tests {
             prompt_cache: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
-            strip_toolcall_reasoning: None,
             models: std::collections::HashMap::new(),
         }
     }
@@ -4180,7 +4181,6 @@ mod tests {
             prompt_cache: None,
             openai_cache_control: None,
             max_request_body_bytes: None,
-            strip_toolcall_reasoning: None,
             models: std::collections::HashMap::new(),
         }
     }

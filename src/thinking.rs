@@ -178,6 +178,7 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
         }
@@ -191,6 +192,7 @@ mod tests {
             extra_body: None,
             api_format: None,
             price: None,
+            strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
         }

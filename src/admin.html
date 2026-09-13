@@ -840,13 +840,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
               <div class="f-row"><label x-text="t('anthropic_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" @input="markDirty()"></div>
               <div class="f-row"><label x-text="t('responses_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_responses" :placeholder="t('responses_endpoint_ph')" @input="markDirty()"></div>
               <div class="f-row"><label x-text="t('balance_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.balance_endpoint" :placeholder="t('balance_endpoint_ph')" @input="markDirty()"></div>
-              <div class="f-row" style="align-items:flex-start">
-                <label x-text="t('strip_toolcall_reasoning_label')"></label>
-                <div style="display:flex;flex-direction:column;gap:4px">
-                  <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" x-model="drawerProv.strip_toolcall_reasoning" @change="markDirty()"><span class="txs" x-text="t('strip_toolcall_reasoning_on')"></span></label>
-                  <span class="txs tm" style="max-width:420px" x-text="t('strip_toolcall_reasoning_hint')"></span>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -936,6 +929,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.reasoning')"></th>
                     <th style="padding:8px 12px;text-align:left;width:6%" x-text="t('badge.free')"></th>
                     <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.protocol')"></th>
+                    <th style="padding:8px 12px;text-align:center;width:7%" :title="t('strip_toolcall_reasoning_hint')" x-text="t('tbl.strip_reasoning')"></th>
                     <th style="padding:8px 12px;width:10%" x-text="t('tbl.unit_price')"></th>
                     <th style="padding:8px 12px;width:4%"></th>
                   </tr>
@@ -956,6 +950,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
+                    <td style="padding:6px 10px;text-align:center"><input type="checkbox" :title="t('strip_toolcall_reasoning_hint')" x-model="m.strip_toolcall_reasoning" @change="markDirty()"></td>
                     <td style="padding:6px 10px;white-space:nowrap">
                       <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?fmtPriceDetail(m.price):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
                     </td>
@@ -1061,8 +1056,8 @@ const I18N = {
     'balance_manual': '手动设置', 'balance_manual_ph': '输入余额 (元)', 'balance_manual_save': '保存', 'balance_clear': '清除手动',
     'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
-    'strip_toolcall_reasoning_label': '历史推理链', 'strip_toolcall_reasoning_on': '同时剥离带工具调用的推理链',
-    'strip_toolcall_reasoning_hint': '省量可观（审计面板可看占比），但约束因上游而异：Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。请先只对单一供应商开启并观察错误率。',
+    'tbl.strip_reasoning': '剥离推理链',
+    'strip_toolcall_reasoning_hint': '逐模型设置：剥离「带工具调用的历史推理链」，省量可观（见分析页省量审计，实测占输入 38.5%）。但约束因上游而异 —— Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。中转供应商同一名下混有多种协议，因此请逐个模型确认后再勾选，并观察错误率。',
     'enabled': '启用', 'disabled': '停用',
     'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
@@ -2554,6 +2549,7 @@ function dashboard() {
                   reasoning_effort: cfg.reasoning_effort||'',
                   api_format: cfg.api_format||'',
                   origin: cfg.origin||'',
+                  strip_toolcall_reasoning: !!cfg.strip_toolcall_reasoning,
                   price: cfg.price||null,
                   free: !!cfg.free || this.autoFree(id, cfg.upstream_model||''),
                   _isNew: false,
@@ -2787,6 +2783,8 @@ function dashboard() {
               if (m.free && !autoFree) cfg.free = true;
               else if (!m.free && autoFree && m._freeTouched) cfg.free = false;
               if (m.origin) cfg.origin = m.origin;
+              // 剥离带工具调用的推理链: 逐模型设置 (中转供应商下各模型协议不同).
+              if (m.strip_toolcall_reasoning) cfg.strip_toolcall_reasoning = true;
               // 单价 (元/百万 tokens): 仅写入非空字段, 避免污染配置.
               if (m.price) {
                 const pr = { input_per_m: m.price.input_per_m||0, output_per_m: m.price.output_per_m||0 };
@@ -2810,7 +2808,6 @@ function dashboard() {
               api_format: p.api_format||undefined,
               prompt_cache: p.prompt_cache,
               openai_cache_control: p.openai_cache_control,
-              strip_toolcall_reasoning: p.strip_toolcall_reasoning||undefined,
               max_request_body_bytes: p.max_request_body_bytes,
               headers: p.headers||undefined,
               models: models,
