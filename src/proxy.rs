@@ -374,9 +374,15 @@ pub async fn chat_completions(
         }
     } else {
         // OpenAI 兼容: 透传 inject_model_params 已填好的 model/messages.
+        let mut bval = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
+        // 协议规整: tool 消息的 content 里不得有 image_url (上游会 400 Invalid input
+        // param=messages.N.content). 把图片提升为紧随其后的一条 user 消息, 图不丢.
+        let hoisted = hoist_tool_images(&mut bval);
+        if hoisted > 0 {
+            info!("proxy: hoisted {hoisted} tool image part(s) into user messages (OpenAI tool content 不接受图片)");
+        }
         // 显式前缀缓存打标: openai_cache_control=true 时在 system + 最后一条 user 消息注入
         // cache_control 断点, 让 OpenAI/DeepSeek 等上游按此前缀缓存 KV (无损).
-        let mut bval = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
         if provider.openai_cache_control == Some(true) {
             inject_openai_cache_control(&mut bval);
         }
@@ -3196,6 +3202,95 @@ fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usiz
 /// 返回 (序列化后的 bytes, 是否有注入, 剥离推理链省量字符数, 历史裁剪省量字符数).
 /// 后两者供面板"转发优化省量"统计展示.
 
+/// 把 `role: "tool"` 消息 content 里的 `image_url` 部件提升为紧随其后的 user 消息.
+///
+/// 背景: OpenAI 协议的 tool 消息 content 只接受字符串或 text parts; 带 image_url 会被
+/// 严格校验的上游拒绝 (实测 commandcode.ai 返回
+/// `Invalid input, param=messages.172.content`, 该消息形态为
+/// `role=tool content=array(len=1)[image_url]`). 而 Anthropic 的 tool_result 是支持图片的,
+/// 所以客户端 (如 CodeBuddy 的截图类工具) 会这么发.
+///
+/// 处理策略 —— **不静默丢图** (与 917b2e8 对 Anthropic 方向的保真原则一致):
+/// 1. tool 消息本身只保留文本 (无文本则置空字符串, 满足 schema 且不改变语义);
+/// 2. 图片部件转成 OpenAI `image_url` part, 放进一条紧随其后的 user 消息.
+///    放在 tool 之后是唯一合法位置: user 消息支持图片, 且不打断 tool_calls → tool 的配对.
+///
+/// 返回被提升的图片部件数. 与同类 tool 相邻时合并到同一条 user 消息, 避免消息数膨胀.
+fn hoist_tool_images(body: &mut serde_json::Value) -> usize {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return 0;
+    };
+    let mut hoisted = 0usize;
+    let mut out: Vec<serde_json::Value> = Vec::with_capacity(messages.len());
+    for msg in messages.drain(..) {
+        let mut msg = msg;
+        let is_tool = msg.get("role").and_then(|r| r.as_str()) == Some("tool");
+        let mut images: Vec<serde_json::Value> = Vec::new();
+        if is_tool {
+            if let Some(serde_json::Value::Array(parts)) =
+                msg.get_mut("content").map(|c| c as &mut serde_json::Value)
+            {
+                let mut text_parts: Vec<serde_json::Value> = Vec::new();
+                for p in parts.drain(..) {
+                    match p.get("type").and_then(|t| t.as_str()) {
+                        Some("image_url") => {
+                            images.push(p);
+                            hoisted += 1;
+                        }
+                        // 其它形态 (text / 裸字符串) 原样保留, 不动语义.
+                        _ => text_parts.push(p),
+                    }
+                }
+                // 只含图片时给出空文本, 保持 tool 消息可被上游接受.
+                if text_parts.is_empty() {
+                    let had_text = false;
+                    let _ = had_text;
+                    msg["content"] = serde_json::Value::String(String::new());
+                } else {
+                    *parts = text_parts;
+                }
+            }
+        }
+        out.push(msg);
+        if !images.is_empty() {
+            // 合并到前一条同样由提升产生的 user 消息, 避免多条相邻 user 触发部分上游的
+            // "consecutive user messages" 校验.
+            let can_merge = out
+                .last()
+                .and_then(|m| m.get("_hoisted_images"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if can_merge {
+                if let Some(arr) = out
+                    .last_mut()
+                    .and_then(|m| m.get_mut("content"))
+                    .and_then(|c| c.as_array_mut())
+                {
+                    arr.extend(images);
+                }
+            } else {
+                let mut content: Vec<serde_json::Value> = Vec::new();
+                content.push(serde_json::json!({
+                    "type": "text",
+                    "text": "[tool result image]"
+                }));
+                content.extend(images);
+                let mut m = serde_json::json!({ "role": "user", "content": content });
+                m["_hoisted_images"] = serde_json::json!(true);
+                out.push(m);
+            }
+        }
+    }
+    // 去掉内部标记, 不污染发往上游的请求体.
+    for m in out.iter_mut() {
+        if let Some(o) = m.as_object_mut() {
+            o.remove("_hoisted_images");
+        }
+    }
+    *messages = out;
+    hoisted
+}
+
 /// 为 OpenAI 兼容请求体注入显式前缀缓存断点 (`cache_control: {type: ephemeral}`).
 ///
 /// 在 system 消息与最后一条 user 消息上打标, 让支持该字段的上游 (OpenAI/DeepSeek 等)
@@ -3743,6 +3838,76 @@ mod tests {
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
         assert!(saved > 0, "剥离量应计入 saved");
         assert_eq!(exempt, 0, "已剥离的不再算作豁免");
+    }
+
+    /// tool 消息里的图片被提升为 user 消息, 图不丢且 tool 消息变合法.
+    #[test]
+    fn hoist_tool_images_moves_image_out_of_tool_message() {
+        let mut body = serde_json::json!({
+            "model": "m",
+            "messages": [
+                { "role": "user", "content": "看下截图" },
+                { "role": "assistant", "content": "", "tool_calls": [{"id":"t1"}] },
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "text", "text": "已截图" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]},
+                { "role": "user", "content": "然后呢" }
+            ]
+        });
+        let n = hoist_tool_images(&mut body);
+        assert_eq!(n, 1);
+        let msgs = body["messages"].as_array().unwrap();
+        // tool 消息只剩文本, 不再含 image_url
+        let tool_msg = msgs.iter().find(|m| m["role"] == "tool").unwrap();
+        let tool_txt = serde_json::to_string(tool_msg).unwrap();
+        assert!(!tool_txt.contains("image_url"), "tool 消息不得再含图片: {tool_txt}");
+        assert!(tool_txt.contains("已截图"), "文本须保留");
+        // 图片被提升到紧随 tool 之后的 user 消息
+        let idx_tool = msgs.iter().position(|m| m["role"] == "tool").unwrap();
+        let hoisted = &msgs[idx_tool + 1];
+        assert_eq!(hoisted["role"], "user");
+        let parts = hoisted["content"].as_array().unwrap();
+        assert!(parts.iter().any(|p| p["type"] == "image_url"), "图片应被保留在 user 消息");
+        assert!(parts.iter().any(|p| p["type"] == "text"), "应带一行说明文本");
+        // tool_calls → tool 的配对顺序未被破坏
+        assert!(idx_tool > msgs.iter().position(|m| m.get("tool_calls").is_some()).unwrap());
+        // 内部标记不残留
+        assert!(!serde_json::to_string(&body).unwrap().contains("_hoisted_images"));
+    }
+
+    /// 纯图片的 tool 消息: content 变空串 (而非空数组), 仍满足 schema.
+    #[test]
+    fn hoist_tool_images_pure_image_becomes_empty_string() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "tool", "tool_call_id": "t1", "content": [
+                    { "type": "image_url", "image_url": { "url": "https://x/a.png" } }
+                ]}
+            ]
+        });
+        assert_eq!(hoist_tool_images(&mut body), 1);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["content"], serde_json::json!(""), "不得留空数组");
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"][1]["image_url"]["url"], "https://x/a.png");
+    }
+
+    /// 无图片 / 非 tool 消息不受影响 (幂等).
+    #[test]
+    fn hoist_tool_images_noop_when_no_tool_images() {
+        let mut body = serde_json::json!({
+            "messages": [
+                { "role": "user", "content": [
+                    { "type": "text", "text": "hi" },
+                    { "type": "image_url", "image_url": { "url": "https://x/u.png" } }
+                ]},
+                { "role": "tool", "tool_call_id": "t1", "content": "纯文本结果" }
+            ]
+        });
+        let before = body.clone();
+        assert_eq!(hoist_tool_images(&mut body), 0);
+        assert_eq!(body, before, "无 tool 图片时不应改动请求体");
     }
 
     /// 解析上游错误体里的 messages.N.content 下标 (多种 param 位置).
