@@ -1830,6 +1830,7 @@ fn stream_response_with_tokens(
             cont_ctx,
             cont_left: auto_continue_max,
             accumulated_content: String::new(),
+            reasoning_chars_seen: 0,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -2039,6 +2040,13 @@ struct TokenStream {
     cont_left: u32,
     /// 已累积的 assistant 可见正文 (仅 delta.content, 不含推理链): 续写请求的 assistant 消息.
     accumulated_content: String,
+    /// 本流已产出的**推理文本字节数** (不算续写素材, 只用于输出 token 估算).
+    ///
+    /// 思考 token 属于模型真实产出 (推理模型按输出计费), 上游中途断流又往往不给 usage,
+    /// 此时若只按可见正文估算, 纯思考段会被记成 0 —— 请求看起来免费 (实测末帧有
+    /// `reasoning` 在流却被记为 "已输出 0 tok"). 累加长度而非文本本身: 只用于估算,
+    /// 无需保留内容, 长思考流不会因此涨内存.
+    reasoning_chars_seen: usize,
     /// 本流是否输出过 tool_calls delta: 半截工具调用 JSON 无法安全续写, 触发即禁用续写.
     emitted_tool_calls: bool,
     /// 进行中的续写请求 future.
@@ -2318,6 +2326,12 @@ impl TokenStream {
                             }
                         }
                     }
+                    // 推理文本字节数 (仅供输出 token 估算): 同一 delta 里 `reasoning` 与
+                    // `reasoning_details` 是同内容的两份表示, 只取其一 —— 两者都算会把
+                    // 同一段思考计两遍, 正是旧版按响应字节估算虚高 50 万的成因之一.
+                    self.reasoning_chars_seen = self
+                        .reasoning_chars_seen
+                        .saturating_add(delta_reasoning_bytes(delta));
                     // 工具调用检测: 出现过 tool_calls delta 的流禁止续写
                     // (半截 arguments JSON 无法安全拼接, 续写会产生损坏的工具调用).
                     if delta.get("tool_calls").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
@@ -2407,15 +2421,27 @@ impl TokenStream {
         };
         let ct = if self.tokens_ct > 0 {
             self.tokens_ct
-        } else if !self.accumulated_content.is_empty() {
-            // 上游未给 usage: 按**可见正文**估算 (4 字节 ≈ 1 token).
-            // 不能用 response_bytes —— SSE 帧含大量协议开销, 且部分上游 (opencode 系)
-            // 同时下发 reasoning 与 reasoning_details (同内容双份), 实测单条响应体可达 2MB,
-            // 按字节估算得出 50 万 completion token (远超输入), 直接导致输出费用虚高十余倍.
-            std::cmp::max(1, (self.accumulated_content.len() / 4) as u32)
         } else {
-            // 全程无可见正文 (纯思考后被截断): completion 记 0, 不做字节估算放大.
-            0
+            // 上游未给 usage: 按**已生成文本**估算 (4 字节 ≈ 1 token).
+            //
+            // 不能按响应字节估算: SSE 每帧都带 `data: {...}` 协议开销与重复的键名,
+            // 部分上游还同时下发 `reasoning` 与 `reasoning_details` 两份同内容 ——
+            // 实测 2MB 响应体被算成 50 万 completion token, 输出费用虚高十余倍.
+            // 但也不能只看可见正文: 纯思考段 (推理模型常见) 会被记成 0, 请求看起来免费,
+            // 而思考 token 同样是模型的真实产出 (实测末帧有 reasoning 在流却记 "已输出 0 tok").
+            // 故只累加**文本本身**: 可见正文 + 推理文本 (同内容只取一份).
+            //
+            // 注: 4 字节/token 对中文偏保守 (中文约 3 字节/字, 每字约 1 token),
+            // 估算值可能偏低 —— 宁可少记也不重复旧版的十余倍虚高.
+            let chars = self
+                .accumulated_content
+                .len()
+                .saturating_add(self.reasoning_chars_seen);
+            if chars > 0 {
+                std::cmp::max(1, (chars / 4) as u32)
+            } else {
+                0
+            }
         };
         // 缓存命中/未命中/首次写入: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
         (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss, self.tokens_cache_creation)
@@ -2993,6 +3019,32 @@ fn audit_duplicate_blocks(body: &serde_json::Value) -> (usize, usize) {
 /// openrouter 系网关与 `reasoning` 并列下发 (实测末帧:
 /// `{"delta":{"reasoning":":","reasoning_details":[...]}}`), 漏掉会导致
 /// 开启剥离后推理链仍残留在历史里, 既费 token 又可能被上游判为非法结构.
+/// 取一条 SSE `delta` 的推理文本字节数 (输出 token 估算用), 同内容只计一次.
+///
+/// 上游对同一段思考可能有两种表示: 纯文本字段 (`reasoning_content` / `reasoning`) 与
+/// 结构化数组 `reasoning_details` (`[{"type":"reasoning.text","text":"..."}]`).
+/// 优先级: 纯文本字段优先; 两者都缺才回退到数组里的 `text` —— 同一 delta 内绝不叠加,
+/// 否则同一段思考被计两遍.
+fn delta_reasoning_bytes(delta: &serde_json::Value) -> usize {
+    for key in ["reasoning_content", "reasoning"] {
+        if let Some(s) = delta.get(key).and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                return s.len();
+            }
+        }
+    }
+    delta
+        .get("reasoning_details")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|it| it.get("text").and_then(|t| t.as_str()))
+                .map(|t| t.len())
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 const REASONING_FIELDS: [&str; 3] = ["reasoning_content", "reasoning", "reasoning_details"];
 
 /// 取出一条消息里全部推理字段的**序列化文本长度** (用于省量估算), 不修改内容.
@@ -4430,6 +4482,7 @@ mod tests {
             cont_ctx: None,
             cont_left: 0,
             accumulated_content: String::new(),
+            reasoning_chars_seen: 0,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -4477,7 +4530,7 @@ mod tests {
     /// 纯思考场景响应体可达 2MB, 按字节/4 估算得出 501580 completion token (远超输入
     /// 303766), 输出费用虚高十余倍.
     #[test]
-    fn completion_fallback_uses_visible_content_not_response_bytes() {
+    fn completion_fallback_estimates_from_text_not_response_bytes() {
         use futures::stream;
         let mk = || TokenStream {
             inner: Box::pin(stream::empty::<Result<Bytes, StreamErr>>()),
@@ -4489,16 +4542,27 @@ mod tests {
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
             out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
-            accumulated_content: String::new(), emitted_tool_calls: false, cont_pending: None,
+            accumulated_content: String::new(),
+            reasoning_chars_seen: 0, emitted_tool_calls: false, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
         };
 
-        // 场景 A: 纯思考无正文, 但响应体巨大 → completion 应为 0, 不按 2MB/4 放大
+        // 场景 A: 纯思考无可见正文 → 按**推理文本**估算, 不得记 0, 也不得按响应字节放大.
+        //
+        // 旧行为曾两次出错: 最早按 response_bytes/4 估出 50 万 token; 改成只看
+        // accumulated_content 后又走向另一极端 —— 纯思考段记 0, 请求看起来免费
+        // (实测末帧有 reasoning 在流, 却记 "已输出 0 tok").
         let mut ts = mk();
         ts.response_bytes = 2_000_000;
         let (_, ct, ..) = ts.final_tokens(1000);
-        assert_eq!(ct, 0, "纯思考截断不得按响应字节估算 completion (实测曾得 50 万)");
+        assert_eq!(ct, 0, "无任何产出时仍应为 0");
+
+        let mut ts_r = mk();
+        ts_r.response_bytes = 2_000_000;
+        ts_r.reasoning_chars_seen = 4000; // 4KB 思考文本
+        let (_, ct_r, ..) = ts_r.final_tokens(1000);
+        assert_eq!(ct_r, 1000, "纯思考应推理文本 4000/4 估算, 而非 0 或按响应体放大");
 
         // 场景 B: 有可见正文 400 字节 → 估算 100 token, 与响应体大小无关
         let mut ts2 = mk();
@@ -4507,12 +4571,50 @@ mod tests {
         let (_, ct2, ..) = ts2.final_tokens(1000);
         assert_eq!(ct2, 100, "应按可见正文 400/4 估算");
 
+        // 场景 B2: 正文与推理并存 → 两者之和, 不遗漏也不重复
+        let mut ts_b2 = mk();
+        ts_b2.accumulated_content = "x".repeat(400);
+        ts_b2.reasoning_chars_seen = 400;
+        let (_, ct_b2, ..) = ts_b2.final_tokens(1000);
+        assert_eq!(ct_b2, 200, "应为 (400+400)/4 = 200");
+
         // 场景 C: 上游给了精确 usage → 优先用精确值
         let mut ts3 = mk();
         ts3.response_bytes = 2_000_000;
         ts3.tokens_ct = 4650;
         let (_, ct3, ..) = ts3.final_tokens(1000);
         assert_eq!(ct3, 4650, "有精确 usage 时不得估算");
+    }
+
+    /// 推理文本字节数: `reasoning` 与 `reasoning_details` 是同内容的两份表示, 只取一份.
+    ///
+    /// 两者都算会把同一段思考计两遍 —— 那是旧版输出 token 虚高的成因之一.
+    #[test]
+    fn delta_reasoning_bytes_does_not_double_count() {
+        // 1) 纯文本字段优先
+        let plain = serde_json::json!({"reasoning":"窄窄窄"});
+        assert_eq!(delta_reasoning_bytes(&plain), "窄窄窄".len());
+
+        // 2) reasoning_content 优先于 reasoning
+        let both = serde_json::json!({"reasoning_content":"abc","reasoning":"xyz"});
+        assert_eq!(delta_reasoning_bytes(&both), 3, "同一 delta 只取一份");
+
+        // 3) reasoning 与 reasoning_details 并列 (实测末帧形态): 只算 reasoning, 不叠加数组
+        let dup = serde_json::json!({
+            "reasoning":"窄",
+            "reasoning_details":[{"type":"reasoning.text","text":"窄"}]
+        });
+        assert_eq!(delta_reasoning_bytes(&dup), "窄".len(), "同内容不得计两遍");
+
+        // 4) 只有结构化数组时才回退到数组里的 text
+        let only_details = serde_json::json!({
+            "reasoning_details":[{"type":"reasoning.text","text":"abcd"},{"type":"reasoning.text","text":"ef"}]
+        });
+        assert_eq!(delta_reasoning_bytes(&only_details), 6);
+
+        // 5) 无推理字段 → 0
+        assert_eq!(delta_reasoning_bytes(&serde_json::json!({"content":"hi"})), 0);
+        assert_eq!(delta_reasoning_bytes(&serde_json::json!({"reasoning":""})), 0);
     }
 
     /// 回归: 收尾 usage 帧只含 output 时, 不得把已解析的输入量覆盖成 0.
@@ -4550,6 +4652,7 @@ mod tests {
             cont_ctx: None,
             cont_left: 0,
             accumulated_content: String::new(),
+            reasoning_chars_seen: 0,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -4637,6 +4740,7 @@ mod tests {
             cont_ctx: None,
             cont_left: 0,
             accumulated_content: String::new(),
+            reasoning_chars_seen: 0,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
