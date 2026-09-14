@@ -255,6 +255,21 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .model-trend-chip:hover{border-color:var(--border-s);color:var(--fg)}
 .model-trend-chip.dim{opacity:.3}
 .model-trend-chip i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.model-trend-chip b{color:var(--fg);font-variant-numeric:tabular-nums}
+/* Token 趋势悬停层: 十字线 + 该时段各模型用量浮层 (替代原生 title 的延迟提示) */
+.trend-hover{position:relative}
+.trend-crosshair{position:absolute;top:6.4%;bottom:12.9%;width:1px;background:rgba(255,255,255,.26);pointer-events:none}
+.trend-tip{position:absolute;top:2px;z-index:5;pointer-events:none;min-width:160px;max-width:280px;padding:7px 9px;border:1px solid var(--border-s);border-radius:8px;background:rgba(18,19,24,.96);box-shadow:0 6px 20px rgba(0,0,0,.45)}
+.trend-tip.tip-left{transform:translateX(4px)}
+.trend-tip.tip-center{transform:translateX(-50%)}
+.trend-tip.tip-right{transform:translateX(calc(-100% - 4px))}
+.trend-tip .tt-h{font-size:10px;color:var(--muted);margin-bottom:5px}
+.trend-tip .tt-h b{color:var(--fg);font-variant-numeric:tabular-nums}
+.trend-tip .tt-r{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg);line-height:1.75;white-space:nowrap}
+.trend-tip .tt-r i{flex:0 0 7px;width:7px;height:7px;border-radius:50%}
+.trend-tip .tt-r .tt-n{flex:1;overflow:hidden;text-overflow:ellipsis}
+.trend-tip .tt-r .tt-v{font-variant-numeric:tabular-nums;font-weight:600}
+.trend-tip .tt-f{margin-top:5px;padding-top:4px;border-top:1px solid var(--border);font-size:10px;color:var(--muted);line-height:1.6;white-space:normal}
 .an-rank{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)}
 .an-rank:last-child{border-bottom:none}
 .an-rank-bar{height:7px;border-radius:99px;background:linear-gradient(90deg,#6366f1,#8b5cf6);min-width:3px;transition:width .2s ease}
@@ -505,7 +520,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
     <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></span><span class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></span><span class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><div class="ta-grid" x-show="tokenActivityFlat.length" :style="'grid-template-columns:repeat('+Math.max(1,Math.ceil((tokenActivityFlat.length||0)/7))+',20px);grid-template-rows:repeat(7,20px)'" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
-    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div x-show="modelTrendSvgHtml" x-html="modelTrendSvgHtml"></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="(k,idx) in (modelTrendData&&modelTrendData.keys||[]).slice(0,6)" :key="k"><span class="model-trend-chip" :class="{dim:hiddenModels[k]}" @click="toggleModel(k)" style="cursor:pointer"><i :style="'background:'+['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'][idx%6]"></i><span x-text="k.split('/').slice(1).join('/')||k"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="it.pct.toFixed(1)+'%'"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
@@ -1111,7 +1126,7 @@ const I18N = {
     'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
     'btn.line': '线', 'btn.bar': '柱',
     'no_trend': '暂无趋势数据',
-    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按日期查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '颜色表示 Token 使用量，空白日期表示没有请求', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
+    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按日期查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '颜色表示 Token 使用量，空白日期表示没有请求', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
     'heatmap_mon': '一', 'heatmap_tue': '二', 'heatmap_wed': '三', 'heatmap_thu': '四', 'heatmap_fri': '五', 'heatmap_sat': '六', 'heatmap_sun': '日',
     'provider_stats': '供应商统计',
     'records_title': '请求记录', 'records_count': '{0} 条',
@@ -1291,7 +1306,7 @@ const I18N = {
     'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
     'btn.line': 'Line', 'btn.bar': 'Bar',
     'no_trend': 'No trend data',
-    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage by date', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Color shows token usage; blank dates have no requests', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
+    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage by date', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Color shows token usage; blank dates have no requests', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
     'heatmap_mon': 'Mon', 'heatmap_tue': 'Tue', 'heatmap_wed': 'Wed', 'heatmap_thu': 'Thu', 'heatmap_fri': 'Fri', 'heatmap_sat': 'Sat', 'heatmap_sun': 'Sun',
     'provider_stats': 'Provider Stats',
     'records_title': 'Request Logs', 'records_count': '{0} entries',
@@ -1568,6 +1583,7 @@ function dashboard() {
     dailyTrends: [], // 日历固定按“天”聚合当前范围, 与所选趋势粒度解耦
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
+    trendHover: null,
     _chartModeHooked: false,
     hiddenModels: {},
     // Proxy policy status
@@ -2063,9 +2079,12 @@ function dashboard() {
       rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||'');sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
       const allKeys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6);
       const keys=allKeys.filter(k=>!this.hiddenModels[k]);
-      this.modelTrendData={keys:allKeys,sums};
+      this.modelTrendData={keys:allKeys,sums,dates:[],series:[],xPct:[],trendByTs:new Map()};
       if(!rows.length||!keys.length){this.modelTrendSvgHtml='';return;}
-      const dates=[...new Map((this.stats.trends||[]).filter(x=>x&&x.ts).map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
+      const trends=(this.stats.trends||[]).filter(x=>x&&x.ts);
+      const dates=[...new Map(trends.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
+      if(!dates.length){this.modelTrendSvgHtml='';return;}
+      // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
       const W=900,H=280,left=52,right=18,top=18,bottom=36,pw=W-left-right,ph=H-top-bottom;
       const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
@@ -2077,9 +2096,15 @@ function dashboard() {
       const x=i=>left+(n===1?pw/2:pw*i/(n-1));
       const y=v=>top+ph-v/max*ph;
       const smooth=pts=>{if(pts.length<2)return '';let d='M'+pts[0][0]+','+pts[0][1];for(let i=0;i<pts.length-1;i++){const cx=(pts[i][0]+pts[i+1][0])/2;d+=' C'+cx+','+pts[i][1]+' '+cx+','+pts[i+1][1]+' '+pts[i+1][0]+','+pts[i+1][1];}return d;};
-      let out='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="model-trend-svg" role="img">';
+      // 暴露给悬停浮层 (按桶取各序列用量, 无需重算).
+      this.modelTrendData.dates=dates;
+      this.modelTrendData.xPct=dates.map((_,i)=>x(i)/W*100);
+      this.modelTrendData.series=keys.map((k,si)=>({key:k,label:k.split('/').slice(1).join('/')||k,color:colorOf(k),values:values[si]}));
+      this.modelTrendData.trendByTs=new Map(trends.map(r=>[r.ts,r]));
+      // viewBox + width:100% + height:auto: 等比缩放, 圆点与文字不被拉扁.
+      let out='<svg viewBox="0 0 '+W+' '+H+'" style="display:block;width:100%;height:auto" class="model-trend-svg" role="img" aria-label="'+this.escapeHtml(t('token_trend_title'))+'">';
       for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" stroke="#2a2d37" stroke-width=".7"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" font-size="9" fill="#6b7280">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
-      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" fill="'+color+'"><title>'+this.escapeHtml(dates[i][1]||'')+' · '+this.escapeHtml(k.split('/').slice(1).join('/'))+' · '+this.fmtT(v)+' tok</title></rect>';});});}else{
+      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" fill="'+color+'"/>';});});}else{
         values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
           const ptsStr=pts.map(p=>p[0]+','+p[1]).join(' ');
           const gid='tg'+si;
@@ -2087,11 +2112,46 @@ function dashboard() {
           const areaD='M'+x(0)+','+(top+ph)+' L'+pts.map(p=>p[0]+','+p[1]).join(' L')+' L'+x(n-1)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
           out+='<polyline points="'+ptsStr+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-          vals.forEach((v,i)=>{if(!v)return;const r=rows.find(q=>q.ts===dates[i][0]&&((q.provider||'')+'/'+(q.upstream_model||''))===k);out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.5" fill="'+color+'" stroke="#16161c" stroke-width="1.5"><title>'+this.escapeHtml(dates[i][1]||'')+' · '+this.escapeHtml(k.split('/').slice(1).join('/'))+' · '+this.fmtT(v)+' tok</title></circle>';});
+          vals.forEach((v,i)=>{if(!v)return;out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.5" fill="'+color+'" stroke="#16161c" stroke-width="1.5"/>';});
         });
       }
       const step=Math.max(1,Math.ceil(n/8));dates.forEach((d,i)=>{if(i%step===0||i===n-1)out+='<text x="'+x(i)+'" y="'+(H-12)+'" text-anchor="middle" font-size="9" fill="#6b7280">'+this.escapeHtml(d[1]||'')+'</text>';});out+='</svg>';
       this.modelTrendSvgHtml=out;
+    },
+    // ── Token 趋势悬停: 十字线 + 该时段各模型用量浮层 ──
+    onTrendHover(ev) {
+      const d=this.modelTrendData; if(!d||!d.dates||!d.dates.length) return;
+      const el=ev.currentTarget; const r=el.getBoundingClientRect(); if(!r.width) return;
+      const W=900, left=52, right=18, pw=W-left-right, n=d.dates.length;
+      const vbX=((ev.clientX-r.left)/r.width)*W;
+      let i=n===1?0:Math.round((vbX-left)*(n-1)/pw);
+      i=Math.max(0,Math.min(n-1,i));
+      if(this.trendHover&&this.trendHover.idx===i) return; // 同一桶不重算, 避免每像素触发重排
+      const leftPct=d.xPct[i]||0;
+      this.trendHover={idx:i,leftPct,align:leftPct<16?'left':leftPct>62?'right':'center'};
+    },
+    onTrendHoverEnd() { this.trendHover=null; },
+    get trendTooltipHtml() {
+      const d=this.modelTrendData||{}; const h=this.trendHover;
+      if(!h||!d.series||!d.dates||!d.dates.length) return '';
+      const i=h.idx, date=(d.dates[i]||[])[1]||'';
+      const shown=d.series.map(s=>({label:s.label,color:s.color,v:(s.values||[])[i]||0})).filter(s=>s.v>0).sort((a,b)=>b.v-a.v);
+      const total=shown.reduce((s,r)=>s+r.v,0);
+      let html='<div class="tt-h">'+this.escapeHtml(date)+' · '+t('trend_total')+' <b>'+this.fmtT(total)+'</b> tok</div>';
+      if(!shown.length){html+='<div class="tt-r"><span class="tt-n tm">'+t('trend_no_requests')+'</span></div>';}
+      shown.forEach(s=>{html+='<div class="tt-r"><i style="background:'+s.color+'"></i><span class="tt-n">'+this.escapeHtml(s.label)+'</span><span class="tt-v">'+this.fmtT(s.v)+'</span></div>';});
+      const tr=d.trendByTs&&d.trendByTs.get?d.trendByTs.get((d.dates[i]||[])[0]):null;
+      if(tr){
+        const cost=this.stats?.has_price_config?this.fmtMoney(tr.total_cost||0):t('chart_no_price');
+        html+='<div class="tt-f">'+t('trend_bucket_metrics',tr.requests||0,tr.errors||0,this.fmtT(tr.total_prompt_tokens||0),this.fmtT(tr.total_completion_tokens||0),this.escapeHtml(cost))+'</div>';
+      }
+      return html;
+    },
+    get trendLegendItems() {
+      const d=this.modelTrendData||{}; const keys=d.keys||[]; const sums=d.sums||{};
+      const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
+      const total=Object.keys(sums).reduce((a,k)=>a+(sums[k]||0),0)||1;
+      return keys.map((k,i)=>({k,label:k.split('/').slice(1).join('/')||k,color:palette[i%palette.length],tokens:sums[k]||0,pct:(sums[k]||0)/total*100,hidden:!!this.hiddenModels[k]}));
     },
     toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
     get modelTokenTrendSeries() {
