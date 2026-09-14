@@ -38,6 +38,11 @@ pub struct RollupEntry {
     /// 映射到该上游模型的中转 ID 集合 (去重, 查询期用于价格覆盖匹配与免费判定).
     #[serde(default)]
     pub aliases: Vec<String>,
+    /// 价格快照: 记录本条目时生效的单价. 查询期按它结算费用, 不再读当前 providers.json ——
+    /// 否则删除模型配置会让历史天的费用整片归零, 改价会改写历史账单.
+    /// 缺失 (升级前落盘的旧数据) 时回退按当前配置现算.
+    #[serde(default)]
+    pub price: Option<crate::pricing::ModelPrice>,
     // ── 全部请求 (含缓存命中/错误) ──
     #[serde(default)]
     pub requests: u64,
@@ -156,17 +161,19 @@ pub struct DailyRollup {
 
 impl DailyRollup {
     /// 累加一条日志到对应条目 (每日条目数有限, 线性查找即可).
+    ///
+    /// 分组键含**价格快照**: 同一天内若改过价, 前后两段请求的费用口径不同, 必须分列
+    /// 两个条目, 否则聚合后无法各自按当时单价结算 (改价只影响之后的请求, 不追溯历史).
     fn record(&mut self, log: &RequestLog, upstream: &str) {
-        if let Some(i) = self
-            .entries
-            .iter()
-            .position(|e| e.provider == log.provider && e.upstream == upstream)
-        {
+        if let Some(i) = self.entries.iter().position(|e| {
+            e.provider == log.provider && e.upstream == upstream && e.price == log.price
+        }) {
             self.entries[i].add_log(log);
         } else {
             let mut e = RollupEntry {
                 provider: log.provider.clone(),
                 upstream: upstream.to_string(),
+                price: log.price,
                 ..Default::default()
             };
             e.add_log(log);
@@ -402,6 +409,7 @@ mod tests {
             audit_dup_block_tokens: 0,
             audit_dup_block_count: 0,
             audit_observed: false,
+            price: None,
             first_token_ms: None,
             upstream_model: Some(upstream.to_string()),
         }
@@ -584,6 +592,44 @@ mod tests {
             5,
             "账本持有的边界天不得被日志尾部覆盖"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 回归: 同日不同价格的日志必须分列条目, 且各自的价格快照落盘后可复原.
+    ///
+    /// 分组键含价格快照的原因: 同一天内改价后, 前后两段请求的结算口径不同 ——
+    /// 若并进同一条目, 查询期只能按其中一个价算, 必然算错一半.
+    #[test]
+    fn rollup_splits_entries_by_price_snapshot() {
+        let dir = "data-test-rollup-price";
+        let _ = std::fs::remove_dir_all(dir);
+        let ts = 1_789_318_171;
+        let day = crate::admin::bucket_start(ts, "day");
+        let price_a = crate::pricing::ModelPrice { input_per_m: 1.0, output_per_m: 2.0, ..Default::default() };
+        let price_b = crate::pricing::ModelPrice { input_per_m: 10.0, output_per_m: 20.0, ..Default::default() };
+
+        let book = RollupBook::new(dir);
+        let mut log_a = mk_log(ts, "p", "m");
+        log_a.price = Some(price_a);
+        let mut log_b = mk_log(ts, "p", "m");
+        log_b.price = Some(price_b);
+        book.record(&log_a);
+        book.record(&log_b);
+
+        let days = book.days_between(day, day);
+        assert_eq!(days.len(), 1, "应只有一天");
+        assert_eq!(days[0].entries.len(), 2, "不同价格的日志必须分列两条目");
+        let prices: Vec<f64> = days[0].entries.iter().filter_map(|e| e.price.map(|p| p.input_per_m)).collect();
+        assert!(prices.contains(&1.0) && prices.contains(&10.0), "两段价格都应保留, 实得 {prices:?}");
+
+        // 落盘 → 重新加载后价格快照仍在 (历史账单不因重启丢失口径).
+        book.flush_blocking();
+        let book2 = RollupBook::new(dir);
+        book2.load_from_file();
+        let days2 = book2.days_between(day, day);
+        assert_eq!(days2[0].entries.len(), 2, "重载后仍应是两条目");
+        let prices2: Vec<f64> = days2[0].entries.iter().filter_map(|e| e.price.map(|p| p.input_per_m)).collect();
+        assert!(prices2.contains(&1.0) && prices2.contains(&10.0), "重载后价格快照应保持, 实得 {prices2:?}");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

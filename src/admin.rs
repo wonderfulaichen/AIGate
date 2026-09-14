@@ -16,6 +16,7 @@ use axum::Json;
 use futures::future::join_all;
 use serde::Serialize;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use crate::store::LogStore;
 use crate::tooltip::{self, TooltipConfig};
@@ -116,6 +117,16 @@ pub struct RequestLog {
     /// 此时上面三个 audit_* 字段是"未测量", 不是"测得为 0", 聚合时须区分开.
     #[serde(default)]
     pub audit_observed: bool,
+    /// 价格快照: **记录本条日志时**该模型生效的单价 (元/百万 token).
+    ///
+    /// 请求记录是历史账单 —— 费用在写入时结算并随本条落盘, 之后改价 / 删除模型 /
+    /// 改高峰表都不再影响它. 缺失 (旧日志) 时回退按当前配置现算, 与升级前行为一致;
+    /// 该回退只对"升级前写入的记录"生效, 新记录一律带快照.
+    ///
+    /// 注意这里存的是**配置价**而非最终单价: 高峰/空闲由查询期按 `timestamp` 与
+    /// 当前高峰表取值 —— 即改高峰表仍会重估历史 (与 rollup 模块文档所述语义一致).
+    #[serde(default)]
+    pub price: Option<crate::pricing::ModelPrice>,
 }
 
 #[inline]
@@ -134,6 +145,10 @@ pub struct LogBuffer {
     store: Option<LogStore>,
     /// 日级 rollup 账本 (跨日志滚动窗口的持久化统计, 供月视图等长跨度查询).
     rollup: Option<std::sync::Arc<crate::rollup::RollupBook>>,
+    /// 路由表句柄: 仅用于在 push 时取"该模型此刻生效的价格"做历史账单快照.
+    /// 用 `Weak` 而非 `Arc` —— 路由表由 AppState 持有, 日志缓冲区不该延长其生命周期
+    /// (否则热重载后旧表仍被引用, 且易形成引用环).
+    registry: Option<std::sync::Weak<tokio::sync::RwLock<crate::providers::ProviderRegistry>>>,
     // ─── 本轮 (进程启动以来) 累计计数, 在 push 时原子累加, 不受 5000 条滚动窗口封顶影响 ───
     /// 本轮请求总数 (含错误/缓存命中).
     session_requests: Arc<AtomicU64>,
@@ -156,6 +171,7 @@ impl LogBuffer {
             seq: Arc::new(AtomicU64::new(0)),
             store: None,
             rollup: None,
+            registry: None,
             session_requests: Arc::new(AtomicU64::new(0)),
             session_success: Arc::new(AtomicU64::new(0)),
             session_prompt_tokens: Arc::new(AtomicU64::new(0)),
@@ -186,6 +202,36 @@ impl LogBuffer {
         }
         self.store = Some(store);
         self
+    }
+
+    /// 附加路由表句柄 (启动时调用): 供 `push` 取"该模型此刻生效的价格"写成历史账单快照.
+    ///
+    /// 只存 `Weak` —— 见字段注释. 未附加时 `push` 不做快照, 行为退回"查询期按当前配置现算".
+    pub fn with_registry(
+        mut self,
+        registry: &std::sync::Arc<tokio::sync::RwLock<crate::providers::ProviderRegistry>>,
+    ) -> Self {
+        self.registry = Some(std::sync::Arc::downgrade(registry));
+        self
+    }
+
+    /// 取该中转 ID 此刻生效的配置价 (路由表的 model 配置即本次请求实际使用的价格).
+    ///
+    /// 刻意用**非阻塞** `try_read` 而非 `read().await`: `push` 由请求处理路径调用, 而
+    /// 那些路径可能正持有 registry 读锁 (路由查找), 此时若有写者 (面板保存配置) 在排队,
+    /// tokio 的写优先策略会阻塞新的读者 —— 同任务内二次取读锁即死锁, 整个网关卡死.
+    /// 取不到就返回 None (该条退回"按当前配置现算"的旧行为), 配置写者极短暂, 影响可忽略.
+    async fn snapshot_price(&self, model: &str) -> Option<crate::pricing::ModelPrice> {
+        let weak = self.registry.as_ref()?;
+        let registry = weak.upgrade()?;
+        let guard = match registry.try_read() {
+            Ok(g) => g,
+            Err(_) => {
+                warn!("log price snapshot skipped (registry busy): model={model}");
+                return None;
+            }
+        };
+        guard.price_of(model)
     }
 
     /// 附加日级 rollup 账本 (启动时调用, 须在 [`Self::with_store`] 之后 —
@@ -243,6 +289,13 @@ impl LogBuffer {
             log.prompt_cache_hit_tokens = 0;
             log.prompt_cache_miss_tokens = 0;
             log.prompt_cache_creation_tokens = 0;
+        }
+        // 历史账单结算: 把"此刻该模型生效的价格"随日志一起落盘.
+        // 否则费用是查询期按当前配置现算的 —— 改价会改写历史金额, 删掉模型更会让
+        // 历史费用直接归零 (请求记录应当是已成事实的账单, 不是按现价的重估).
+        // 已有快照则不覆盖 (记录路径重放/测试构造的日志自带价格).
+        if log.price.is_none() {
+            log.price = self.snapshot_price(&log.model).await;
         }
         let mut buf = self.inner.lock().await;
         if buf.len() >= crate::store::MAX_LINES {
@@ -420,6 +473,7 @@ pub async fn record_request(
         audit_dup_block_tokens: 0,
         audit_dup_block_count: 0,
         audit_observed: false,
+        price: None,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -527,6 +581,7 @@ pub async fn record_request_with_tokens_status(
         audit_dup_block_tokens: audit.dup_block_tokens,
         audit_dup_block_count: audit.dup_block_count,
         audit_observed: audit_is_observed,
+        price: None,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
     };
@@ -629,14 +684,13 @@ fn request_logs_with_enrichment(
                     + (l.trim_saved_tokens as u64)
                     + (l.resp_cache_saved_tokens as u64);
                 let opt_fee = match memo.resolve(&l) {
-                    Some(p) if opt_tokens > 0 => {
-                        let (input_price, _, _) = pricing::effective(p, l.timestamp);
-                        if input_price > 0.0 {
-                            opt_tokens as f64 / 1e6 * input_price
-                        } else {
-                            0.0
-                        }
-                    }
+                    Some(p) if opt_tokens > 0 => saved_tokens_fee(
+                        p,
+                        l.timestamp,
+                        opt_tokens,
+                        l.prompt_tokens as u64,
+                        l.prompt_cache_hit_tokens as u64,
+                    ),
                     _ => 0.0,
                 };
                 obj.insert("opt_saved_fee".into(), serde_json::json!(opt_fee));
@@ -1178,6 +1232,7 @@ pub async fn api_mock(
             audit_dup_block_count: 0,
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
+            price: None,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1215,6 +1270,7 @@ pub async fn api_mock(
             audit_dup_block_count: 0,
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
+            price: None,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -2473,7 +2529,14 @@ impl<'a> PriceMemo<'a> {
     }
 
     /// 解析单条日志的价格 (记忆化): 命中则直接返回缓存的 `Option<ModelPrice>`.
+    ///
+    /// 优先用日志自带的**价格快照** (记录当时结算的历史账单); 缺失 (升级前的旧日志)
+    /// 才回退当前配置 —— 这条回退只服务于旧记录, 新记录一律带快照, 因此改价/删模型
+    /// 不会再改写已有历史.
     fn resolve(&self, log: &RequestLog) -> Option<ModelPrice> {
+        if let Some(snap) = log.price {
+            return Some(snap);
+        }
         let key = (log.provider.clone(), log.model.clone(), log.endpoint.clone());
         if let Some(v) = self.cache.borrow().get(&key).copied() {
             return v;
@@ -2648,18 +2711,21 @@ fn compute_stats(
     let total_opt_saved_fee: f64 = logs
         .iter()
         .map(|l| {
-            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as f64;
-            if opt <= 0.0 {
+            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64;
+            if opt == 0 {
                 return 0.0;
             }
-            if let Some(p) = memo.resolve(l) {
-                // 按请求时段选择生效 input 价（高峰/空闲）, 与 log_cost 同口径.
-                let (input_price, _, _) = pricing::effective(p, l.timestamp);
-                if input_price > 0.0 {
-                    return opt / 1e6 * input_price;
-                }
+            match memo.resolve(l) {
+                // 按该请求的缓存命中比例加权折算, 见 saved_tokens_fee.
+                Some(p) => saved_tokens_fee(
+                    p,
+                    l.timestamp,
+                    opt,
+                    l.prompt_tokens as u64,
+                    l.prompt_cache_hit_tokens as u64,
+                ),
+                None => 0.0,
             }
-            0.0
         })
         .sum();
     // 命中率口径: 命中 / 总输入 token (与 opencode-visual-cache 一致: 缓存读 / prompt_tokens).
@@ -2700,18 +2766,21 @@ fn compute_stats(
     let today_opt_saved_fee: f64 = today_logs
         .iter()
         .map(|l| {
-            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as f64;
-            if opt <= 0.0 {
+            let opt = (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64;
+            if opt == 0 {
                 return 0.0;
             }
-            if let Some(p) = memo.resolve(l) {
-                // 按请求时段选择生效 input 价（高峰/空闲）, 与 log_cost 同口径.
-                let (input_price, _, _) = pricing::effective(p, l.timestamp);
-                if input_price > 0.0 {
-                    return opt / 1e6 * input_price;
-                }
+            match memo.resolve(l) {
+                // 与 total_opt_saved_fee / 请求详情同口径: 按命中比例加权, 见 saved_tokens_fee.
+                Some(p) => saved_tokens_fee(
+                    p,
+                    l.timestamp,
+                    opt,
+                    l.prompt_tokens as u64,
+                    l.prompt_cache_hit_tokens as u64,
+                ),
+                None => 0.0,
             }
-            0.0
         })
         .sum();
     // 累计优化省量的最早记录日期 (取有优化省量日志的最早时间戳), 用于给"累计"标注起算点.
@@ -3001,8 +3070,13 @@ fn entry_price(
     price_table: &PriceTable,
     e: &crate::rollup::RollupEntry,
 ) -> Option<ModelPrice> {
-    // 优先用 entry 自带的供应商做精确匹配 —— 同名 model_id 在不同供应商下价格可能不同,
-    // 只取"第一个能匹配到的别名"会把整条按错价记账.
+    // 优先用条目自带的价格快照 —— 历史账单在记录时就已结算, 不随之后的改价/删模型变动.
+    // (删除模型配置会让旧口径下的历史费用整片归零, 快照正是为此而存.)
+    if let Some(snap) = e.price {
+        return Some(snap);
+    }
+    // 以下为旧数据 (无快照) 的回退: 优先用 entry 自带的供应商做精确匹配 ——
+    // 同名 model_id 在不同供应商下价格可能不同, 只取"第一个能匹配到的别名"会把整条按错价记账.
     if !e.provider.is_empty() && e.provider != "-" {
         for alias in &e.aliases {
             if let Some(p) = price_table
@@ -3128,13 +3202,16 @@ fn merge_rollup_days(
                 if !e.aliases.iter().any(|a| free_ids.contains(a)) {
                     total_cache_saved += entry_cache_saved(p, e);
                 }
-                // 优化省量折费: 省下 token × 对应时段 input 价 (与 total_opt_saved_fee 同口径).
+                // 优化省量折费: 与日志侧同口径 (见 saved_tokens_fee) —— 条目级用整条的
+                // 缓存命中比例做加权, 高峰/空闲两段各按自己的费率折算.
+                // input 价为 0 (免费/显式配 0) 时不折算, 与旧口径一致.
                 if p.input_per_m > 0.0 {
+                    let (peak_part, offpeak_part) = pricing::effective_parts(p);
+                    let hit_ratio = cache_hit_ratio(e.prompt_tokens, e.cache_hit_tokens);
                     let peak_saved = e.saved_peak_tokens.min(saved);
-                    let offpeak_saved = saved - peak_saved;
-                    let (_, offpeak_input, _) = pricing::effective_parts(p).1;
-                    total_opt_saved_fee +=
-                        peak_saved as f64 / 1e6 * p.input_per_m + offpeak_saved as f64 / 1e6 * offpeak_input;
+                    let offpeak_saved = saved.saturating_sub(peak_saved);
+                    total_opt_saved_fee += saved_fee_weighted(peak_part, peak_saved as f64, hit_ratio)
+                        + saved_fee_weighted(offpeak_part, offpeak_saved as f64, hit_ratio);
                 }
             }
         }
@@ -3526,9 +3603,51 @@ fn compute_model_trends(logs: &[RequestLog], granularity: &str) -> Vec<ModelTren
     compute_model_trends_window(logs, granularity, None, None)
 }
 
-/// 按各条日志的模型生效 input 单价, 把 `pick` 选出的省量 token 折算为费用 (元).
+/// 一组生效单价三元组 `(input, output, cache_read)` 下, `tokens` 个省量 token 的价值 (元).
 ///
-/// 口径与 `compute_stats` 的 `total_opt_saved_fee` 一致: 按请求时段选 input 价,
+/// 省量都是**输入侧**的历史内容 (推理链 / 历史轮次), 故只取 input 与 cache_read 两档,
+/// 按 `hit_ratio` 加权 —— 见 [`saved_tokens_fee`] 对为何不能一律按 input 价的说明.
+fn saved_fee_weighted(part: (f64, f64, f64), tokens: f64, hit_ratio: f64) -> f64 {
+    let (input_price, _, cache_read_price) = part;
+    tokens / 1e6 * (hit_ratio * cache_read_price + (1.0 - hit_ratio) * input_price)
+}
+
+/// 该请求的 KV 缓存命中比例 (0..1); prompt 为 0 时无从判断, 取 0 (按未命中价, 保守偏低).
+fn cache_hit_ratio(prompt_tokens: u64, cache_hit_tokens: u64) -> f64 {
+    if prompt_tokens == 0 {
+        return 0.0;
+    }
+    (cache_hit_tokens.min(prompt_tokens) as f64 / prompt_tokens as f64).clamp(0.0, 1.0)
+}
+
+/// 省下 token 折算费用 (元): 按**该请求自身的 KV 缓存命中比例**, 把省量拆成
+/// 「命中区」(cache_read 价) 与「未命中区」(input 价) 两部分加权.
+///
+/// 为什么不一律按 input 价折算: 实测 agent 工作流的缓存命中率极高 (本机实测
+/// commandcodeAI 98.3% / ginka 93.3%), 而 cache_read 价与 input 价相差约 50x
+/// (1.0 vs 0.02). 被省掉的推理链与历史轮次绝大多数本就落在缓存命中区, 一律按
+/// 未命中价折算会把价值放大约 50 倍. 按请求自身命中结构加权, 得到的是"这些 token
+/// 若未被省掉、按其所属请求的缓存结构计费"的期望值, 比单向取任一端都更接近真实节省.
+fn saved_tokens_fee(
+    p: ModelPrice,
+    ts: u64,
+    saved_tokens: u64,
+    prompt_tokens: u64,
+    cache_hit_tokens: u64,
+) -> f64 {
+    if saved_tokens == 0 {
+        return 0.0;
+    }
+    saved_fee_weighted(
+        pricing::effective(p, ts),
+        saved_tokens as f64,
+        cache_hit_ratio(prompt_tokens, cache_hit_tokens),
+    )
+}
+
+/// 按各条日志的模型生效单价, 把 `pick` 选出的省量 token 折算为费用 (元).
+///
+/// 口径与 `compute_stats` 的 `total_opt_saved_fee` 一致 (同走 [`saved_tokens_fee`]);
 /// 单价为 0 (未配置/免费) 时记 0. 用于把"已生效省量"拆成各项费用.
 fn sum_saved_fee(
     memo: &PriceMemo,
@@ -3542,14 +3661,13 @@ fn sum_saved_fee(
                 return 0.0;
             }
             match memo.resolve(l) {
-                Some(p) => {
-                    let (input_price, _, _) = pricing::effective(p, l.timestamp);
-                    if input_price > 0.0 {
-                        tokens as f64 / 1e6 * input_price
-                    } else {
-                        0.0
-                    }
-                }
+                Some(p) => saved_tokens_fee(
+                    p,
+                    l.timestamp,
+                    tokens,
+                    l.prompt_tokens as u64,
+                    l.prompt_cache_hit_tokens as u64,
+                ),
                 None => 0.0,
             }
         })
@@ -3680,6 +3798,7 @@ mod tests {
             audit_dup_block_count: 0,
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
+            price: None,
             first_token_ms: None,
             upstream_model: None,
         }
@@ -4137,5 +4256,147 @@ mod tests {
         let mut log5 = mk("opencode", "oc", 1_000_000, 0);
         log5.prompt_tokens = 1_000_000;
         assert_eq!(log_cache_saved(&memo2, &log5), 0.0);
+    }
+
+    /// 省量折算必须按「该请求自身的缓存命中比例」加权, 而不是一律按未命中输入价.
+    ///
+    /// 回归背景: 原口径把省下的 token 全按 input 价折算, 而实测 agent 工作流缓存命中率
+    /// 可达 98% —— 被省掉的推理链本会落在缓存命中区 (input 与 cache_read 价差约 50x),
+    /// 于是面板把省量价值放大约 50 倍 (实测 tool_calls 项 ¥63.75 实为 ¥2.38).
+    #[test]
+    fn saved_fee_is_weighted_by_cache_hit_ratio() {
+        // input 1.0 / output 2.0 / cache_read 0.01 (价差 100x, 便于断言两个极端)
+        let p = ModelPrice {
+            input_per_m: 1.0,
+            output_per_m: 2.0,
+            cache_read_per_m: Some(0.01),
+            ..Default::default()
+        };
+        // 非高峰: 用 offpeak=0 回退高峰价, 保证时段不影响断言.
+        let ts = 0;
+
+        // 1) 命中率 99%: 10000 tok 省量 → 0.01 * (0.99*0.01 + 0.01*1.0) = 0.000199
+        let fee = saved_tokens_fee(p, ts, 10_000, 100_000, 99_000);
+        assert!((fee - 0.000199).abs() < 1e-12, "命中率加权结果实得 {fee}");
+
+        // 2) 必须显著低于「全按 input 价」的错误口径 (0.01 元)
+        let naive = 10_000f64 / 1e6 * 1.0;
+        assert!(fee < naive / 40.0, "加权后应远低于按 input 价的 {naive}, 实得 {fee}");
+
+        // 3) 命中率 0% → 退化为 input 价 (未命中区)
+        let nohit = saved_tokens_fee(p, ts, 10_000, 100_000, 0);
+        assert!((nohit - naive).abs() < 1e-12, "零命中应等于 input 价, 实得 {nohit}");
+
+        // 4) 全部命中 → 趋近 cache_read 价 (0.01/M → 10000 tok = 0.0001)
+        let allhit = saved_tokens_fee(p, ts, 10_000, 100_000, 100_000);
+        assert!((allhit - 0.0001).abs() < 1e-12, "全命中应等于 cache_read 价, 实得 {allhit}");
+
+        // 5) prompt 为 0 (无从判断命中结构) → 按未命中价, 保守偏低而不是放大
+        assert!((saved_tokens_fee(p, ts, 10_000, 0, 0) - naive).abs() < 1e-12);
+
+        // 6) 省量为 0 → 恒 0 (不得因单价非零而凭空计费)
+        assert_eq!(saved_tokens_fee(p, ts, 0, 100_000, 99_000), 0.0);
+
+        // 7) 命中数超过 prompt (脏数据) 时钳制在 1.0, 不得把比例算成 >1
+        assert!((saved_tokens_fee(p, ts, 10_000, 1_000, 999_999) - 0.0001).abs() < 1e-12);
+    }
+
+    /// 今日 / 月度 / 累计 / 审计明细四处省量费用必须同口径 (同走 saved_tokens_fee).
+    ///
+    /// 回归背景: 折算口径散落在四处内联实现里, 改一处漏三处会让面板各卡片互相打架
+    /// (实测曾出现审计明细 ¥3.28 而累计仍显示 ¥82.00).
+    #[test]
+    fn saved_fee_sites_agree_on_same_logs() {
+        let price = ModelPrice {
+            input_per_m: 1.0,
+            output_per_m: 2.0,
+            cache_read_per_m: Some(0.01),
+            ..Default::default()
+        };
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("prov".into(), "m".into()), price);
+        let memo = PriceMemo::new(&t);
+
+        // 命中率 99%, 省量 10000
+        let mut log = mk("m", "prov", 99_000, 1_000);
+        log.prompt_tokens = 100_000;
+        log.strip_saved_tokens = 10_000;
+        let logs = vec![log];
+
+        let a = sum_saved_fee(&memo, &logs, |l| {
+            (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64
+        });
+        let b = saved_tokens_fee(price, 0, 10_000, 100_000, 99_000);
+        assert!((a - b).abs() < 1e-12, "sum_saved_fee 与 saved_tokens_fee 应一致: {a} vs {b}");
+        assert!(a > 0.0, "该场景省量费用应为正, 实得 {a}");
+    }
+
+    /// 请求记录是**历史账单**: 费用按记录当时的价格结算, 之后改价/删模型都不得改写它.
+    ///
+    /// 回归背景: 原先 `RequestLog` 只存 token, `cost` 在查询期用当前价格表现算 ——
+    /// 实测同一批 1451 条历史日志, 改价后总费用被改写, 删掉模型配置后更是直接归零.
+    #[test]
+    fn log_cost_uses_frozen_price_snapshot() {
+        let frozen = ModelPrice { input_per_m: 1.0, output_per_m: 2.0, ..Default::default() };
+        let current = ModelPrice { input_per_m: 100.0, output_per_m: 200.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("p".into(), "m".into()), current);
+        let memo = PriceMemo::new(&t);
+
+        let mut snap = mk("m", "p", 0, 0);
+        snap.prompt_tokens = 1_000_000;
+        snap.completion_tokens = 0;
+        snap.price = Some(frozen);
+
+        // 1) 带快照: 按记录当时的价格结算 (1.0/M → 1.0 元), 不受当前配置 (100x) 影响.
+        assert!((log_cost(&memo, &snap) - 1.0).abs() < 1e-9, "应按快照价结算, 实得 {}", log_cost(&memo, &snap));
+
+        // 2) 旧日志 (无快照): 回退当前配置, 与升级前行为一致.
+        let mut legacy = mk("m", "p", 0, 0);
+        legacy.prompt_tokens = 1_000_000;
+        legacy.completion_tokens = 0;
+        assert!((log_cost(&memo, &legacy) - 100.0).abs() < 1e-9, "旧日志应回退当前配置");
+
+        // 3) 当前配置被清空 (等价于删除模型): 带快照的历史仍必须可结算 —— 这是本修复的核心.
+        let empty_table = PriceTable::default();
+        let memo_empty = PriceMemo::new(&empty_table);
+        assert!(
+            (log_cost(&memo_empty, &snap) - 1.0).abs() < 1e-9,
+            "删除模型后历史费用不得归零, 实得 {}",
+            log_cost(&memo_empty, &snap)
+        );
+
+        // 4) 省量与缓存净省的折算同样走快照, 保持全口径一致.
+        let mut saved = mk("m", "p", 0, 0);
+        saved.prompt_tokens = 1_000_000;
+        saved.completion_tokens = 0;
+        saved.strip_saved_tokens = 100_000;
+        saved.price = Some(frozen);
+        let fee = sum_saved_fee(&memo_empty, &[saved], |l| l.strip_saved_tokens as u64);
+        assert!(fee > 0.0, "删除模型后省量折算也不得归零, 实得 {fee}");
+    }
+
+    /// rollup 条目自带价格快照: 条目级费用同样不受后续改价/删模型影响.
+    #[test]
+    fn rollup_entry_price_is_frozen() {
+        let frozen = ModelPrice { input_per_m: 1.0, output_per_m: 2.0, ..Default::default() };
+        let mut e = crate::rollup::RollupEntry::default();
+        e.provider = "p".into();
+        e.upstream = "m".into();
+        e.aliases = vec!["m".into()];
+        e.price = Some(frozen);
+        e.bill_prompt_offpeak = 1_000_000;
+
+        // 当前配置里价格已改成 100x, 表里甚至可能已无此模型 → 条目仍按快照结算.
+        let mut t = PriceTable::default();
+        t.known_providers.insert("p".into());
+        t.by_provider_model
+            .insert(("p".into(), "m".into()), ModelPrice { input_per_m: 100.0, output_per_m: 200.0, ..Default::default() });
+        let p = entry_price(&t, &e).expect("应能取到价格");
+        assert_eq!(p.input_per_m, 1.0, "必须用条目快照价而非当前配置价");
+        assert!((entry_cost(p, &e) - 1.0).abs() < 1e-9);
+
+        // 表为空 (模型被删除) 时同样可用.
+        assert!(entry_price(&PriceTable::default(), &e).is_some(), "删模型后条目仍应可结算");
     }
 }

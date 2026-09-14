@@ -316,6 +316,14 @@ impl ProviderRegistry {
         self.providers.clone()
     }
 
+    /// 该中转 ID 此刻生效的配置价 (元/百万 token), 未配置返回 `None`.
+    ///
+    /// 取的是路由条目自带的 model 配置 —— 即**本次请求实际使用的**那一份价格,
+    /// 用于写日志时结算历史账单快照 (见 `admin::LogBuffer::push`).
+    pub fn price_of(&self, model_id: &str) -> Option<crate::pricing::ModelPrice> {
+        self.routes.get(model_id).and_then(|r| r.model.price)
+    }
+
     /// 从文件热重载配置.
     pub fn reload(&mut self, path: &str) -> Result<(), String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("读取 {path} 失败: {e}"))?;

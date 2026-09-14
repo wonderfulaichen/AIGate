@@ -595,9 +595,11 @@ fn main() {
     if local_log_len == 0 {
         info!("main: no log history in '{resolved_data_dir}'; set AIGATE_DATA_DIR to reuse another instance's data dir");
     }
+    // 路由表句柄提前取出: AppState 与日志缓冲区 (价格快照) 都要引用它.
+    let registry = Arc::new(RwLock::new(registry));
     let state = AppState {
         client,
-        registry: Arc::new(RwLock::new(registry)),
+        registry: Arc::clone(&registry),
         admin_token: config.admin_token.clone(),
         breaker: config.breaker.clone(),
         cache: Arc::new(crate::cache::ResponseCache::new(
@@ -616,7 +618,8 @@ fn main() {
         ),
         log_buffer: LogBuffer::new()
             .with_store(store::LogStore::new(&resolved_data_dir))
-            .with_rollup(rollup::RollupBook::new(&resolved_data_dir)),
+            .with_rollup(rollup::RollupBook::new(&resolved_data_dir))
+            .with_registry(&registry),
         stats_cache: Arc::new(tokio::sync::Mutex::new(None)),
         loop_guard: config.loop_guard.clone(),
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
