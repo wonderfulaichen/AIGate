@@ -410,6 +410,7 @@ mod tests {
             audit_dup_block_count: 0,
             audit_observed: false,
             price: None,
+            usage_estimated: false,
             first_token_ms: None,
             upstream_model: Some(upstream.to_string()),
         }

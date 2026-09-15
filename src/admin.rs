@@ -127,6 +127,14 @@ pub struct RequestLog {
     /// 当前高峰表取值 —— 即改高峰表仍会重估历史 (与 rollup 模块文档所述语义一致).
     #[serde(default)]
     pub price: Option<crate::pricing::ModelPrice>,
+    /// 本条日志的 token 是否为**估算/未上报** (上游没返回 usage).
+    ///
+    /// 上游未给 usage 时, 流式路径按已生成文本长度估算, 非流式路径则只能记 0 ——
+    /// 两者都不是实测值. 若不标记, 面板上估算值与实测值长得一模一样, 会被当成精确数据读,
+    /// 这正是"看似精确的假数"的来源 (实测踩过: 先按响应字节估出 50 万, 后改成纯思考记 0).
+    /// 旧日志无此字段, 默认 false (升级前的值确实多数来自上游上报).
+    #[serde(default)]
+    pub usage_estimated: bool,
 }
 
 #[inline]
@@ -476,6 +484,8 @@ pub async fn record_request(
         price: None,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
+        // 失败路径不解析 usage, 记的 0 是"未上报"而非"实测为 0".
+        usage_estimated: true,
     };
     log_buffer.push(log).await;
 }
@@ -503,6 +513,7 @@ pub async fn record_request_with_tokens(
     audit: Option<crate::proxy::TokenAudit>,
     first_token_ms: Option<u64>,
     error: Option<String>,
+    usage_estimated: bool,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -525,6 +536,7 @@ pub async fn record_request_with_tokens(
         audit,
         first_token_ms,
         error,
+        usage_estimated,
     )
     .await;
 }
@@ -555,6 +567,7 @@ pub async fn record_request_with_tokens_status(
     audit: Option<crate::proxy::TokenAudit>,
     first_token_ms: Option<u64>,
     error: Option<String>,
+    usage_estimated: bool,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -584,6 +597,7 @@ pub async fn record_request_with_tokens_status(
         price: None,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
+        usage_estimated,
     };
     log_buffer.push(log).await;
 }
@@ -1233,6 +1247,7 @@ pub async fn api_mock(
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             price: None,
+            usage_estimated: false,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1271,6 +1286,7 @@ pub async fn api_mock(
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             price: None,
+            usage_estimated: false,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1648,7 +1664,7 @@ impl LogBuffer {
         let mut r_count: u64 = 0;
         let mut r_latency_sum: u64 = 0;
         let mut r_hit: u64 = 0;
-        let mut r_miss: u64 = 0;
+        let mut r_prompt: u64 = 0;
         let mut r_gen_ct: u64 = 0;
         let mut r_gen_ms: u64 = 0;
         let mut today_count: u64 = 0;
@@ -1663,7 +1679,7 @@ impl LogBuffer {
             r_count += 1;
             r_latency_sum += l.latency_ms;
             r_hit += l.prompt_cache_hit_tokens as u64;
-            r_miss += l.prompt_cache_miss_tokens as u64;
+            r_prompt += l.prompt_tokens as u64;
             if let Some(ft) = l.first_token_ms {
                 if ft < l.latency_ms && l.completion_tokens > 0 {
                     r_gen_ct += l.completion_tokens as u64;
@@ -1679,8 +1695,14 @@ impl LogBuffer {
         } else {
             0.0
         };
-        let cache_hit_rate = if r_hit + r_miss > 0 {
-            r_hit as f64 / (r_hit + r_miss) as f64
+        // 命中率口径必须与统计页一致: 命中 / **总输入 token** (含缓存首次写入).
+        //
+        // 曾用 `hit / (hit + miss)`, 而 creation 已从 miss 中拆出, 故 hit+miss = prompt - creation,
+        // 分母偏小 → 有缓存写入的模型 (Anthropic 类) 命中率被系统性高估.
+        // 两处同名字段用不同分母会让「托盘窗口」与「控制台统计页」对同一批流量给出不同数字,
+        // 在 creation 为 0 时二者恰好相等, 因此长期未被发现.
+        let cache_hit_rate = if r_prompt > 0 {
+            r_hit as f64 / r_prompt as f64
         } else {
             0.0
         };
@@ -2070,6 +2092,11 @@ pub struct AuditSummary {
     /// 其中真正做过审计的请求数 (升级前的老日志与直通/回放路径不计).
     /// 远小于 `requests` 时, 各项潜在可省量会被低估, 需积累更多新请求再看.
     pub sampled_requests: u64,
+    /// 窗口内 token 为**估算/未上报**的请求数 (上游没返回 usage).
+    ///
+    /// 数据可信度指标: 这些请求的输入/输出 token 是本地估的 (或记 0), 与实测值不可混看.
+    /// 正常情况应接近 0; 持续偏高说明上游未按 OpenAI 口径返回 usage, 统计需打折看.
+    pub estimated_requests: u64,
     /// 审计窗口的起止时间戳 (秒): 即实际纳入统计的最早/最晚日志时间.
     pub window_start: u64,
     pub window_end: u64,
@@ -2677,6 +2704,7 @@ fn compute_stats(
         cache_saved_fee: total_cache_saved,
         requests: logs.iter().filter(|l| !l.cached).count() as u64,
         sampled_requests: logs.iter().filter(|l| l.audit_observed).count() as u64,
+        estimated_requests: logs.iter().filter(|l| l.usage_estimated).count() as u64,
         window_start: logs.iter().map(|l| l.timestamp).min().unwrap_or(0),
         window_end: logs.iter().map(|l| l.timestamp).max().unwrap_or(0),
         sampled_input_tokens: logs
@@ -3799,6 +3827,7 @@ mod tests {
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             price: None,
+            usage_estimated: false,
             first_token_ms: None,
             upstream_model: None,
         }

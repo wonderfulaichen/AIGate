@@ -680,6 +680,7 @@ pub async fn chat_completions(
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
+                        usage_missing(pt, ct),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -717,6 +718,7 @@ pub async fn chat_completions(
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
+                        usage_missing(pt, ct),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1171,6 +1173,7 @@ async fn relay_native_passthrough(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
             false, hit, miss, creation, 0, 0, 0, None, None, None,
+            usage_missing(pt, ct),
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1397,6 +1400,7 @@ impl Stream for NativeTapStream {
                         crate::admin::record_request_with_tokens(
                             &lb, &m, &p, &ep, up.as_deref(), start,
                             prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None, None,
+                            usage_missing(prompt, output),
                         ).await;
                     });
                 }
@@ -1831,6 +1835,7 @@ fn stream_response_with_tokens(
             cont_left: auto_continue_max,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -1934,6 +1939,8 @@ async fn try_replay_cache(
         None,
         None,
         None,
+        // 缓存回放未调用上游: 0 是真实口径 (行内另有"缓存"徽章), 不是"未上报".
+        false,
     )
     .await;
     Some(serve_cached(&cached))
@@ -2047,6 +2054,13 @@ struct TokenStream {
     /// `reasoning` 在流却被记为 "已输出 0 tok"). 累加长度而非文本本身: 只用于估算,
     /// 无需保留内容, 长思考流不会因此涨内存.
     reasoning_chars_seen: usize,
+    /// 本流是否解析到上游上报的 usage.
+    ///
+    /// 用于区分「实测」与「估算/未上报」: 上游没给 usage 时 token 是本地按文本长度估的
+    /// (或直接为 0), 二者若显示成同一个数字, 估算值看起来就和实测一样精确.
+    /// 判据取"是否见过 usage 对象"而非"token 是否非零" —— 上报了 usage 但输出确为 0
+    /// 是合法情况, 不能因此被误标成估算.
+    usage_seen: bool,
     /// 本流是否输出过 tool_calls delta: 半截工具调用 JSON 无法安全续写, 触发即禁用续写.
     emitted_tool_calls: bool,
     /// 进行中的续写请求 future.
@@ -2254,6 +2268,8 @@ impl TokenStream {
         // completion 累加 (各段新生成的量之和才是总产出).
         let is_cont_seg = self.cont_segment > 0;
         if let Some(usage) = val.get("usage") {
+            // 见到 usage 即视为"上游上报" (哪怕值全为 0, 那也是实测的 0).
+            self.usage_seen = true;
             if let Some(pt) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
                 let pt = pt as u32;
                 // 非续写段仅在帧内确带正数时覆盖: 只含 output 的收尾 usage 帧
@@ -2282,6 +2298,7 @@ impl TokenStream {
         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
             if let Some(choice) = choices.first() {
                 if let Some(inner_usage) = choice.get("usage") {
+                    self.usage_seen = true;
                     if let Some(pt) = inner_usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
                         let pt = pt as u32;
                         // 同上: 非续写段不让 0 覆盖既有输入量.
@@ -2380,6 +2397,8 @@ impl TokenStream {
             self.tokens_cache_miss,
             self.tokens_cache_creation,
         );
+        // 先取出为 Copy 值: 下方 async 块不能借用 self.
+        let usage_estimated = !self.usage_seen;
         let first_token_ms = self
             .first_token_at
             .map(|t| t.duration_since(ld.start).as_millis() as u64);
@@ -2405,14 +2424,18 @@ impl TokenStream {
                 Some(ld.audit),
                 first_token_ms,
                 Some(err),
+                usage_estimated,
             )
             .await;
         });
     }
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
-    /// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens).
-    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32, u32) {
+    ///
+    /// 返回 `(prompt, completion, cache_hit, cache_miss, cache_creation, 是否估算/未上报)`.
+    /// 末位为 `true` 表示上游未给 usage (值为本地估算或 0) —— 调用方据此在日志里打标,
+    /// 避免把估算值当实测值展示.
+    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32, u32, bool) {
         let pt = if self.tokens_pt > 0 {
             self.tokens_pt
         } else {
@@ -2444,7 +2467,14 @@ impl TokenStream {
             }
         };
         // 缓存命中/未命中/首次写入: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
-        (pt, ct, self.tokens_cache_hit, self.tokens_cache_miss, self.tokens_cache_creation)
+        (
+            pt,
+            ct,
+            self.tokens_cache_hit,
+            self.tokens_cache_miss,
+            self.tokens_cache_creation,
+            !self.usage_seen,
+        )
     }
 }
 
@@ -2646,7 +2676,7 @@ impl Stream for TokenStream {
                         }
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
-                        let (pt, ct, hit, miss, creation) = this.final_tokens(req_body_len);
+                        let (pt, ct, hit, miss, creation, usage_estimated) = this.final_tokens(req_body_len);
                         // 完成日志的 error 判定:
                         //  - 死循环检测截断 (loop_aborted): 用专属文案, 避免误显示为上游截断.
                         //  - 续写尝试失败 (cont_fail_note): 展示失败原因.
@@ -2719,6 +2749,7 @@ impl Stream for TokenStream {
                                     hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                                     first_token_ms,
                                     err_for_log,
+                                    usage_estimated,
                                 ).await;
                             });
                         }
@@ -3043,6 +3074,14 @@ fn delta_reasoning_bytes(delta: &serde_json::Value) -> usize {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+/// 非流式路径是否缺上游 usage: 成功响应不可能输入与输出同时为 0,
+/// 故双零即"上游未上报"(错误响应体同样没有 usage).
+///
+/// 这类 0 不是实测值 —— 标记出来, 面板才不会把"没拿到数据"读成"确实没消耗".
+fn usage_missing(prompt_tokens: u32, completion_tokens: u32) -> bool {
+    prompt_tokens == 0 && completion_tokens == 0
 }
 
 const REASONING_FIELDS: [&str; 3] = ["reasoning_content", "reasoning", "reasoning_details"];
@@ -4483,6 +4522,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -4543,7 +4583,8 @@ mod tests {
             out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
             accumulated_content: String::new(),
-            reasoning_chars_seen: 0, emitted_tool_calls: false, cont_pending: None,
+            reasoning_chars_seen: 0,
+            usage_seen: false, emitted_tool_calls: false, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
         };
@@ -4577,6 +4618,19 @@ mod tests {
         ts_b2.reasoning_chars_seen = 400;
         let (_, ct_b2, ..) = ts_b2.final_tokens(1000);
         assert_eq!(ct_b2, 200, "应为 (400+400)/4 = 200");
+
+        // 场景 D: usage 标记 —— 区分「实测」与「估算/未上报」.
+        // 判据是"是否见过 usage 对象", 不是"token 是否非零": 上报了 usage 但输出确为 0
+        // 是合法情况, 不能因此被误标成估算.
+        let ts4 = mk();
+        let (.., est4) = ts4.final_tokens(1000);
+        assert!(est4, "未见到 usage 应标记为估算/未上报 (面板据此显示 ≈)");
+
+        let mut ts5 = mk();
+        ts5.usage_seen = true;
+        ts5.tokens_pt = 100;
+        let (.., est5) = ts5.final_tokens(1000);
+        assert!(!est5, "上报了 usage 即实测, 输出确为 0 也算实测 0");
 
         // 场景 C: 上游给了精确 usage → 优先用精确值
         let mut ts3 = mk();
@@ -4653,6 +4707,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
@@ -4741,6 +4796,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
             cont_segment: 0,
