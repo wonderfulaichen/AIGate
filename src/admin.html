@@ -250,15 +250,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
    每列按 输入/输出 分色堆叠, 空桶画一条底线占位.
    旧实现是"日历热力图"且**刻意与所选粒度解耦**(固定按天), 于是选 24h 只有 1 列、
    选 30d 只有 5 列, 浮在宽面板左侧像块残片, 还让上方的范围选择器成了摆设. */
-.act-stack{display:flex;gap:2px;align-items:flex-end;height:150px}
-.act-col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;height:100%;border-radius:3px;overflow:hidden;background:rgba(255,255,255,.02)}
-.act-col:hover{background:rgba(255,255,255,.07)}
-.act-seg{width:100%;min-height:2px}
-.act-in{background:linear-gradient(180deg,#3b9cff,#2f7fd6)}
-.act-out{background:#a78bfa}
-.act-empty{height:2px;background:rgba(255,255,255,.1)}
-.act-labels{display:flex;gap:2px;margin-top:6px}
-.act-label{flex:1 1 0;min-width:0;font-size:9px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden}
+/* 时段 x 星期 热力图: 24 列(0-23 时) x 7 行(周一~周日), 格子正方形 (aspect-ratio:1)
+   并按 1fr 均分宽度 —— 因此**任何范围下都是一整片满方格**, 不会出现小块浮在宽面板左侧. */
+.hm-wrap{display:flex;flex-direction:column;gap:3px}
+.hm-row{display:grid;grid-template-columns:30px repeat(24,minmax(0,1fr));gap:3px;align-items:center}
+.hm-wd{font-size:9px;color:var(--muted);text-align:right;padding-right:2px;white-space:nowrap}
+.hm-hour{font-size:9px;color:var(--muted);text-align:center;line-height:1}
+.hm-cell{aspect-ratio:1;min-width:0;border-radius:3px}
+
 .ta-cell{position:relative;width:20px;height:20px;border-radius:4px}
 /* 带标签的日历热力图: 左列星期 + 每列一周, 列顶标月份 */
 .ta-cal{display:flex;gap:6px;align-items:flex-start}
@@ -555,7 +554,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div class="an-stat"><div class="an-stat-label" x-text="t('average_tpm')"></div><div class="an-stat-value" x-text="fmtT(Math.round(analysisTpm))"></div><div class="txs tm an-stat-hint" x-text="t('tokens_per_min')"></div></div>
     </div>
     <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></span><span class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></span><span class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
-    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div></div><div class="pnl-b"><div x-show="tokenActivityFlat.length" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="prop-legend" style="margin-top:10px"><span><i style="background:#3b9cff"></i><span x-text="t('input_tokens_short')"></span></span><span><i style="background:#a78bfa"></i><span x-text="t('output_tokens_short')"></span></span></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)+(tokenActivitySpan?(' · '+tokenActivitySpan):'')"></div></div></div><div class="pnl-b"><div x-show="tokenActivityFlat.length" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="prop-legend" style="margin-top:10px;align-items:center"><span x-text="t('heatmap_few')"></span><span style="display:inline-flex;gap:2px"><i style="background:rgba(255,255,255,.035);width:14px;height:12px"></i><i style="background:#1d4ed8;width:14px;height:12px"></i><i style="background:#2563eb;width:14px;height:12px"></i><i style="background:#3b82f6;width:14px;height:12px"></i><i style="background:#60a5fa;width:14px;height:12px"></i></span><span x-text="t('heatmap_many')"></span></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -1167,7 +1166,7 @@ const I18N = {
     'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
     'btn.line': '线', 'btn.bar': '柱',
     'no_trend': '暂无趋势数据',
-    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按所选时间范围逐桶查看输入与输出 Token 使用量', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '每根柱对应所选范围的一个时间桶，柱高表示 Token 用量；底部一条细线表示该时段没有请求', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
+    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'token_activity_title': 'Token 活动', 'token_activity_desc': '按星期与时段看 Token 用量分布（颜色越深用得越多）', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_activity_legend': '纵轴为星期、横轴为 0-23 时；每格是一个时段的 Token 用量，深色表示用得更多，浅底表示该时段没有请求。逐日细节见下方 Token 趋势图', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
     'heatmap_mon': '一', 'heatmap_tue': '二', 'heatmap_wed': '三', 'heatmap_thu': '四', 'heatmap_fri': '五', 'heatmap_sat': '六', 'heatmap_sun': '日',
     'provider_stats': '供应商统计',
     'records_title': '请求记录', 'records_count': '{0} 条',
@@ -1347,7 +1346,7 @@ const I18N = {
     'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
     'btn.line': 'Line', 'btn.bar': 'Bar',
     'no_trend': 'No trend data',
-    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Input and output token usage per bucket in the selected range', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Each bar is one bucket of the selected range; bar height shows token usage. A thin baseline marks a bucket with no requests', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
+    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'token_activity_title': 'Token activity', 'token_activity_desc': 'Token usage by weekday and hour (darker = more)', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_activity_legend': 'Rows are weekdays, columns are hours (0-23). Cell color shows token usage; a faint cell means no requests in that slot. Per-day detail is in the trend chart below', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
     'heatmap_mon': 'Mon', 'heatmap_tue': 'Tue', 'heatmap_wed': 'Wed', 'heatmap_thu': 'Thu', 'heatmap_fri': 'Fri', 'heatmap_sat': 'Sat', 'heatmap_sun': 'Sun',
     'provider_stats': 'Provider Stats',
     'records_title': 'Request Logs', 'records_count': '{0} entries',
@@ -1621,7 +1620,8 @@ function dashboard() {
     tokenActivityCells: [],
     tokenActivityFlat: [],
     tokenActivityHtml: '',
-    dailyTrends: [], // 日历固定按“天”聚合当前范围, 与所选趋势粒度解耦
+    hourlyTrends: [], // 时段x星期 热力图的逐时数据 (rollup 只到天粒度, 故仅日志窗口内有值)
+    tokenActivitySpan: '', // 热力图实际覆盖的区间 (标在面板上, 避免让人以为覆盖了整个范围)
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     trendHover: null,
@@ -2026,13 +2026,13 @@ function dashboard() {
     },
     async fetchStats(rangeOverride)   { try { const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d')); const params=new URLSearchParams({granularity:this.trendGranularity,range}); const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick();
       // 日历固定按“天”聚合当前范围, 与所选趋势粒度解耦: 粒度=day 时直接复用, 否则单独拉日级数据
-      // Token 活动与趋势图同源 (当前粒度/范围的 trends), 不再单独按天拉取 ——
-      // 原先"日历固定按天、与所选粒度解耦"导致选 24h 只有 1 列、30d 只有 5 列.
-      this.dailyTrends=this.stats.trends||[];
-      this.computeTokenActivityCells();
+      // 热力图按"逐时"取数, 范围跟随所选时间范围 (小时→1d, 天/月→29d).
+      this.fetchHourlyTrends(this.analyticsSpan==='hour'?'1d':'29d');
       this.computeModelTrend(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
     // 日历专用: 始终以“天”为粒度拉取当前范围, 避免把 hour/month 桶当成天渲染
-    async fetchDailyTrends(range) { try { const r=await fetch('/admin/api/stats?granularity=day&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok){ const d=await r.json(); this.dailyTrends=d.trends||[]; this.computeTokenActivityCells(); } } catch(e){} },
+    // 时段x星期 热力图的取数: 逐时桶. 上限 29d —— 更早的日期 rollup 只有天粒度,
+    // 逐时视图里本就没有数据, 拉更长范围只是徒增桶数.
+    async fetchHourlyTrends(range) { try { const r=await fetch('/admin/api/stats?granularity=hour&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok){ const d=await r.json(); this.hourlyTrends=d.trends||[]; this.computeTokenActivityCells(); } } catch(e){} },
     isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
@@ -2084,41 +2084,49 @@ function dashboard() {
     },
     // ── 活跃热力图 SVG: 最近 24 个小时桶的相对请求量 ──
     get tokenActivityGridCols() { return 'repeat('+Math.max(1,this.tokenActivityCells.length)+',16px)'; },
-    // Token 活动: 按当前所选范围的**桶**出柱 (24h→24 列 / 30d→30 列 / 12m→12 列),
-    // 每列按 输入/输出 分色堆叠, 高度按该桶 token / 全范围峰值 归一.
-    // 空桶画一条底线而不是零高柱 —— "那段时间没有请求"要看得出来, 但不必给出零高度.
+    // Token 活动 · 时段 x 星期 热力图.
+    //
+    // 形态: 24 列(0-23 时) x 7 行(周一~周日), 格子正方形并按 1fr 均分宽度 ——
+    // 因此**任何时间范围下都是一整片满方格**, 不会出现"一小块浮在宽面板左侧".
+    // 颜色深浅 = 该(星期, 时段)的 Token 用量, 数据范围由上方「时间范围」决定.
+    // 逐日细节不在这里, 由下方 Token 趋势图承担.
+    //
+    // 数据源: 逐时桶 (granularity=hour). 注意 rollup 只到"天"粒度, 故超出日志窗口的
+    // 更早日期在逐时视图里没有数据 —— 面板上下文行会把实际覆盖区间标出来.
     computeTokenActivityCells() {
-      const rows=(this.stats&&this.stats.trends)||[];
-      const days=rows.filter(x=>x&&x.ts).map(x=>({
-        ts:x.ts, date:x.date,
-        requests:Number(x.requests||0),
-        input:Number(x.total_prompt_tokens||0),
-        output:Number(x.total_completion_tokens||0),
-        tokens:Number(x.total_prompt_tokens||0)+Number(x.total_completion_tokens||0),
-      }));
-      if(!days.length){this.tokenActivityFlat=[];this.tokenActivityHtml='';return;}
-      const max=Math.max(...days.map(d=>d.tokens),1);
-      const n=days.length;
-      // 标签抽稀: 列多时只标首/尾与等距若干, 避免挤成一团
-      const step=Math.max(1,Math.ceil(n/10));
-      let html='<div class="act-wrap"><div class="act-stack">';
-      days.forEach(d=>{
-        const tip=d.date+' · '+t('input_tokens_short')+' '+this.fmtT(d.input)
-          +' · '+t('output_tokens_short')+' '+this.fmtT(d.output)
-          +' · '+t('chart_metric_label_requests')+' '+d.requests;
-        html+='<div class="act-col" title="'+this.escapeHtml(tip)+'">';
-        if(d.tokens>0){
-          html+='<div class="act-seg act-out" style="height:'+(d.output/max*100).toFixed(2)+'%"></div>';
-          html+='<div class="act-seg act-in" style="height:'+(d.input/max*100).toFixed(2)+'%"></div>';
-        }else{
-          html+='<div class="act-empty"></div>';
+      const rows=(this.hourlyTrends||[]).filter(x=>x&&x.ts);
+      const WD=['一','二','三','四','五','六','日'];
+      const grid=new Map();   // "wd|hour" -> tokens
+      const pad=n=>String(n).padStart(2,'0');
+      let minTs=0, maxTs=0;
+      rows.forEach(x=>{
+        const d=new Date((x.ts+8*3600)*1000);
+        const wd=(d.getUTCDay()+6)%7, h=d.getUTCHours();
+        const v=Number(x.total_prompt_tokens||0)+Number(x.total_completion_tokens||0);
+        const k=wd+'|'+h;
+        grid.set(k,(grid.get(k)||0)+v);
+        if(!minTs||x.ts<minTs) minTs=x.ts;
+        if(x.ts>maxTs) maxTs=x.ts;
+      });
+      this.tokenActivitySpan = rows.length ? (pad(new Date((minTs+8*3600)*1000).getUTCMonth()+1)+'/'+pad(new Date((minTs+8*3600)*1000).getUTCDate())+' '+pad(new Date((minTs+8*3600)*1000).getUTCHours())+':00 → '+pad(new Date((maxTs+8*3600)*1000).getUTCMonth()+1)+'/'+pad(new Date((maxTs+8*3600)*1000).getUTCDate())+' '+pad(new Date((maxTs+8*3600)*1000).getUTCHours())+':00') : '';
+      if(!rows.length){this.tokenActivityFlat=[];this.tokenActivityHtml='';return;}
+      const max=Math.max(...grid.values(),1);
+      const color=v=>{if(!v)return 'rgba(255,255,255,.035)';const r=Math.min(v/max,1);return r>.75?'#60a5fa':r>.5?'#3b82f6':r>.25?'#2563eb':'#1d4ed8';};
+      let html='<div class="hm-wrap">';
+      html+='<div class="hm-row"><span class="hm-wd"></span>';
+      for(let h=0;h<24;h++) html+='<span class="hm-hour">'+(h%3===0?h:'')+'</span>';
+      html+='</div>';
+      for(let r=0;r<7;r++){
+        html+='<div class="hm-row"><span class="hm-wd">'+WD[r]+'</span>';
+        for(let h=0;h<24;h++){
+          const v=grid.get(r+'|'+h)||0;
+          const tip='周'+WD[r]+' '+pad(h)+':00-'+pad(h)+':59 · '+this.fmtT(v)+' tok';
+          html+='<div class="hm-cell" style="background:'+color(v)+'" title="'+this.escapeHtml(tip)+'"></div>';
         }
         html+='</div>';
-      });
-      html+='</div><div class="act-labels">';
-      days.forEach((d,i)=>{ html+='<span class="act-label">'+((i%step===0||i===n-1)?this.escapeHtml(d.date||''):'')+'</span>'; });
-      html+='</div></div>';
-      this.tokenActivityFlat=days;
+      }
+      html+='</div>';
+      this.tokenActivityFlat=rows;
       this.tokenActivityHtml=html;
     },
     computeModelTrend() {
