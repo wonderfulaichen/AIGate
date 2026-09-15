@@ -230,15 +230,38 @@ pub fn translate_upstream_message(msg: &str) -> String {
     if let Some(rest) = s.strip_prefix("Error from provider (") {
         s = format!("来自供应商 ({rest}");
     }
-    // 已知短语保守替换 (顺序无关, 互不重叠).
+    // 已知短语保守替换.
+    //
+    // 「Please try again / Please retry」这类短句必须**仅在句末**替换: 它们是更长句子的
+    // 前缀, 直接 replace 会把后半截留下, 拼出中英夹杂的残句 —— 实测
+    // `Upstream model provider is temporarily unavailable. Please try again in a moment.`
+    // 被替换成 `... unavailable. 请稍后再试 in a moment.` (保留原文反而更清楚).
     s = s
         .replace("Rate limit exceeded", "请求频率超限")
         .replace("Rate limited", "请求频率受限")
         .replace("Too many requests", "请求过多")
+        // 整句已知的优先整句替换 (替换后句末判定仍成立).
         .replace("Please try again later", "请稍后再试")
         .replace("Please retry later", "请稍后再试")
-        .replace("Please try again", "请稍后再试");
-    s
+        .replace("Please try again in a moment", "请稍后再试")
+        .replace("Upstream model provider is temporarily unavailable", "上游模型供应商暂时不可用")
+        .replace("All available accounts are currently rate-limited", "所有可用账号当前均被限流");
+    replace_trailing_phrase(&s, "Please try again", "请稍后再试")
+}
+
+/// 仅在 `from` **位于句末** (其后只剩标点/空白) 时替换为 `to`.
+///
+/// 用于避免短句吞掉长句前缀: `Please try again` 是 `Please try again later` /
+/// `Please try again in a moment` 的前缀, 无条件替换会截断原句.
+fn replace_trailing_phrase(s: &str, from: &str, to: &str) -> String {
+    let is_tail = |c: char| c.is_whitespace() || ".,;:!?。，；：！？…".contains(c);
+    // 去掉尾部标点/空白后判断是否以 from 结尾 (留下的是从 0 开始的切片, 故其长度即偏移).
+    let head = s.trim_end_matches(is_tail);
+    match head.strip_suffix(from) {
+        // `prefix` 是短语**之前**的部分, 故匹配结束位置 = prefix.len() + from.len().
+        Some(prefix) => format!("{prefix}{to}{}", &s[prefix.len() + from.len()..]),
+        None => s.to_string(),
+    }
 }
 
 /// 熔断状态原始值 (closed / open / half-open) → 文案 (供面板展示).
@@ -479,5 +502,43 @@ mod tests {
         // 还原默认, 避免影响后续 (串行) 测试
         set_current_lang(Lang::Zh);
         assert_eq!(error_type("rate_limit_error"), "请求频率超限（请稍后重试）");
+    }
+
+    /// 回归: 短句只在**句末**替换, 不得吞掉长句前缀留下中英夹杂的残句.
+    ///
+    /// 实测上游原文 `Upstream model provider is temporarily unavailable. Please try
+    /// again in a moment.` 曾被替换成 `... unavailable. 请稍后再试 in a moment.`
+    /// —— 保留英文原文反而更清楚, 故整句未收录时应原样保留.
+    #[test]
+    fn translate_does_not_truncate_longer_sentences() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+
+        // 1) 长句含 "Please try again" 前缀但后面还有内容 → 不得截断成中英夹杂.
+        let long = "Upstream model provider is temporarily unavailable. Please try again in a moment.";
+        let out = translate_upstream_message(long);
+        assert!(
+            !out.contains("请稍后再试 in a moment"),
+            "不得把长句前缀替换后留下残余, 实得: {out}"
+        );
+
+        // 2) 已知整句 → 应整体译出, 且不留英文尾巴.
+        let ginka = "All available accounts are currently rate-limited. Please retry later.";
+        let out2 = translate_upstream_message(ginka);
+        assert!(out2.contains("所有可用账号当前均被限流"), "整句应译出, 实得: {out2}");
+        assert!(!out2.contains("rate-limited"), "不应残留英文, 实得: {out2}");
+
+        // 3) 短句位于句末 → 正常替换 (末尾标点保留).
+        assert_eq!(translate_upstream_message("Rate limit exceeded. Please try again."),
+                   "请求频率超限. 请稍后再试.");
+        assert_eq!(translate_upstream_message("Please try again"), "请稍后再试");
+        assert_eq!(translate_upstream_message("Please try again later."), "请稍后再试.");
+
+        // 4) 短语出现在句首/句中 (后面还有内容) → 保持原样, 不做半截替换.
+        assert_eq!(translate_upstream_message("Please try again with a smaller input"),
+                   "Please try again with a smaller input");
+
+        // 5) 未知内容原样保留.
+        assert_eq!(translate_upstream_message("some vendor specific failure"),
+                   "some vendor specific failure");
     }
 }
