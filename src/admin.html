@@ -489,14 +489,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <template x-if="stats && stats.total_requests>0">
     <div class="ov-grid">
       <div class="ov-main">
-        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" x-text="t('today_label')"></span></div><div class="pnl-b"><div class="ov-summary-grid">
-          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_requests')"></span><span class="ov-icon" style="background:rgba(99,102,241,.12);color:#818cf8">↗</span></div><div class="ov-kpi-value" x-text="stats.today_requests"></div><div class="ov-kpi-hint" x-text="t('errors_total',stats.today_errors,stats.total_requests)"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.requests),'#818cf8')"></div></div>
-          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_cost')"></span><span class="ov-icon" style="background:rgba(245,158,11,.12);color:#f59e0b">¥</span></div><div class="ov-kpi-value" style="color:#f59e0b" x-text="stats.has_price_config?fmtMoney(stats.today_total_cost||0):'—'"></div><div class="ov-kpi-hint" x-text="stats.has_price_config?t('cost_estimated'):t('price_unconfigured')"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.total_cost||0),'#f59e0b')"></div></div>
-          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('today_total_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:#a78bfa">◇</span></div><div class="ov-kpi-value" style="color:#a78bfa" x-text="fmtT((stats.today_total_prompt_tokens||0)+(stats.today_total_completion_tokens||0))"></div><div class="ov-kpi-hint" x-text="t('tokens_input_output',fmtT(stats.today_total_prompt_tokens),fmtT(stats.today_total_completion_tokens))"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
-        </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:#34d399" x-text="fmtT(stats.today_total_prompt_tokens)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:#a78bfa" x-text="fmtT(stats.today_total_completion_tokens)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:#22d3ee" x-text="todayCacheRate+'%'"></div></div></div></div></div>
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" :title="heroScopeHint" x-text="heroScopeLabel"></span></div><div class="pnl-b"><div class="ov-summary-grid">
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_requests')"></span><span class="ov-icon" style="background:rgba(99,102,241,.12);color:#818cf8">↗</span></div><div class="ov-kpi-value" x-text="heroRequests"></div><div class="ov-kpi-hint" x-text="heroRequestsHint"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.requests),'#818cf8')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_cost')"></span><span class="ov-icon" style="background:rgba(245,158,11,.12);color:#f59e0b">¥</span></div><div class="ov-kpi-value" style="color:#f59e0b" x-text="heroCostText"></div><div class="ov-kpi-hint" x-text="stats.has_price_config?t('cost_estimated'):t('price_unconfigured')"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.total_cost||0),'#f59e0b')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:#a78bfa">◇</span></div><div class="ov-kpi-value" style="color:#a78bfa" x-text="fmtT(heroTokens)"></div><div class="ov-kpi-hint" x-text="heroTokensHint"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
+        </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:#34d399" x-text="fmtT(heroPrompt)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:#a78bfa" x-text="fmtT(heroCompletion)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:#22d3ee" x-text="heroCacheText"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:#34d399">⚡</span></div><div class="ov-kpi-value" style="color:#34d399" x-text="fmtT((stats.today_strip_saved_tokens||0)+(stats.today_trim_saved_tokens||0)+(stats.today_resp_cache_saved_tokens||0))"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:rgba(34,211,238,.12);color:#22d3ee">📊</span></div><div class="ov-kpi-value" style="color:#22d3ee" x-text="fmtT(stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+t('opt_saved_30d')"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
-          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+(sRate>=95?'#34d399':sRate>=80?'#f59e0b':'#ef4444')" x-text="sRate+'%'"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+(sRateText==='—'?'var(--muted)':sRate>=95?'#34d399':sRate>=80?'#f59e0b':'#ef4444')" x-text="sRateText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms||0)"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
         </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?Math.round((m.requests-m.errors)/m.requests*100)+'%':'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
@@ -522,7 +522,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
     <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></span><span class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></span><span class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_activity_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_activity_desc')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><div class="ta-grid" x-show="tokenActivityFlat.length" :style="'grid-template-columns:repeat('+Math.max(1,Math.ceil((tokenActivityFlat.length||0)/7))+',20px);grid-template-rows:repeat(7,20px)'" x-html="tokenActivityHtml"></div><div class="tm" x-show="!tokenActivityFlat.length" style="padding:16px 0" x-text="t('no_data')"></div><div class="chart-note" x-text="t('token_activity_legend')"></div></div></div>
-    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="it.pct.toFixed(1)+'%'"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
@@ -555,9 +555,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
       </div>
       <div class="txs tm" style="color:var(--muted)" x-text="t('audit_footer')"></div>
     </div></div>
-    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="((m.requests/(stats.total_requests||1))*100).toFixed(1)+'%'"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
-    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100).toFixed(1)+'%':'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_matching_models')"></td></tr></template></tbody></table></div></div>
-    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('provider_performance')"></span><div class="txs tm" style="margin-top:3px" x-text="t('current_window_aggregate')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('kv_cache_saved')"></th><th x-text="t('optimization_saved_tokens')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="Math.max(0,(p.requests||0)-(p.errors||0))"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100).toFixed(1)+'%':'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="p.billing?fmtMoney(p.cache_saved||0):'—'"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template></tbody></table></div></div>
+    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
+    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_matching_models')"></td></tr></template></tbody></table></div></div>
+    <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('provider_performance')"></span><div class="txs tm" style="margin-top:3px" x-text="t('current_window_aggregate')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('kv_cache_saved')"></th><th x-text="t('optimization_saved_tokens')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="Math.max(0,(p.requests||0)-(p.errors||0))"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?fmtPct(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100):'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="p.billing?fmtMoney(p.cache_saved||0):'—'"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template></tbody></table></div></div>
   </div></template>
 </div>
 <div x-show="activeTab==='records'" class="page-enter page-wide">
@@ -565,7 +565,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div class="rec-stats">
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
-    <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" style="color:var(--ok)" x-text="logs.length?recordSuccessRate+'%':'—'"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" style="color:var(--ok)" x-text="recordSuccessRateText"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
   </div>
   <div class="rec-layout">
@@ -1095,7 +1095,7 @@ const I18N = {
     'tbl.strip_reasoning': '剥离推理链',
     'strip_toolcall_reasoning_hint': '逐模型设置：剥离「带工具调用的历史推理链」，省量可观（见分析页省量审计，实测占输入 38.5%）。但约束因上游而异 —— Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。中转供应商同一名下混有多种协议，因此请逐个模型确认后再勾选，并观察错误率。',
     'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'tok', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
+    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
     'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种',
     'price_copy': '复制价格', 'price_paste': '粘贴价格', 'price_copied': '已复制', 'price_applied': '已应用到 {0} 个模型',
@@ -1108,7 +1108,7 @@ const I18N = {
     'other_n': '其他 {0} 个',
     'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
     'model_usage_detail': '模型用量明细',
-    'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）',
+    'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）', 'hero_requests': '请求', 'hero_cost': '费用', 'hero_tokens': 'Token 总量', 'window_label': '窗口累计', 'errors_only': '错误 {0}', 'hero_scope_today_hint': '显示今日数据', 'hero_scope_window_hint': '今日暂无请求，显示整个统计窗口的累计',
     'audit_applied': '已生效省量',
     'audit_applied_strip': '· 剥离推理链（普通轮次）', 'audit_applied_strip_tc': '· 剥离推理链（工具轮次）', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
     'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"剥离推理链（工具轮次）"）',
@@ -1222,7 +1222,7 @@ const I18N = {
     'manage_providers': '管理供应商', 'view_records': '查看请求记录',
     'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
     'current_log_window': '当前日志窗口', 'total_requests': '总请求数', 'total_cost': '总费用', 'total_tokens': '总 Tokens',
-    'average_rpm': '平均 RPM', 'average_tpm': '平均 TPM', 'tokens_per_min': 'Tokens / 分钟', 'time_range': '时间范围',
+    'average_rpm': '平均 RPM（活跃期间）', 'average_tpm': '平均 TPM', 'tokens_per_min': 'Tokens / 分钟', 'time_range': '时间范围',
     'range_1d': '1 天', 'range_7d': '7 天', 'range_14d': '14 天', 'range_29d': '29 天', 'range_365d': '12 个月', 'trend_granularity': '趋势粒度', 'span_hour': '小时 (24)', 'span_day': '天 (30)', 'span_month': '月 (12)',
     'granularity_hour': '小时', 'granularity_day': '天', 'granularity_month': '月', 'stats_range': '统计范围：{0}',
     'request_count': '{0} 次请求', 'consumption_trend': '消费趋势',
@@ -1275,7 +1275,7 @@ const I18N = {
     'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
     'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'tok', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
+    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
     'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
     'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
     'price_copy': 'Copy price', 'price_paste': 'Paste price', 'price_copied': 'Copied', 'price_applied': 'Applied to {0} model(s)',
@@ -1288,7 +1288,7 @@ const I18N = {
     'other_n': '{0} others',
     'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
     'model_usage_detail': 'Model Details',
-    'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)',
+    'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)', 'hero_requests': 'Requests', 'hero_cost': 'Cost', 'hero_tokens': 'Total tokens', 'window_label': 'Window total', 'errors_only': 'Errors {0}', 'hero_scope_today_hint': 'Showing today', 'hero_scope_window_hint': 'No requests today — showing the whole statistics window',
     'audit_applied': 'Applied savings',
     'audit_applied_strip': '· strip reasoning (plain turns)', 'audit_applied_strip_tc': '· strip reasoning (tool turns)', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
     'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "strip reasoning (tool turns)" above)',
@@ -1402,7 +1402,7 @@ const I18N = {
     'manage_providers': 'Manage providers', 'view_records': 'View request logs',
     'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
     'current_log_window': 'Current log window', 'total_requests': 'Total requests', 'total_cost': 'Total cost', 'total_tokens': 'Total tokens',
-    'average_rpm': 'Average RPM', 'average_tpm': 'Average TPM', 'tokens_per_min': 'Tokens / min', 'time_range': 'Time range',
+    'average_rpm': 'Average RPM (active)', 'average_tpm': 'Average TPM', 'tokens_per_min': 'Tokens / min', 'time_range': 'Time range',
     'range_1d': '1 day', 'range_7d': '7 days', 'range_14d': '14 days', 'range_29d': '29 days', 'range_365d': '12 months', 'trend_granularity': 'Trend granularity', 'span_hour': 'Hour (24)', 'span_day': 'Day (30)', 'span_month': 'Month (12)',
     'granularity_hour': 'Hour', 'granularity_day': 'Day', 'granularity_month': 'Month', 'stats_range': 'Range: {0}',
     'request_count': '{0} requests', 'consumption_trend': 'Consumption trend',
@@ -1586,6 +1586,8 @@ function dashboard() {
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     trendHover: null,
+    // 趋势图是否做过自适应裁剪 (首尾空桶已去掉) —— 供上下文标签说明当前展示区间.
+    modelTrendTrimmed: false,
     _chartModeHooked: false,
     hiddenModels: {},
     // Proxy policy status
@@ -2000,8 +2002,20 @@ function dashboard() {
       const errors=Number(this.stats.error_count||0);
       return Math.round(Math.max(0,total-errors)/total*100);
     },
-    get analysisRpm() { return Number(this.stats&&this.stats.total_requests||0)/this.analysisWindowMinutes; },
-    get analysisTpm() { return ((Number(this.stats&&this.stats.total_prompt_tokens||0)+Number(this.stats&&this.stats.total_completion_tokens||0))/this.analysisWindowMinutes); },
+    // 活跃跨度(分钟): 窗口内首个到最后一个**有数据**的桶.
+    // 用整个窗口当分母会把大量空闲时段算进去 —— 实测 29 天窗口算出"平均 RPM 0.06",
+    // 读不出任何信息; 按实际活跃区间算才有意义.
+    get analysisActiveMinutes() {
+      const all=(this.stats&&this.stats.trends)||[];
+      const live=all.filter(x=>x&&x.ts&&((x.requests||0)>0||(x.total_prompt_tokens||0)>0||(x.total_completion_tokens||0)>0));
+      if(live.length<2) return this.analysisWindowMinutes;
+      const bucket=Math.max(1,(all[1].ts||0)-(all[0].ts||0));
+      // 钳到窗口以内: 桶跨度按整天向外取整 (日粒度下首桶从当天 0 点算起), 会略大于真实数据跨度;
+      // 活跃跨度不可能超过窗口本身, 否则算出的 RPM 比按整窗口算的还低, 反而失真.
+      return Math.max(1, Math.min(this.analysisWindowMinutes, (live[live.length-1].ts-live[0].ts+bucket)/60));
+    },
+    get analysisRpm() { return Number(this.stats&&this.stats.total_requests||0)/this.analysisActiveMinutes; },
+    get analysisTpm() { return ((Number(this.stats&&this.stats.total_prompt_tokens||0)+Number(this.stats&&this.stats.total_completion_tokens||0))/this.analysisActiveMinutes); },
     get filteredModelStats() {
       const q=(this.modelDetailFilter||'').toLowerCase().trim();
       return (this.stats&&this.stats.per_model||[]).filter(m=>{
@@ -2092,6 +2106,21 @@ function dashboard() {
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
       const values=keys.map(k=>dates.map(([ts])=>{const [p,...u]=k.split('/');const r=map.get(ts+'/'+p+'/'+u.join('/'));return r?Number(r.prompt_tokens||0)+Number(r.completion_tokens||0):0;}));
+      // 自适应裁剪: 去掉首尾**没有任何数据**的桶, 否则稀疏数据下大半画布是贴着 0 的直线,
+      // 真正的信息被挤到一角 (实测 29 天窗口里只有最近 3 天有数据 → 3/4 画布无信息).
+      // 两端各多留一个空桶: 让人看得出数据"从哪开始、到哪结束", 而不是被硬切在边缘.
+      const hasData=i=>values.some(vals=>Number(vals[i]||0)>0);
+      let lo=-1, hi=-1;
+      for(let i=0;i<dates.length;i++){ if(hasData(i)){ if(lo<0)lo=i; hi=i; } }
+      if(lo>=0){
+        lo=Math.max(0,lo-1); hi=Math.min(dates.length-1,hi+1);
+        if(hi-lo+1 < dates.length){
+          this.modelTrendTrimmed=true;
+          dates.splice(hi+1);
+          dates.splice(0,lo);
+          values.forEach(vals=>{ vals.splice(hi+1); vals.splice(0,lo); });
+        }
+      }
       const stackMax=Math.max(...dates.map((_,i)=>values.reduce((s,vals)=>s+vals[i],0)),1);
       const max=this.chartMode==='bar'?stackMax:Math.max(...values.flat(),1);
       const n=dates.length;
@@ -2189,6 +2218,13 @@ function dashboard() {
     // ── 趋势图 SVG (line/bar 共用坐标系: 第 j 列中心 x=35+j*70) ──
     get trendColor() {
       return this.dailyMode==='cost'?'#f59e0b':this.dailyMode==='tokens'?'#a78bfa':this.dailyMode==='latency'?'#22d3ee':'#818cf8';
+    },
+    // 图表上下文标签: 粒度 · 时区 (+ 自适应裁剪后的实际区间, 避免让人以为展示的就是整个窗口).
+    get trendContextLabel() {
+      const base = t('stats_context', this.trendGranularityLabel, this.tzLabel);
+      const d = (this.modelTrendData && this.modelTrendData.dates) || [];
+      if (!this.modelTrendTrimmed || d.length < 2) return base;
+      return base + ' · ' + (d[0][1] || '') + ' → ' + (d[d.length - 1][1] || '');
     },
     get trendGranularityLabel() {
       return t(this.trendGranularity==='hour'?'granularity_hour':this.trendGranularity==='month'?'granularity_month':'granularity_day');
@@ -2990,18 +3026,46 @@ function dashboard() {
      },
 
     // Computed
+    // 成功率(数值): 供配色阈值使用; 无数据返回 0 (配色另由 sRateText 判为灰).
     get sRate() {
-      if(!this.stats||this.stats.today_requests===0) return 100;
-      return Math.round(this.stats.today_success/this.stats.today_requests*100);
+      if(!this.stats||!this.stats.today_requests) return 0;
+      return this.stats.today_success/this.stats.today_requests*100;
+    },
+    // 今日无请求 ≠ "100% 成功" —— 那是没有数据, 与全部成功是两回事.
+    get sRateText() {
+      if(!this.stats||!this.stats.today_requests) return '—';
+      return this.fmtPct(this.sRate);
     },
     get avgGenSpeed() { return Number(this.stats&&this.stats.gen_speed||0); },
-    get todayCacheRate() {
-      if(!this.stats) return '0.0';
-      // 命中率口径: 命中 / 总输入 token (与 opencode-visual-cache 一致: 缓存读 / prompt_tokens).
-      // 分母用 prompt_tokens 而非 hit+miss: creation(首次写入) 已从 miss 拆出, hit+miss ≠ prompt.
-      const h=this.stats.today_total_cache_hit_tokens, p=this.stats.today_total_prompt_tokens;
-      if(!p) return '0.0';
-      return (h/p*100).toFixed(1);
+    // ── 概览 hero 的作用域 ──
+    //
+    // 今日有请求就显示今日; **今日为空则整块回落到窗口累计**, 而不是显示一片 0.
+    // 起因: 每天开始(或停用一段时间后)打开面板, 页面最显眼的位置六个数全是 0,
+    // 而卡片里的迷你折线画的是整个窗口的曲线(有峰) —— 数字与图形口径不一致, 看起来自相矛盾.
+    // 现在数字与图形同口径(都跟 stats 的窗口), 且标签明确写出当前是哪个口径.
+    get heroToday() { return Number((this.stats&&this.stats.today_requests)||0) > 0; },
+    get heroScopeLabel() { return this.heroToday ? t('today_label') : t('window_label'); },
+    get heroScopeHint() { return this.heroToday ? t('hero_scope_today_hint') : t('hero_scope_window_hint'); },
+    get heroRequests() { const s=this.stats||{}; return Number((this.heroToday?s.today_requests:s.total_requests)||0); },
+    get heroErrors() { const s=this.stats||{}; return Number((this.heroToday?s.today_errors:s.error_count)||0); },
+    get heroRequestsHint() {
+      return this.heroToday
+        ? t('errors_total', this.heroErrors, (this.stats&&this.stats.total_requests)||0)
+        : t('errors_only', this.heroErrors);
+    },
+    get heroCost() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_cost:s.total_cost)||0); },
+    get heroCostText() { return (this.stats&&this.stats.has_price_config) ? this.fmtMoney(this.heroCost) : '—'; },
+    get heroPrompt() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_prompt_tokens:s.total_prompt_tokens)||0); },
+    get heroCompletion() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_completion_tokens:s.total_completion_tokens)||0); },
+    get heroTokens() { return this.heroPrompt + this.heroCompletion; },
+    get heroTokensHint() { return t('tokens_input_output', this.fmtT(this.heroPrompt), this.fmtT(this.heroCompletion)); },
+    // 命中率口径: 命中 / 总输入 token (与统计页一致). 分母为 0 = 没有数据, 给 '—' 而非 0%.
+    get heroCacheText() {
+      const s=this.stats||{};
+      const h=Number((this.heroToday?s.today_total_cache_hit_tokens:s.total_cache_hit_tokens)||0);
+      const pt=Number((this.heroToday?s.today_total_prompt_tokens:s.total_prompt_tokens)||0);
+      if(!pt) return '—';
+      return this.fmtPct(h/pt*100);
     },
     get maxModelReqs() { if(!this.stats||!this.stats.top_models.length) return 1; return this.stats.top_models[0].requests; },
     get maxDailyReqs() { if(!this.stats||!this.stats.trends.length) return 1; return Math.max(...this.stats.trends.map(t=>t.requests),1); },
@@ -3028,7 +3092,7 @@ function dashboard() {
       if (log && log.cached) return t('badge.cached');
       const hit=Number(log&&log.prompt_cache_hit_tokens||0), pt=Number(log&&log.prompt_tokens||0);
       if (!pt || hit<=0) return '—';
-      return (hit/pt*100).toFixed(1)+'%';
+      return this.fmtPct(hit/pt*100);
     },
     // 单条请求的纯生成速度 (tok/s): 排除排队与 TTFT, 需要首 token 延迟已知的流式请求.
     logGenSpeed(log) {
@@ -3058,7 +3122,8 @@ function dashboard() {
 
     // 独立错误列表: 直接来自 /admin/api/errors (已按时间倒序 + 仅错误), 与请求窗口解耦.
     get recordErrorCount() { return this.logs.filter(l=>Number(l.status)>=400 || !!l.error).length; },
-    get recordSuccessRate() { return this.logs.length ? Math.round((this.logs.length-this.recordErrorCount)/this.logs.length*100) : 0; },
+    get recordSuccessRate() { return this.logs.length ? (this.logs.length-this.recordErrorCount)/this.logs.length*100 : 0; },
+    get recordSuccessRateText() { return this.logs.length ? this.fmtPct(this.recordSuccessRate) : '—'; },
     get recordTokenCount() { return this.logs.reduce((s,l)=>s+(Number(l.prompt_tokens)||0)+(Number(l.completion_tokens)||0),0); },
 
 
@@ -3112,9 +3177,32 @@ function dashboard() {
     providerLogo(p) {
       return window.providerLogo(p);
     },
-    fmtTs(ts) { const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleTimeString(loc,{hour12:false}); },
+    // 记录列表的时间列: 带日期 —— 日志窗口本身跨天(实测 09/13 → 09/16),
+    // 只显示 HH:MM:SS 时, 同一条 22:45:42 无法判断是哪一天.
+    fmtTs(ts) {
+      const d=new Date(ts*1000);
+      const p=n=>String(n).padStart(2,'0');
+      return p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+    },
     fmtDateTime(ts){ const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleString(loc); },
     fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
+    // 百分比格式化 (入参为 0..100 的百分值).
+    //
+    // 两处舍入都会把"事实"改掉, 必须挡住:
+    //   · 非满值不得显示成 100% —— `toFixed(1)` 把 99.95%+ 抬成 "100.0%", `Math.round` 把 99.5%+ 抬成 "100%".
+    //     实测: 231 条缓存命中率显示 100.0% 而真 100% 的一条都没有 (例 603264/603517 = 99.958%);
+    //     成功率显示 100% 的同时旁边写着"错误请求 1".
+    //   · 非零不得显示成 0.0% —— 同理, 舍入不该改变"有没有"这个事实.
+    // 分母为 0 (没有数据) 由调用方给 `—`, 不走这里 —— "没有数据"也不是 0%.
+    fmtPct(pct) {
+      const v = Number(pct);
+      if (!Number.isFinite(v)) return '—';
+      if (v >= 100) return '100%';
+      if (v > 99.9) return '>99.9%';
+      if (v <= 0) return '0%';
+      if (v < 0.1) return '<0.1%';
+      return v.toFixed(1) + '%';
+    },
     fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
     // 省量明细行: "标签 <tokens> ≈ <费用>". 费用为 0 (未配置价格/免费) 时省略.
     auditLine(labelKey, tokens, fee) {
@@ -3198,7 +3286,7 @@ function dashboard() {
       const a = (this.stats && this.stats.audit) || {};
       const base = a.input_tokens || 0;
       if (!base) return '—';
-      return ((a.cache_read_tokens || 0) / base * 100).toFixed(1) + '%';
+      return this.fmtPct((a.cache_read_tokens || 0) / base * 100);
     },
     // 省量审计: 某潜在省量占当前窗口总输入 token 的百分比 (分母缺失时显示占位).
     auditPct(v) {
