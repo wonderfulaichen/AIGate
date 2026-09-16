@@ -1083,48 +1083,48 @@ setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; 
 const I18N = {
   'zh-CN': {
     'app_title': 'AIGate · 控制台',
-    'nav.dashboard': '概览', 'nav.analytics': '分析', 'nav.records': '记录', 'nav.routes': '路由·健康', 'nav.about': '关于', 'nav.settings': '设置', 'nav.providers': '供应商',
+    'nav.dashboard': '概览', 'nav.analytics': '分析', 'nav.records': '记录', 'nav.about': '关于', 'nav.settings': '设置', 'nav.providers': '供应商',
     'whats_new': '更新亮点', 'whats_new_title': '本次更新内容', 'got_it': '知道了', 'whats_new_empty': '暂无更新说明',
     'loading': '加载中...',
     'service_running': '服务运行中',
-    'app_service_title': 'AIGate 代理服务',
+    
     'waiting_first_request': '等待第一次 API 请求...',
-    'conn_info': '连接信息', 'api_endpoint': 'API 端点',
+    
     'setup_hint': '将上方地址填入编程工具的 API 地址，API Key 任意填写。',
-    'view_routes': '查看路由配置', 'health_check': '健康检查',
-    'overview': '概览',
-    'stat.today_requests': '今日请求', 'stat.today_success_rate': '今日成功率', 'stat.today_avg_latency': '今日平均延迟', 'stat.today_input_tokens': '今日输入 Tokens', 'stat.today_output_tokens': '今日输出 Tokens', 'stat.today_cache_hit': '今日缓存命中', 'stat.today_cost': '今日费用', 'stat.total_cost': '累计费用', 'cache_saved': '已省 {0}',
-    'no_cache_returned': '供应商未返回缓存命中',
-    'hit_count': '命中 {0} tok',
-    'model_usage_rank': '模型使用排名',
-    'balance_title': '供应商余额', 'balance_provider': '供应商', 'balance_amount': '余额', 'balance_detail': '查看/编辑',
-    'provider_overview': '供应商总览',
-    'balance_currency': '货币', 'balance_updated': '更新时间', 'balance_error': '查询失败',
+    
+    
+    'stat.today_cost': '今日费用', 
+    
+    
+    
+    'balance_provider': '供应商', 
+    
+    
     'balance_none': '未配置余额查询', 'balance_refresh': '刷新余额',
-    'balance_manual': '手动设置', 'balance_manual_ph': '输入余额 (元)', 'balance_manual_save': '保存', 'balance_clear': '清除手动',
-    'balance_src_api': 'API 查询', 'balance_src_manual': '手动', 'balance_edit': '编辑',
+    
+    
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
     'tbl.strip_reasoning': '剥离推理链',
     'strip_toolcall_reasoning_hint': '逐模型设置：剥离「带工具调用的历史推理链」，省量可观（见分析页省量审计，实测占输入 38.5%）。但约束因上游而异 —— Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。中转供应商同一名下混有多种协议，因此请逐个模型确认后再勾选，并观察错误率。',
-    'enabled': '启用', 'disabled': '停用',
-    'unit_times': '次', 'unit_errors': '错', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_entries': '条', 'unit_models': '模型', 'unit_providers': '供应商', 'unit_cny': '元', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'no_cost_yet': '已配置价格，但暂无产生费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
+    
+    'unit_times': '次', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_models': '模型', 'unit_providers': '供应商', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
     'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种',
     'price_copy': '复制价格', 'price_paste': '粘贴价格', 'price_copied': '已复制', 'price_applied': '已应用到 {0} 个模型',
-    'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_label': '汇率', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
+    'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按上方汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
     'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
     'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。',
     'wd.1': '一', 'wd.2': '二', 'wd.3': '三', 'wd.4': '四', 'wd.5': '五', 'wd.6': '六', 'wd.7': '日',
-    'expand_all': '展开全部', 'collapse': '收起',
+    
     'other_n': '其他 {0} 个',
-    'model_usage_dist': '模型用量分布', 'no_data': '暂无数据',
-    'model_usage_detail': '模型用量明细',
+    'no_data': '暂无数据',
+    
     'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）', 'hero_requests': '请求', 'hero_cost': '费用', 'hero_tokens': 'Token 总量', 'window_label': '窗口累计', 'errors_only': '错误 {0}', 'hero_scope_today_hint': '显示今日数据', 'hero_scope_window_hint': '今日暂无请求，显示整个统计窗口的累计',
     'audit_applied': '已生效省量',
     'audit_applied_strip': '· 剥离推理链（普通轮次）', 'audit_applied_strip_tc': '· 剥离推理链（工具轮次）', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
     'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"剥离推理链（工具轮次）"）',
-    'audit_kv_saved_fee': '缓存净省', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中',
+    'audit_kv_saved_fee': '缓存净省', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中', 'audit_kv_creation': '缓存写入',
     'audit_potential': '潜在可省（尚未启用）',
     'audit_exempt_reasoning': '豁免推理链', 'audit_exempt_reasoning_hint': '带工具调用的历史推理链当前未剥离',
     'audit_dup_blocks': '重复内容块', 'audit_dup_count': '{0} 块', 'audit_dup_hint': '同一内容重复出现，保留首次即可（需改写，行为可能偏移）',
@@ -1134,70 +1134,70 @@ const I18N = {
     'audit_out_long_hint': '单请求输出 >8192 token；若占比高说明输出高度集中',
     'audit_out_loop': '死循环截断', 'audit_out_loop_hint': '模型重复生成至被网关掐断，这部分输出是纯浪费',
     'audit_footer': '窗口 = 内存日志缓冲区（启动时含磁盘历史），故请求数与输入量是「请求数 × 单次上下文」的累加，绝大部分为重复上下文（见 KV 命中率）。「潜在可省」只统计做过审计的请求，采样不足时会偏低。',
-    'audit_pct_of_input': '占总输入 {0}%',
-    'tbl.model': '模型', 'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.cache_saved': 'KV缓存省', 'tbl.unit_price': '单价(元/1M)',
-    'req_token_trend': '请求 / Token 趋势',
-    'btn.requests': '请求数', 'btn.latency': '延迟', 'btn.tokens': 'Tokens', 'btn.cost': '费用', 'btn.hour': '时', 'btn.day': '日', 'btn.month': '月',
-    'btn.line': '线', 'btn.bar': '柱',
+    
+    'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.unit_price': '单价(元/1M)',
+    
+    
+    
     'no_trend': '暂无趋势数据',
-    'heatmap_title': '活跃热力图', 'heatmap_desc': '最近 24 小时的请求分布（小时粒度）', 'activity_daily': '每日', 'activity_weekly': '每周', 'activity_cumulative': '窗口累计', 'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'heatmap_few': '较少', 'heatmap_many': '较多', 'heatmap_legend': '当前 24 小时相对请求量', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': '空桶表示该时段没有请求', 'chart_metric_label_requests': '请求数', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': '平均延迟', 'chart_metric_label_cost': '费用', 'chart_no_price': '未配置价格', 'chart_bucket_detail': '{0} · 请求 {1} · 错误 {2} · 输入 {3} · 输出 {4} · 费用 {5}', 'trend_detail_title': '时间桶详情', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
-    'heatmap_mon': '一', 'heatmap_tue': '二', 'heatmap_wed': '三', 'heatmap_thu': '四', 'heatmap_fri': '五', 'heatmap_sat': '六', 'heatmap_sun': '日',
-    'provider_stats': '供应商统计',
-    'records_title': '请求记录', 'records_count': '{0} 条',
+    'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_no_price': '未配置价格', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
+    
+    
+    'records_title': '请求记录', 
     'export_json': '导出 JSON', 'clear': '清除',
     'opt_all': '全部', 'time_all': '全部时间', 'time_1h': '近1小时', 'time_24h': '近24小时', 'time_7d': '近7天',
-    'token_io': '输入/输出 Tokens', 'filter_reset': '清空筛选',
+    'filter_reset': '清空筛选',
     'search_placeholder': '搜索模型/供应商/错误...',
-    'opt.all_providers': '全部供应商', 'opt.all_status': '全部状态', 'opt.success': '成功', 'opt.error': '错误',
+    'opt.all_providers': '全部供应商', 'opt.success': '成功', 'opt.error': '错误',
     'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
-  'errors_title': '错误 {0} 条',
-    'badge.cached': '缓存', 'badge.cached_title': '命中本地缓存, 未请求上游', 'badge.kvcache_title': 'KV Cache 命中率: 命中/未命中 token 数',
-    'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.status': '状态码', 'detail.latency': '延迟', 'detail.body': '请求体', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情', 'detail.reasoning': '思考强度', 'detail.cache_hit_rate': '缓存命中率', 'detail.opt_saved': '优化省量',
-    'kv_hit': '命中 {0}', 'kv_miss': '未命中 {0}',
+  
+    'badge.cached': '缓存', 
+    'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情', 'detail.reasoning': '思考强度', 'detail.cache_hit_rate': '缓存命中率', 'detail.opt_saved': '优化省量',
+    
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
-    'routes_config': '路由配置', 'routes_count': '({0} 模型, {1} 供应商)',
-    'tbl.model_id': '模型 ID', 'tbl.provider': '供应商', 'tbl.endpoint': '端点', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'fmt.responses': 'Responses', 'fmt.responses_short': 'R', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /messages；填了则 Anthropic 协议模型走此独立地址。', 'responses_endpoint_label': 'Responses 端点', 'responses_endpoint_ph': '如 https://api.openai.com/v1/responses', 'responses_endpoint_hint': '留空则自动把 endpoint 的 /chat/completions 改写为 /responses；填了则 Responses 协议模型走此独立地址。',
-    'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.creds': '凭据', 'section.monitor': '监控', 'section.provider': '供应商',
+    
+    'tbl.model_id': '模型 ID', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses 端点', 'responses_endpoint_ph': '如 https://api.openai.com/v1/responses', 
+    'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.monitor': '监控', 
     'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率恒为 0，不参与缓存）',
-    'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_desc': '条目写入后保留的秒数，过期自动失效；仅影响后续写入', 'cache_ttl_unit': '秒',
-    'cache_max_entries_label': '缓存条目上限', 'cache_max_entries_desc': '内存最多保留的缓存条目数，超出后淘汰最早的一半', 'cache_max_entries_unit': '条',
-    'cache_config_hint': '配置为运行时生效；开启状态与缓存条目均随进程落盘，重启后自动恢复。命中统计与省量见「概览」页。',
-    'cache.entries': '缓存条目', 'cache.hits': '命中', 'cache.misses': '未命中', 'cache.ttl': 'TTL', 'cache.saved_label': '已省 Tokens（本轮累计）', 'cache.saved_enabled_label': '开启后', 'cache.saved_hint': '命中缓存即跳过上游，省下的 prompt+completion token 累计（重启清零）',
-    'cache.hit_rate_session': '运行命中率', 'cache.hit_rate_session_hint': '进程启动以来累计（重启清零）',
-    'cache.hit_rate_enabled': '开启后命中率', 'cache.hit_rate_enabled_hint': '本次启用累计（重新开启清零）',
-    'health_check_title': '健康检查', 'probe': '探测', 'click_probe_hint': '点击"探测"检查供应商连通性', 'reset_circuit': '重置熔断',
-    'health_legend_title': '状态图例', 'legend_ok': '健康：供应商连通正常', 'legend_fault': '异常：探测失败或超时',
-    'circuit_closed': '闭合', 'legend_closed': '熔断闭合：正常放行请求', 'circuit_half_open': '半开', 'legend_half_open': '熔断半开：试探性放行少量请求',
-    'circuit_open': '断开', 'legend_open': '熔断断开：已拦截该供应商请求', 'legend_latency': '延迟：本次探测往返耗时（毫秒）',
-    'legend_hint': '连续失败会触发熔断保护，断开后不再向上游发起请求以避免雪崩；点击"重置熔断"可手动恢复。',
-    'fetch_models': '拉取模型', 'fetching': '拉取中...',
-    'developer': '开发者：wonderful艾晨',
+    'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_unit': '秒',
+    'cache_max_entries_label': '缓存条目上限', 'cache_max_entries_unit': '条',
+    
+    'cache.entries': '缓存条目', 'cache.saved_label': '已省 Tokens（本轮累计）', 'cache.saved_enabled_label': '开启后', 
+    'cache.hit_rate_session': '运行命中率', 
+    
+    'reset_circuit': '重置熔断',
+    
+    'circuit_closed': '闭合', 'circuit_half_open': '半开', 
+    'circuit_open': '断开', 
+    
+    'fetch_models': '拉取模型', 
+    
     'about_page_subtitle': '本地 AI 网关与运维控制台', 'about_intro_title': '统一接入，集中运维',
     'about_desc1': '本地 OpenAI 兼容反向代理，支持多供应商路由、模型名映射、思考强度注入。',
     'about_desc2': '功能：多供应商路由 · 模型名映射 · 思考强度注入 · 实时监控面板。',
     'about_capabilities_title': '核心能力', 'about_capability_routing': '多供应商路由', 'about_capability_routing_desc': '按模型和供应商配置请求转发。', 'about_capability_mapping': '模型名映射', 'about_capability_mapping_desc': '用统一的中转 ID 管理上游模型。', 'about_capability_monitoring': '实时监控', 'about_capability_monitoring_desc': '查看请求、延迟、错误和费用趋势。', 'about_capability_reasoning': '思考强度注入', 'about_capability_reasoning_desc': '为支持的模型统一管理推理档位。',
     'changelog_title': '更新日志',
-    'api_endpoints_title': 'API 端点', 'tech_stack': '技术栈', 'help_title': '使用帮助',
-    'help.config': '编程工具配置：', 'help.config_desc': '将上方「中转 Base URL」填入编程工具（Trae / Cursor / CodeBuddy 等）的 API 地址，API Key 任意填写。',
-    'help.feedback': '问题反馈：', 'help.feedback_desc': '检查日志面板查看错误详情，或使用健康检查探测供应商连通性。',
+    'api_endpoints_title': 'API 端点', 'tech_stack': '技术栈', 
+    
+    
     'settings_title': '设置', 'settings_subtitle': '代理服务与供应商配置',
     'ui_language': '界面语言', 'lang_zh': '简体中文', 'lang_en': 'English',
-    'proxy_service': '代理服务', 'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
+    'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
     'proxy_policy': '上游代理策略', 'proxy_mode_system': '继承系统代理', 'proxy_mode_no_proxy': '已禁用代理', 'proxy_mode_custom': '自定义代理', 'proxy_hint': '由环境变量 AIGATE_NO_PROXY / AIGATE_PROXY 控制，修改后需重启生效',
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制', 'copy_model_id': '复制模型中转 ID',
-    'forward_opt': '转发优化', 'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 'strip_reasoning_hint': '默认开启，可即时开关；重启后回到环境变量 STRIP_HISTORY_REASONING 默认值。精简多轮历史可省输入 token 并提升 KV 缓存命中',
-    'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 'history_trim_hint': '默认关闭（0）。开启后以质量换成本：长会话每轮 input token 显著降低，但可能丢失早期上下文依赖。推荐 10~30。重启后回到环境变量 MAX_HISTORY_TURNS 默认值',
-    'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 'auto_continue_hint': '默认 2 次，0 = 关闭。工具调用流不会续写（半截 JSON 无法安全拼接）。每次续写会重发完整上下文，token 消耗相应增加。重启后回到环境变量 AIGATE_AUTO_CONTINUE 默认值',
+    'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 
+    'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 
+    'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
     'unit_secs': '秒', 'conn_params_hint': '空闲超时：上游超过该时长未吐出数据则断开（30~600 秒）；重试仅对连接/超时错误与 5xx 生效。修改即时生效，重启后回到环境变量默认值',
-    'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 'meta_in': '输入', 'meta_title': '模型信息',
-    'meta_in_vis': '文本 + 图像', 'meta_text_only': '仅文本', 'meta_reasoning': '推理', 'meta_tools': '工具调用',
-    'forward_saved_strip': '已剥离推理链', 'forward_saved_trim': '已裁剪历史', 'forward_saved_resp_cache': '响应缓存命中', 'provider_opt_saved': '今日优化省量',
-    'session_info': '运行统计', 'session_hint': '进程启动以来累计（重启清零）',
-    'session_requests': '运行请求', 'session_input_tokens': '运行输入', 'session_output_tokens': '运行输出',
-    'session_cache_hit': 'KV 缓存命中率', 'session_saved_tokens': '总优化省量', 'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'session_cache_opt': '响应缓存', 'session_opt_off': '未开启', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
-    'apikey_mgmt': 'API Key 管理', 'not_configured': '未配置', 'edit': '编辑', 'cancel': '取消',
+    'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 
+    'meta_reasoning': '推理', 'meta_tools': '工具调用',
+    
+    
+    
+    'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
+    'apikey_mgmt': 'API Key 管理', 'edit': '编辑', 'cancel': '取消',
     'tooltip_config': '任务栏 Tooltip', 'tooltip_enabled': '启用 Tooltip', 'tooltip_metrics': '显示指标',
     'tooltip_requests_per_second': '请求速度 (req/s)', 'tooltip_avg_latency_ms': '平均延迟 (ms)',
     'tooltip_cache_hit_rate': '缓存命中率 (%)', 'tooltip_gen_speed': '生成速度 (tok/s)',
@@ -1205,7 +1205,7 @@ const I18N = {
     'tooltip_save': '保存配置',
     'key_placeholder': '输入新 API Key', 'save': '保存', 'key_save_hint': '保存后立即生效，无需重启服务。',
     'provider_config': '供应商配置', 'add': '新增', 'refresh': '刷新', 'save_config': '保存配置',
-    'upstream_placeholder': '留空=原样',
+    
     'eff.none': '- 无 -', 'eff.low': '低', 'eff.medium': '中', 'eff.high': '高', 'eff.max': '最高',
     'delete': '删除', 'add_model': '添加模型', 'select_all': '全选', 'deselect_all': '取消', 'delete_selected': '删除选中',
     'add_provider_title': '新增供应商',
@@ -1213,17 +1213,17 @@ const I18N = {
     'addprov.ph_name': '如 my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
     'data_mgmt': '数据管理', 'clear_all_records': '清空所有记录',
     'add_provider_hint': '已添加供应商，点击"保存配置"生效',
-    'badge.free': '免费', 'tbl.vendor': '品牌', 'free_model': '免费模型',
-    'plaza_search_ph': '搜索供应商、端点或模型名…', 'plaza_filter': '筛选', 'provider_name': '供应商名称', 'plaza_all': '全部',
-    'plaza_protocol': '协议', 'plaza_effort': '思考强度', 'plaza_free_only': '仅看免费模型', 'plaza_no_key': '仅看未配置密钥',
+    'badge.free': '免费', 'tbl.vendor': '品牌', 
+    'plaza_search_ph': '搜索供应商、端点或模型名…', 'provider_name': '供应商名称', 'plaza_all': '全部',
+    
     'plaza_clear_filters': '清除筛选', 'plaza_view_card': '卡片', 'plaza_view_table': '表格', 'plaza_showing': '显示',
-    'plaza_details': '详情', 'plaza_no_match': '没有符合筛选条件的供应商', 'plaza_summary': '{0} 个供应商 · {1} 个模型',
-    'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'details': '详情', 'health_ok': '正常', 'health_err': '异常', 'health_na': '未检测', 'test_connection': '测试连接', 'testing': '测试中...', 'saving': '保存中...', 'search_models': '搜索模型 ID 或上游模型名...', 'unsaved_confirm': '有未保存的供应商配置，切换将丢失改动，是否继续？', 'meta_loading': '加载模型信息...', 'meta_unavailable': '暂无公开模型信息', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
+    'plaza_no_match': '没有符合筛选条件的供应商', 'plaza_summary': '{0} 个供应商 · {1} 个模型',
+    'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'health_ok': '正常', 'health_err': '异常', 'health_na': '未检测', 'test_connection': '测试连接', 'testing': '测试中...', 'saving': '保存中...', 'search_models': '搜索模型 ID 或上游模型名...', 'unsaved_confirm': '有未保存的供应商配置，切换将丢失改动，是否继续？', 'meta_loading': '加载模型信息...', 'meta_unavailable': '暂无公开模型信息', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
     'nav_group.monitor': '监控', 'nav_group.config': '配置', 'nav_group.system': '系统', 'unsaved_changes': '未保存', 'unit_ms': '毫秒',
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日',
-    'today_requests': '今日请求', 'errors_total': '错误 {0} · 总计 {1}', 'today_cost': '今日费用',
-    'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 'today_total_tokens': '今日总 Tokens',
+    'errors_total': '错误 {0} · 总计 {1}', 
+    'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 
     'tokens_input_output': '{0} 输入 · {1} 输出', 'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
     'kv_cache_hit': 'KV Cache 命中', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
     'view_analytics': '查看分析', 'success_rate': '成功率', 'avg_latency': '平均延迟', 'generation_speed': '生成速度',
@@ -1235,25 +1235,25 @@ const I18N = {
     'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
     'current_log_window': '当前日志窗口', 'total_requests': '总请求数', 'total_cost': '总费用', 'total_tokens': '总 Tokens',
     'average_rpm': '平均 RPM（活跃期间）', 'average_tpm': '平均 TPM', 'tokens_per_min': 'Tokens / 分钟', 'time_range': '时间范围',
-    'range_1d': '1 天', 'range_7d': '7 天', 'range_14d': '14 天', 'range_29d': '29 天', 'range_365d': '12 个月', 'trend_granularity': '趋势粒度', 'span_hour': '小时 (24)', 'span_day': '天 (30)', 'span_month': '月 (12)',
+    'span_hour': '小时 (24)', 'span_day': '天 (30)', 'span_month': '月 (12)',
     'granularity_hour': '小时', 'granularity_day': '天', 'granularity_month': '月', 'stats_range': '统计范围：{0}',
-    'request_count': '{0} 次请求', 'consumption_trend': '消费趋势',
-    'consumption_desc': '请求、Tokens、延迟与费用', 'line_chart': '线', 'bar_chart': '柱',
+    
+    'line_chart': '线', 'bar_chart': '柱',
     'call_distribution': '调用分布', 'aggregate_provider_model': '按供应商 / 上游模型聚合', 'call_ranking': '调用排名',
     'top_model_routes': '请求量最多的模型路由', 'model_details': '模型明细',
     'model_details_desc': '按供应商 / 上游模型聚合，可搜索并筛选供应商', 'analytics_search_models': '搜索模型、上游模型或别名...',
-    'provider_all': '供应商：全部', 'instant_filter': '即时筛选 · {0} 条', 'no_matching_models': '没有匹配的模型',
+    'provider_all': '供应商：全部', 'instant_filter': '即时筛选 · {0} 条', 
     'provider_performance': '供应商性能', 'current_window_aggregate': '当前运行日志窗口的聚合结果', 'kv_cache_saved': 'KV Cache Saved',
-    'optimization_saved_tokens': '优化省 Tokens', 'chart_metric_requests': '请求', 'chart_metric_tokens': 'Tokens', 'chart_metric_latency': '延迟', 'chart_metric_cost': '费用',
-    'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_status': '密钥状态', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '当前窗口请求',
-    'error_requests': '错误请求', 'errors_summary': '错误摘要', 'entry_count': '{0} 条', 'expand_action': '展开',
-    'collapse_action': '收起', 'call_records': '调用记录', 'request_details': '请求详情', 'log_details_hint': '点击查看详情',
+    'optimization_saved_tokens': '优化省 Tokens', 
+    'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '当前窗口请求',
+    'error_requests': '错误请求', 
+    'call_records': '调用记录', 'request_details': '请求详情', 
     'detail_body_size': '请求体大小', 'detail_prompt_completion': '输入 / 输出 Token', 'detail_latency_ttft': '延迟 / 首字延迟',
     'detail_in_out': '输入', 'detail_out': '输出', 'detail_hit_n': '命中 {0}', 'detail_miss_n': '未命中 {0}',
     'detail_cost': '本次费用', 'detail_cost_cached': '缓存命中（未计费）', 'detail_cache_saved': 'KV 缓存净省',
     'saved_strip': '剥离推理链（普通轮次）', 'saved_strip_tc': '剥离推理链（工具轮次）', 'saved_trim': '历史裁剪', 'saved_resp': '响应缓存',
     'provider_status': '状态', 'latency': '延迟', 'circuit': '熔断', 'key_label': 'Key', 'actions': '操作',
-    'configured': '已配置', 'unconfigured': '未配置', 'endpoint_protocol_desc': 'API 基地址与协议专用端点',
+    'endpoint_protocol_desc': 'API 基地址与协议专用端点',
     'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：', 'price': '价格：', 'paid': '付费', 'status': '状态：', 'status_active': '在用', 'status_removed': '已下架', 'origin': '来源：', 'origin_manual': '手动', 'origin_fetched': '获取',
     'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
     'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
@@ -1265,46 +1265,48 @@ const I18N = {
   },
   'en-US': {
     'app_title': 'AIGate · Console',
-    'nav.dashboard': 'Overview', 'nav.analytics': 'Analytics', 'nav.records': 'Records', 'nav.routes': 'Routes', 'nav.about': 'About', 'nav.settings': 'Settings', 'nav.providers': 'Providers',
+    'nav.dashboard': 'Overview', 'nav.analytics': 'Analytics', 'nav.records': 'Records', 'nav.about': 'About', 'nav.settings': 'Settings', 'nav.providers': 'Providers',
     'whats_new': "What's New", 'whats_new_title': "Here's what's new", 'got_it': 'Got it', 'whats_new_empty': 'No release notes',
     'loading': 'Loading...',
     'service_running': 'Service running',
-    'app_service_title': 'AIGate Proxy Service',
+    
     'waiting_first_request': 'Waiting for the first API request...',
-    'conn_info': 'Connection Info', 'api_endpoint': 'API Endpoint',
+    
     'setup_hint': "Use the address above as your coding tool's API base URL; any API Key works.",
-    'view_routes': 'View routes', 'health_check': 'Health check',
-    'overview': 'Overview',
-    'stat.today_requests': 'Today Requests', 'stat.today_success_rate': 'Today Success Rate', 'stat.today_avg_latency': 'Today Avg Latency', 'stat.today_input_tokens': 'Today Input Tokens', 'stat.today_output_tokens': 'Today Output Tokens', 'stat.today_cache_hit': 'Today Cache Hit', 'stat.today_cost': 'Today Cost', 'stat.total_cost': 'Total Cost', 'cache_saved': 'Saved {0}',
-    'no_cache_returned': 'Provider did not report cache hits',
-    'hit_count': 'Hit {0} tok',
-    'model_usage_rank': 'Top Models',
-    'balance_title': 'Provider Balance', 'balance_provider': 'Provider', 'balance_amount': 'Balance', 'balance_detail': 'View / Edit',
-    'provider_overview': 'Provider Overview',
-    'balance_currency': 'Currency', 'balance_updated': 'Updated', 'balance_error': 'Query failed',
+    
+    
+    'stat.today_cost': 'Today Cost', 
+    
+    
+    
+    'balance_provider': 'Provider', 
+    
+    
     'balance_none': 'Balance query not configured', 'balance_refresh': 'Refresh Balance',
-    'balance_manual': 'Set Manually', 'balance_manual_ph': 'Enter balance (CNY)', 'balance_manual_save': 'Save', 'balance_clear': 'Clear Manual',
-    'balance_src_api': 'API', 'balance_src_manual': 'Manual', 'balance_edit': 'Edit',
+    
+    
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
-    'enabled': 'Enabled', 'disabled': 'Disabled',
-    'unit_times': 'reqs', 'unit_errors': 'err', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_entries': 'entries', 'unit_models': 'models', 'unit_providers': 'providers', 'unit_cny': 'CNY', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'no_cost_yet': 'Price configured, but no cost incurred yet', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
+    'tbl.strip_reasoning': 'Strip reasoning',
+    'strip_toolcall_reasoning_hint': 'Per-model: strips the historical reasoning chain attached to tool calls, saving a lot of input (see the savings audit on the Analytics page; measured at 38.5% of input). The constraints differ per upstream — Anthropic requires thinking blocks and tool_use to coexist, and DeepSeek reasoner likewise requires both, so stripping them returns 400. A single relay provider may mix several protocols under one name, so confirm model by model before ticking this box and watch the error rate.',
+    
+    'unit_times': 'reqs', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_models': 'models', 'unit_providers': 'providers', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
     'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
     'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
     'price_copy': 'Copy price', 'price_paste': 'Paste price', 'price_copied': 'Copied', 'price_applied': 'Applied to {0} model(s)',
-    'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_label': 'Rate', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
+    'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the rate above; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
     'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
     'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.',
     'wd.1': 'Mon', 'wd.2': 'Tue', 'wd.3': 'Wed', 'wd.4': 'Thu', 'wd.5': 'Fri', 'wd.6': 'Sat', 'wd.7': 'Sun',
-    'expand_all': 'Expand all', 'collapse': 'Collapse',
+    
     'other_n': '{0} others',
-    'model_usage_dist': 'Model Distribution', 'no_data': 'No data',
-    'model_usage_detail': 'Model Details',
+    'no_data': 'No data',
+    
     'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)', 'hero_requests': 'Requests', 'hero_cost': 'Cost', 'hero_tokens': 'Total tokens', 'window_label': 'Window total', 'errors_only': 'Errors {0}', 'hero_scope_today_hint': 'Showing today', 'hero_scope_window_hint': 'No requests today — showing the whole statistics window',
     'audit_applied': 'Applied savings',
     'audit_applied_strip': '· strip reasoning (plain turns)', 'audit_applied_strip_tc': '· strip reasoning (tool turns)', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
     'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "strip reasoning (tool turns)" above)',
-    'audit_kv_saved_fee': 'net saved', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit',
+    'audit_kv_saved_fee': 'net saved', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit', 'audit_kv_creation': 'cache write',
     'audit_potential': 'Potential (not yet enabled)',
     'audit_exempt_reasoning': 'Exempt reasoning', 'audit_exempt_reasoning_hint': 'history reasoning on tool-calling turns is not stripped today',
     'audit_dup_blocks': 'Duplicate blocks', 'audit_dup_count': '{0} blocks', 'audit_dup_hint': 'identical content repeated; keeping the first suffices (requires rewriting, behaviour may shift)',
@@ -1314,70 +1316,70 @@ const I18N = {
     'audit_out_long_hint': 'requests emitting >8192 tokens; a high share means output is concentrated',
     'audit_out_loop': 'Loop truncations', 'audit_out_loop_hint': 'model repeated until cut off by the gateway — pure waste',
     'audit_footer': 'The window is the in-memory log buffer (loaded from disk at startup), so request counts and input tokens accumulate context across turns — most of it repeated context (see KV hit rate). Potential savings only cover audited requests and are understated until enough samples accumulate.',
-    'audit_pct_of_input': '{0}% of total input',
-    'tbl.model': 'Model', 'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.cache_saved': 'KV Cache', 'tbl.unit_price': 'Unit (CNY/1M)',
-    'req_token_trend': 'Requests / Tokens Trend',
-    'btn.requests': 'Requests', 'btn.latency': 'Latency', 'btn.tokens': 'Tokens', 'btn.cost': 'Cost', 'btn.hour': 'Hour', 'btn.day': 'Day', 'btn.month': 'Month',
-    'btn.line': 'Line', 'btn.bar': 'Bar',
+    
+    'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.unit_price': 'Unit (CNY/1M)',
+    
+    
+    
     'no_trend': 'No trend data',
-    'heatmap_title': 'Activity Heatmap', 'heatmap_few': 'Less', 'heatmap_many': 'More', 'activity_daily': 'Daily', 'activity_weekly': 'Weekly', 'activity_cumulative': 'Cumulative', 'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'heatmap_desc': 'Request distribution over the last 24 hours (hourly)', 'heatmap_legend': 'Relative requests in the current 24 hours', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_empty_note': 'Empty buckets mean no requests in that period', 'chart_metric_label_requests': 'Requests', 'chart_metric_label_tokens': 'Tokens', 'chart_metric_label_latency': 'Average latency', 'chart_metric_label_cost': 'Cost', 'chart_no_price': 'Pricing not configured', 'chart_bucket_detail': '{0} · Requests {1} · Errors {2} · Input {3} · Output {4} · Cost {5}', 'trend_detail_title': 'Bucket details', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
-    'heatmap_mon': 'Mon', 'heatmap_tue': 'Tue', 'heatmap_wed': 'Wed', 'heatmap_thu': 'Thu', 'heatmap_fri': 'Fri', 'heatmap_sat': 'Sat', 'heatmap_sun': 'Sun',
-    'provider_stats': 'Provider Stats',
-    'records_title': 'Request Logs', 'records_count': '{0} entries',
+    'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_no_price': 'Pricing not configured', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
+    
+    
+    'records_title': 'Request Logs', 
     'export_json': 'Export JSON', 'clear': 'Clear',
     'opt_all': 'All', 'time_all': 'All time', 'time_1h': 'Last 1h', 'time_24h': 'Last 24h', 'time_7d': 'Last 7d',
-    'token_io': 'Tokens in/out', 'filter_reset': 'Reset filters',
+    'filter_reset': 'Reset filters',
     'search_placeholder': 'Search model/provider/error...',
-    'opt.all_providers': 'All providers', 'opt.all_status': 'All status', 'opt.success': 'Success', 'opt.error': 'Error',
+    'opt.all_providers': 'All providers', 'opt.success': 'Success', 'opt.error': 'Error',
     'no_match': 'No matches', 'no_logs': 'No request logs',
-  'errors_title': 'Errors ({0})',
-    'badge.cached': 'Cached', 'badge.cached_title': 'Served from local cache, no upstream call', 'badge.kvcache_title': 'KV Cache hit rate: hit/miss token counts',
-    'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.status': 'Status', 'detail.latency': 'Latency', 'detail.body': 'Body', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details', 'detail.reasoning': 'Reasoning', 'detail.cache_hit_rate': 'Cache Hit Rate', 'detail.opt_saved': 'Tokens Saved',
-    'kv_hit': 'Hit {0}', 'kv_miss': 'Miss {0}',
+  
+    'badge.cached': 'Cached', 
+    'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details', 'detail.reasoning': 'Reasoning', 'detail.cache_hit_rate': 'Cache Hit Rate', 'detail.opt_saved': 'Tokens Saved',
+    
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
-    'routes_config': 'Route Config', 'routes_count': '({0} models, {1} providers)',
-    'tbl.model_id': 'Model ID', 'tbl.provider': 'Provider', 'tbl.endpoint': 'Endpoint', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.anthropic_short': 'A', 'fmt.responses': 'Responses', 'fmt.responses_short': 'R', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'anthropic_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /messages; if set, Anthropic models use this independent URL.', 'responses_endpoint_label': 'Responses Endpoint', 'responses_endpoint_ph': 'e.g. https://api.openai.com/v1/responses', 'responses_endpoint_hint': 'Blank = auto rewrite endpoint /chat/completions to /responses; if set, Responses models use this independent URL.',
-    'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.creds': 'Credentials', 'section.monitor': 'Monitoring', 'section.provider': 'Providers',
+    
+    'tbl.model_id': 'Model ID', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses Endpoint', 'responses_endpoint_ph': 'e.g. https://api.openai.com/v1/responses', 
+    'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.monitor': 'Monitoring', 
     'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical non-stream request bodies are served from cache to save tokens (streaming IDE traffic is excluded)',
-    'cache_ttl_label': 'Cache TTL', 'cache_ttl_desc': 'Seconds a cached entry lives before expiry; affects new writes only', 'cache_ttl_unit': 's',
-    'cache_max_entries_label': 'Max entries', 'cache_max_entries_desc': 'Max cached entries kept in memory; oldest half evicted when exceeded', 'cache_max_entries_unit': 'entries',
-    'cache_config_hint': 'Settings apply at runtime. Enabled state and cache entries persist on disk and auto-restore after restart. Hit stats & savings are on the Overview page.',
-    'cache.entries': 'Entries', 'cache.hits': 'Hits', 'cache.misses': 'Misses', 'cache.ttl': 'TTL', 'cache.saved_label': 'Tokens saved (since launch)', 'cache.saved_enabled_label': 'Since enabled', 'cache.saved_hint': 'Tokens skipped from upstream on each cache hit (resets on restart)',
-    'cache.hit_rate_session': 'Runtime hit rate', 'cache.hit_rate_session_hint': 'Process lifetime (resets on restart)',
-    'cache.hit_rate_enabled': 'Since enabled', 'cache.hit_rate_enabled_hint': 'Since last enable (resets on re-enable)',
-    'health_check_title': 'Health Check', 'probe': 'Probe', 'click_probe_hint': 'Click "Probe" to check provider connectivity', 'reset_circuit': 'Reset breaker',
-    'health_legend_title': 'Status Legend', 'legend_ok': 'OK: provider is reachable', 'legend_fault': 'Fault: probe failed or timed out',
-    'circuit_closed': 'Closed', 'legend_closed': 'Circuit closed: requests pass normally', 'circuit_half_open': 'Half-open', 'legend_half_open': 'Circuit half-open: probing a few requests',
-    'circuit_open': 'Open', 'legend_open': 'Circuit open: requests to this provider are blocked', 'legend_latency': 'Latency: round-trip time of this probe (ms)',
-    'legend_hint': 'Consecutive failures trip the circuit breaker, which stops sending requests upstream to avoid cascading failures. Click "Reset breaker" to recover manually.',
-    'fetch_models': 'Fetch models', 'fetching': 'Fetching...',
-    'developer': 'Developer: wonderful艾晨',
+    'cache_ttl_label': 'Cache TTL', 'cache_ttl_unit': 's',
+    'cache_max_entries_label': 'Max entries', 'cache_max_entries_unit': 'entries',
+    
+    'cache.entries': 'Entries', 'cache.saved_label': 'Tokens saved (since launch)', 'cache.saved_enabled_label': 'Since enabled', 
+    'cache.hit_rate_session': 'Runtime hit rate', 
+    
+    'reset_circuit': 'Reset breaker',
+    
+    'circuit_closed': 'Closed', 'circuit_half_open': 'Half-open', 
+    'circuit_open': 'Open', 
+    
+    'fetch_models': 'Fetch models', 
+    
     'about_page_subtitle': 'Local AI gateway and operations console', 'about_intro_title': 'One gateway, centralized operations',
     'about_desc1': 'A local OpenAI-compatible reverse proxy with multi-provider routing, model mapping, and reasoning injection.',
     'about_desc2': 'Features: multi-provider routing · model mapping · reasoning injection · real-time dashboard.',
     'about_capabilities_title': 'Core capabilities', 'about_capability_routing': 'Multi-provider routing', 'about_capability_routing_desc': 'Forward requests by model and provider configuration.', 'about_capability_mapping': 'Model mapping', 'about_capability_mapping_desc': 'Manage upstream models through consistent proxy IDs.', 'about_capability_monitoring': 'Real-time monitoring', 'about_capability_monitoring_desc': 'Track requests, latency, errors, and cost trends.', 'about_capability_reasoning': 'Reasoning injection', 'about_capability_reasoning_desc': 'Manage reasoning levels consistently for supported models.',
     'changelog_title': 'Changelog',
-    'api_endpoints_title': 'API Endpoints', 'tech_stack': 'Tech Stack', 'help_title': 'Help',
-    'help.config': 'Coding tool setup:', 'help.config_desc': 'Paste the "Proxy Base URL" above into your coding tool (Trae / Cursor / CodeBuddy, etc.) as the API base URL; any API Key works.',
-    'help.feedback': 'Feedback:', 'help.feedback_desc': 'Check the logs panel for error details, or use health check to probe providers.',
+    'api_endpoints_title': 'API Endpoints', 'tech_stack': 'Tech Stack', 
+    
+    
     'settings_title': 'Settings', 'settings_subtitle': 'Proxy service & provider config',
     'ui_language': 'Interface Language', 'lang_zh': '简体中文', 'lang_en': 'English',
-    'proxy_service': 'Proxy Service', 'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
+    'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
     'proxy_policy': 'Upstream Proxy Policy', 'proxy_mode_system': 'System Proxy', 'proxy_mode_no_proxy': 'Disabled', 'proxy_mode_custom': 'Custom', 'proxy_hint': 'Controlled by env AIGATE_NO_PROXY / AIGATE_PROXY; restart required to apply',
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied', 'copy_model_id': 'Copy model transit ID',
-    'forward_opt': 'Forwarding', 'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 'strip_reasoning_hint': 'On by default, toggle live; restart reverts to env STRIP_HISTORY_REASONING. Trimming multi-turn history saves input tokens and improves KV-cache hits',
-    'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 'history_trim_hint': 'Off by default (0). Trading quality for cost when on: lower per-turn input tokens on long sessions, but may lose early context. Recommended 10~30. Restart reverts to env MAX_HISTORY_TURNS',
-    'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 'auto_continue_hint': 'Default 2, 0 = off. Streams with tool calls are never continued (partial JSON cannot be safely stitched). Each continuation re-sends full context, increasing token usage. Restart reverts to env AIGATE_AUTO_CONTINUE',
+    'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 
+    'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 
+    'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
     'unit_secs': 's', 'conn_params_hint': 'Idle timeout: disconnect if upstream sends nothing for this long (30~600 s); retries apply to connection/timeout errors and 5xx. Changes apply live; restart reverts to env defaults',
-    'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 'meta_in': 'Input', 'meta_title': 'Model info',
-    'meta_in_vis': 'Text + Image', 'meta_text_only': 'Text only', 'meta_reasoning': 'Reasoning', 'meta_tools': 'Tool call',
-    'forward_saved_strip': 'Reasoning chains stripped', 'forward_saved_trim': 'History trimmed', 'forward_saved_resp_cache': 'Response cache hit', 'provider_opt_saved': 'Today Optimization Savings',
-    'session_info': 'Runtime', 'session_hint': 'Process lifetime (resets on restart)',
-    'session_requests': 'Runtime requests', 'session_input_tokens': 'Runtime input', 'session_output_tokens': 'Runtime output',
-    'session_cache_hit': 'KV cache hit rate', 'session_saved_tokens': 'Total saved', 'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'session_cache_opt': 'Response cache', 'session_opt_off': 'off', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
-    'apikey_mgmt': 'API Keys', 'not_configured': 'Not set', 'edit': 'Edit', 'cancel': 'Cancel',
+    'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 
+    'meta_reasoning': 'Reasoning', 'meta_tools': 'Tool call',
+    
+    
+    
+    'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
+    'apikey_mgmt': 'API Keys', 'edit': 'Edit', 'cancel': 'Cancel',
     'tooltip_config': 'Taskbar Tooltip', 'tooltip_enabled': 'Enable Tooltip', 'tooltip_metrics': 'Display Metrics',
     'tooltip_requests_per_second': 'Request Speed (req/s)', 'tooltip_avg_latency_ms': 'Avg Latency (ms)',
     'tooltip_cache_hit_rate': 'Cache Hit Rate (%)', 'tooltip_gen_speed': 'Gen Speed (tok/s)',
@@ -1385,7 +1387,7 @@ const I18N = {
     'tooltip_save': 'Save Config',
     'key_placeholder': 'Enter new API Key', 'save': 'Save', 'key_save_hint': 'Takes effect immediately, no restart needed.',
     'provider_config': 'Providers', 'add': 'Add', 'refresh': 'Refresh', 'save_config': 'Save Config',
-    'upstream_placeholder': 'Blank = as-is',
+    
     'eff.none': '- None -', 'eff.low': 'Low', 'eff.medium': 'Medium', 'eff.high': 'High', 'eff.max': 'Max',
     'delete': 'Delete', 'add_model': 'Add Model', 'select_all': 'Select All', 'deselect_all': 'Deselect', 'delete_selected': 'Delete Selected',
     'add_provider_title': 'Add Provider',
@@ -1393,17 +1395,17 @@ const I18N = {
     'addprov.ph_name': 'e.g. my-provider', 'addprov.ph_endpoint': 'https://api.example.com/v1/chat/completions',
     'data_mgmt': 'Data Management', 'clear_all_records': 'Clear all records',
     'add_provider_hint': 'Provider added, click "Save Config" to apply',
-    'badge.free': 'FREE', 'tbl.vendor': 'Brand', 'free_model': 'Free model',
-    'plaza_search_ph': 'Search provider, endpoint or model name…', 'plaza_filter': 'Filters', 'provider_name': 'Provider name', 'plaza_all': 'All',
-    'plaza_protocol': 'Protocol', 'plaza_effort': 'Reasoning', 'plaza_free_only': 'Free models only', 'plaza_no_key': 'Unconfigured keys only',
+    'badge.free': 'FREE', 'tbl.vendor': 'Brand', 
+    'plaza_search_ph': 'Search provider, endpoint or model name…', 'provider_name': 'Provider name', 'plaza_all': 'All',
+    
     'plaza_clear_filters': 'Clear filters', 'plaza_view_card': 'Cards', 'plaza_view_table': 'Table', 'plaza_showing': 'Showing',
-    'plaza_details': 'Details', 'plaza_no_match': 'No providers match the filters', 'plaza_summary': '{0} providers · {1} models',
-    'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'details': 'Details', 'health_ok': 'Healthy', 'health_err': 'Error', 'health_na': 'Not checked', 'test_connection': 'Test connection', 'testing': 'Testing...', 'saving': 'Saving...', 'search_models': 'Search model ID or upstream model...', 'unsaved_confirm': 'You have unsaved provider changes. Switching tabs will discard them. Continue?', 'meta_loading': 'Loading model info...', 'meta_unavailable': 'No public model metadata', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
+    'plaza_no_match': 'No providers match the filters', 'plaza_summary': '{0} providers · {1} models',
+    'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'health_ok': 'Healthy', 'health_err': 'Error', 'health_na': 'Not checked', 'test_connection': 'Test connection', 'testing': 'Testing...', 'saving': 'Saving...', 'search_models': 'Search model ID or upstream model...', 'unsaved_confirm': 'You have unsaved provider changes. Switching tabs will discard them. Continue?', 'meta_loading': 'Loading model info...', 'meta_unavailable': 'No public model metadata', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
     'nav_group.monitor': 'Monitoring', 'nav_group.config': 'Configuration', 'nav_group.system': 'System', 'unsaved_changes': 'Unsaved', 'unit_ms': 'ms',
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today',
-    'today_requests': 'Today requests', 'errors_total': '{0} errors · {1} total', 'today_cost': 'Today cost',
-    'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 'today_total_tokens': 'Today total tokens',
+    'errors_total': '{0} errors · {1} total', 
+    'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 
     'tokens_input_output': '{0} in · {1} out', 'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
     'kv_cache_hit': 'KV Cache hit', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
     'view_analytics': 'View analytics', 'success_rate': 'Success rate', 'avg_latency': 'Average latency', 'generation_speed': 'Generation speed',
@@ -1415,25 +1417,25 @@ const I18N = {
     'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
     'current_log_window': 'Current log window', 'total_requests': 'Total requests', 'total_cost': 'Total cost', 'total_tokens': 'Total tokens',
     'average_rpm': 'Average RPM (active)', 'average_tpm': 'Average TPM', 'tokens_per_min': 'Tokens / min', 'time_range': 'Time range',
-    'range_1d': '1 day', 'range_7d': '7 days', 'range_14d': '14 days', 'range_29d': '29 days', 'range_365d': '12 months', 'trend_granularity': 'Trend granularity', 'span_hour': 'Hour (24)', 'span_day': 'Day (30)', 'span_month': 'Month (12)',
+    'span_hour': 'Hour (24)', 'span_day': 'Day (30)', 'span_month': 'Month (12)',
     'granularity_hour': 'Hour', 'granularity_day': 'Day', 'granularity_month': 'Month', 'stats_range': 'Range: {0}',
-    'request_count': '{0} requests', 'consumption_trend': 'Consumption trend',
-    'consumption_desc': 'Requests, tokens, latency, and cost', 'line_chart': 'Line', 'bar_chart': 'Bar',
+    
+    'line_chart': 'Line', 'bar_chart': 'Bar',
     'call_distribution': 'Call distribution', 'aggregate_provider_model': 'Aggregated by provider / upstream model', 'call_ranking': 'Call ranking',
     'top_model_routes': 'Model routes with the most requests', 'model_details': 'Model details',
     'model_details_desc': 'Aggregated by provider / upstream model; searchable and filterable by provider', 'analytics_search_models': 'Search model, upstream model, or alias...',
-    'provider_all': 'Provider: All', 'instant_filter': 'Instant filter · {0} entries', 'no_matching_models': 'No matching models',
+    'provider_all': 'Provider: All', 'instant_filter': 'Instant filter · {0} entries', 
     'provider_performance': 'Provider performance', 'current_window_aggregate': 'Aggregated results for the current log window', 'kv_cache_saved': 'KV Cache saved',
-    'optimization_saved_tokens': 'Optimization savings (tokens)', 'chart_metric_requests': 'Requests', 'chart_metric_tokens': 'Tokens', 'chart_metric_latency': 'Latency', 'chart_metric_cost': 'Cost',
-    'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_status': 'Key status', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Requests in window',
-    'error_requests': 'Error requests', 'errors_summary': 'Error summary', 'entry_count': '{0} entries', 'expand_action': 'Expand',
-    'collapse_action': 'Collapse', 'call_records': 'Call records', 'request_details': 'Request details', 'log_details_hint': 'Click to view details',
+    'optimization_saved_tokens': 'Optimization savings (tokens)', 
+    'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Requests in window',
+    'error_requests': 'Error requests', 
+    'call_records': 'Call records', 'request_details': 'Request details', 
     'detail_body_size': 'Request size', 'detail_prompt_completion': 'Input / Output token', 'detail_latency_ttft': 'Latency / TTFT',
     'detail_in_out': 'in', 'detail_out': 'out', 'detail_hit_n': '{0} hit', 'detail_miss_n': '{0} miss',
     'detail_cost': 'Cost', 'detail_cost_cached': 'cache hit (not billed)', 'detail_cache_saved': 'KV cache net saved',
     'saved_strip': 'strip reasoning (plain turns)', 'saved_strip_tc': 'strip reasoning (tool turns)', 'saved_trim': 'history trim', 'saved_resp': 'response cache',
     'provider_status': 'Status', 'latency': 'Latency', 'circuit': 'Circuit', 'key_label': 'Key', 'actions': 'Actions',
-    'configured': 'Configured', 'unconfigured': 'Not configured', 'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
+    'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
     'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ', 'price': 'Price: ', 'paid': 'Paid', 'status': 'Status: ', 'status_active': 'Active', 'status_removed': 'Removed', 'origin': 'Origin: ', 'origin_manual': 'Manual', 'origin_fetched': 'Fetched',
     'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
     'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
@@ -1559,14 +1561,6 @@ function _logoWrap(svg) {
 }
 function dashboard() {
   return {
-    // Sidebar navigation — monitoring, provider configuration, settings, about
-    navItems: [
-      { id:'dashboard', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>', labelKey:'nav.dashboard' },
-      { id:'analytics', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>', labelKey:'nav.analytics' },
-      { id:'records', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>', labelKey:'nav.records' },
-      { id:'settings', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', labelKey:'nav.settings' },
-      { id:'about', icon:'<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>', labelKey:'nav.about' },
-    ],
     activeTab: 'dashboard',
     sbCollapsed: false,
     loading: true,
@@ -1582,22 +1576,17 @@ function dashboard() {
     logs: [], selectedLog: null, health: [], stats: null, cache: null,
     healthLoading: false,
     balanceData: null, balanceLoading: false,
-    balanceEditProvider: null, balanceEditValue: '',
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
     analyticsRange: '29d',
     analyticsSpan: 'day', // 'hour' | 'day' | 'month' — 统一时间范围与粒度 (24h/30d/12m)
     modelDetailFilter: '',
     modelProviderFilter: '',
-    hourlyStats: null, // hourly granularity for heatmap
-    tokenActivityView: 'daily',
-    tokenActivityCells: [],
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     trendHover: null,
     // 趋势图是否做过自适应裁剪 (首尾空桶已去掉) —— 供上下文标签说明当前展示区间.
     modelTrendTrimmed: false,
-    _chartModeHooked: false,
     hiddenModels: {},
     // Proxy policy status
     proxyStatus: null,
@@ -1610,7 +1599,6 @@ function dashboard() {
     // 模型元信息 (models.dev): {模型名: {context,output,vision,reasoning,tool_call}|null}
     modelMeta: {},
     modelMetaLoading: false,
-    ovMetaOpen: {},
     _metaSig: '',
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
     streamTimeoutSecs: 120,
@@ -1625,7 +1613,7 @@ function dashboard() {
     // Settings
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
-    provSearch: '', provNameFilter: '', provProtocolFilter: '', provEffortFilter: '', provFreeOnly: false, provNoKeyOnly: false, provViewMode: 'table', drawerProv: null,
+    provSearch: '', provViewMode: 'table', drawerProv: null,
     pricePanelModel: null, pricePanel: {},
     // 价格剪贴板: 复制后可在其他模型面板"粘贴", 或批量应用到勾选的模型.
     priceClipboard: null, priceClipboardSet: false, priceClipMsg: '',
@@ -1639,8 +1627,6 @@ function dashboard() {
     peakSchedule: { enabled: true, tz_offset_hours: 8, weekdays: [1,2,3,4,5,6,7], windows: [{start:'09:00',end:'12:00'},{start:'14:00',end:'18:00'}] },
     peakMsg: '', peakMsgOk: false,
 
-    // Dashboard trend chart mode: 'requests' | 'latency' | 'tokens'
-    dailyMode: 'requests',
     trendGranularity: 'day',
 
     // Logs
@@ -1864,11 +1850,6 @@ function dashboard() {
       if (s.startsWith('gpt-5') || s.startsWith('muse-spark')) return 'responses';
       return '';
     },
-    circuitClass(c) {
-      if (c === 'open') return 'text-[#ef4444] bg-[rgba(239,68,68,.15)]';
-      if (c === 'half-open') return 'text-[#f59e0b] bg-[rgba(245,158,11,.15)]';
-      return 'text-[#34d399] bg-[rgba(52,211,153,.15)]';
-    },
     async resetCircuit(provider) {
       try { const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})}); if(r.ok){ await this.fetchHealth(); } } catch(e){}
     },
@@ -1893,11 +1874,6 @@ function dashboard() {
     },
     async setStripReasoning(val) {
       try { const r=await fetch('/admin/api/strip-reasoning',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})}); if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; } } catch(e){}
-    },
-    // 转发优化省量换算 token 估算: 被移除内容是 JSON 序列化字节数, 按 4 字节 ≈ 1 token 估算
-    // (OpenAI 官方近似, 中英混合场景的通用粗略换算; 精确值以上游 tokenizer 为准).
-    estTok(bytes) {
-      return Math.round(Math.max(0, bytes|0) / 4);
     },
     async fetchMaxHistoryTurns() {
       try { const r=await fetch('/admin/api/max-history-turns', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
@@ -1962,11 +1938,6 @@ function dashboard() {
       return this.modelMeta[u] ?? this.modelMeta[(m.model_id||'').trim()] ?? null;
     },
     fmtTok(n) { if(!n) return '—'; if(n>=1e6) return (Math.round(n/1e5)/10)+'M'; if(n>=1000) return Math.round(n/1000)+'K'; return String(n); },
-    // 展开状态切换 (不可变更新保证 Alpine 响应)
-    toggleMeta(obj, key) { const o=Object.assign({}, obj||{}); o[key]=!o[key]; return o; },
-    // 概览页模型名带 "provider/" 中转前缀, meta 表键为裸 upstream_model, 查找前需剥离
-    metaHasModel(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return !!this.metaFor({model_id:id}); },
-    ovMetaChips(model) { const id=(model||'').includes('/') ? model.split('/').pop() : model; return this.metaChipsHtml({model_id:id}); },
     // 模型元信息 chips 面板内容 (数据源 models.dev, 仅数字/布尔/i18n 文案, x-html 安全)
     sparklineSvg(values,color) {
       const vals=(values||[]).map(Number).filter(v=>Number.isFinite(v));
@@ -2000,12 +1971,6 @@ function dashboard() {
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
     },
-    get analysisSuccessRate() {
-      const total=Number(this.stats&&this.stats.total_requests||0);
-      if(!total) return 100;
-      const errors=Number(this.stats.error_count||0);
-      return Math.round(Math.max(0,total-errors)/total*100);
-    },
     // 活跃跨度(分钟): 窗口内首个到最后一个**有数据**的桶.
     // 用整个窗口当分母会把大量空闲时段算进去 —— 实测 29 天窗口算出"平均 RPM 0.06",
     // 读不出任何信息; 按实际活跃区间算才有意义.
@@ -2028,11 +1993,8 @@ function dashboard() {
       });
     },
     modelProviderName(model) { return (model&&model.provider)||'—'; },
-    modelUpstreamName(model) { return (model&&model.upstream_model)||'—'; },
     modelErrorCount(model) { return Number(model&&model.errors||0); },
-    modelSuccessRate(model) { const total=Number(model&&model.requests||0); return total?Math.round((total-this.modelErrorCount(model))/total*100):100; },
     get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
-    async fetchHourlyStats() { try { const range=this.analyticsRange||'1d'; const r=await fetch('/admin/api/stats?granularity=hour&range='+encodeURIComponent(range), {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.hourlyStats=d.trends||[]; } } catch(e){} },
     // 统一时间范围与粒度: 小时(24h)/天(30d)/月(12m). 每个选项同时决定窗口与桶大小, 避免两套控件重叠混乱.
     setSpan(span) {
       this.analyticsSpan = span;
@@ -2045,8 +2007,6 @@ function dashboard() {
     get whatsNewEntry() {
       return (this.changelog && this.changelog.length) ? this.changelog[0] : null;
     },
-    // ── 活跃热力图 SVG: 最近 24 个小时桶的相对请求量 ──
-    get tokenActivityGridCols() { return 'repeat('+Math.max(1,this.tokenActivityCells.length)+',16px)'; },
     computeModelTrend() {
       const rows=this.stats?.model_trends||[]; const sums={};
       rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||'');sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
@@ -2142,40 +2102,6 @@ function dashboard() {
       return keys.map((k,i)=>({k,label:k.split('/').slice(1).join('/')||k,color:palette[i%palette.length],tokens:sums[k]||0,pct:(sums[k]||0)/total*100,hidden:!!this.hiddenModels[k]}));
     },
     toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
-    get modelTokenTrendSeries() {
-      const rows=this.stats?.model_trends||[]; const sums={};
-      rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||''); sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
-      const keys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6); return {rows,keys,sums};
-    },
-    get modelTokenTrendLegend() {
-      const colors=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6']; const s=this.modelTrendData||{}; const keys=s.keys||[]; const sums=s.sums||{}; return keys.map((k,i)=>'<span class="model-trend-chip"><i style="background:'+colors[i]+'"></i>'+this.escapeHtml(k.split('/').slice(1).join('/')||k)+'</span>').join('')+(Object.keys(sums).length>keys.length?'<span class="model-trend-chip">Other ('+(Object.keys(sums).length-keys.length)+')</span>':'');
-    },
-    get heatmapHours() {
-      return (this.hourlyStats||[]).slice(-24);
-    },
-    get heatmapTotalRequests() {
-      return this.heatmapHours.reduce((sum,h)=>sum+Number(h.requests||0),0);
-    },
-    get heatmapSvg() {
-      const hs=this.heatmapHours; if(!hs.length) return '';
-      const vals=hs.map(h=>Number(h.requests||0)); const mx=Math.max(...vals,1);
-      const W=760,H=116,left=34,right=10,top=12,bottom=28,plotW=W-left-right,plotH=H-top-bottom;
-      const colors=['#1c1d24','#202b3d','#263f63','#2f66bd','#5f9df0','#9ac4ff'];
-      const x=i=>left+plotW*(i+.5)/Math.max(vals.length,1);
-      const barW=Math.max(6,plotW/Math.max(vals.length,1)-4);
-      let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:116px">`;
-      for(let i=0;i<vals.length;i++){
-        const level=vals[i]===0?0:Math.min(5,Math.floor(vals[i]/mx*5)+1), h=vals[i]/mx*plotH;
-        s+=`<rect x="${x(i)-barW/2}" y="${top+plotH-h}" width="${barW}" height="${h}" rx="3" fill="${colors[level]}"><title>${hs[i].date}: ${vals[i]} ${t('unit_times')}</title></rect>`;
-        if(i%Math.max(1,Math.ceil(vals.length/8))===0||i===vals.length-1) s+=`<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#6b7280">${(hs[i].date||'').split(' ').pop()||''}</text>`;
-      }
-      s+=`<text x="${left}" y="9" font-size="9" fill="#6b7280">${t('heatmap_few')}</text><text x="${W-right}" y="9" text-anchor="end" font-size="9" fill="#6b7280">${t('heatmap_many')}</text></svg>`;
-      return s;
-    },
-    // ── 趋势图 SVG (line/bar 共用坐标系: 第 j 列中心 x=35+j*70) ──
-    get trendColor() {
-      return this.dailyMode==='cost'?'#f59e0b':this.dailyMode==='tokens'?'#a78bfa':this.dailyMode==='latency'?'#22d3ee':'#818cf8';
-    },
     // 图表上下文标签: 粒度 · 时区 (+ 自适应裁剪后的实际区间, 避免让人以为展示的就是整个窗口).
     get trendContextLabel() {
       const base = t('stats_context', this.trendGranularityLabel, this.tzLabel);
@@ -2186,41 +2112,8 @@ function dashboard() {
     get trendGranularityLabel() {
       return t(this.trendGranularity==='hour'?'granularity_hour':this.trendGranularity==='month'?'granularity_month':'granularity_day');
     },
-    get trendMetricLabel() {
-      return t(this.dailyMode==='cost'?'chart_metric_label_cost':this.dailyMode==='tokens'?'chart_metric_label_tokens':this.dailyMode==='latency'?'chart_metric_label_latency':'chart_metric_label_requests');
-    },
     get tzLabel() { return t('tz_label'); },
-    get trendSummaryHtml() {
-      const tr=(this.stats?.trends||[]).slice(-1)[0];
-      if(!tr) return '';
-      const cost=this.stats?.has_price_config?this.fmtMoney(tr.total_cost||0):t('chart_no_price');
-      return '<span>'+t('trend_detail_title')+': '+this.escapeHtml(tr.date||'—')+'</span><br><span>'+t('trend_bucket_metrics',tr.requests||0,tr.errors||0,this.fmtT(tr.total_prompt_tokens||0),this.fmtT(tr.total_completion_tokens||0),this.escapeHtml(cost))+'</span>';
-    },
     escapeHtml(value) { return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
-    get trendSvg() {
-      const trends=this.stats?.trends||[]; if(!trends.length) return '';
-      const n=trends.length, W=760, H=190, left=44, right=12, top=18, bottom=34;
-      const plotW=W-left-right, plotH=H-top-bottom, stroke=this.trendColor;
-      const vals=trends.map(tr=>this.dailyMode==='cost'?(tr.total_cost||0):this.dailyMode==='tokens'?((tr.total_prompt_tokens||0)+(tr.total_completion_tokens||0)):this.dailyMode==='latency'?(tr.requests?(tr.avg_latency||0):null):(tr.requests||0));
-      const finite=vals.filter(v=>v!==null&&Number.isFinite(v)); const mx=Math.max(...finite,1);
-      const x=i=>left+(n===1?plotW/2:plotW*i/(n-1));
-      const y=v=>v===null?top+plotH:top+plotH-(v/mx)*plotH;
-      const tip=(tr,v)=>t('trend_bucket_metrics',tr.requests||0,tr.errors||0,this.fmtT(tr.total_prompt_tokens||0),this.fmtT(tr.total_completion_tokens||0),this.stats?.has_price_config?this.escapeHtml(this.fmtMoney(tr.total_cost||0)):t('chart_no_price'));
-      let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="display:block;width:100%;height:190px"><defs><linearGradient id="trendAreaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${stroke}" stop-opacity=".22"/><stop offset="1" stop-color="${stroke}" stop-opacity="0"/></linearGradient></defs>`;
-      for(let i=0;i<=4;i++){const yy=top+plotH*i/4;const value=mx*(1-i/4);const label=this.dailyMode==='cost'?this.fmtMoney(value):this.dailyMode==='tokens'?this.fmtT(value):this.dailyMode==='latency'?this.fmtMs(value):Math.round(value);s+=`<line x1="${left}" x2="${W-right}" y1="${yy}" y2="${yy}" stroke="#2a2d37" stroke-width=".7"/><text x="${left-7}" y="${yy+3}" font-size="9" text-anchor="end" fill="#6b7280">${label}</text>`;}
-      const points=vals.map((v,i)=>[x(i),y(v)]);
-      if(this.chartMode==='bar'){
-        const gap=Math.min(8,plotW/n*.22), bw=Math.max(2,plotW/n-gap);
-        vals.forEach((v,i)=>{if(v===null)return;const xx=x(i)-bw/2,hh=top+plotH-y(v);s+=`<rect x="${xx}" y="${y(v)}" width="${bw}" height="${hh}" rx="3" fill="${stroke}" opacity=".85"><title>${tip(trends[i],v)}</title></rect>`;});
-      } else {
-        const pts=points.filter((_,i)=>vals[i]!==null).map(p=>p.join(',')).join(' ');
-        if(pts){const area=`${left},${top+plotH} ${pts} ${W-right},${top+plotH}`;s+=`<polygon points="${area}" fill="url(#trendAreaFill)"/><polyline points="${pts}" fill="none" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;}
-        points.forEach((p,i)=>{if(vals[i]===null)return;s+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${stroke}" stroke="#16161c" stroke-width="1.5"><title>${tip(trends[i],vals[i])}</title></circle>`;});
-      }
-      const step=Math.max(1,Math.ceil(n/7));trends.forEach((tr,i)=>{if(i%step!==0&&i!==n-1)return;s+=`<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="9" fill="#6b7280">${tr.date}</text>`;});
-      s+=`<text x="${W-right}" y="${top+3}" text-anchor="end" font-size="9" fill="${stroke}">${this.escapeHtml(this.trendMetricLabel)}</text></svg>`;
-      return s;
-    },
     async fetchBalance() {
       this.balanceLoading = true;
       try {
@@ -2232,45 +2125,7 @@ function dashboard() {
       } catch(e) {}
       this.balanceLoading = false;
     },
-    // 重置倒计时格式化 (秒 -> "Xh Ym" / "Xm Ys")
-    fmtResetIn(sec) {
-      sec = Math.max(0, Math.trunc(sec || 0));
-      const d = Math.floor(sec / 86400);
-      const h = Math.floor((sec % 86400) / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      const s = sec % 60;
-      if (d > 0) return d + 'd ' + h + 'h';
-      if (h > 0) return h + 'h ' + m + 'm';
-      return m + 'm ' + s + 's';
-    },
-    async saveManualBalance(provider) {
-      const val = parseFloat(this.balanceEditValue);
-      if (isNaN(val) || val < 0) return;
-      try {
-        const r = await fetch('/admin/api/balance/manual', {
-          method: 'POST', headers: authHeaders(),
-          body: JSON.stringify({provider, balance: val}),
-        });
-        if (r.ok) {
-          this.balanceEditProvider = null; this.balanceEditValue = '';
-          await this.fetchBalance();
-        }
-      } catch(e) {}
-    },
-    async clearManualBalance(provider) {
-      try {
-        const r = await fetch('/admin/api/balance/manual', {
-          method: 'POST', headers: authHeaders(),
-          body: JSON.stringify({provider, balance: null}),
-        });
-        if (r.ok) {
-          this.balanceEditProvider = null;
-          await this.fetchBalance();
-        }
-      } catch(e) {}
-    },
     async clearAllLogs() { try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){} },
-    clearLogs() { this.logs=[]; },
 
     exportLogs() {
       const blob = new Blob([JSON.stringify(this.logs, null, 2)], {type:'application/json'});
@@ -2484,15 +2339,6 @@ function dashboard() {
       if((prov.endpoint||'').toLowerCase().includes(q)) return true;
       return (prov.models||[]).some(m=>((m.model_id||'').toLowerCase().includes(q))||((m.upstream_model||'').toLowerCase().includes(q)));
     },
-    provHasProtocol(prov, fmt){
-      return (prov.models||[]).some(m=>(m.api_format||'')===fmt);
-    },
-    provHasEffort(prov, eff){
-      return (prov.models||[]).some(m=>(m.reasoning_effort||'')===eff);
-    },
-    provHasFree(prov){
-      return (prov.models||[]).some(m=>m.free);
-    },
     provProtocols(prov){
       const s=new Set((prov.models||[]).map(m=>(m.api_format||'')===''?'OpenAI':m.api_format));
       return [...s];
@@ -2603,9 +2449,6 @@ function dashboard() {
       this.pricePanelModel.price = null;
       this.markDirty();
       this.closePricePanel();
-    },
-    clearProvFilters(){
-      this.provSearch='';
     },
     async loadProvidersForm() {
        try {
@@ -2993,7 +2836,6 @@ function dashboard() {
       if(!this.stats||!this.stats.today_requests) return '—';
       return this.fmtPct(this.sRate);
     },
-    get avgGenSpeed() { return Number(this.stats&&this.stats.gen_speed||0); },
     // ── 概览 hero 的作用域 ──
     //
     // 今日有请求就显示今日; **今日为空则整块回落到窗口累计**, 而不是显示一片 0.
@@ -3024,8 +2866,6 @@ function dashboard() {
       if(!pt) return '—';
       return this.fmtPct(h/pt*100);
     },
-    get maxModelReqs() { if(!this.stats||!this.stats.top_models.length) return 1; return this.stats.top_models[0].requests; },
-    get maxDailyReqs() { if(!this.stats||!this.stats.trends.length) return 1; return Math.max(...this.stats.trends.map(t=>t.requests),1); },
     get donutSvg() {
       if(!this.stats||!this.stats.per_model.length) return '';
       const total=this.stats.total_requests||1;
@@ -3274,12 +3114,6 @@ function dashboard() {
         {k:'cre',label:t('audit_kv_creation'),v:cre,color:'#a78bfa'},
       ].filter(x=>x.v>0);
       return items.length>1?items:[];
-    },
-    auditPct(v) {
-      const a = (this.stats && this.stats.audit) || {};
-      const base = a.input_tokens || 0;
-      if (!v || !base) return '0.0%';
-      return ((v / base) * 100).toFixed(1) + '%';
     },
     fmtB(b) {
       if(b===0) return '0B'; if(b<1024) return b+'B'; if(b<1048576) return (b/1024).toFixed(1)+'KB';
