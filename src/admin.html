@@ -335,6 +335,10 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .ps{font-size:13px;color:var(--muted);margin-top:2px}
 /* ── new-api form rows ── */
 .set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px}
+/* 左侧文案可收缩、右侧控件组保住宽度: 否则长说明会把多控件行挤到换行
+   (实测「连接参数」一行三控件: 需要 347px 而只剩 341px, 第三个被挤到第二行, 行高 68 -> 161). */
+.set-row>*:first-child{flex:1 1 auto;min-width:0}
+.set-row>*:last-child{flex:0 0 auto}
 .row-t{font-size:13px;font-weight:600;color:var(--fg)}
 .row-d{font-size:12px;color:var(--muted);margin-top:2px;max-width:560px}
 .cg{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;flex-wrap:wrap}
