@@ -518,7 +518,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div class="an-stat"><div class="an-stat-label" x-text="t('average_tpm')"></div><div class="an-stat-value" x-text="fmtT(Math.round(analysisTpm))"></div><div class="txs tm an-stat-hint" x-text="t('tokens_per_min')"></div></div>
     </div>
     <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><span class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></span><span class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></span><span class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></span></div><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
-    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('token_trend_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-show="trendContextLabel" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><span class="seg-i" :class="{'a':chartMode==='line'}" @click="chartMode='line';computeModelTrend()" x-text="t('line_chart')"></span><span class="seg-i" :class="{'a':chartMode==='bar'}" @click="chartMode='bar';computeModelTrend()" x-text="t('bar_chart')"></span></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="tm" x-text="t('no_trend')"></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
@@ -1127,7 +1127,7 @@ const I18N = {
     
     
     'no_trend': '暂无趋势数据',
-    'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_no_price': '未配置价格', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求',
+    'token_trend_title': 'Token 趋势', 'token_trend_desc': '按上游模型拆分的 Token 使用量', 'token_trend_note': '默认显示 Token 使用量最高的模型，其余模型合并为“其他”；悬停任意时段可看该时段各模型的用量与请求数，点击图例可单独隐藏/显示', 'stats_context': '{0} 粒度 · {1}', 'tz_label': 'UTC+8', 'chart_no_price': '未配置价格', 'trend_bucket_metrics': '请求 {0} · 错误 {1} · 输入 {2} · 输出 {3} · 费用 {4}', 'trend_total': '总计', 'trend_no_requests': '无请求', 'trend_shown_range': '实际展示 {0} → {1}',
     
     
     'records_title': '请求记录', 
@@ -1310,7 +1310,7 @@ const I18N = {
     
     
     'no_trend': 'No trend data',
-    'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_no_price': 'Pricing not configured', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests',
+    'token_trend_title': 'Token trend', 'token_trend_desc': 'Token usage split by upstream model', 'token_trend_note': 'Top models by token usage are shown; remaining models are grouped as Other. Hover a bucket to see per-model usage and requests; click a legend chip to toggle it', 'stats_context': '{0} granularity · {1}', 'tz_label': 'UTC+8', 'chart_no_price': 'Pricing not configured', 'trend_bucket_metrics': 'Requests {0} · Errors {1} · Input {2} · Output {3} · Cost {4}', 'trend_total': 'Total', 'trend_no_requests': 'No requests', 'trend_shown_range': 'Showing {0} → {1}',
     
     
     'records_title': 'Request Logs', 
@@ -2144,12 +2144,14 @@ function dashboard() {
       return keys.map((k,i)=>({k,label:k.split('/').slice(1).join('/')||k,color:palette[i%palette.length],tokens:sums[k]||0,pct:(sums[k]||0)/total*100,hidden:!!this.hiddenModels[k]}));
     },
     toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
-    // 图表上下文标签: 粒度 · 时区 (+ 自适应裁剪后的实际区间, 避免让人以为展示的就是整个窗口).
+    // 图表上下文标签: 只在图表的展示区间**不同于整个窗口**时才输出
+    // (自适应裁剪掉了首尾空桶时, 明确写出实际展示的区间, 免得让人以为画的是整个窗口).
+    // 粒度 · 时区由页头统一承担 —— 原先这里也输出一份, 与分析页页头完全重复:
+    // 同一屏出现两次「天 粒度 · UTC+8」. 无裁剪时返回空串, 该行自然不占位.
     get trendContextLabel() {
-      const base = t('stats_context', this.trendGranularityLabel, this.tzLabel);
       const d = (this.modelTrendData && this.modelTrendData.dates) || [];
-      if (!this.modelTrendTrimmed || d.length < 2) return base;
-      return base + ' · ' + (d[0][1] || '') + ' → ' + (d[d.length - 1][1] || '');
+      if (!this.modelTrendTrimmed || d.length < 2) return '';
+      return t('trend_shown_range', (d[0][1] || ''), (d[d.length - 1][1] || ''));
     },
     get trendGranularityLabel() {
       return t(this.trendGranularity==='hour'?'granularity_hour':this.trendGranularity==='month'?'granularity_month':'granularity_day');
