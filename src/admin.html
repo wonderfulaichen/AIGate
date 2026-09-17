@@ -581,6 +581,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" :style="'color:'+rateColor(recordSuccessRate,recordSuccessRateText)" x-text="recordSuccessRateText"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
   </div>
+  <div class="txs tm" style="margin:-6px 0 12px" x-text="t('records_scope_hint',logs.length)"></div>
   <div class="rec-layout">
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_records')"></span><span class="txs tm" style="margin-left:8px" x-text="filteredLogs.length+' / '+logs.length"></span></div></div>
       <div class="an-filter"><input type="text" class="inp" style="width:220px" :placeholder="t('search_placeholder')" x-model="logSearch" @input="resetLogView()"><select class="sel" x-model="logProviderFilter" @change="resetLogView()"><option value="" x-text="t('opt.all_providers')"></option><template x-for="p in logProviders" :key="p"><option :value="p" x-text="p"></option></template></select><div class="seg"><span class="seg-i" :class="{'a':logStatusFilter===''}" @click="logStatusFilter='';resetLogView()" x-text="t('opt_all')"></span><span class="seg-i" :class="{'a':logStatusFilter==='success'}" @click="logStatusFilter='success';resetLogView()" x-text="t('opt.success')"></span><span class="seg-i" :class="{'a':logStatusFilter==='error'}" @click="logStatusFilter='error';resetLogView()" x-text="t('opt.error')"></span></div><select class="sel" x-model="logTimeFilter" @change="resetLogView()"><option value="" x-text="t('time_all')"></option><option value="1h" x-text="t('time_1h')"></option><option value="24h" x-text="t('time_24h')"></option><option value="7d" x-text="t('time_7d')"></option></select><button class="btn btn-g" style="font-size:11px" @click="logSearch='';logProviderFilter='';logStatusFilter='';logTimeFilter='';resetLogView()" x-text="t('filter_reset')"></button></div>
@@ -1246,7 +1247,7 @@ const I18N = {
     'provider_all': '供应商：全部', 'instant_filter': '即时筛选 · {0} 条', 
     'provider_performance': '供应商性能', 'current_window_aggregate': '当前运行日志窗口的聚合结果', 'kv_cache_saved': 'KV Cache Saved',
     'optimization_saved_tokens': '优化省 Tokens', 
-    'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '当前窗口请求',
+    'records_subtitle': '检索请求、定位错误并查看单次调用详情', 'key_configured_masked': '已配置 · ••••{0}', 'key_configured': '已配置', 'key_unconfigured': '未配置', 'current_window_requests': '已加载请求', 'records_scope_hint': '以下统计只覆盖当前已加载的最近 {0} 条日志（内存缓冲区上限），与概览的「窗口累计」口径不同；如需完整窗口数据请看概览或分析页。',
     'error_requests': '错误请求', 
     'call_records': '调用记录', 'request_details': '请求详情', 
     'detail_body_size': '响应体大小', 'detail_prompt_completion': '输入 / 输出 Token', 'detail_latency_ttft': '延迟 / 首字延迟',
@@ -1429,7 +1430,7 @@ const I18N = {
     'provider_all': 'Provider: All', 'instant_filter': 'Instant filter · {0} entries', 
     'provider_performance': 'Provider performance', 'current_window_aggregate': 'Aggregated results for the current log window', 'kv_cache_saved': 'KV Cache saved',
     'optimization_saved_tokens': 'Optimization savings (tokens)', 
-    'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Requests in window',
+    'records_subtitle': 'Search requests, investigate errors, and inspect individual calls', 'key_configured_masked': 'Configured · ••••{0}', 'key_configured': 'Configured', 'key_unconfigured': 'Not configured', 'current_window_requests': 'Loaded requests', 'records_scope_hint': 'These figures cover only the {0} most recent log rows currently loaded (in-memory buffer limit) — a different scope from the overview\'s window totals. See the overview or analytics page for full-window data.',
     'error_requests': 'Error requests', 
     'call_records': 'Call records', 'request_details': 'Request details', 
     'detail_body_size': 'Response size', 'detail_prompt_completion': 'Input / Output token', 'detail_latency_ttft': 'Latency / TTFT',
