@@ -481,12 +481,13 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </nav>
 <main class="main">
 <template x-if="loading && !stats"><div style="display:flex;align-items:center;justify-content:center;min-height:120px;padding:48px 16px"><div style="width:200px;height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,var(--primary),#818cf8);border-radius:99px;width:60%;animation:loadBar 1.8s ease-in-out infinite"></div></div></div></template>
+<template x-if="statsError && !stats"><div class="pnl" style="margin-bottom:16px"><div class="pnl-b" style="text-align:center;padding:40px 16px"><div class="tm" style="margin-bottom:14px" x-text="t('fetch_failed')"></div><button class="btn btn-g" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>
 <div x-show="activeTab==='dashboard'" class="page-enter ov-page">
   <div class="phd">
     <div><h1 class="pt" x-text="t('dashboard_title')"></h1><p class="ps" x-text="t('dashboard_subtitle')"></p></div>
     <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
   </div>
-  <template x-if="!stats || stats.total_requests===0">
+  <template x-if="!statsError && (!stats || stats.total_requests===0)">
     <div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px">
       <span class="bdg bdg-s mb2" x-text="t('service_running')"></span>
       <h2 style="font-size:1.1rem;font-weight:600;color:var(--fg);margin:8px 0" x-text="t('waiting_first_request')"></h2>
@@ -519,7 +520,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </div>
 <div x-show="activeTab==='analytics'" class="page-enter ov-page">
   <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats()" x-text="t('refresh')"></button></div></div>
-  <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('no_data')"></span></div></div></template>
+  <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="statsError?t('fetch_failed'):t('no_data')"></span><button x-show="statsError" class="btn btn-g" style="margin-left:10px" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>
   <template x-if="stats"><div style="display:flex;flex-direction:column;gap:16px">
     <div class="an-stat-strip">
       <div class="an-stat"><div class="an-stat-label" x-text="t('total_requests')"></div><div class="an-stat-value" x-text="stats.total_requests||0"></div><div class="an-stat-hint"></div></div>
@@ -1566,6 +1567,9 @@ function dashboard() {
     activeTab: 'dashboard',
     sbCollapsed: false,
     loading: true,
+    // 统计拉取失败标记: 失败时必须复位 loading, 否则界面永远停在「加载中」
+    // (原实现只在 r.ok 分支置 loading=false, 失败被 catch 吞掉 → 假"加载中"永不结束).
+    statsError: false,
     version: (window.AIGATE_VERSION && window.AIGATE_VERSION.version) ? window.AIGATE_VERSION : {version:'?', git_commit:'', build_time:''},
     changelog: null,
 
@@ -1997,8 +2001,28 @@ function dashboard() {
       if(this.modelMetaLoading) return '<span class="meta-pending">'+t('meta_loading')+'</span>';
       return '<span class="meta-pending">'+t('meta_unavailable')+'</span>';
     },
-    async fetchStats(rangeOverride)   { try { const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d')); const params=new URLSearchParams({granularity:this.trendGranularity,range}); const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()}); if(r.ok) { this.stats=await r.json(); this.loading=false; this.fetchModelMeta(); await this.$nextTick();
-      this.computeModelTrend(); if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; } } } catch(e){} },
+    async fetchStats(rangeOverride)   {
+      try {
+        const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d'));
+        const params=new URLSearchParams({granularity:this.trendGranularity,range});
+        const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()});
+        if(r.ok) {
+          this.stats=await r.json();
+          this.loading=false;
+          this.statsError=false;
+          this.fetchModelMeta(); await this.$nextTick();
+          this.computeModelTrend();
+          if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; }
+        } else {
+          // 非 2xx 也是失败: 必须复位 loading, 否则界面停在假的「加载中」.
+          this.loading=false; this.statsError=true;
+        }
+      } catch(e) {
+        // 网络异常同理 —— 原实现这里是空 catch, 导致 loading 永远为 true.
+        this.loading=false; this.statsError=true;
+      }
+    },
+    retryFetchStats() { this.statsError=false; this.loading=true; this.fetchStats(); },
     isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
