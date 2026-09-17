@@ -504,7 +504,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
         </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:#34d399" x-text="fmtT(heroPrompt)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:#a78bfa" x-text="fmtT(heroCompletion)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:#22d3ee" x-text="heroCacheText"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:#34d399">⚡</span></div><div class="ov-kpi-value" style="color:#34d399" x-text="fmtT((stats.today_strip_saved_tokens||0)+(stats.today_trim_saved_tokens||0)+(stats.today_resp_cache_saved_tokens||0))"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:rgba(34,211,238,.12);color:#22d3ee">📊</span></div><div class="ov-kpi-value" style="color:#22d3ee" x-text="fmtT(stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+t('opt_saved_30d')"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
-          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+(sRateText==='—'?'var(--muted)':sRate>=95?'#34d399':sRate>=80?'#f59e0b':'#ef4444')" x-text="sRateText"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms||0)"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
         </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
@@ -577,7 +577,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div class="rec-stats">
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
-    <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" style="color:var(--ok)" x-text="recordSuccessRateText"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" :style="'color:'+rateColor(recordSuccessRate,recordSuccessRateText)" x-text="recordSuccessRateText"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
   </div>
   <div class="rec-layout">
@@ -2862,6 +2862,16 @@ function dashboard() {
      },
 
     // Computed
+    // 成功率配色阈值: 概览与记录页共用同一套, 避免两处口径分叉
+    // (原先记录页把成功率写死 var(--ok), 全是错误时也会显示绿色的 0%).
+    // 无数据 → 灰(muted); 判定与 sRateText 的 '—' 一致.
+    rateColor(pct, text) {
+      // 注意: null/'' 经 Number() 会变成 0, 会被误判为"成功率 0%"的红色 —— 故先排除空值.
+      if (text === '—' || pct === null || pct === undefined || pct === ''
+          || !Number.isFinite(Number(pct))) return 'var(--muted)';
+      const v = Number(pct);
+      return v >= 95 ? '#34d399' : v >= 80 ? '#f59e0b' : '#ef4444';
+    },
     // 成功率(数值): 供配色阈值使用; 无数据返回 0 (配色另由 sRateText 判为灰).
     get sRate() {
       if(!this.stats||!this.stats.today_requests) return 0;
