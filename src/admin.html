@@ -446,7 +446,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 <body>
 <div class="layout" x-data="dashboard()" x-init="init()">
 <header class="hdr">
-  <button @click="sbCollapsed=!sbCollapsed" class="btn-g" style="padding:4px 6px;border-radius:6px">
+  <button @click="sbCollapsed=!sbCollapsed" class="btn-g" style="padding:4px 6px;border-radius:6px" :title="t('toggle_sidebar')" :aria-label="t('toggle_sidebar')">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
   <span class="hdr-title">AIGate</span>
@@ -689,7 +689,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
           <input type="time" class="inp mono" style="width:120px" x-model="w.start">
           <span class="tm">—</span>
           <input type="time" class="inp mono" style="width:120px" x-model="w.end">
-          <button class="btn btn-g" style="color:var(--err);padding:2px 8px" @click="removePeakWindow(i)">✕</button>
+          <button class="btn btn-g" style="color:var(--err);padding:2px 8px" @click="removePeakWindow(i)" :title="t('remove_peak_window')" :aria-label="t('remove_peak_window')">✕</button>
         </div>
       </template>
       <div><button class="btn btn-g" style="font-size:11px" @click="addPeakWindow()" x-text="t('peak_add_window')"></button></div>
@@ -799,7 +799,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
     <button class="btn btn-g" style="font-size:11px;padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
     <button class="btn btn-o" style="font-size:11px;padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-    <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))">✕</button>
+    <button class="btn btn-g" style="font-size:11px;padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))" :title="t('delete')" :aria-label="t('delete')">✕</button>
   </div></td>
 </tr></template></tbody></table>
 </div></div></template>
@@ -854,7 +854,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
           <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.25);font-size:10px">● <span x-text="t('health_err')"></span></span></template>
           <template x-if="healthOf(drawerProv.name)===''"><span class="bdg" style="background:rgba(156,163,175,.12);color:#9ca3af;border:1px solid rgba(156,163,175,.25);font-size:10px">○ <span x-text="t('health_na')"></span></span></template>
         </div>
-        <button class="btn btn-g" @click="closeProviderDrawer()" style="padding:4px 8px">✕</button>
+        <button class="btn btn-g" @click="closeProviderDrawer()" style="padding:4px 8px" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
       </div>
 
       <div class="dr-body">
@@ -997,7 +997,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                     <td style="padding:6px 10px;white-space:nowrap">
                       <button class="btn btn-g" style="font-size:11px;padding:2px 6px" :title="m.price?fmtPriceDetail(m.price):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
                     </td>
-                    <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)">✕</button></td>
+                    <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)" :title="t('delete')" :aria-label="t('delete')">✕</button></td>
                   </tr>
                   </template>
                 </tbody>
@@ -1023,7 +1023,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>
       <span class="txsm fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pricePanelModel?(pricePanelModel.upstream_model||pricePanelModel.model_id):''"></span>
     </div>
-    <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0">✕</button>
+    <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
   </div>
   <div class="dr-body" style="display:flex;flex-direction:column;gap:12px;padding:16px 20px">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -1106,7 +1106,7 @@ const I18N = {
     'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按所选汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
     'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
-    'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。',
+    'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。', 'close_label': '关闭', 'remove_peak_window': '移除该时段', 'toggle_sidebar': '收起 / 展开侧栏',
     'wd.1': '一', 'wd.2': '二', 'wd.3': '三', 'wd.4': '四', 'wd.5': '五', 'wd.6': '六', 'wd.7': '日',
     
     'other_n': '其他 {0} 个',
@@ -1289,7 +1289,7 @@ const I18N = {
     'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the selected rate; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
     'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
-    'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.',
+    'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.', 'close_label': 'Close', 'remove_peak_window': 'Remove this window', 'toggle_sidebar': 'Collapse / expand sidebar',
     'wd.1': 'Mon', 'wd.2': 'Tue', 'wd.3': 'Wed', 'wd.4': 'Thu', 'wd.5': 'Fri', 'wd.6': 'Sat', 'wd.7': 'Sun',
     
     'other_n': '{0} others',
