@@ -4,16 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AIGate</title>
-<script>
-window.__errs=[];
-var __flt=function(m){return !/cdn.tailwindcss|should not be used in production|\[RUM\]/.test(m)};
-window.addEventListener('error', function(e){ var m='ERR: '+e.message+' @'+String(e.lineno); if(__flt(m)) window.__errs.push(m); });
-window.addEventListener('unhandledrejection', function(e){ var m='REJ: '+((e.reason&&e.reason.message)||e.reason); if(__flt(m)) window.__errs.push(m); });
-(function(){ var ow=console.warn, oe=console.error;
- console.warn=function(){ var a=Array.prototype.map.call(arguments,function(x){return typeof x==='object'?JSON.stringify(x).slice(0,160):String(x)}).join(' ').slice(0,240); var s='WARN: '+a; if(__flt(s)) window.__errs.push(s); ow.apply(console,arguments); };
- console.error=function(){ var a=Array.prototype.map.call(arguments,function(x){return typeof x==='object'?JSON.stringify(x).slice(0,160):String(x)}).join(' ').slice(0,240); var s='CERR: '+a; if(__flt(s)) window.__errs.push(s); oe.apply(console,arguments); };
-})();
-</script>
 <script defer src="/admin/static/tailwind.js"></script>
 
 <script>
@@ -325,7 +315,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .row-d{font-size:12px;color:var(--muted);margin-top:2px;max-width:560px}
 .cg{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;flex-wrap:wrap}
 .chkbox{accent-color:var(--primary);width:14px;height:14px;cursor:pointer}
-#dbgbar{position:fixed;left:0;bottom:0;right:0;background:#3a0d0d;color:#ffb4b4;font-size:11px;padding:4px 8px;z-index:99999;white-space:pre-wrap;display:none;max-height:180px;overflow:auto;pointer-events:none}
 
 /* ── new-api header + sidebar ── */
 .hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:rgba(12,12,16,.92);flex-shrink:0}
@@ -450,7 +439,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </style>
 </head>
 <body>
-<div id="dbgbar"></div>
 <div class="layout" x-data="dashboard()" x-init="init()">
 <header class="hdr">
   <button @click="sbCollapsed=!sbCollapsed" class="btn-g" style="padding:4px 6px;border-radius:6px">
@@ -1076,9 +1064,6 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
 </div>
 <script>
-setInterval(function(){ var d=document.getElementById('dbgbar'); if(!d) return; var n=(window.__errs||[]).length; if(n===window.__lastN) return; window.__lastN=n; if(!n){ d.style.display='none'; return; } d.style.display='block'; d.textContent=window.__errs.join(String.fromCharCode(10)).slice(0,1500); }, 600);
-</script>
-<script>
 /*__AIGATE_TOKEN__*/
 /*__AIGATE_LANG__*/
 /*__AIGATE_VERSION__*/
@@ -1224,7 +1209,7 @@ const I18N = {
     'nav_group.monitor': '监控', 'nav_group.config': '配置', 'nav_group.system': '系统', 'unsaved_changes': '未保存', 'unit_ms': '毫秒',
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日',
-    'errors_total': '错误 {0} · 总计 {1}', 
+    'errors_only': '错误 {0}', 
     'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 
     'tokens_input_output': '{0} 输入 · {1} 输出', 'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
     'kv_cache_hit': 'KV Cache 命中', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
@@ -1407,7 +1392,7 @@ const I18N = {
     'nav_group.monitor': 'Monitoring', 'nav_group.config': 'Configuration', 'nav_group.system': 'System', 'unsaved_changes': 'Unsaved', 'unit_ms': 'ms',
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today',
-    'errors_total': '{0} errors · {1} total', 
+    'errors_only': '{0} errors', 
     'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 
     'tokens_input_output': '{0} in · {1} out', 'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
     'kv_cache_hit': 'KV Cache hit', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
@@ -2927,9 +2912,11 @@ function dashboard() {
     get heroRequests() { const s=this.stats||{}; return Number(s.total_requests||0); },
     get heroErrors() { const s=this.stats||{}; return Number(s.error_count||0); },
     get heroRequestsHint() {
-      // 与主数字同口径: 错误数与总数都取窗口累计, 两者可互相验算.
-      // 今日有请求时把今日用量作为附加信息放在末尾 —— 它是补充, 不与主数字混排取值.
-      const base = t('errors_total', this.heroErrors, Number((this.stats && this.stats.total_requests) || 0));
+      // 提示只补主数字**没有**的信息: 主数字已是"请求总数", 故这里只给错误数,
+      // 不再重复一遍总数 (原先渲染成「错误 70 · 总计 2619」而主数字正是 2619,
+      // 同屏把同一个数说了两遍, 白占提示行三分之一).
+      // 今日有请求时把今日用量附在末尾 —— 它是补充, 不与主数字混排取值.
+      const base = t('errors_only', this.heroErrors);
       return this.heroToday
         ? base + ' · ' + t('today_label') + ' ' + Number((this.stats && this.stats.today_requests) || 0)
         : base;
