@@ -196,7 +196,8 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .ov-kpi-hint{font-size:11px;color:var(--muted);margin-top:5px}
 .ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
-.ov-summary-card{background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0}
+.ov-summary-card{background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0;display:flex;flex-direction:column}
+.ov-summary-card .mini-spark{margin-top:auto}
 .ov-summary-card .ov-kpi-value{font-size:1.5rem}
 .ov-secondary-item{background:rgba(255,255,255,.025);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
 .ov-secondary-label{font-size:11px;color:var(--muted)}
@@ -489,7 +490,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" :title="heroScopeHint" x-text="heroScopeLabel"></span></div><div class="pnl-b"><div class="ov-summary-grid">
           <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_requests')"></span><span class="ov-icon" style="background:rgba(99,102,241,.12);color:#818cf8">↗</span></div><div class="ov-kpi-value" x-text="heroRequests"></div><div class="ov-kpi-hint" x-text="heroRequestsHint"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.requests),'#818cf8')"></div></div>
           <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_cost')"></span><span class="ov-icon" style="background:rgba(245,158,11,.12);color:#f59e0b">¥</span></div><div class="ov-kpi-value" style="color:#f59e0b" x-text="heroCostText"></div><div class="ov-kpi-hint" x-text="stats.has_price_config?t('cost_estimated'):t('price_unconfigured')"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.total_cost||0),'#f59e0b')"></div></div>
-          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:#a78bfa">◇</span></div><div class="ov-kpi-value" style="color:#a78bfa" x-text="fmtT(heroTokens)"></div><div class="ov-kpi-hint" x-text="heroTokensHint"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:#a78bfa">◇</span></div><div class="ov-kpi-value" style="color:#a78bfa" x-text="fmtT(heroTokens)"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
         </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:#34d399" x-text="fmtT(heroPrompt)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:#a78bfa" x-text="fmtT(heroCompletion)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:#22d3ee" x-text="heroCacheText"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:#34d399">⚡</span></div><div class="ov-kpi-value" style="color:#34d399" x-text="fmtT((stats.today_strip_saved_tokens||0)+(stats.today_trim_saved_tokens||0)+(stats.today_resp_cache_saved_tokens||0))"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:rgba(34,211,238,.12);color:#22d3ee">📊</span></div><div class="ov-kpi-value" style="color:#22d3ee" x-text="fmtT(stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+t('opt_saved_30d')"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
@@ -1211,7 +1212,7 @@ const I18N = {
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日',
     'errors_only': '错误 {0}', 
     'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 
-    'tokens_input_output': '{0} 输入 · {1} 输出', 'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
+    'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
     'kv_cache_hit': 'KV Cache 命中', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
     'view_analytics': '查看分析', 'success_rate': '成功率', 'avg_latency': '平均延迟', 'generation_speed': '生成速度',
     'sample_count': '{0} 个样本', 'top_models_traffic': '流量最高的模型', 'api_information': 'API 信息',
@@ -1394,7 +1395,7 @@ const I18N = {
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today',
     'errors_only': '{0} errors', 
     'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 
-    'tokens_input_output': '{0} in · {1} out', 'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
+    'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
     'kv_cache_hit': 'KV Cache hit', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
     'view_analytics': 'View analytics', 'success_rate': 'Success rate', 'avg_latency': 'Average latency', 'generation_speed': 'Generation speed',
     'sample_count': '{0} samples', 'top_models_traffic': 'Top models by traffic', 'api_information': 'API information',
@@ -2928,7 +2929,6 @@ function dashboard() {
     get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
     get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
-    get heroTokensHint() { return t('tokens_input_output', this.fmtT(this.heroPrompt), this.fmtT(this.heroCompletion)); },
     // 命中率口径: 命中 / 总输入 token (与统计页一致). 分母为 0 = 没有数据, 给 '—' 而非 0%.
     get heroCacheText() {
       const s=this.stats||{};
