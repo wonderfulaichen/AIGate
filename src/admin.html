@@ -2918,8 +2918,11 @@ function dashboard() {
     get heroRequests() { const s=this.stats||{}; return Number((this.heroToday?s.today_requests:s.total_requests)||0); },
     get heroErrors() { const s=this.stats||{}; return Number((this.heroToday?s.today_errors:s.error_count)||0); },
     get heroRequestsHint() {
+      // 口径必须与主数字一致: 主数字是"今日请求"时, 提示里的总数也必须是今日请求,
+      // 不能拿窗口总请求来配 (那会出现「22 请求」+「错误 12 · 总计 2598」这种
+      // 三个数互不相干、算不通的读数).
       return this.heroToday
-        ? t('errors_total', this.heroErrors, (this.stats&&this.stats.total_requests)||0)
+        ? t('errors_total', this.heroErrors, Number((this.stats && this.stats.today_requests) || 0))
         : t('errors_only', this.heroErrors);
     },
     get heroCost() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_cost:s.total_cost)||0); },
