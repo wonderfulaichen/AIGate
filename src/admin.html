@@ -1121,7 +1121,7 @@ const I18N = {
     'other_n': '其他 {0} 个',
     'no_data': '暂无数据',
     
-    'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）', 'hero_requests': '请求', 'hero_cost': '费用', 'hero_tokens': 'Token 总量', 'window_label': '窗口累计', 'errors_only': '错误 {0}', 'hero_scope_today_hint': '显示今日数据', 'hero_scope_window_hint': '今日暂无请求，显示整个统计窗口的累计',
+    'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）', 'hero_requests': '请求', 'hero_cost': '费用', 'hero_tokens': 'Token 总量', 'window_label': '窗口累计', 'hero_scope_window_hint': '今日暂无请求，显示整个统计窗口的累计',
     'audit_applied': '已生效省量',
     'audit_applied_strip': '· 剥离推理链（普通轮次）', 'audit_applied_strip_tc': '· 剥离推理链（工具轮次）', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
     'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"剥离推理链（工具轮次）"）',
@@ -1304,7 +1304,7 @@ const I18N = {
     'other_n': '{0} others',
     'no_data': 'No data',
     
-    'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)', 'hero_requests': 'Requests', 'hero_cost': 'Cost', 'hero_tokens': 'Total tokens', 'window_label': 'Window total', 'errors_only': 'Errors {0}', 'hero_scope_today_hint': 'Showing today', 'hero_scope_window_hint': 'No requests today — showing the whole statistics window',
+    'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)', 'hero_requests': 'Requests', 'hero_cost': 'Cost', 'hero_tokens': 'Total tokens', 'window_label': 'Window total', 'hero_scope_window_hint': 'No requests today — showing the whole statistics window',
     'audit_applied': 'Applied savings',
     'audit_applied_strip': '· strip reasoning (plain turns)', 'audit_applied_strip_tc': '· strip reasoning (tool turns)', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
     'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "strip reasoning (tool turns)" above)',
@@ -2897,45 +2897,51 @@ function dashboard() {
       return v >= 95 ? '#34d399' : v >= 80 ? '#f59e0b' : '#ef4444';
     },
     // 成功率(数值): 供配色阈值使用; 无数据返回 0 (配色另由 sRateText 判为灰).
+    // 口径与**同面板**的「平均延迟」「生成速度」保持一致, 都用窗口累计 ——
+    // 原先此处用今日、而旁边两项用窗口, 同一张卡片里混了两个尺度.
     get sRate() {
-      if(!this.stats||!this.stats.today_requests) return 0;
-      return this.stats.today_success/this.stats.today_requests*100;
+      if(!this.stats||!this.stats.total_requests) return 0;
+      return (this.stats.total_requests-(this.stats.error_count||0))/this.stats.total_requests*100;
     },
-    // 今日无请求 ≠ "100% 成功" —— 那是没有数据, 与全部成功是两回事.
+    // 窗口内无请求 ≠ "100% 成功" —— 那是没有数据, 与全部成功是两回事.
     get sRateText() {
-      if(!this.stats||!this.stats.today_requests) return '—';
+      if(!this.stats||!this.stats.total_requests) return '—';
       return this.fmtPct(this.sRate);
     },
     // ── 概览 hero 的作用域 ──
     //
-    // 今日有请求就显示今日; **今日为空则整块回落到窗口累计**, 而不是显示一片 0.
-    // 起因: 每天开始(或停用一段时间后)打开面板, 页面最显眼的位置六个数全是 0,
-    // 而卡片里的迷你折线画的是整个窗口的曲线(有峰) —— 数字与图形口径不一致, 看起来自相矛盾.
-    // 现在数字与图形同口径(都跟 stats 的窗口), 且标签明确写出当前是哪个口径.
+    // **主数字一律用「窗口累计」口径**, 与卡片里的迷你折线严格同口径
+    // (折线画的就是 stats.trends 整个窗口) —— 这是本面板最看重的一条: 数字与图形不得打架.
+    //
+    // 历史: 最初六个数只显示"今日", 每天开始打开面板全是 0 而折线有峰 (口径不一致);
+    // 上一版改成"今日有请求就显示今日", 修好了全 0, 但引入了新矛盾 ——
+    // 今日有请求时主数字是今日口径 (例: 22), 旁边的折线却仍是窗口口径 (峰值可达数百),
+    // 同一张卡片里两个尺度. 且注释声称"现在数字与图形同口径", 与实现不符.
+    // 现统一为窗口口径, 今日用量以文字形式附在提示里 (见 heroRequestsHint), 不再抢主位.
     get heroToday() { return Number((this.stats&&this.stats.today_requests)||0) > 0; },
-    get heroScopeLabel() { return this.heroToday ? t('today_label') : t('window_label'); },
-    get heroScopeHint() { return this.heroToday ? t('hero_scope_today_hint') : t('hero_scope_window_hint'); },
-    get heroRequests() { const s=this.stats||{}; return Number((this.heroToday?s.today_requests:s.total_requests)||0); },
-    get heroErrors() { const s=this.stats||{}; return Number((this.heroToday?s.today_errors:s.error_count)||0); },
+    get heroScopeLabel() { return t('window_label'); },
+    get heroScopeHint() { return t('hero_scope_window_hint'); },
+    get heroRequests() { const s=this.stats||{}; return Number(s.total_requests||0); },
+    get heroErrors() { const s=this.stats||{}; return Number(s.error_count||0); },
     get heroRequestsHint() {
-      // 口径必须与主数字一致: 主数字是"今日请求"时, 提示里的总数也必须是今日请求,
-      // 不能拿窗口总请求来配 (那会出现「22 请求」+「错误 12 · 总计 2598」这种
-      // 三个数互不相干、算不通的读数).
+      // 与主数字同口径: 错误数与总数都取窗口累计, 两者可互相验算.
+      // 今日有请求时把今日用量作为附加信息放在末尾 —— 它是补充, 不与主数字混排取值.
+      const base = t('errors_total', this.heroErrors, Number((this.stats && this.stats.total_requests) || 0));
       return this.heroToday
-        ? t('errors_total', this.heroErrors, Number((this.stats && this.stats.today_requests) || 0))
-        : t('errors_only', this.heroErrors);
+        ? base + ' · ' + t('today_label') + ' ' + Number((this.stats && this.stats.today_requests) || 0)
+        : base;
     },
-    get heroCost() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_cost:s.total_cost)||0); },
+    get heroCost() { const s=this.stats||{}; return Number(s.total_cost||0); },
     get heroCostText() { return (this.stats&&this.stats.has_price_config) ? this.fmtMoney(this.heroCost) : '—'; },
-    get heroPrompt() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_prompt_tokens:s.total_prompt_tokens)||0); },
-    get heroCompletion() { const s=this.stats||{}; return Number((this.heroToday?s.today_total_completion_tokens:s.total_completion_tokens)||0); },
+    get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
+    get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
     get heroTokensHint() { return t('tokens_input_output', this.fmtT(this.heroPrompt), this.fmtT(this.heroCompletion)); },
     // 命中率口径: 命中 / 总输入 token (与统计页一致). 分母为 0 = 没有数据, 给 '—' 而非 0%.
     get heroCacheText() {
       const s=this.stats||{};
-      const h=Number((this.heroToday?s.today_total_cache_hit_tokens:s.total_cache_hit_tokens)||0);
-      const pt=Number((this.heroToday?s.today_total_prompt_tokens:s.total_prompt_tokens)||0);
+      const h=Number(s.total_cache_hit_tokens||0);
+      const pt=Number(s.total_prompt_tokens||0);
       if(!pt) return '—';
       return this.fmtPct(h/pt*100);
     },
