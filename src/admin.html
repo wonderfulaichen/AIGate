@@ -1853,7 +1853,11 @@ function dashboard() {
       return '';
     },
     async resetCircuit(provider) {
-      try { const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})}); if(r.ok){ await this.fetchHealth(); } } catch(e){}
+      try {
+        const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})});
+        if(r.ok){ await this.fetchHealth(); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async fetchCache() {
       try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
@@ -1866,30 +1870,48 @@ function dashboard() {
       try {
         const r = await fetch('/admin/api/cache', {method:'POST', headers:authHeaders(), body:JSON.stringify(cfg)});
         if (r.ok) this.cache = await r.json();
-      } catch(e) {}
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e) { toast(t('network_error'), 'error'); }
     },
     async clearCache() {
-      try { const r=await fetch('/admin/api/cache/clear',{method:'POST',headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
+      try {
+        const r=await fetch('/admin/api/cache/clear',{method:'POST',headers:authHeaders()});
+        if(r.ok) { this.cache=await r.json(); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async fetchStripReasoning() {
       try { const r=await fetch('/admin/api/strip-reasoning', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; } } catch(e){}
     },
     async setStripReasoning(val) {
-      try { const r=await fetch('/admin/api/strip-reasoning',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})}); if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; } } catch(e){}
+      // 失败必须提示: 开关按 :class 绑状态, 失败时开关会弹回原位, 不提示用户就不知为何没生效.
+      try {
+        const r=await fetch('/admin/api/strip-reasoning',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})});
+        if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async fetchMaxHistoryTurns() {
       try { const r=await fetch('/admin/api/max-history-turns', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
     },
     async setMaxHistoryTurns(val) {
       const turns = Math.max(0, val|0);
-      try { const r=await fetch('/admin/api/max-history-turns',{method:'POST',headers:authHeaders(),body:JSON.stringify({turns:turns})}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
+      try {
+        const r=await fetch('/admin/api/max-history-turns',{method:'POST',headers:authHeaders(),body:JSON.stringify({turns:turns})});
+        if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async fetchAutoContinue() {
       try { const r=await fetch('/admin/api/auto-continue', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); } } catch(e){}
     },
     async setAutoContinue(val) {
       const count = Math.min(5, Math.max(0, val|0));
-      try { const r=await fetch('/admin/api/auto-continue',{method:'POST',headers:authHeaders(),body:JSON.stringify({count:count})}); if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); } } catch(e){}
+      try {
+        const r=await fetch('/admin/api/auto-continue',{method:'POST',headers:authHeaders(),body:JSON.stringify({count:count})});
+        if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async fetchConnParams() {
       try {
@@ -1904,10 +1926,18 @@ function dashboard() {
       } catch(e){}
     },
     async setStreamTimeout(secs) {
-      try { const r=await fetch('/admin/api/stream-timeout',{method:'POST',headers:authHeaders(),body:JSON.stringify({secs:secs})}); if(r.ok) { const d=await r.json(); this.streamTimeoutSecs=Math.max(30,d.secs|0); } } catch(e){}
+      try {
+        const r=await fetch('/admin/api/stream-timeout',{method:'POST',headers:authHeaders(),body:JSON.stringify({secs:secs})});
+        if(r.ok) { const d=await r.json(); this.streamTimeoutSecs=Math.max(30,d.secs|0); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     async setRetry(max, backoffMs) {
-      try { const r=await fetch('/admin/api/retry',{method:'POST',headers:authHeaders(),body:JSON.stringify({max:max|0, backoff_ms:backoffMs|0})}); if(r.ok) { const d=await r.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); } } catch(e){}
+      try {
+        const r=await fetch('/admin/api/retry',{method:'POST',headers:authHeaders(),body:JSON.stringify({max:max|0, backoff_ms:backoffMs|0})});
+        if(r.ok) { const d=await r.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
     },
     // ── 模型元信息 (models.dev): 点击展开 chips 面板 (上下文/输出/视觉/推理/工具) ──
     async fetchModelMeta() {
