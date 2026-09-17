@@ -507,7 +507,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+(sRateText==='—'?'var(--muted)':sRate>=95?'#34d399':sRate>=80?'#f59e0b':'#ef4444')" x-text="sRateText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms||0)"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
-        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?Math.round((m.requests-m.errors)/m.requests*100)+'%':'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
+        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
       </div>
       <div class="ov-side">
         <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('balance_cost')"></span><button class="btn btn-g" style="font-size:11px" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider"><div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)"><div style="display:flex;align-items:center;gap:8px"><div style="width:24px;height:24px;border-radius:6px;overflow:hidden" x-html="providerLogo(row.provider)"></div><span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span><span class="txsm mono fw6" x-text="row.hasBalance?fmtMoney(row.balance):'—'"></span></div><div style="display:flex;justify-content:space-between;padding-left:32px;margin-top:4px"><span class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span><span class="txs tm" x-text="row.source||''"></span></div><template x-if="row.error"><div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div></template></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template></div></div>
@@ -648,7 +648,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 16px 14px">
       <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.entries')"></span><span class="txsm mono fw6" x-text="cache.entries"></span></div>
-      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.hit_rate_session')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="(cache.hits+cache.misses>0?(cache.hits/(cache.hits+cache.misses)*100).toFixed(1):'0.0')+'%'"></span></div>
+      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.hit_rate_session')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="(cache.hits+cache.misses>0?fmtPct(cache.hits/(cache.hits+cache.misses)*100):'—')"></span></div>
       <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.saved_label')"></span><span class="txsm mono fw6" x-text="'≈ '+fmtT(cache.saved_tokens||0)+' tok'"></span></div>
       <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.saved_enabled_label')"></span><span class="txsm mono fw6" x-text="'≈ '+fmtT(cache.enabled_saved_tokens||0)+' tok'"></span></div>
     </div>
@@ -3088,7 +3088,7 @@ function dashboard() {
       // 两者口径在小样本下可能不一致, 会算出 >100% 的失真值. 封顶并标注.
       const pct = v / base * 100;
       if (pct > 100) return '>100%';
-      return pct.toFixed(1) + '%';
+      return this.fmtPct(pct);
     },
     // 输出/输入 token 比 (看输出相对规模).
     outInRatio() {
@@ -3102,7 +3102,8 @@ function dashboard() {
     outLongShare() {
       const o = ((this.stats && this.stats.audit) || {}).output || {};
       if (!o.output_tokens) return '—';
-      return ((o.long_tokens || 0) / o.output_tokens * 100).toFixed(1) + '%';
+      // 占比类: 走 fmtPct, 避免 9999/10000 被舍入显示成 100%.
+      return this.fmtPct((o.long_tokens || 0) / o.output_tokens * 100);
     },
     // 已生效省量占比: 分母用「反事实基线」= 实际发送 + 已省, 而非只算实际发送.
     // 省下的 token 本就不在 input_tokens 内 (响应缓存回放的 prompt_tokens 记为 0),
@@ -3111,8 +3112,10 @@ function dashboard() {
       const a = (this.stats && this.stats.audit) || {};
       const saved = a.applied_saved_tokens || 0;
       const base = (a.input_tokens || 0) + saved;
-      if (!saved || !base) return '0.0%';
-      return (saved / base * 100).toFixed(1) + '%';
+      // 无数据 ≠ 0: 窗口内没有输入量时给 '—', 不给 '0%' (那是"确实没省量"的表达).
+      if (!base) return '—';
+      if (!saved) return '0%';
+      return this.fmtPct(saved / base * 100);
     },
     // 省量审计: KV 缓存命中率 = 命中 token / 输入总量 (比"写入量"普适, 后者仅 Anthropic 上报).
     kvHitRate() {
