@@ -1781,7 +1781,7 @@ function dashboard() {
       this.seenVersion = cur;
       try { await fetch('/admin/api/seen-version', { method:'POST', headers:authHeaders(), body: JSON.stringify({ version: cur }) }); } catch(e){}
     },
-    async fetchLogs()    { try { const r=await fetch('/admin/api/logs', {headers:authHeaders()}); if(r.ok) this.logs=await r.json(); } catch(e){} },
+    async fetchLogs()    { try { const r=await fetch('/admin/api/logs', {headers:authHeaders()}); if(r.ok) { this.logs=await r.json(); this.clampLogPage(); } } catch(e){} },
     async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
     healthOf(name) { const h=(this.health||[]).find(x=>x.provider===name); return h?(h.status_level||''):''; },
     // 品牌徽章: 从上游模型名/供应商名识别品牌, 返回 {label, color}
@@ -2184,7 +2184,7 @@ function dashboard() {
     async clearAllLogs() {
       // 不可恢复: 服务端会一并重写日志文件与删除 rollup 账本, 故必须二次确认.
       if(!confirm(t('confirm_clear_logs'))) return;
-      try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; } } catch(e){}
+      try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; this.logPage=0; } } catch(e){}
     },
 
     exportLogs() {
@@ -2987,6 +2987,14 @@ function dashboard() {
       return r;
     },
     resetLogView() { this.logPage = 0; },
+    // 数据收缩后把当前页夹回有效范围: 日志缓冲区会滚动淘汰旧记录 (每 3s 轮询刷新),
+    // 用户若停在第 5 页而列表缩到 2 页, 原实现会渲染出一个空白表格且毫无提示 ——
+    // 看起来像"筛选把结果筛没了", 实际只是页码越界.
+    clampLogPage() {
+      const max = this.totalLogPages - 1;
+      if (this.logPage > max) this.logPage = Math.max(0, max);
+      if (this.logPage < 0) this.logPage = 0;
+    },
     get totalLogPages() { return Math.ceil(this.filteredLogs.length/this.pageSize)||1; },
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
