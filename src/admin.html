@@ -1260,7 +1260,7 @@ const I18N = {
     'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
     'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
     'confirm_clear_removed_models': '确认清理 {0} 个已下架模型？', 'removed_models_cleaned': '已清理 {0} 个下架模型',
-    'confirm_clear_logs': '确认清空所有记录？\n\n这会同时删除内存与磁盘上的全部请求日志、日级账本与历史价格快照，且无法恢复。\n如需留档，请先用「导出 JSON」。',
+    'confirm_clear_logs': '确认清空所有记录？\n\n这会同时删除内存与磁盘上的全部请求日志、日级账本与历史价格快照，且无法恢复。\n注意：「导出 JSON」只含当前已加载的最近 {0} 条，无法保全全部历史。',
     'models_imported': '已导入 {0} 个模型', 'removed_models_suffix': ' | 下架 {0} 个', 'new_models_badge': '新 +{0}',
     'provider_name_required': '供应商 name 不能为空', 'provider_name_duplicate': '供应商 name 重复：{0}',
     'provider_keys_saved': '已保存 {0} 个供应商的密钥', 'provider_keys_save_failed': '{0} 个供应商的密钥保存失败',
@@ -1443,7 +1443,7 @@ const I18N = {
     'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
     'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
     'confirm_clear_removed_models': 'Remove {0} discontinued models?', 'removed_models_cleaned': 'Removed {0} discontinued models',
-    'confirm_clear_logs': 'Clear all records?\n\nThis deletes every request log, the daily ledger and all historical price snapshots on both memory and disk. It cannot be undone.\nUse "Export JSON" first if you want to keep a copy.',
+    'confirm_clear_logs': 'Clear all records?\n\nThis deletes every request log, the daily ledger and all historical price snapshots on both memory and disk. It cannot be undone.\nNote: "Export JSON" only covers the {0} most recently loaded rows, so it cannot preserve the full history.',
     'models_imported': 'Imported {0} models', 'removed_models_suffix': ' | {0} discontinued', 'new_models_badge': 'New +{0}',
     'provider_name_required': 'Provider name is required', 'provider_name_duplicate': 'Duplicate provider name: {0}',
     'provider_keys_saved': 'Saved keys for {0} providers', 'provider_keys_save_failed': 'Failed to save keys for {0} providers',
@@ -2184,7 +2184,9 @@ function dashboard() {
     },
     async clearAllLogs() {
       // 不可恢复: 服务端会一并重写日志文件与删除 rollup 账本, 故必须二次确认.
-      if(!confirm(t('confirm_clear_logs'))) return;
+      // 文案里的条数取实时的 logs.length —— 导出只覆盖已加载的这部分, 写明它才能避免
+      // 用户误以为"先导出就没损失"(实测磁盘 4290 条时导出仅 1000 条, 覆盖率 23%).
+      if(!confirm(t('confirm_clear_logs', this.logs.length))) return;
       try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; this.logPage=0; } } catch(e){}
     },
 
