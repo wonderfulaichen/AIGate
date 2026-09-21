@@ -1067,6 +1067,23 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div style="border-top:1px solid var(--border);padding-top:10px">
       <div class="f-row"><label x-text="t('price_row_cache_write')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:110px" x-model.number="pricePanel.cache_creation_per_m"></div>
     </div>
+    <div x-show="refPriceRows().length" style="border-top:1px solid var(--border);padding-top:10px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <span class="txs fw6" style="color:var(--muted)" x-text="t('ref_price_title')"></span>
+        <span class="bdg bdg-g" style="font-size:9px" x-text="t('ref_price_source')+' / '+((refCostFor(pricePanelModel)||{}).provider||'')"></span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <tbody>
+          <template x-for="r in refPriceRows()" :key="r.label">
+            <tr>
+              <td style="padding:2px 8px 2px 0;color:var(--muted);white-space:nowrap" x-text="r.label"></td>
+              <td class="mono" style="padding:2px 0;color:var(--fg)" x-text="r.value"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div class="txs tm" style="margin-top:6px;line-height:1.5" x-text="t('ref_price_note').replace('{0}', Number((currencyConfig.rates||{}).USD)||0)"></div>
+    </div>
     <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:10px">
       <button class="btn btn-g" style="font-size:11px" @click="copyPriceFromPanel()" x-text="t('price_copy')"></button>
@@ -1113,7 +1130,8 @@ const I18N = {
     
     'unit_times': '次', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_models': '模型', 'unit_providers': '供应商', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
-    'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 'display_currency': '显示币种',
+    'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 
+    'ref_price_title': '参考价', 'ref_price_source': 'models.dev', 'ref_price_note': '取自 models.dev 中「同名供应商」的报价，按汇率 1 USD = {0} CNY 换算展示。该数据为单一价、不含高峰/空闲时段，与官方峰谷定价可能不一致（实测 DeepSeek 偏差近 2 倍）；仅供对照，不会自动填入。','display_currency': '显示币种',
     'price_copy': '复制价格', 'price_paste': '粘贴价格', 'price_copied': '已复制', 'price_applied': '已应用到 {0} 个模型',
     'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按所选汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
@@ -1301,7 +1319,8 @@ const I18N = {
     
     'unit_times': 'reqs', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_models': 'models', 'unit_providers': 'providers', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
     'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
-    'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
+    'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.',
+    'ref_price_title': 'Reference price', 'ref_price_source': 'models.dev', 'ref_price_note': 'Taken from the same-named provider on models.dev, converted at 1 USD = {0} CNY. It is a single price with no peak/off-peak dimension and can disagree with official time-based pricing (measured ~2x off for DeepSeek). Shown for comparison only; never auto-filled.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
     'price_copy': 'Copy price', 'price_paste': 'Paste price', 'price_copied': 'Copied', 'price_applied': 'Applied to {0} model(s)',
     'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the selected rate; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
@@ -1626,6 +1645,9 @@ function dashboard() {
     autoContinue: 2,
     // 模型元信息 (models.dev): {模型名: {context,output,vision,reasoning,tool_call}|null}
     modelMeta: {},
+    // 参考价: {供应商: {上游模型名: {input,output,cache_read,cache_write,provider}}} (USD/1M).
+    // 按供应商严格匹配 models.dev —— 同名模型各家中转价差异极大, 不可跨家回退.
+    modelCosts: {},
     modelMetaLoading: false,
     _metaSig: '',
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
@@ -2019,14 +2041,37 @@ function dashboard() {
           names.add(raw.includes('/') ? raw.split('/').pop() : raw);
         });
         if(!names.size) { this.modelMetaLoading = false; return; }
+        // 参考价查询对: 只查「本供应商 + 该模型」这一组合 (按 provider 严格匹配,
+        // 避免取到同名模型在别家的价 —— 实测同名模型有几十家收录且报价差异极大).
+        const costQueries=[];
+        (this.providersFormData||[]).forEach(p=>{
+          const pn=(p.name||'').trim(); if(!pn) return;
+          (p.models||[]).forEach(m=>{
+            const u=(m.upstream_model||'').trim();
+            if(u) costQueries.push({provider:pn, name:u});
+          });
+        });
         // 签名去重: 轮询/重复进入不重发 (服务端有 24h 缓存, 也省一次往返)
-        const sig=[...names].sort().join(',');
+        const sig=[...names].sort().join(',')+'|'+costQueries.map(q=>q.provider+'/'+q.name).sort().join(',');
         if(sig===this._metaSig && Object.keys(this.modelMeta).length) { this.modelMetaLoading = false; return; }
         this._metaSig=sig;
-        const r=await fetch('/admin/api/model-meta',{method:'POST',headers:authHeaders(),body:JSON.stringify({names:[...names]})});
-        if(r.ok){ const d=await r.json(); this.modelMeta=d.meta||{}; }
+        const r=await fetch('/admin/api/model-meta',{method:'POST',headers:authHeaders(),body:JSON.stringify({names:[...names], costQueries})});
+        if(r.ok){
+          const d=await r.json();
+          this.modelMeta=d.meta||{};
+          this.modelCosts=d.costs||{};
+        }
       } catch(e){}
       this.modelMetaLoading = false;
+    },
+    // 该模型的参考价 (USD/1M): 仅当 models.dev 里**同名供应商**收录了该模型才返回.
+    // 不做跨供应商回退 —— 别家的价当参考只会误导.
+    refCostFor(m) {
+      const p=((this.drawerProv&&this.drawerProv.name)||'').trim();
+      const u=(m&&m.upstream_model||'').trim();
+      if(!p||!u) return null;
+      const byProv=this.modelCosts[p];
+      return (byProv&&byProv[u])||null;
     },
     metaFor(m) {
       const u=(m.upstream_model||'').trim();
@@ -2536,6 +2581,28 @@ function dashboard() {
     openPricePanel(model){
       this.priceToPanel(model.price);
       this.pricePanelModel = model;
+    },
+    // models.dev 收录的参考价 (USD/1M) -> 换算为内部基准 CNY/1M 展示.
+    //
+    // 只展示、**不写入** price: models.dev 是单一价且以 USD 计价, 而 AIGate 内部按 CNY
+    // 计价, 部分官方供应商还是峰谷双价 (DeepSeek 空闲价 = 高峰价一半, 另有独立缓存命中价).
+    // 实测 DeepSeek flash: 官方高峰 2.0/8.0/0.04 元, models.dev 换算约 1.08/4.32/0.02 ——
+    // 两档都不吻合; pro 偏差达 44%. 自动填入会把已配准的官方价格改错, 故交用户自行判断.
+    // 且必须按**同名供应商**取价: 同名模型有几十家收录, 报价从 0 到 0.435 不等.
+    refPriceRows(){
+      const m = this.pricePanelModel;
+      const c = m ? this.refCostFor(m) : null;
+      if(!c) return [];
+      // USD -> CNY: rates[code] = 1 单位该币种 = 多少 CNY (与 currency.rs 语义一致).
+      const usdToCny = Number((this.currencyConfig.rates||{}).USD) || 0;
+      if(!(usdToCny > 0)) return [];
+      const fmt = v => '¥' + (v >= 1 ? v.toFixed(3).replace(/0+$/,'').replace(/\.$/,'') : v.toFixed(4)) + ' / 1M';
+      const rows = [];
+      if(c.input != null) rows.push({label: t('price_row_cache_miss'), value: fmt(c.input * usdToCny)});
+      if(c.output != null) rows.push({label: t('price_row_output'), value: fmt(c.output * usdToCny)});
+      if(c.cache_read != null) rows.push({label: t('price_row_cache_hit'), value: fmt(c.cache_read * usdToCny)});
+      if(c.cache_write != null) rows.push({label: t('price_row_cache_write'), value: fmt(c.cache_write * usdToCny)});
+      return rows;
     },
     closePricePanel(){
       this.pricePanelModel = null;

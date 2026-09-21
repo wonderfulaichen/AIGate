@@ -34,14 +34,41 @@ pub struct ModelMeta {
     pub tool_call: bool,
 }
 
+/// models.dev 收录的单价 (美元 / 百万 tokens). 缺失字段为 None.
+///
+/// 仅作**面板参考**, 不写入 `price`: models.dev 是单一价、USD 计价, 而 AIGate 内部按
+/// CNY 计价且部分官方供应商是峰谷双价 (DeepSeek 空闲价 = 高峰价一半, 另有独立缓存命中价).
+#[derive(Debug, Clone, Serialize)]
+pub struct MetaCost {
+    pub input: Option<f64>,
+    pub output: Option<f64>,
+    /// 缓存读取价 (`cache_read`).
+    pub cache_read: Option<f64>,
+    /// 缓存写入价 (`cache_write`), 部分供应商才有.
+    pub cache_write: Option<f64>,
+    /// 该价来自哪个 models.dev provider —— 面板据此展示来源, 让用户判断是否与自己的供应商相符.
+    pub provider: String,
+}
+
 /// models.dev 全量索引: 归一化 id → 元信息.
+///
+/// 说明: 上下文/输出/视觉/推理/工具等字段在同名模型间基本一致, 扁平覆盖无实质影响.
+/// **价格不能这样处理** —— 见 `costs` 字段的注释.
 struct Index {
     map: HashMap<String, ModelMeta>,
+    /// 官方参考价: `(models.dev provider id, 归一化模型名)` → 单价 (USD/1M).
+    ///
+    /// ⚠️ 价格必须按 provider 分别索引: models.dev 收录 200+ provider, 同一模型被几十家
+    /// 重复收录且报价差异极大. 实测 `deepseek-v4-flash` 有 **34 个 provider** 贡献同一
+    /// 归一化键 —— 官方 deepseek 报 0.15/0.6, azure 报 0.19/0.51, 而部分订阅制 provider
+    /// 直接报 **0/0**. 若沿用扁平 map (后者覆盖前者), 参考价会取到别家甚至 0 ——
+    /// 这正是本项目反复强调要避免的「看着精确的假数」.
+    costs: HashMap<(String, String), MetaCost>,
 }
 
 impl Index {
     fn empty() -> Self {
-        Self { map: HashMap::new() }
+        Self { map: HashMap::new(), costs: HashMap::new() }
     }
 }
 
@@ -65,6 +92,34 @@ impl MetaCache {
                 last_failure_at: None,
             }),
         }
+    }
+
+    /// 解析一批「(供应商, 模型名)」 → 该供应商在 models.dev 的**参考价**.
+    ///
+    /// **严格按供应商归属匹配, 匹配不到就不返回** —— 不做"随便找一家同名模型"的回退.
+    /// 理由: 同名模型在不同 provider 下报价差异极大 (实测 `deepseek-v4-flash` 有 34 家收录:
+    /// 官方 0.15/0.6, azure 0.19/0.51, 部分订阅制 provider 报 0/0). 拿别家的价当"参考"
+    /// 只会误导. 返回 `provider(原样) -> {模型名(原样) -> MetaCost}`.
+    pub async fn resolve_costs(
+        &self,
+        client: &reqwest::Client,
+        queries: &[(String, String)],
+    ) -> HashMap<String, HashMap<String, MetaCost>> {
+        let index = self.get_index(client).await;
+        let mut out: HashMap<String, HashMap<String, MetaCost>> = HashMap::new();
+        for (prov, name) in queries {
+            let p = prov.trim();
+            let n = name.trim();
+            if p.is_empty() || n.is_empty() {
+                continue;
+            }
+            let Some(ix) = index.as_ref() else { continue };
+            let key = (p.to_lowercase(), normalize(n));
+            if let Some(c) = ix.costs.get(&key) {
+                out.entry(p.to_string()).or_default().insert(n.to_string(), c.clone());
+            }
+        }
+        out
     }
 
     /// 解析一批模型名 → 名称到元信息的映射 (未收录的键值为 None, 前端据此隐藏).
@@ -151,10 +206,11 @@ fn parse_root(root: &serde_json::Value) -> Index {
     let Some(providers) = root.as_object() else {
         return ix;
     };
-    for (_prov_id, pv) in providers {
+    for (prov_id, pv) in providers {
         let Some(models) = pv.get("models").and_then(|m| m.as_object()) else {
             continue;
         };
+        let prov_key = prov_id.trim().to_lowercase();
         for (id, mv) in models {
             let context = mv.pointer("/limit/context").and_then(fnum);
             let output = mv.pointer("/limit/output").and_then(fnum);
@@ -167,13 +223,40 @@ fn parse_root(root: &serde_json::Value) -> Index {
                 || mv.get("attachment").and_then(|b| b.as_bool()).unwrap_or(false);
             let reasoning = mv.get("reasoning").and_then(|b| b.as_bool()).unwrap_or(false);
             let tool_call = mv.get("tool_call").and_then(|b| b.as_bool()).unwrap_or(false);
+            let norm = normalize(id);
             ix.map.insert(
-                normalize(id),
+                norm.clone(),
                 ModelMeta { context, output, vision, reasoning, tool_call },
             );
+            // 参考价按 (provider, 归一化模型名) 单独存放 —— 同名模型各家中转价差异极大,
+            // 不能扁平覆盖 (详见 Index::costs 注释).
+            if let Some(mc) = mv.get("cost").and_then(|c| parse_cost(c, &prov_key)) {
+                ix.costs.insert((prov_key.clone(), norm), mc);
+            }
         }
     }
     ix
+}
+
+/// 解析单个 provider 的 `cost` 对象 → MetaCost. 全字段缺失/非对象时返回 None.
+fn parse_cost(c: &serde_json::Value, provider: &str) -> Option<MetaCost> {
+    if !c.is_object() {
+        return None;
+    }
+    let mc = MetaCost {
+        input: c.get("input").and_then(|v| v.as_f64()),
+        output: c.get("output").and_then(|v| v.as_f64()),
+        cache_read: c.get("cache_read").and_then(|v| v.as_f64()),
+        cache_write: c.get("cache_write").and_then(|v| v.as_f64()),
+        provider: provider.to_string(),
+    };
+    if mc.input.is_none() && mc.output.is_none()
+        && mc.cache_read.is_none() && mc.cache_write.is_none()
+    {
+        None
+    } else {
+        Some(mc)
+    }
 }
 
 /// 数字字段容错读取 (models.dev 个别字段可能为浮点/字符串).
@@ -286,7 +369,8 @@ mod tests {
                     "name": "Claude Sonnet 4.5",
                     "attachment": true, "reasoning": true, "tool_call": true,
                     "modalities": {"input": ["text","image"], "output": ["text"]},
-                    "limit": {"context": 200000, "output": 64000}
+                    "limit": {"context": 200000, "output": 64000},
+                    "cost": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75}
                 }
             }},
             "openai": { "models": {
@@ -304,9 +388,72 @@ mod tests {
         assert_eq!(m.output, Some(64000));
         assert!(m.vision);
         assert!(m.reasoning && m.tool_call);
+        // 参考价 (USD/1M) 存在 (provider, 模型) 维度, 并带上来源 provider
+        let c = ix.costs.get(&("anthropic".to_string(), "claude-sonnet-4-5".to_string()))
+            .expect("cost 应按 (provider, model) 被解析");
+        assert_eq!(c.input, Some(3.0));
+        assert_eq!(c.output, Some(15.0));
+        assert_eq!(c.cache_read, Some(0.3));
+        assert_eq!(c.cache_write, Some(3.75));
+        assert_eq!(c.provider, "anthropic");
         let g = ix.map.get("gpt-5.2").unwrap();
         assert!(!g.vision);
         assert_eq!(g.context, Some(400000));
+        // 无 cost 字段 -> 无条目 (面板据此不显示参考价, 不得造出 0 价)
+        assert!(!ix.costs.contains_key(&("openai".to_string(), "gpt-5.2".to_string())));
+    }
+
+    /// **核心保证**: 同名模型被多个 provider 收录时, 参考价按 provider 分别保存,
+    /// 不得互相覆盖 (实测 deepseek-v4-flash 有 34 家收录, 报价从 0 到 0.435 不等).
+    #[test]
+    fn costs_are_indexed_per_provider_not_flattened() {
+        let root: serde_json::Value = serde_json::json!({
+            "deepseek": { "models": {
+                "deepseek-v4-flash": {"cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}}
+            }},
+            "azure": { "models": {
+                "deepseek-v4-flash": {"cost": {"input": 0.19, "output": 0.51}}
+            }},
+            "alibaba-token-plan": { "models": {
+                "deepseek-v4-flash": {"cost": {"input": 0, "output": 0}}
+            }}
+        });
+        let ix = parse_root(&root);
+        let k = |p: &str| (p.to_string(), "deepseek-v4-flash".to_string());
+        assert_eq!(ix.costs.get(&k("deepseek")).unwrap().input, Some(0.15));
+        assert_eq!(ix.costs.get(&k("azure")).unwrap().input, Some(0.19));
+        // 0 价是真实存在的订阅制档位, 必须原样保留 (不能被别的 provider 顶掉)
+        let free = ix.costs.get(&k("alibaba-token-plan")).unwrap();
+        assert_eq!(free.input, Some(0.0));
+        assert_eq!(free.provider, "alibaba-token-plan");
+        // 三家各自独立存在
+        assert_eq!(ix.costs.len(), 3);
+    }
+
+    /// cost 解析的边界: 空对象 / 全空字段 -> None; 部分字段 -> 保留已知项.
+    #[test]
+    fn parse_root_handles_partial_cost() {
+        let root: serde_json::Value = serde_json::json!({
+            "p": { "models": {
+                "a": {"cost": {}},
+                "b": {"cost": {"input": null, "output": null}},
+                "c": {"cost": {"input": 1.5}},
+                "d": {"cost": "not-an-object"},
+                "e": {"cost": {"output": 2.5, "cache_read": 0.1}}
+            }}
+        });
+        let ix = parse_root(&root);
+        let k = |n: &str| ("p".to_string(), n.to_string());
+        assert!(!ix.costs.contains_key(&k("a")), "空 cost 对象不应产生条目");
+        assert!(!ix.costs.contains_key(&k("b")), "全空字段不应产生条目");
+        assert!(!ix.costs.contains_key(&k("d")), "非对象不应产生条目");
+        let c = ix.costs.get(&k("c")).expect("部分字段应产生条目");
+        assert_eq!(c.input, Some(1.5));
+        assert_eq!(c.output, None);
+        let e = ix.costs.get(&k("e")).expect("部分字段应产生条目");
+        assert_eq!(e.output, Some(2.5));
+        assert_eq!(e.cache_read, Some(0.1));
+        assert_eq!(e.input, None);
     }
 
     #[test]

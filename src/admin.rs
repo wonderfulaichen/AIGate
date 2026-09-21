@@ -1965,12 +1965,31 @@ pub async fn api_retry_set(
 // ─── 模型元信息 (models.dev) ───
 
 /// POST /admin/api/model-meta — 批量解析模型元信息 (上下文/输出限制/视觉等).
-/// 请求体 `{names: ["kimi-k3-free", ...]}`; 响应 `{meta: {名称: ModelMeta|null}}`,
-/// null = 未收录 (前端隐藏标签). 首次调用触发 models.dev 拉取 (24h 缓存, 走系统代理),
-/// 拉取失败返回全 null 不阻塞面板.
+///
+/// 请求体 `{names: [...], costQueries: [{provider, name}, ...]}`;
+/// 响应 `{meta: {名称: ModelMeta|null}, costs: {供应商: {模型名: MetaCost}}}`.
+/// `meta` 中 null = 未收录 (前端隐藏标签). 首次调用触发 models.dev 拉取
+/// (24h 缓存, 走系统代理), 拉取失败返回空不阻塞面板.
+///
+/// `costs` 是**官方参考价** (USD/1M), 按供应商严格匹配, 仅供面板展示对照 —— 不写回 price.
+///
+/// 注意 `rename_all = "camelCase"`: 前端按 JS 习惯发 `costQueries`, 这里必须对应,
+/// 否则该字段会被静默当作缺失 (实测表现为参考价永远查不到, 且无任何报错).
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelMetaReq {
     pub names: Vec<String>,
+    /// 参考价查询对: 只对这些「(供应商, 模型名)」组合查 models.dev 的报价.
+    #[serde(default)]
+    pub cost_queries: Option<Vec<CostQuery>>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CostQuery {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 pub async fn api_model_meta(
@@ -1980,7 +1999,20 @@ pub async fn api_model_meta(
     // 上限保护: 名单异常大时截断 (正常配置 <500 个模型).
     let names: Vec<String> = payload.names.into_iter().take(2000).collect();
     let map = state.model_meta.resolve_many(&state.client, &names).await;
-    Json(serde_json::json!({ "meta": map }))
+    // 参考价: 按「(供应商, 模型名)」严格匹配 models.dev 中**同名供应商**的报价, 匹配不到不返回.
+    // 不自动写入 price —— models.dev 是单一价+USD, 而面板按 CNY+峰谷双价计价, 换算后偏差可达 44%.
+    let pairs: Vec<(String, String)> = payload
+        .cost_queries
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|q| match (q.provider, q.name) {
+            (Some(p), Some(n)) if !p.trim().is_empty() && !n.trim().is_empty() => Some((p, n)),
+            _ => None,
+        })
+        .take(2000)
+        .collect();
+    let costs = state.model_meta.resolve_costs(&state.client, &pairs).await;
+    Json(serde_json::json!({ "meta": map, "costs": costs }))
 }
 
 // ─── 使用统计 ───
@@ -3873,6 +3905,27 @@ fn prev_bucket(ts: u64, granularity: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 前端按 JS 习惯发 camelCase (`costQueries`), 后端结构体是 snake_case 字段 ——
+    /// 缺 `#[serde(rename_all = "camelCase")]` 时该字段会被**静默**当作缺失
+    /// (实测表现为参考价永远查不到, 且没有任何报错). 此测试固化该映射, 防止回归.
+    #[test]
+    fn model_meta_req_accepts_camel_case_cost_queries() {
+        let raw = r#"{
+            "names": ["deepseek-v4-flash"],
+            "costQueries": [{"provider": "deepseek", "name": "deepseek-v4-flash"}]
+        }"#;
+        let req: ModelMetaReq = serde_json::from_str(raw).expect("应能解析 camelCase");
+        let qs = req.cost_queries.expect("costQueries 不应丢失");
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0].provider.as_deref(), Some("deepseek"));
+        assert_eq!(qs[0].name.as_deref(), Some("deepseek-v4-flash"));
+
+        // 不带 costQueries 时也不应报错 (旧前端/其它调用方兼容).
+        let req2: ModelMetaReq =
+            serde_json::from_str(r#"{"names":["x"]}"#).expect("应能解析仅 names");
+        assert!(req2.cost_queries.is_none());
+    }
 
     /// 构造一条带 KV Cache 统计的请求日志.
     fn mk(model: &str, provider: &str, hit: u32, miss: u32) -> RequestLog {
