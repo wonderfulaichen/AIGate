@@ -342,8 +342,14 @@ impl ProviderRegistry {
 
     /// 将上游拉取到的模型 ID 合并进指定供应商的 `models` 表.
     ///
-    /// - 新增未存在的模型 ID, `upstream_model` 设为同名 (原样转发), `reasoning_effort` 留空
-    ///   (由客户端按模型自行调节思考档位), `extra_body` 留空.
+    /// - 新增未存在的模型 ID, 中转 ID 生成为 **`供应商名/上游模型ID`**, `upstream_model`
+    ///   存原始上游 ID (原样转发), `reasoning_effort` 留空 (由客户端按模型自行调节思考档位),
+    ///   `extra_body` 留空.
+    /// - **为什么上游 ID 自带斜杠时也加前缀**: OpenRouter / commandcodeAI 等上游用
+    ///   「作者/模型」命名 (如 `deepseek/deepseek-v4-flash`). 若原样用作中转 ID, 同一 ID
+    ///   会在多家供应商间撞车, 而路由表是 `HashMap`(一个 ID 一条路由), 后加载者静默覆盖
+    ///   前者 —— 被覆盖的条目在面板上可见可改却永不生效, 且无任何提示. 加前缀后每个
+    ///   供应商的条目都拥有独立中转 ID (形如 `commandcodeAI/deepseek/deepseek-v4-flash`).
     /// - **去重的唯一标准 = 上游模型 ID**: 只要本地已有某个条目 (任意中转别名) 的 `upstream_model`
     ///   等于待拉取的 ID, 就跳过. **不对比中转别名(key)、也不对比思考档位(reasoning_effort)**.
     ///   例: 文件里 `go-flash -> deepseek-v4-flash`, 上游返回的 `deepseek-v4-flash` 不再重复加入.
@@ -353,6 +359,7 @@ impl ProviderRegistry {
         let mut added = 0usize;
         let mut skipped = 0usize;
         if let Some(provider) = self.providers.iter_mut().find(|p| p.name == name) {
+            let prov_name = provider.name.clone();
             for id in ids {
                 // 去重: 本地是否已有条目的 upstream_model == 该上游 ID (不对比别名 / 思考档位)
                 let already_exists = provider
@@ -363,8 +370,10 @@ impl ProviderRegistry {
                     skipped += 1;
                     continue;
                 }
+                // 中转 ID: 恒加「供应商/」前缀 (幂等: 已带本前缀则不重复加).
+                let transit_id = transit_model_id(&prov_name, id);
                 provider.models.insert(
-                    id.clone(),
+                    transit_id,
                     ModelConfig {
                         upstream_model: Some(id.clone()),
                         reasoning_effort: None,
@@ -382,6 +391,26 @@ impl ProviderRegistry {
         }
         (added, skipped)
     }
+}
+
+/// 由「供应商名 + 上游模型 ID」构造模型中转 ID: `供应商/上游模型ID`.
+///
+/// **上游 ID 自带斜杠时同样加前缀**: OpenRouter / commandcodeAI 等上游以「作者/模型」
+/// 命名 (如 `deepseek/deepseek-v4-flash`). 若原样用作中转 ID, 同一 ID 会挂在多家供应商下,
+/// 而路由表是 `HashMap`(一个 ID 只能有一条路由), 后加载者静默覆盖前者 —— 被覆盖的条目
+/// 在面板上可见可改却永不生效, 且没有任何提示. 加前缀后各家条目拥有独立中转 ID.
+///
+/// 幂等: 上游 ID 已等于供应商名或已带 `供应商/` 前缀时, 原样返回 (重复拉取/导入不叠加前缀).
+pub fn transit_model_id(provider_name: &str, upstream_id: &str) -> String {
+    let p = provider_name.trim();
+    let u = upstream_id.trim();
+    if p.is_empty() {
+        return u.to_string();
+    }
+    if u == p || u.starts_with(&format!("{p}/")) {
+        return u.to_string();
+    }
+    format!("{p}/{u}")
 }
 
 /// 按官方网关清单, 为「供应商 + 模型 ID」推断默认 API 格式 (OpenAI / Anthropic / Responses).
@@ -637,13 +666,106 @@ mod tests {
         let (added, skipped) = reg.add_models("test-zen", &ids);
         assert_eq!(added, 2);
         assert_eq!(skipped, 1);
-        // 新增的模型: upstream_model 同名, reasoning_effort 留空
+        // 新增的模型: 中转 ID = 供应商/上游ID, upstream_model 存原始上游 ID, reasoning_effort 留空
         let provider = reg.providers.iter().find(|p| p.name == "test-zen").unwrap();
-        let m = provider.models.get("new-model-a").unwrap();
+        let m = provider.models.get("test-zen/new-model-a").unwrap();
         assert_eq!(m.upstream_model.as_deref(), Some("new-model-a"));
         assert!(m.reasoning_effort.is_none());
         // 上游已覆盖的 ID 未作为新 key 被加入
-        assert!(!provider.models.contains_key("deepseek-v4-flash"));
+        assert!(!provider.models.contains_key("test-zen/deepseek-v4-flash"));
+    }
+
+    /// 中转 ID 恒加「供应商/」前缀; 上游 ID 自带斜杠 (OpenRouter 风格) 也一样加,
+    /// 否则同名 ID 会在多家供应商间撞车, 被路由表静默覆盖.
+    #[test]
+    fn transit_id_always_prefixes_provider() {
+        // 裸 ID
+        assert_eq!(transit_model_id("go", "deepseek-v4-flash"), "go/deepseek-v4-flash");
+        // 上游自带斜杠: 仍加前缀, 得到两段斜杠 (供应商/作者/模型)
+        assert_eq!(
+            transit_model_id("commandcodeAI", "deepseek/deepseek-v4-flash"),
+            "commandcodeAI/deepseek/deepseek-v4-flash"
+        );
+        // 同一上游 ID 在不同供应商下产生不同中转 ID -> 不再冲突
+        let a = transit_model_id("Openrouter", "deepseek/deepseek-v4-flash");
+        let b = transit_model_id("commandcodeAI", "deepseek/deepseek-v4-flash");
+        assert_ne!(a, b);
+    }
+
+    /// 前缀必须幂等: 已带本供应商前缀时不重复叠加 (重复拉取/导入场景).
+    #[test]
+    fn transit_id_is_idempotent() {
+        assert_eq!(transit_model_id("go", "go/deepseek-flash"), "go/deepseek-flash");
+        assert_eq!(
+            transit_model_id("commandcodeAI", "commandcodeAI/deepseek/deepseek-v4-flash"),
+            "commandcodeAI/deepseek/deepseek-v4-flash"
+        );
+        // 只认「自己的」前缀: 别家前缀不算已加
+        assert_eq!(
+            transit_model_id("go", "zen/deepseek-flash"),
+            "go/zen/deepseek-flash"
+        );
+        // 供应商名为空 -> 原样返回, 不造出 "/xxx" 这种畸形 ID
+        assert_eq!(transit_model_id("", "m"), "m");
+    }
+
+    /// 拉取后同名上游 ID 挂到两家供应商, 注册表里两条路由都能查到 (改前缀的核心目的).
+    #[test]
+    fn same_upstream_id_across_providers_no_longer_collides() {
+        let json = r#"
+        {
+          "providers": [
+            { "name": "Openrouter", "endpoint": "https://a/v1/chat/completions",
+              "api_key_env": "K1", "models": {} },
+            { "name": "commandcodeAI", "endpoint": "https://b/v1/chat/completions",
+              "api_key_env": "K2", "models": {} }
+          ]
+        }
+        "#;
+        let mut reg = ProviderRegistry::from_str(json).unwrap();
+        let up = vec!["deepseek/deepseek-v4-flash".to_string()];
+        reg.add_models("Openrouter", &up);
+        reg.add_models("commandcodeAI", &up);
+
+        // add_models 只改 providers 列表, 路由表由 from_str 重建 —— 走真实保存/重载路径.
+        let reloaded = ProviderRegistry::from_str(&reg.to_json().unwrap()).unwrap();
+
+        // 两条独立路由, 各自指向自己的供应商
+        let r1 = reloaded
+            .lookup("Openrouter/deepseek/deepseek-v4-flash")
+            .expect("Openrouter 路由存在");
+        assert_eq!(r1.provider.name, "Openrouter");
+        assert_eq!(r1.model.upstream_model.as_deref(), Some("deepseek/deepseek-v4-flash"));
+        let r2 = reloaded
+            .lookup("commandcodeAI/deepseek/deepseek-v4-flash")
+            .expect("commandcodeAI 路由存在");
+        assert_eq!(r2.provider.name, "commandcodeAI");
+        assert_eq!(r2.model.upstream_model.as_deref(), Some("deepseek/deepseek-v4-flash"));
+
+        // 未加前缀的裸 ID 不再是可路由的中转 ID
+        assert!(reloaded.lookup("deepseek/deepseek-v4-flash").is_none());
+    }
+
+    /// 反例对照: 若不加前缀 (旧行为), 两家供应商的同名 ID 会塌成一条路由,
+    /// 后者覆盖前者 —— 这正是本次要修的问题.
+    #[test]
+    fn unprefixed_ids_would_collide() {
+        let json = r#"
+        {
+          "providers": [
+            { "name": "Openrouter", "endpoint": "https://a/v1/chat/completions",
+              "api_key_env": "K1",
+              "models": { "deepseek/deepseek-v4-flash": { "upstream_model": "deepseek/deepseek-v4-flash" } } },
+            { "name": "commandcodeAI", "endpoint": "https://b/v1/chat/completions",
+              "api_key_env": "K2",
+              "models": { "deepseek/deepseek-v4-flash": { "upstream_model": "deepseek/deepseek-v4-flash" } } }
+          ]
+        }
+        "#;
+        let reg = ProviderRegistry::from_str(json).unwrap();
+        // 同一个 ID 只剩一条路由, 且被后加载的 commandcodeAI 占据 (Openrouter 那条永不生效)
+        let r = reg.lookup("deepseek/deepseek-v4-flash").expect("存在一条路由");
+        assert_eq!(r.provider.name, "commandcodeAI");
     }
 
     #[test]

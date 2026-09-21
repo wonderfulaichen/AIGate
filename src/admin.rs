@@ -882,8 +882,9 @@ pub async fn api_providers_save(
     };
 
     // 1) 写前校验: 解析 + 结构化语义校验, 防止坏配置覆盖落盘 (包含 name 唯一/非空, endpoint 非空).
-    let new_names = match validate_providers_json(json_str) {
-        Ok(names) => names,
+    //    重复中转 ID 只告警不阻断 —— 存量配置本就有历史重复, 硬拦会让用户连无关字段都存不下去.
+    let (new_names, dup_warnings) = match validate_providers_json(json_str) {
+        Ok(v) => v,
         Err(e) => return Json(serde_json::json!({ "error": e })),
     };
 
@@ -958,12 +959,25 @@ pub async fn api_providers_save(
         let _ = state.key_store.remove_many(&removed).await;
     }
 
-    Json(serde_json::json!({ "message": crate::i18n::msg_config_saved() }))
+    Json(serde_json::json!({
+        "message": crate::i18n::msg_config_saved(),
+        // 重复中转 ID 告警 (非阻断): 前端据此提示哪些条目改了不会生效.
+        "duplicate_ids": dup_warnings,
+    }))
 }
 
 /// 校验 providers.json 文本: 解析为 {providers:[...]}, 每个供应商 name 非空且唯一, endpoint 非空.
-/// 返回供应商名列表 (供调用方做孤儿 key 清理).
-fn validate_providers_json(json_str: &str) -> Result<Vec<String>, String> {
+///
+/// 另**检测**跨供应商的模型中转 ID 重复 (不阻断保存): 路由表是 `HashMap<中转ID, 路由>`,
+/// 同一 ID 只能有一条路由, 后加载者会静默覆盖前者 —— 被覆盖的条目在面板上可见可改却永不
+/// 生效 (改协议/思考档位/价格都没反应), 且原先无任何提示. 这里返回告警供前端展示.
+///
+/// **为什么不直接拒绝保存**: 存量配置里已存在大量历史重复 (纯上游命名习惯遗留), 一旦
+/// 硬性拦截, 用户连"改个无关字段"都存不下去, 只能被迫大改配置 —— 那是把体验绑死。
+/// 新拉取的模型已按「供应商/上游ID」生成, 不会新增冲突; 存量由用户按提示自行清理。
+///
+/// 返回 `(供应商名列表, 重复中转 ID 告警列表)`; 前者供调用方做孤儿 key 清理.
+fn validate_providers_json(json_str: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let v: serde_json::Value = serde_json::from_str(json_str)
         .map_err(|e| format!("JSON 解析失败: {e}"))?;
     let arr = v
@@ -971,6 +985,9 @@ fn validate_providers_json(json_str: &str) -> Result<Vec<String>, String> {
         .and_then(|p| p.as_array())
         .ok_or_else(|| "providers.json 缺少顶层 providers 数组".to_string())?;
     let mut names: Vec<String> = Vec::with_capacity(arr.len());
+    // 中转 ID -> 首次出现的供应商名 (用于报告冲突双方)
+    let mut owner: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut dup_warnings: Vec<String> = Vec::new();
     for (i, p) in arr.iter().enumerate() {
         let name = p
             .get("name")
@@ -986,9 +1003,22 @@ fn validate_providers_json(json_str: &str) -> Result<Vec<String>, String> {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("供应商 '{name}' 的 endpoint 为空 (必填)"))?;
         let _ = endpoint;
+        if let Some(models) = p.get("models").and_then(|m| m.as_object()) {
+            for mid in models.keys() {
+                match owner.get(mid) {
+                    Some(prev) => dup_warnings.push(format!(
+                        "中转 ID '{mid}' 同时属于 '{prev}' 与 '{name}' —— 只有后者生效, \
+                         '{prev}' 那条改了不会有任何效果; 建议改成 '{name}/{mid}' 形式区分"
+                    )),
+                    None => {
+                        owner.insert(mid.clone(), name.to_string());
+                    }
+                }
+            }
+        }
         names.push(name.to_string());
     }
-    Ok(names)
+    Ok((names, dup_warnings))
 }
 
 /// 配置热重载后, 按当前熔断阈值同步熔断表 (新增供应商补齐, 删除的清理).

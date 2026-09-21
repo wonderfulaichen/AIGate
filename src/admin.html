@@ -1000,7 +1000,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                       <template x-if="m.origin==='manual'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.25)">手动</span></template>
                       <template x-if="!m.origin || m.origin==='fetched'"><span style="display:inline-flex;align-items:center;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:700;background:rgba(56,189,248,.12);color:#38bdf8;border:1px solid rgba(56,189,248,.25)">获取</span></template>
                     </div></td>
-                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" :placeholder="m.model_id===drawerProv.name+'/'?drawerProv.name+'/模型ID':''" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"><button style="flex-shrink:0;background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px" :title="t('copy_model_id')" @click="copyText(m.model_id||'', 'mid'+ei)"><span x-text="copiedField==='mid'+ei?'✓':'⧉'" :style="copiedField==='mid'+ei?'color:var(--ok)':'color:var(--muted)'"></span></button></div></td>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px"><input type="text" class="inp mono" style="width:100%;font-size:11px" x-model="m.model_id" :placeholder="m.model_id===drawerProv.name+'/'?drawerProv.name+'/模型ID':''" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"><button style="flex-shrink:0;background:none;border:none;cursor:pointer;font-size:13px;padding:2px 4px" :title="t('copy_model_id')" @click="copyText(m.model_id||'', 'mid'+ei)"><span x-text="copiedField==='mid'+ei?'✓':'⧉'" :style="copiedField==='mid'+ei?'color:var(--ok)':'color:var(--muted)'"></span></button></div><template x-if="modelIdDupHint(m.model_id, drawerProv.name)"><div style="margin-top:4px;font-size:10px;line-height:1.35;color:var(--warn)" x-text="modelIdDupHint(m.model_id, drawerProv.name)"></div></template></td>
                     <td style="padding:6px 10px;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:11px;padding:3px 6px" x-model="m.reasoning_effort" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
@@ -1161,7 +1161,7 @@ const I18N = {
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
     
-    'tbl.model_id': '模型 ID', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses 端点', 'responses_endpoint_ph': '如 https://api.openai.com/v1/responses', 
+    'tbl.model_id': '模型 ID', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.protocol': '协议', 'dup_model_id_hint': '该 ID 也存在于 {0} —— 同名只有一条路由生效，本条的设置可能不会起作用；建议改成「本供应商/…」形式', 'dup_model_id_saved': '（注意：有 {0} 个中转 ID 与其它供应商重复，那些条目不会生效）', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic 端点', 'anthropic_endpoint_ph': '如 https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses 端点', 'responses_endpoint_ph': '如 https://api.openai.com/v1/responses', 
     'cache_title': '响应缓存', 'experimental_badge': '实验功能', 'section.perf_opt': '性能与优化', 'section.personal': '个性化', 'section.conn': '连接', 'section.monitor': '监控', 
     'cache_enable_label': '启用缓存', 'cache_enable_desc': '相同非流式请求体命中缓存时直接返回，省 token（流式编程流量滚动上下文命中率恒为 0，不参与缓存）',
     'cache_ttl_label': '缓存有效期 (TTL)', 'cache_ttl_unit': '秒',
@@ -1349,7 +1349,7 @@ const I18N = {
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
     
-    'tbl.model_id': 'Model ID', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses Endpoint', 'responses_endpoint_ph': 'e.g. https://api.openai.com/v1/responses', 
+    'tbl.model_id': 'Model ID', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.protocol': 'Protocol', 'dup_model_id_hint': 'This ID also exists under {0} — only one route can win per ID, so this entry\'s settings may have no effect; consider renaming to "this-provider/..."', 'dup_model_id_saved': '(note: {0} proxy ID(s) collide with other providers and will not take effect)', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'anthropic_endpoint_label': 'Anthropic Endpoint', 'anthropic_endpoint_ph': 'e.g. https://api.deepseek.com/anthropic/v1/messages', 'responses_endpoint_label': 'Responses Endpoint', 'responses_endpoint_ph': 'e.g. https://api.openai.com/v1/responses', 
     'cache_title': 'Response Cache', 'experimental_badge': 'Experimental', 'section.perf_opt': 'Performance & Optimization', 'section.personal': 'Personalization', 'section.conn': 'Connection', 'section.monitor': 'Monitoring', 
     'cache_enable_label': 'Enable cache', 'cache_enable_desc': 'Identical non-stream request bodies are served from cache to save tokens (streaming IDE traffic is excluded)',
     'cache_ttl_label': 'Cache TTL', 'cache_ttl_unit': 's',
@@ -1869,6 +1869,32 @@ function dashboard() {
     autoFree(modelId, upstream) {
       const s = (upstream || modelId || '').toLowerCase();
       return s.includes('free') || s.includes('免费');
+    },
+    // 中转 ID = 「供应商名/上游模型ID」. 上游 ID 自带斜杠时 (OpenRouter/commandcodeAI
+    // 等用「作者/模型」命名, 如 deepseek/deepseek-v4-flash) **同样加前缀**, 得到
+    // commandcodeAI/deepseek/deepseek-v4-flash —— 否则同名 ID 会在多家供应商间冲突,
+    // 而路由表 (HashMap) 只保留最后一个, 其余条目静默失效 (改配置无效果且无提示).
+    // 已带本供应商前缀时原样返回, 保证幂等 (重复拉取/导入不会叠加前缀).
+    transitId(provName, upstreamId) {
+      const p = (provName || '').trim();
+      const u = (upstreamId || '').trim();
+      if (!p) return u;
+      if (u === p || u.startsWith(p + '/')) return u;
+      return p + '/' + u;
+    },
+    // 该中转 ID 是否同时存在于**其他**供应商下. 路由表是 HashMap(一个 ID 一条路由),
+    // 重复时只有最后加载的那家生效, 另一家改了协议/思考档位/价格都不会有任何效果 ——
+    // 原先完全无提示, 用户会以为改了没生效是 bug. 返回告警文案 (无冲突返回空串).
+    modelIdDupHint(modelId, selfProvName) {
+      const id = (modelId || '').trim();
+      if (!id) return '';
+      const others = [];
+      (this.providersFormData || []).forEach(p => {
+        if (!p || p.name === selfProvName) return;
+        if ((p.models || []).some(m => (m.model_id || '').trim() === id)) others.push(p.name);
+      });
+      if (!others.length) return '';
+      return t('dup_model_id_hint').replace('{0}', others.join('、'));
     },
     // 与后端 default_api_format 规则保持一致: claude→anthropic, grok/gpt-5*/muse-spark→responses
     defaultApiFormat(modelId) {
@@ -2699,9 +2725,8 @@ function dashboard() {
             if(line.startsWith('#')) continue;
             const parts=line.split(/[,;\t|]/).map(s=>s.trim()).filter(Boolean);
             if(!parts.length) continue;
-            // 中转 ID 未显式带「供应商/」前缀时自动补全 (与拉取模型一致), 免手动命名.
-            let model_id=parts[0];
-            if(!model_id.includes('/')) model_id = prov.name + '/' + model_id;
+            // 中转 ID 一律补全「供应商/」前缀 (与拉取模型一致), 免手动命名且避免跨供应商同名冲突.
+            let model_id=this.transitId(prov.name, parts[0]);
             const upstream=parts[1]||model_id;
             const effort=parts[2]||'';
             const fmt=parts[3]||'';
@@ -2755,8 +2780,9 @@ function dashboard() {
           let added=0;
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
-              // 中转 ID 自动生成为「供应商/上游模型ID」, 免去手动命名; 不满意可直接改.
-              const prefixed = (id.includes('/') ? id : prov.name + '/' + id);
+              // 中转 ID 一律生成为「供应商/上游模型ID」(上游自带斜杠也照加, 见 transitId),
+              // 避免跨供应商同名 ID 冲突导致路由被静默覆盖; 不满意可直接改.
+              const prefixed = this.transitId(prov.name, id);
               prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
@@ -2853,6 +2879,11 @@ function dashboard() {
          const d=await r.json();
          this.providersFormOk = !!d.message;
          this.providersFormMsg=d.message||d.error||t('save_failed');
+         // 保存成功但存在重复中转 ID: 追加告警. 这些条目在面板上可见可改却永不生效
+         // (路由表一个 ID 只留一条), 原先完全无提示, 用户会误以为"改了没反应"是 bug.
+         if(d.message && (d.duplicate_ids||[]).length) {
+           this.providersFormMsg += ' ' + t('dup_model_id_saved', d.duplicate_ids.length);
+         }
           if(d.message) {
             // 配置保存成功后, 同步保存所有有草稿的 key
             await this.saveAllProviderKeys();
