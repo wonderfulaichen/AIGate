@@ -34,10 +34,5 @@ verify_*.ps1
 NUL
 served_check.html
 design-preview/
-src/admin.html.original
-src/admin_from_8787.html
-src/admin_part.html
-src/admin_working.html
-src/admin.js
 transform.py
 .openbitfun/
