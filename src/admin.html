@@ -329,6 +329,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
 .pnl-ht{font-size:13px;font-weight:600;color:var(--fg)}
 .pnl-b{padding:16px}
+/* 组内子卡头: 与 .st 同款的弱化标题, 但作为面板内部的次级分区 —— 用上边框与
+   上方行为界, 不占独立分区的层级 (响应缓存是性能优化的子项, 不是并列分区). */
+.sub-h{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;margin-top:2px;border-top:1px solid var(--border);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 /* ── new-api page header ── */
 .phd{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px}
 .pt{font-size:clamp(1.25rem,2.5vw,1.5rem);font-weight:800;letter-spacing:-.02em;color:var(--fg);line-height:1.2}
@@ -635,9 +638,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_backoff_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="0" max="10000" :value="retryBackoffMs" @change="setRetry(retryMax,parseInt($event.target.value)||200)" class="inp" style="width:90px"><span class="txs tm" x-text="t('unit_ms')"></span></div></div>
     </div>
   </div>
-</div>
-<div class="st mb3"><span x-text="t('cache_title')"></span>&nbsp;<span class="bdg bdg-w" x-text="t('experimental_badge')"></span></div>
-<div class="pnl mb4">
+  <div class="sub-h"><span x-text="t('cache_title')"></span><span class="bdg bdg-w" x-text="t('experimental_badge')"></span></div>
   <template x-if="cache===null"><div class="pnl-b"><span class="txs tm" x-text="t('loading')"></span></div></template>
   <template x-if="cache!==null"><div>
     <div class="set-row">
