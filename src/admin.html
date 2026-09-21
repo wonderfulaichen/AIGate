@@ -567,7 +567,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div></template>
 </div>
 <div x-show="activeTab==='records'" class="page-enter page-wide">
-  <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" @click="clearAllLogs()" x-text="t('clear_all_records')"></button></div></div>
+  <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" :disabled="clearingLogs" @click="clearAllLogs()" x-text="clearingLogs?t('saving'):t('clear_all_records')"></button></div></div>
   <div class="rec-stats">
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
@@ -745,7 +745,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 <div class="pnl mb4" style="border-color:rgba(239,68,68,.3)">
   <div class="set-row">
     <div><div class="row-t" x-text="t('data_mgmt')"></div></div>
-    <button class="btn btn-g" style="font-size:12px;color:var(--err)" @click="clearAllLogs()" x-text="t('clear_all_records')"></button>
+    <button class="btn btn-g" style="font-size:12px;color:var(--err)" :disabled="clearingLogs" @click="clearAllLogs()" x-text="clearingLogs?t('saving'):t('clear_all_records')"></button>
   </div>
 </div>
 </div>
@@ -1561,6 +1561,10 @@ function dashboard() {
     // 统计拉取失败标记: 失败时必须复位 loading, 否则界面永远停在「加载中」
     // (原实现只在 r.ok 分支置 loading=false, 失败被 catch 吞掉 → 假"加载中"永不结束).
     statsError: false,
+    // 清空记录进行中: 期间禁用按钮并显示「保存中…」.
+    // 清理会重写日志文件 + 删除账本, 不是瞬时操作; 无此标记时用户可能连点两次
+    // (第二次请求已无数据可清), 或因界面毫无反馈而以为没生效.
+    clearingLogs: false,
     version: (window.AIGATE_VERSION && window.AIGATE_VERSION.version) ? window.AIGATE_VERSION : {version:'?', git_commit:'', build_time:''},
     changelog: null,
 
@@ -2178,8 +2182,16 @@ function dashboard() {
       // 不可恢复: 服务端会一并重写日志文件与删除 rollup 账本, 故必须二次确认.
       // 文案里的条数取实时的 logs.length —— 导出只覆盖已加载的这部分, 写明它才能避免
       // 用户误以为"先导出就没损失"(实测磁盘 4290 条时导出仅 1000 条, 覆盖率 23%).
+      if(this.clearingLogs) return;                                  // 进行中, 忽略重复点击
       if(!confirm(t('confirm_clear_logs', this.logs.length))) return;
-      try { const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()}); if(r.ok){ this.logs=[]; this.stats=null; this.logPage=0; } } catch(e){}
+      this.clearingLogs = true;
+      try {
+        const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()});
+        if(r.ok){ this.logs=[]; this.stats=null; this.logPage=0; }
+        // 失败必须提示: 数据没被清掉却无声无息, 用户会以为已经清空.
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+      finally { this.clearingLogs = false; }                         // 失败也要复位, 否则按钮永久禁用
     },
 
     exportLogs() {
