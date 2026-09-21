@@ -73,6 +73,12 @@ pub struct AppState {
     /// 流截断自动续写次数上限 (0=关闭, 默认 2): 上游断流无 finish_reason 时自动
     /// 带已输出正文重发"继续"请求并拼接新响应. 运行时可在面板调整.
     pub auto_continue: Arc<AtomicUsize>,
+    /// 「带 tool_calls 的历史推理链」按**协议**白名单剥离 (见 Config 同名注释).
+    /// 为什么不按供应商/模型: 供应商只是换 endpoint, 协议才决定剥离是否安全,
+    /// 且同一供应商可同时提供 chat / anthropic / responses 三种协议.
+    /// anthropic 不设开关 —— 该协议下剥离必然 400, 代理层硬性跳过.
+    pub strip_toolcall_on_chat: Arc<AtomicBool>,
+    pub strip_toolcall_on_responses: Arc<AtomicBool>,
     /// 模型元信息缓存 (models.dev): 面板悬停展示上下文/输出限制与视觉标签.
     pub model_meta: Arc<crate::model_meta::MetaCache>,
     /// 进程级稳定标识: 用于 OpenCode Go 等按 session 优化路由的上游自动注入
@@ -255,12 +261,19 @@ pub async fn chat_completions(
     // 5. 注入模型级参数 (reasoning_effort / extra_body): 固定按 providers.json 配置档注入,
     //    不做自适应探测/降级 —— 思考强度完全由配置档决定 (客户端显式关闭/自带档位时尊重客户端).
     let orig_body_len = bytes.len(); // 注入前原始请求体大小 (诊断用)
+    let strip_toolcall = resolve_strip_toolcall(
+        anthropic_mode,
+        responses_mode,
+        model_cfg.strip_toolcall_reasoning,
+        state.strip_toolcall_on_chat.load(Ordering::Relaxed),
+        state.strip_toolcall_on_responses.load(Ordering::Relaxed),
+    );
     let (bytes, _injected, strip_saved, trim_saved, audit) = inject_model_params(
         bytes,
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
-        model_cfg.strip_toolcall_reasoning.unwrap_or(false),
+        strip_toolcall,
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
@@ -3456,6 +3469,35 @@ fn inject_openai_cache_control(body: &mut serde_json::Value) {
     }
 }
 
+/// 判定是否剥离「带 tool_calls 的历史推理链」.
+///
+/// 判据是**上游协议**, 不是供应商 —— 供应商只是换 endpoint, 协议才决定剥离是否安全,
+/// 且同一供应商常同时提供 chat / anthropic / responses 三种协议.
+///
+/// 优先级与理由:
+/// 1. `anthropic_mode`: 恒 `false`. Anthropic 要求 `thinking` 块与 `tool_use` 并存,
+///    剥掉必然被上游 400. 这一条**优先于模型级配置** —— 宁可少省量, 也不能
+///    制造必然失败的请求 (用户可能在模型列表里误勾).
+/// 2. `model_override`(`Some(x)`): 逐模型显式勾选, 优先级最高. 保留既有行为:
+///    部署里已有若干模型显式设了 `true`, 不能让协议白名单把它们静默关掉.
+/// 3. 否则按协议取白名单: `responses` 用 responses 开关, 其余(chat)用 chat 开关.
+fn resolve_strip_toolcall(
+    anthropic_mode: bool,
+    responses_mode: bool,
+    model_override: Option<bool>,
+    chat_enabled: bool,
+    responses_enabled: bool,
+) -> bool {
+    if anthropic_mode {
+        return false;
+    }
+    model_override.unwrap_or(if responses_mode {
+        responses_enabled
+    } else {
+        chat_enabled
+    })
+}
+
 fn inject_model_params(
     bytes: bytes::Bytes,
     model_cfg: &crate::providers::ModelConfig,
@@ -4916,6 +4958,47 @@ mod tests {
         inject_opencode_session(&mut req, &client, &prov, "id-fixed");
         let v = req.get("x-opencode-session").expect("name=go 应注入");
         assert_eq!(v.to_str().unwrap(), "id-fixed");
+    }
+
+    // ─── 协议白名单判定 (resolve_strip_toolcall) ───
+    //
+    // 判据是上游协议而非供应商: 供应商只换 endpoint, 协议才决定剥离是否安全.
+
+    /// anthropic 恒不剥, 且**优先于模型级配置** —— 模型列表里误勾也不能放行,
+    /// 否则必然被上游 400 (thinking 块必须与 tool_use 并存).
+    #[test]
+    fn strip_toolcall_anthropic_always_denied_even_if_model_forces_true() {
+        assert!(!resolve_strip_toolcall(true, false, Some(true), true, true));
+        assert!(!resolve_strip_toolcall(true, false, None, true, true));
+    }
+
+    /// chat 协议: 默认白名单开启 → 剥.
+    #[test]
+    fn strip_toolcall_chat_follows_chat_whitelist() {
+        assert!(resolve_strip_toolcall(false, false, None, true, false));
+        // chat 关掉 → 不剥 (用户可在面板关).
+        assert!(!resolve_strip_toolcall(false, false, None, false, false));
+    }
+
+    /// responses 协议: 读 responses 开关, **不受 chat 开关影响** ——
+    /// 这正是"按协议"的意义: 同一供应商两种协议各自独立.
+    #[test]
+    fn strip_toolcall_responses_uses_responses_flag_not_chat() {
+        // chat 开但 responses 关 → responses 协议不剥 (保守默认).
+        assert!(!resolve_strip_toolcall(false, true, None, true, false));
+        // chat 关但 responses 开 → responses 协议仍剥 (用户实测后试开).
+        assert!(resolve_strip_toolcall(false, true, None, false, true));
+    }
+
+    /// 模型级显式配置优先于协议白名单 (保留部署里既有的逐模型勾选).
+    #[test]
+    fn strip_toolcall_model_override_wins_over_protocol() {
+        // 协议关, 模型强制开 → 剥.
+        assert!(resolve_strip_toolcall(false, false, Some(true), false, false));
+        assert!(resolve_strip_toolcall(false, true, Some(true), false, false));
+        // 协议开, 模型强制关 → 不剥.
+        assert!(!resolve_strip_toolcall(false, false, Some(false), true, true));
+        assert!(!resolve_strip_toolcall(false, true, Some(false), true, true));
     }
 }
 

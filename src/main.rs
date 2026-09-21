@@ -625,6 +625,8 @@ fn main() {
         strip_history_reasoning: Arc::new(AtomicBool::new(config.strip_history_reasoning)),
         max_history_turns: Arc::new(AtomicUsize::new(config.max_history_turns)),
         auto_continue: Arc::new(AtomicUsize::new(config.auto_continue)),
+        strip_toolcall_on_chat: Arc::new(AtomicBool::new(config.strip_toolcall_on_chat)),
+        strip_toolcall_on_responses: Arc::new(AtomicBool::new(config.strip_toolcall_on_responses)),
         model_meta: Arc::new(model_meta::MetaCache::new()),
         // 进程级稳定 session id: 启动时生成一次, 用于 OpenCode Go 等
         // 要求 x-opencode-session 头的上游做兜底注入. 不覆盖客户端自传.
@@ -657,6 +659,7 @@ fn main() {
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
+        .route("/admin/api/strip-toolcall-protocols", get(admin::api_strip_toolcall_protocols_get).post(admin::api_strip_toolcall_protocols_set))
         .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
         .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
         .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))

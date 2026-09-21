@@ -54,6 +54,23 @@ pub struct Config {
     /// 流截断自动续写次数上限: 上游断流且无 finish_reason 时, 网关自动带已输出正文
     /// 重发"继续"请求并把新响应拼进当前流. 默认 2; 0 = 关闭. 运行时可在面板调整.
     pub auto_continue: usize,
+    /// 按**协议**白名单决定是否剥离「带 tool_calls 的历史推理链」.
+    ///
+    /// 为什么按协议而不是按供应商: 供应商只是换个 endpoint, 协议才决定剥离是否安全 ——
+    /// 同一个供应商可以同时提供 chat / anthropic / responses 三种协议.
+    ///
+    /// 只暴露**可切换**的两种协议; `anthropic` 恒不参与剥离, 故不设开关:
+    /// - `strip_toolcall_on_chat`(`/v1/chat/completions`): **默认开启**. 最通用的协议,
+    ///   `tool_calls` 是结构化数组, 剥掉历史推理链不破坏 tool_use ↔ tool_result 配对.
+    /// - `strip_toolcall_on_responses`(`/v1/responses`): **默认关闭**. 该协议把推理作为
+    ///   独立的 `reasoning` item, AIGate 会降级为 `messages[].reasoning_content` 后走同一条
+    ///   剥离路径; 结构上可剥, 但**上游是否校验 item 序列未经实测**, 故保守默认关闭,
+    ///   由用户在面板自行试开 (试出问题即取消勾选, 无需改代码).
+    ///
+    /// `anthropic`(`/v1/messages`) 为何恒不可剥: Anthropic 要求 `thinking` 块与 `tool_use`
+    /// 并存, 剥掉上游直接 400 (见 proxy.rs 中 anthropic 模式分支)。
+    pub strip_toolcall_on_chat: bool,
+    pub strip_toolcall_on_responses: bool,
 }
 
 impl Config {
@@ -105,6 +122,9 @@ impl Config {
             strip_history_reasoning: env_bool("STRIP_HISTORY_REASONING", true), // 默认开启
             max_history_turns: env_usize("MAX_HISTORY_TURNS", 0), // 默认 0 = 不裁剪 (保持上下文完整性, 旧版行为); 超限时由 proxy 紧急瘦身兜底
             auto_continue: env_usize("AIGATE_AUTO_CONTINUE", 2), // 默认 2 次; 0 = 关闭
+            // 协议白名单: chat 默认开 (实测安全), responses 默认关 (未实测, 由用户试开).
+            strip_toolcall_on_chat: env_bool("STRIP_TOOLCALL_ON_CHAT", true),
+            strip_toolcall_on_responses: env_bool("STRIP_TOOLCALL_ON_RESPONSES", false),
         }
     }
 }

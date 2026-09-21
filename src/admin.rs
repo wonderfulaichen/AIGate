@@ -1788,6 +1788,49 @@ pub async fn api_strip_reasoning_set(
     Json(serde_json::json!({ "enabled": payload.enabled }))
 }
 
+// ─── 「带 tool_calls 的历史推理链」协议白名单 ───
+
+/// GET /admin/api/strip-toolcall-protocols — 返回按协议剥离的开关状态.
+///
+/// 注意这里返回的是**协议**维度 (chat / responses), 不是供应商维度:
+/// 供应商只是换 endpoint, 协议才决定剥离是否安全. `anthropic` 不在此列,
+/// 因为该协议下剥离必然导致上游 400, 无开关可言.
+pub async fn api_strip_toolcall_protocols_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "chat": state.strip_toolcall_on_chat.load(std::sync::atomic::Ordering::Relaxed),
+        "responses": state.strip_toolcall_on_responses.load(std::sync::atomic::Ordering::Relaxed),
+    }))
+}
+
+/// POST /admin/api/strip-toolcall-protocols — 运行时切换协议白名单.
+/// 两个字段均可选, 只更新传入的项 (便于前端只提交变化的那个).
+#[derive(serde::Deserialize)]
+pub struct StripToolcallProtocolsReq {
+    #[serde(default)]
+    pub chat: Option<bool>,
+    #[serde(default)]
+    pub responses: Option<bool>,
+}
+
+pub async fn api_strip_toolcall_protocols_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<StripToolcallProtocolsReq>,
+) -> Json<serde_json::Value> {
+    use std::sync::atomic::Ordering;
+    if let Some(v) = payload.chat {
+        state.strip_toolcall_on_chat.store(v, Ordering::Relaxed);
+    }
+    if let Some(v) = payload.responses {
+        state.strip_toolcall_on_responses.store(v, Ordering::Relaxed);
+    }
+    Json(serde_json::json!({
+        "chat": state.strip_toolcall_on_chat.load(Ordering::Relaxed),
+        "responses": state.strip_toolcall_on_responses.load(Ordering::Relaxed),
+    }))
+}
+
 // ─── 长会话历史裁剪开关 ───
 
 /// GET /admin/api/max-history-turns — 返回当前保留的最近 user 轮数 (0 = 不裁剪).

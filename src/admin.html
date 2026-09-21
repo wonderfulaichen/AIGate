@@ -602,6 +602,17 @@ tr:hover td{background:rgba(99,102,241,.04)}
     <div style="min-width:0"><div class="row-t" x-text="t('strip_reasoning_label')"></div><div class="row-d" x-text="t('strip_reasoning_desc')"></div></div>
     <button class="tgl" :class="stripReasoning?'on':'off'" @click="setStripReasoning(!stripReasoning)"></button>
   </div>
+  <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
+    <div style="min-width:0"><div class="row-t" x-text="t('strip_tc_proto_label')"></div><div class="row-d" x-text="t('strip_tc_proto_desc')"></div></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px">
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_chat_hint')" x-text="t('strip_tc_proto_chat')"></span><button class="tgl" :class="stripTcChat?'on':'off'" @click="setStripTcProtocols({chat:!stripTcChat})"></button></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_resp_hint')" x-text="t('strip_tc_proto_resp')"></span><button class="tgl" :class="stripTcResp?'on':'off'" @click="setStripTcProtocols({responses:!stripTcResp})"></button></div>
+    </div>
+  </div>
+  <div style="padding:0 16px 14px">
+    <div class="txs tm" x-text="t('strip_tc_proto_anthropic_note')"></div>
+    <div class="txs tm" style="margin-top:2px" x-text="t('strip_tc_proto_model_override')"></div>
+  </div>
   <div class="set-row" style="border-top:1px solid var(--border)">
     <div style="min-width:0"><div class="row-t" x-text="t('history_trim_label')"></div><div class="row-d" x-text="t('history_trim_desc')"></div></div>
     <button class="tgl" :class="maxHistoryTurns>0?'on':'off'" @click="setMaxHistoryTurns(maxHistoryTurns>0?0:20)"></button>
@@ -1179,6 +1190,11 @@ const I18N = {
     'proxy_policy': '上游代理策略', 'proxy_mode_system': '继承系统代理', 'proxy_mode_no_proxy': '已禁用代理', 'proxy_mode_custom': '自定义代理', 'proxy_hint': '由环境变量 AIGATE_NO_PROXY / AIGATE_PROXY 控制，修改后需重启生效',
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制', 'copy_model_id': '复制模型中转 ID',
     'strip_reasoning_label': '历史推理链瘦身', 'strip_reasoning_desc': '转发上游时移除历史 assistant 消息中的推理链（保留带工具调用的消息）', 
+    'strip_tc_proto_label': '工具轮次推理链剥离（按协议）', 'strip_tc_proto_desc': '按上游协议决定是否剥离「带工具调用的历史推理链」。协议决定剥离是否安全，供应商只是换地址——同一供应商常同时提供多种协议', 
+    'strip_tc_proto_chat': 'Chat 协议', 'strip_tc_proto_chat_hint': 'OpenAI /v1/chat/completions，工具调用是结构化数组，剥离不破坏配对，已实测安全', 
+    'strip_tc_proto_resp': 'Responses 协议', 'strip_tc_proto_resp_hint': 'OpenAI /v1/responses，结构上可剥但上游是否校验未经实测，请试开后观察报错', 
+    'strip_tc_proto_anthropic_note': 'Anthropic /messages 恒不剥离：该协议要求 thinking 块与 tool_use 并存，剥掉必然被上游拒绝', 
+    'strip_tc_proto_model_override': '模型列表中的逐模型勾选优先级更高，可强制开启/关闭',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 
     'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
@@ -1362,6 +1378,11 @@ const I18N = {
     'proxy_policy': 'Upstream Proxy Policy', 'proxy_mode_system': 'System Proxy', 'proxy_mode_no_proxy': 'Disabled', 'proxy_mode_custom': 'Custom', 'proxy_hint': 'Controlled by env AIGATE_NO_PROXY / AIGATE_PROXY; restart required to apply',
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied', 'copy_model_id': 'Copy model transit ID',
     'strip_reasoning_label': 'Strip history reasoning', 'strip_reasoning_desc': 'Remove reasoning chains from historical assistant messages before forwarding (keep messages with tool calls)', 
+    'strip_tc_proto_label': 'Strip tool-call reasoning (by protocol)', 'strip_tc_proto_desc': 'Decide whether to strip the historical reasoning chain attached to tool calls, per upstream protocol. The protocol decides whether stripping is safe; a provider is only an address, and one provider often serves several protocols', 
+    'strip_tc_proto_chat': 'Chat protocol', 'strip_tc_proto_chat_hint': 'OpenAI /v1/chat/completions. Tool calls are a structured array, so stripping keeps the pairing intact; verified safe', 
+    'strip_tc_proto_resp': 'Responses protocol', 'strip_tc_proto_resp_hint': 'OpenAI /v1/responses. Structurally strippable, but upstream sequence validation is untested - enable and watch for errors', 
+    'strip_tc_proto_anthropic_note': 'Anthropic /messages never strips: that protocol requires thinking blocks to coexist with tool_use, so stripping is always rejected upstream', 
+    'strip_tc_proto_model_override': 'Per-model checkboxes in the model list take precedence and can force either way', 
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 
     'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
@@ -1593,6 +1614,11 @@ function dashboard() {
     proxyStatus: null,
     // 历史推理链剥离开关 (运行时, 重启回到环境变量默认)
     stripReasoning: false,
+    // 「带 tool_calls 的历史推理链」按协议白名单剥离 (运行时, 重启回默认).
+    // 注意是协议维度: 供应商只换 endpoint, 协议才决定剥离是否安全.
+    // anthropic 无开关 —— 该协议下剥离必然被上游拒绝.
+    stripTcChat: true,
+    stripTcResp: false,
     // 长会话历史裁剪: 保留最近 user 轮数 (0 = 关闭), 运行时可切换
     maxHistoryTurns: 0,
     // 断流自动续写次数上限 (0 = 关闭), 运行时可调
@@ -1755,7 +1781,7 @@ function dashboard() {
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); }
       if (tabId==='records') { this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
+      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
     },
 
     startPoll() {
@@ -1887,6 +1913,17 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/strip-reasoning',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})});
         if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+    },
+    async fetchStripTcProtocols() {
+      try { const r=await fetch('/admin/api/strip-toolcall-protocols', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.stripTcChat=!!d.chat; this.stripTcResp=!!d.responses; } } catch(e){}
+    },
+    async setStripTcProtocols(patch) {
+      // 同 setStripReasoning: 开关按 :class 绑状态, 失败时弹回原位, 必须提示.
+      try {
+        const r=await fetch('/admin/api/strip-toolcall-protocols',{method:'POST',headers:authHeaders(),body:JSON.stringify(patch)});
+        if(r.ok) { const d=await r.json(); this.stripTcChat=!!d.chat; this.stripTcResp=!!d.responses; }
         else { toast(t('save_failed'), 'error'); }
       } catch(e){ toast(t('network_error'), 'error'); }
     },
