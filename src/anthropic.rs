@@ -117,19 +117,21 @@ pub fn openai_to_anthropic(body: &Value, prompt_cache: bool) -> Value {
         }
     }
 
-    // reasoning_effort → thinking (Anthropic 的思考开关 + budget)
+    // reasoning_effort → thinking (Anthropic 的思考开关 + budget).
+    // 预算走统一换算表 + 护栏: 须预留可见输出空间且 < max_tokens, 放不下则不注入 ——
+    // 避免 "budget ≥ max_tokens" 的必然 400, 或思考吃满预算把正文饿成空字符串.
     if let Some(effort) = body.get("reasoning_effort").and_then(|v| v.as_str()) {
-        let budget = match effort.to_ascii_lowercase().as_str() {
-            "low" => 1024,
-            "medium" => 2048,
-            "high" => 4096,
-            "max" | "maximum" => 8000,
-            _ => 4096,
-        };
-        out.insert(
-            "thinking".to_string(),
-            json!({"type": "enabled", "budget_tokens": budget}),
-        );
+        let max_tokens = body
+            .get("max_tokens")
+            .or_else(|| body.get("max_completion_tokens"))
+            .and_then(|m| m.as_u64())
+            .unwrap_or(4096);
+        if let Some(budget) = crate::thinking::anthropic_thinking_budget(effort, max_tokens) {
+            out.insert(
+                "thinking".to_string(),
+                json!({"type": "enabled", "budget_tokens": budget}),
+            );
+        }
     }
 
     Value::Object(out)
@@ -942,17 +944,12 @@ pub fn anthropic_to_openai_request(body: &Value) -> Value {
             out.insert("stop".to_string(), Value::Array(stops.clone()));
         }
     }
-    // thinking → reasoning_effort (OpenAI 侧消费; 上游若为 Anthropic,
-    // 内部 openai_to_anthropic 会再映射回 thinking, budget 近似).
+    // thinking → 原样下传 (含 type: enabled/disabled 与 budget_tokens), 由统一思考参数
+    // 整流器 (thinking.rs::normalize_thinking) 解析档位与显式关闭 —— 此处不再自行换算:
+    // 历史上这里的换算表与 thinking.rs 对象分支的表互不自洽 (同一 budget 8000 在两处
+    // 分别得到 max 与 medium), 且 type:"disabled" 会被静默丢弃、配置档照常注入.
     if let Some(th) = body.get("thinking") {
-        if th.get("type").and_then(|t| t.as_str()) == Some("enabled") {
-            let budget = th.get("budget_tokens").and_then(|b| b.as_u64()).unwrap_or(0);
-            let effort = if budget == 0 || budget < 1200 { "low" }
-                else if budget < 2500 { "medium" }
-                else if budget < 6000 { "high" }
-                else { "max" };
-            out.insert("reasoning_effort".to_string(), json!(effort));
-        }
+        out.insert("thinking".to_string(), th.clone());
     }
 
     Value::Object(out)
@@ -1316,15 +1313,38 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}],
             "tools": [{"type": "function", "function": {"name": "f", "description": "d", "parameters": {"type": "object", "$schema": "x", "properties": {}}}}],
             "tool_choice": {"type": "function", "function": {"name": "f"}},
-            "reasoning_effort": "max"
+            "reasoning_effort": "max",
+            "max_tokens": 65536
         });
         let out = openai_to_anthropic(&body, false);
         assert_eq!(out["tools"][0]["name"], "f");
         assert!(out["tools"][0]["input_schema"].get("$schema").is_none()); // 展平
         assert_eq!(out["tool_choice"], json!({"type": "tool", "name": "f"}));
-        // reasoning_effort → thinking
+        // reasoning_effort → thinking (max_tokens 充足时预算不被护栏钳制)
         assert_eq!(out["thinking"]["type"], "enabled");
         assert_eq!(out["thinking"]["budget_tokens"], 8000);
+    }
+
+    /// 护栏: max_tokens 放不下预算时按 cap 钳制; 完全放不下则不注入 thinking (不制造 400/空正文).
+    #[test]
+    fn request_effort_budget_guarded_by_max_tokens() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "max",
+            "max_tokens": 4096
+        });
+        let out = openai_to_anthropic(&body, false);
+        assert_eq!(out["thinking"]["budget_tokens"], 3072); // 4096 - 1024 可见输出预留
+
+        let tiny = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "high",
+            "max_tokens": 2000
+        });
+        let out2 = openai_to_anthropic(&tiny, false);
+        assert!(out2.get("thinking").is_none(), "预算放不下时应不注入而非强行注入");
     }
 
     #[test]
@@ -1653,8 +1673,48 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}],
             "thinking": {"type": "enabled", "budget_tokens": 8000}
         });
-        let out = anthropic_to_openai_request(&body);
+        // 转换层只透传 thinking, 档位换算交给统一整流器 (thinking.rs) —— 与直通/入口同一张表.
+        let mut out = anthropic_to_openai_request(&body);
+        assert_eq!(out["thinking"]["budget_tokens"], 8000);
+        let disabled = crate::thinking::normalize_thinking(&mut out, &no_effort_model());
+        assert!(!disabled);
         assert_eq!(out["reasoning_effort"], "max");
+    }
+
+    /// type:"disabled" 必须穿透转换层并被整流器识别为显式关闭, 不得被配置档打开.
+    #[test]
+    fn back_request_thinking_disabled() {
+        let body = json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"type": "disabled"}
+        });
+        let mut out = anthropic_to_openai_request(&body);
+        assert_eq!(out["thinking"]["type"], "disabled");
+        let disabled = crate::thinking::normalize_thinking(&mut out, &model_with_effort("max"));
+        assert!(disabled, "客户端 type:disabled 应阻止配置档注入");
+        assert!(out.get("reasoning_effort").is_none());
+    }
+
+    fn no_effort_model() -> crate::providers::ModelConfig {
+        crate::providers::ModelConfig {
+            upstream_model: None,
+            reasoning_effort: None,
+            free: None,
+            extra_body: None,
+            api_format: None,
+            price: None,
+            strip_toolcall_reasoning: None,
+            origin: None,
+            loop_guard: None,
+        }
+    }
+
+    fn model_with_effort(effort: &str) -> crate::providers::ModelConfig {
+        crate::providers::ModelConfig {
+            reasoning_effort: Some(effort.to_string()),
+            ..no_effort_model()
+        }
     }
 
     #[test]

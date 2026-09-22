@@ -1035,12 +1035,132 @@ impl NativeProto {
     }
 }
 
+/// 直通路径的配置档思考强度注入 (纯函数, 便于单测).
+///
+/// 优先级链与 chat 路径一致: **客户端档位 > 面板配置档 > 不注入** — 客户端带了任何
+/// 思考字段 (含 `thinking: {type:"disabled"}` 这类显式关闭) 即视为"已表达", 一律不碰;
+/// 未表达且模型配置了档位时, 按上游协议格式注入.
+///
+/// - Anthropic: 注入 `thinking: {type:"enabled", budget_tokens}`, 预算经
+///   [`crate::thinking::anthropic_thinking_budget`] 护栏 (须留可见输出空间且 < max_tokens),
+///   放不下则放弃注入 — 宁可不思考, 不制造必然 400 / 空正文.
+/// - Responses: 注入 `reasoning: {effort, summary:"auto"}` (与 chat→responses 转换同形);
+///   客户端已有 `reasoning` 对象但缺 `effort` 时只补档位、保留其 summary 等字段.
+///
+/// 返回是否注入 (供日志).
+fn inject_config_effort_passthrough(
+    v: &mut serde_json::Value,
+    model_cfg: &crate::providers::ModelConfig,
+    proto: NativeProto,
+) -> bool {
+    let Some(effort_cfg) = crate::thinking::config_effort(model_cfg) else {
+        return false;
+    };
+    let effort =
+        crate::thinking::clamp_effort_for_model(effort_cfg, model_cfg);
+    // 客户端已表达思考意图的字段 (跨两种协议取并集, 多余字段宁可跳过注入也不叠床架屋).
+    const EXPRESSED: [&str; 4] = ["thinking", "reasoning", "reasoning_effort", "reasoningEffort"];
+    match proto {
+        NativeProto::Anthropic => {
+            let obj = match v.as_object_mut() {
+                Some(o) => o,
+                None => return false,
+            };
+            if EXPRESSED.iter().any(|k| obj.contains_key(*k)) {
+                return false;
+            }
+            let max_tokens = obj
+                .get("max_tokens")
+                .and_then(|m| m.as_u64())
+                .unwrap_or(4096);
+            let Some(budget) =
+                crate::thinking::anthropic_thinking_budget(&effort, max_tokens)
+            else {
+                return false;
+            };
+            obj.insert(
+                "thinking".to_string(),
+                serde_json::json!({"type": "enabled", "budget_tokens": budget}),
+            );
+            true
+        }
+        NativeProto::Responses => {
+            if v.get("thinking").is_some() {
+                return false; // 客户端带了思考字段 (非 Responses 标准但常见), 视为已表达
+            }
+            if let Some(r) = v.get("reasoning_effort").or_else(|| v.get("reasoningEffort")) {
+                if r.is_string() {
+                    return false; // 客户端自带档位字段, 视为已表达
+                }
+            }
+            match v.get_mut("reasoning") {
+                Some(serde_json::Value::Object(r)) => {
+                    let client_set = r
+                        .get("effort")
+                        .and_then(|e| e.as_str())
+                        .map(|s| !s.is_empty())
+                        .unwrap_or(false);
+                    if client_set {
+                        return false; // 客户端已给档位, 保留其 reasoning 对象原样
+                    }
+                    // 客户端开了 reasoning (如只要 summary) 但没给档位 → 只补档位
+                    r.insert(
+                        "effort".to_string(),
+                        serde_json::Value::String(effort),
+                    );
+                    true
+                }
+                Some(_) => false, // reasoning 非对象 (字符串等客户端自定义形态), 不碰
+                None => {
+                    let obj = match v.as_object_mut() {
+                        Some(o) => o,
+                        None => return false,
+                    };
+                    obj.insert(
+                        "reasoning".to_string(),
+                        serde_json::json!({"effort": effort, "summary": "auto"}),
+                    );
+                    true
+                }
+            }
+        }
+    }
+}
+
+/// 直通请求体最小改写 (纯函数, 便于单测): 换 upstream_model → 合 extra_body
+/// (**逐字段补缺, 不覆盖客户端已有字段** — 与 chat 路径 `inject_model_params` 同语义;
+/// 直通原实现是无条件覆盖, 会让软件配置反杀客户端自带档位) → 注入配置档思考强度
+/// (客户端已表达则跳过). 返回是否注入了思考档.
+fn rewrite_passthrough_body(
+    v: &mut serde_json::Value,
+    model_cfg: &crate::providers::ModelConfig,
+    proto: NativeProto,
+) -> bool {
+    if let Some(up) = model_cfg.upstream_model.as_deref().filter(|s| !s.is_empty()) {
+        v["model"] = serde_json::Value::String(up.to_string());
+    }
+    if let Some(serde_json::Value::Object(extra)) = &model_cfg.extra_body {
+        if let Some(obj) = v.as_object_mut() {
+            for (k, val) in extra {
+                if !obj.contains_key(k) {
+                    obj.insert(k.clone(), val.clone());
+                }
+            }
+        }
+    }
+    inject_config_effort_passthrough(v, model_cfg, proto)
+}
+
 /// 原生直通中继: 客户端与上游同协议时字节级直通, 不经跨协议往返.
 ///
-/// 仅做必要的转发处理 (模型名替换 / extra_body 合并 / 鉴权头 / 熔断 / 重试 / 用量记账),
-/// 请求与响应体保持上游协议原样 — Anthropic 保留 thinking 块的 signature、多模态与工具
-/// 结构; Responses 保留 reasoning / 多模态 / 工具结构. 由 [`NativeProto`] 决定
-/// 端点解析、错误体风格与 usage 记账口径.
+/// 仅做必要的转发处理 (模型名替换 / extra_body 补缺合并 / **配置档思考强度注入** /
+/// 鉴权头 / 熔断 / 重试 / 用量记账), 请求与响应体保持上游协议原样 — Anthropic 保留
+/// thinking 块的 signature、多模态与工具结构; Responses 保留 reasoning / 多模态 / 工具
+/// 结构. 由 [`NativeProto`] 决定端点解析、错误体风格与 usage 记账口径.
+///
+/// 思考强度遵守与 chat 路径相同的优先级链: **客户端档位 > 面板配置档 > 不注入** —
+/// 此前配置档在直通路径完全不生效 (只换 model / 合 extra_body), 面板上配了档位却看似
+/// 随机不起作用. 客户端带了任何思考字段 (含显式关闭) 时一概不注入, 直通保真不受影响.
 async fn relay_native_passthrough(
     state: AppState,
     headers: HeaderMap,
@@ -1082,18 +1202,15 @@ async fn relay_native_passthrough(
         }
     };
 
-    // 请求体最小改写: 换 upstream_model + 合 extra_body, 其余字段原样保留 (保真).
+    // 请求体最小改写: 换 upstream_model + 合 extra_body (补缺不覆盖) + 配置档思考强度
+    // 注入 (客户端已表达则跳过), 其余字段原样保留 (保真). 逻辑见 rewrite_passthrough_body.
     let mut bytes = body;
     if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-        if let Some(up) = model_cfg.upstream_model.as_deref().filter(|s| !s.is_empty()) {
-            v["model"] = serde_json::json!(up);
-        }
-        if let Some(extra) = &model_cfg.extra_body {
-            if let (Some(obj), Some(map)) = (v.as_object_mut(), extra.as_object()) {
-                for (k, val) in map {
-                    obj.insert(k.clone(), val.clone());
-                }
-            }
+        if rewrite_passthrough_body(&mut v, &model_cfg, proto) {
+            info!(
+                "{tag}: injected config reasoning effort (client did not specify): {:?}",
+                model_cfg.reasoning_effort
+            );
         }
         if let Ok(nb) = serde_json::to_vec(&v) {
             bytes = Bytes::from(nb);
@@ -3673,7 +3790,9 @@ fn inject_model_params(
 
     // 没有任何需要注入的参数 → 已含规范化结果, 序列化返回.
     let has_remap = model_cfg.upstream_model.is_some();
-    let has_effort = model_cfg.reasoning_effort.is_some();
+    // 配置档判空统一走 config_effort: 空串/空白 (面板「无」的手编等价形态) 视为未配置.
+    let config_effort = crate::thinking::config_effort(model_cfg);
+    let has_effort = config_effort.is_some();
     let has_extra = model_cfg
         .extra_body
         .as_ref()
@@ -3706,8 +3825,8 @@ fn inject_model_params(
     }
 
     // 注入 reasoning_effort: 配置档仅作"客户端无指示时的默认", 客户端档位优先.
-    // 客户端显式关闭思考 (thinking:false) 时不注入, 尊重其关思考意图.
-    if let Some(effort) = &model_cfg.reasoning_effort {
+    // 客户端显式关闭思考 (thinking:false / type:disabled) 时不注入, 尊重其关思考意图.
+    if let Some(effort) = &config_effort {
         if !explicitly_disabled && v.get("reasoning_effort").is_none() {
             v["reasoning_effort"] = serde_json::Value::String(effort.clone());
             info!("proxy: injected reasoning_effort={effort}");
@@ -4196,6 +4315,102 @@ mod tests {
         assert!(saved_tc > 0, "tool_calls 轮次省量应单独记账");
         assert_eq!(saved_tc, 302, "300 字符 + JSON 引号");
         assert_eq!(exempt, 0, "已剥离的不再算作豁免");
+    }
+
+    // ── 直通路径的优先级链: 客户端档位 > 面板配置档 > 不注入 ──
+
+    /// Anthropic 直通: 客户端未表达思考意图 + 配置了档位 → 按协议格式注入 thinking.
+    #[test]
+    fn passthrough_anthropic_injects_config_effort() {
+        let cfg = cfg_with_effort("high");
+        let mut v = serde_json::json!({ "model": "m", "max_tokens": 65536, "messages": [] });
+        assert!(inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Anthropic));
+        assert_eq!(v["thinking"]["type"], "enabled");
+        assert_eq!(v["thinking"]["budget_tokens"], 4096);
+    }
+
+    /// Anthropic 直通: 客户端带 thinking (含 type:disabled) → 一律不注入, 直通保真.
+    #[test]
+    fn passthrough_anthropic_respects_client_thinking() {
+        let cfg = cfg_with_effort("max");
+        for client in [
+            serde_json::json!({ "type": "disabled" }),
+            serde_json::json!({ "type": "enabled", "budget_tokens": 2048 }),
+        ] {
+            let mut v =
+                serde_json::json!({ "model": "m", "max_tokens": 65536, "thinking": client });
+            assert!(!inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Anthropic));
+            assert!(v["thinking"].is_object(), "客户端 thinking 应原样保留");
+        }
+        // 客户端只带 reasoning_effort (非标但常见) 也算已表达
+        let mut v = serde_json::json!({ "model": "m", "reasoning_effort": "low" });
+        assert!(!inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Anthropic));
+        assert!(v.get("thinking").is_none());
+    }
+
+    /// Anthropic 直通: max_tokens 放不下最小预算 → 放弃注入 (不制造 400/空正文);
+    /// 只是略紧则钳制预算继续注入.
+    #[test]
+    fn passthrough_anthropic_budget_guard() {
+        let cfg = cfg_with_effort("max");
+        let mut v = serde_json::json!({ "model": "m", "max_tokens": 2000, "messages": [] });
+        assert!(!inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Anthropic));
+        assert!(v.get("thinking").is_none());
+
+        let mut v2 = serde_json::json!({ "model": "m", "max_tokens": 4096, "messages": [] });
+        assert!(inject_config_effort_passthrough(&mut v2, &cfg, NativeProto::Anthropic));
+        assert_eq!(v2["thinking"]["budget_tokens"], 3072, "钳到 max_tokens-1024");
+    }
+
+    /// Responses 直通: 未表达 → 注入 reasoning {effort, summary}; 配置为空 → 不注入.
+    #[test]
+    fn passthrough_responses_injects_config_effort() {
+        let cfg = cfg_with_effort("medium");
+        let mut v = serde_json::json!({ "model": "m", "input": [] });
+        assert!(inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Responses));
+        assert_eq!(v["reasoning"]["effort"], "medium");
+        assert_eq!(v["reasoning"]["summary"], "auto");
+
+        let mut clean = serde_json::json!({ "model": "m", "input": [] });
+        assert!(!inject_config_effort_passthrough(&mut clean, &cfg_no_effort(), NativeProto::Responses));
+        assert!(clean.get("reasoning").is_none());
+    }
+
+    /// Responses 直通: 客户端已有 reasoning 档位 → 不碰; 只有 summary 无档位 → 只补档位.
+    #[test]
+    fn passthrough_responses_respects_client_reasoning() {
+        let cfg = cfg_with_effort("max");
+        // 客户端给了档位 → 保留
+        let mut v = serde_json::json!({ "model": "m", "reasoning": { "effort": "low", "summary": "detailed" } });
+        assert!(!inject_config_effort_passthrough(&mut v, &cfg, NativeProto::Responses));
+        assert_eq!(v["reasoning"]["effort"], "low");
+        // 客户端只声明 summary, 未给档位 → 补配置档, 保留其 summary
+        let mut v2 = serde_json::json!({ "model": "m", "reasoning": { "summary": "auto" } });
+        assert!(inject_config_effort_passthrough(&mut v2, &cfg, NativeProto::Responses));
+        assert_eq!(v2["reasoning"]["effort"], "max");
+        assert_eq!(v2["reasoning"]["summary"], "auto");
+    }
+
+    /// extra_body 合并语义与 chat 路径一致: 补缺不覆盖 (原直通实现是无条件覆盖,
+    /// 会让软件配置反杀客户端自带档位 —— 与优先级链相反).
+    #[test]
+    fn passthrough_extra_body_does_not_overwrite_client() {
+        let mut cfg = cfg_no_effort();
+        cfg.extra_body = Some(serde_json::json!({ "temperature": 0.1, "custom_k": "v" }));
+        let mut v = serde_json::json!({ "model": "m", "temperature": 0.9 });
+        assert!(!rewrite_passthrough_body(&mut v, &cfg, NativeProto::Anthropic));
+        assert_eq!(v["temperature"], 0.9, "客户端已有字段不得被 extra_body 覆盖");
+        assert_eq!(v["custom_k"], "v", "客户端缺的字段应补上");
+        assert_eq!(v["model"], "m", "未配 upstream_model 时 model 不变");
+    }
+
+    /// 配置档空串 (面板「无」的手编等价形态) → 直通不注入, 视为「无」这一级.
+    #[test]
+    fn passthrough_empty_config_effort_no_inject() {
+        let cfg = cfg_with_effort("  ");
+        let mut v = serde_json::json!({ "model": "m", "max_tokens": 65536 });
+        assert!(!rewrite_passthrough_body(&mut v, &cfg, NativeProto::Anthropic));
+        assert!(v.get("thinking").is_none());
     }
 
     /// 关键回归: 多个 tool_calls 且其中一个 tool 含图时, 图片必须插在**整串 tool 之后**,

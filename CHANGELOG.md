@@ -2,6 +2,16 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.7] - 2026-09-22
+
+### 新增
+- **思考强度优先级链补齐为「客户端档位 > 面板配置档 > 不注入」，覆盖原生直通路径**：跨协议转换路径本就客户端优先，但**同协议原生直通（Claude Code → Anthropic 上游、Responses → Responses 上游）此前只换模型名 + 合 extra_body，面板配的思考强度完全不注入**——最常见的直通场景里配置形同虚设；且直通的 extra_body 合并是**无条件覆盖**客户端字段（chat 路径是补缺不覆盖），软件配置反而会反杀工具自带档位。现直通请求体按上游协议格式注入配置档（Anthropic → `thinking:{type:"enabled",budget_tokens}`、Responses → `reasoning:{effort,summary}`），客户端带了任何思考字段（含 `thinking:false`、`type:"disabled"`）一律不碰；extra_body 改为与 chat 路径一致的逐字段补缺。注入走纯函数 `rewrite_passthrough_body` / `inject_config_effort_passthrough`，7 个单测覆盖两个协议的注入/跳过/护栏分支。
+- **客户端 `thinking:{type:"disabled"}` 的「关思考」会被静默丢弃**：anthropic→openai 转换层只认 `type:"enabled"` 并自行换算档位，disabled 既不透传也不标记，下游照常注入配置档——编程工具明确要求不思考，却被面板配置强行打开。现转换层原样下传 `thinking`，由统一整流器 `normalize_thinking` 解析：`type:"disabled"` 与 `thinking:false` 同权（返回显式关闭，阻止配置档注入），`enabled` 的预算按统一换算表映射档位。
+- **budget→档位换算表曾有两张且互不自洽**：anthropic 入口（<1200/<2500/<6000/≥6000 → low/medium/high/max）与 thinking.rs 对象分支（≥6000→medium、≥12000→high）对同一 budget 8000 分别得 max 与 medium，且与反向表 effort→budget（high→4096）round-trip 不自洽（4096 换回去是 low，一来一回丢两档）。现统一为单一互逆换算表 `effort_to_budget_tokens` / `budget_tokens_to_effort`，round-trip 有单测固化。
+- **配置档注入 Anthropic 时补预算护栏**：原 `reasoning_effort→thinking` 不看 `max_tokens`，配置 max（budget 8000）遇上限 4096 的请求会必然 400；预算贴满上限还会把可见正文饿成空字符串（同 HANDOFF §G 的实测根因）。现注入前经 `anthropic_thinking_budget` 检查：预算须 < max_tokens 且预留 ≥1024 可见输出，放不下则放弃注入（宁可不思考也不制造必然失败），略紧则钳到 `max_tokens-1024`。
+- **配置档空串（`reasoning_effort: ""`）视为「无」而非注入空值**：判空统一收口到 `config_effort()`，三处注入点（chat 路径、thinking:true 兜底、直通）共用。
+- **面板思考强度列表头/下拉新增优先级口径提示**（悬停可见，中英各一条 `tbl.reasoning_hint`）：写明「客户端自带档位时以客户端为准，此配置仅在客户端未指定时生效，客户端显式关闭不会被注入」——把这条已在代码中成立的优先级链显式告知，避免用户误以为面板配置是强制档。
+
 ## [0.5.6] - 2026-09-22
 
 ### 新增
