@@ -1795,6 +1795,70 @@ pub async fn api_cache_clear(
     Json(state.cache.stats())
 }
 
+// ─── 降级可回取 (recall) ───
+
+/// GET /admin/api/recall — 留存的开关状态与统计.
+///
+/// 统计口径说明: `recalls` 是**进程内**累计的回取次数 (重启清零), 与 `entries`/`bytes`
+/// 这类从落盘索引推导的量不同源, 面板需分别呈现, 不可相加.
+pub async fn api_recall_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let s = state.recall.stats();
+    let c = state.recall.config();
+    Json(serde_json::json!({
+        "enabled": s.enabled,
+        "entries": s.entries,
+        "bytes": s.bytes,
+        "recalls": s.recalls,
+        "evicted": s.evicted,
+        "max_entry_bytes": c.max_entry_bytes,
+        "max_entries": c.max_entries,
+    }))
+}
+
+/// POST /admin/api/recall — 运行时切换留存开关.
+#[derive(serde::Deserialize)]
+pub struct RecallSetReq {
+    pub enabled: bool,
+}
+
+pub async fn api_recall_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<RecallSetReq>,
+) -> Json<serde_json::Value> {
+    state.recall.set_enabled(payload.enabled);
+    Json(serde_json::json!({ "enabled": state.recall.is_enabled() }))
+}
+
+/// GET /admin/api/recall/list — 最近留存的条目 (最新在前).
+pub async fn api_recall_list(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "entries": state.recall.list(100) }))
+}
+
+/// GET /admin/api/recall/entry/:id — 取回某条被移除的原文.
+///
+/// `id` 由 `RecallStore::get` 做白名单校验 (仅十六进制), 拒绝路径穿越.
+pub async fn api_recall_entry(
+    State(state): State<super::proxy::AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    match state.recall.get(&id) {
+        Some(content) => Json(serde_json::json!({ "id": id, "content": content })),
+        None => Json(serde_json::json!({ "error": crate::i18n::msg_recall_not_found(&id) })),
+    }
+}
+
+/// POST /admin/api/recall/clear — 清空全部留存 (返回被清除的条目数).
+pub async fn api_recall_clear(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let n = state.recall.clear();
+    Json(serde_json::json!({ "cleared": n }))
+}
+
 // ─── 历史推理链瘦身开关 ───
 
 /// GET /admin/api/strip-reasoning — 返回当前是否剥离历史推理链.
@@ -2013,6 +2077,99 @@ pub async fn api_model_meta(
         .collect();
     let costs = state.model_meta.resolve_costs(&state.client, &pairs).await;
     Json(serde_json::json!({ "meta": map, "costs": costs }))
+}
+
+// ─── 降级埋点 (参照 RTK 的 parse_failures 思路) ───
+
+/// 会静默降级、导致"功能悄悄失效"的位置.
+///
+/// 为什么需要: 这些路径失败后请求**照常转发**, 只是优化/转换没生效 —— 面板上表现为
+/// 省量变 0 或响应格式异常, 而没有任何解释. 用户无法区分"这次确实没什么可省"与
+/// "我们根本没解析成功". 加计数后至少能回答"降级发生过几次", 便于归因.
+///
+/// 注意: **不要把不可达的分支也塞进来**。曾经想过记录"请求体解析失败", 但实测证明
+/// 该分支不可达 —— 入口 `parse_model` 已用同一个 `serde_json::from_slice` 完整解析过
+/// body, 失败会在那里直接 400. 记一个永远为 0 的计数只会误导排查方向.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Degradation {
+    /// 上游错误响应体解析失败 → 原样透传给客户端 (未翻译). **可达**: 上游可能返回
+    /// 非 JSON 错误页 (网关 502 HTML 等), 此时按协议翻译失败, 只能原样透传.
+    UpstreamErrorParseFailed,
+}
+
+impl Degradation {
+    /// 面板 i18n 键后缀 (前端拼 `degrade_<suffix>`).
+    fn key(self) -> &'static str {
+        match self {
+            Degradation::UpstreamErrorParseFailed => "upstream_error_parse_failed",
+        }
+    }
+}
+
+/// 进程级降级计数 (只增不减, 重启清零).
+///
+/// 为什么不落盘: 与请求日志不同, 这是**诊断信号**而非业务数据; 且发生频率本应极低,
+/// 若为它引入落盘/轮转/清理是过度设计 (RTK 建表是因为它要跨会话做长期统计).
+static DEGRADATIONS: std::sync::Mutex<Option<std::collections::HashMap<&'static str, u64>>> =
+    std::sync::Mutex::new(None);
+
+/// 记一次降级 (供转发路径调用; 失败静默 —— 埋点自身绝不能影响转发).
+pub fn note_degradation(kind: Degradation) {
+    if let Ok(mut g) = DEGRADATIONS.lock() {
+        let m = g.get_or_insert_with(std::collections::HashMap::new);
+        *m.entry(kind.key()).or_insert(0) += 1;
+    }
+    // 同时打一条 warn: 便于在日志里定位具体是哪一次请求 (计数只说"有", 日志说"何时").
+    tracing::warn!("proxy: degraded at {} (optimization/translation did not apply)", kind.key());
+}
+
+/// 读取当前降级计数 (面板展示).
+pub fn degradation_counts() -> serde_json::Value {
+    let g = DEGRADATIONS.lock().ok();
+    let m = g.as_ref().and_then(|x| x.as_ref());
+    let mut out = serde_json::Map::new();
+    for k in [Degradation::UpstreamErrorParseFailed] {
+        let n = m.and_then(|x| x.get(k.key()).copied()).unwrap_or(0);
+        out.insert(k.key().to_string(), serde_json::json!(n));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// GET /admin/api/degradations — 静默降级计数 (进程级, 重启清零).
+pub async fn api_degradations() -> Json<serde_json::Value> {
+    Json(degradation_counts())
+}
+
+// ─── 常态截断超长 tool 输出 ───
+
+/// GET /admin/api/tool-output-limit — 当前阈值 (字节, 0 = 不截断).
+pub async fn api_tool_output_limit_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "bytes": state.tool_output_max_bytes.load(std::sync::atomic::Ordering::Relaxed)
+    }))
+}
+
+/// POST /admin/api/tool-output-limit — 运行时设置阈值.
+///
+/// 上限钳到 4MB: 该值意为"单条 tool 输出超过它才截断", 设得比典型请求体还大就失去意义;
+/// 下限 0 = 关闭. 用 `min` 而非拒绝, 保持与项目其他运行时开关一致的"不阻断"哲学.
+#[derive(serde::Deserialize)]
+pub struct ToolOutputLimitReq {
+    pub bytes: usize,
+}
+
+pub async fn api_tool_output_limit_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<ToolOutputLimitReq>,
+) -> Json<serde_json::Value> {
+    let v = payload.bytes.min(4 * 1024 * 1024);
+    state
+        .tool_output_max_bytes
+        .store(v, std::sync::atomic::Ordering::Relaxed);
+    Json(serde_json::json!({ "bytes": v }))
 }
 
 // ─── 使用统计 ───

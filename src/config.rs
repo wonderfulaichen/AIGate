@@ -71,6 +71,25 @@ pub struct Config {
     /// 并存, 剥掉上游直接 400 (见 proxy.rs 中 anthropic 模式分支)。
     pub strip_toolcall_on_chat: bool,
     pub strip_toolcall_on_responses: bool,
+    /// 降级可回取: 是否留存被「转发优化」剔离/截断的原文, 供事后在面板核查.
+    ///
+    /// **默认关闭** —— 留存内容是模型推理链与 tool 输出**明文**, 落盘等于把对话内容写到
+    /// 磁盘上. 这是隐私取舍, 必须由用户显式开启并接受 (同 `cache_persist_path` 的警示).
+    /// 开启后 `data/recall/` 下保存被移除的原文, 可在请求详情里查看, 并统计"留了有没有被
+    /// 真正查看过", 用数据判断截断/剥离是否伤害了实际使用.
+    pub recall_enabled: bool,
+    /// 单条留存上限 (字节): 超过只保留头部并显式标注, 避免单条撑爆磁盘.
+    pub recall_max_entry_bytes: usize,
+    /// 留存条目数上限 (超出按 FIFO 淘汰最旧).
+    pub recall_max_entries: usize,
+    /// 单条 tool 输出超过此字节数即截断 (0 = 不截断).
+    ///
+    /// **与 `max_request_body_bytes` 的区别**: 后者是"超上游硬上限才被动救火", 本项是
+    /// **常态**生效 —— 每条超长 tool 结果都会被截断并追加可辨识的提示. 实测这类请求占
+    /// 6.5% (p99 达 2.8MB), 单条 tool 消息可含整个文件内容.
+    ///
+    /// 0 = 关闭 (默认): 截断是有损的, 需用户显式接受. 被截断的原文可由 `recall` 留存回看.
+    pub tool_output_max_bytes: usize,
 }
 
 impl Config {
@@ -125,6 +144,12 @@ impl Config {
             // 协议白名单: chat 默认开 (实测安全), responses 默认关 (未实测, 由用户试开).
             strip_toolcall_on_chat: env_bool("STRIP_TOOLCALL_ON_CHAT", true),
             strip_toolcall_on_responses: env_bool("STRIP_TOOLCALL_ON_RESPONSES", false),
+            // 降级可回取: 默认关 (留存含推理链/工具输出明文, 属隐私取舍).
+            recall_enabled: env_bool("AIGATE_RECALL_ENABLED", false),
+            recall_max_entry_bytes: env_usize("AIGATE_RECALL_MAX_ENTRY_BYTES", 256 * 1024),
+            recall_max_entries: env_usize("AIGATE_RECALL_MAX_ENTRIES", 200),
+            // 常态截断超长 tool 输出: 默认 0 = 关 (有损, 需显式开启).
+            tool_output_max_bytes: env_usize("AIGATE_TOOL_OUTPUT_MAX_BYTES", 0),
         }
     }
 }

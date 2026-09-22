@@ -563,6 +563,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:6px" x-show="((stats.audit.output||{}).loop_truncated||0)>0"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_out_loop')"></span><span class="txsm mono fw6" style="color:var(--err)" x-text="(stats.audit.output||{}).loop_truncated||0"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_out_loop_hint')"></span></div>
       </div>
       <div class="txs tm" style="color:var(--muted)" x-text="t('audit_footer')"></div>
+      <div x-show="degradationTotal>0" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <span class="txsm" style="min-width:96px;color:var(--warn)" x-text="t('degrade_title')"></span>
+          <span class="txsm mono fw6" style="color:var(--warn)" x-text="degradationTotal"></span>
+          <template x-for="(v,k) in (degradations||{})" :key="k"><span x-show="v>0" class="txs tm" x-text="'· '+t('degrade_'+k)+' '+v"></span></template>
+        </div>
+        <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('degrade_note')"></div>
+      </div>
     </div></div>
     <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
@@ -629,6 +637,30 @@ tr:hover td{background:rgba(99,102,241,.04)}
   </div>
   <div x-show="autoContinue>0" style="padding:0 16px 14px">
     <div class="cg"><span class="txs tm" x-text="t('auto_continue_max')"></span><input type="number" min="1" max="5" :value="autoContinue" @change="setAutoContinue(parseInt($event.target.value)||0)" class="inp" style="width:80px"><span class="txs tm" x-text="t('auto_continue_unit')"></span></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('recall_label')"></div><div class="row-d" x-text="t('recall_desc')"></div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-g" style="font-size:11px" @click="openRecallPanel()" x-text="t('recall_view')"></button>
+      <button class="tgl" :class="recall.enabled?'on':'off'" @click="setRecall(!recall.enabled)"></button>
+    </div>
+  </div>
+  <div x-show="recall.enabled" style="padding:0 16px 14px">
+    <div class="cg" style="flex-wrap:wrap;gap:14px">
+      <span class="txs tm" x-text="t('recall_stat_entries')+' '+recall.entries"></span>
+      <span class="txs tm" x-text="t('recall_stat_bytes')+' '+fmtBytes(recall.bytes)"></span>
+      <span class="txs tm" :style="recall.recalls>0?'color:var(--ok)':''" x-text="t('recall_stat_recalls')+' '+recall.recalls"></span>
+      <span class="txs tm" x-show="recall.evicted>0" x-text="t('recall_stat_evicted')+' '+recall.evicted"></span>
+    </div>
+    <div class="txs tm" style="margin-top:6px" x-text="t('recall_privacy_note')"></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('tool_trunc_label')"></div><div class="row-d" x-text="t('tool_trunc_desc')"></div></div>
+    <button class="tgl" :class="toolOutputLimit>0?'on':'off'" @click="setToolOutputLimit(toolOutputLimit>0?0:32768)"></button>
+  </div>
+  <div x-show="toolOutputLimit>0" style="padding:0 16px 14px">
+    <div class="cg"><span class="txs tm" x-text="t('tool_trunc_keep')"></span><input type="number" min="1024" max="4194304" step="1024" :value="toolOutputLimit" @change="setToolOutputLimit(parseInt($event.target.value)||0)" class="inp" style="width:110px"><span class="txs tm" x-text="t('tool_trunc_unit')"></span></div>
+    <div class="txs tm" style="margin-top:6px" x-text="t('tool_trunc_note')"></div>
   </div>
   <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
     <div style="min-width:180px;padding-top:2px"><div class="row-t" x-text="t('conn_params_label')"></div><div class="row-d" x-text="t('conn_params_hint')"></div></div>
@@ -851,6 +883,43 @@ tr:hover td{background:rgba(99,102,241,.04)}
 </main>
 </div>
 <div x-show="showWhatsNew" x-cloak class="modal-overlay" role="dialog" aria-modal="true" @click.self="dismissWhatsNew()" @keydown.escape.window="dismissWhatsNew()"><div class="modal-card modal-card-sm"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('whats_new')"></span><span class="txs mono tm" x-text="whatsNewEntry?(whatsNewEntry.version+(whatsNewEntry.date?' · '+whatsNewEntry.date:'')):''"></span></div><div class="modal-title" x-text="t('whats_new_title')"></div></div><div class="modal-body"><template x-if="whatsNewEntry"><div style="display:flex;flex-direction:column;gap:12px;padding:8px 0"><template x-for="sec in whatsNewEntry.sections" :key="sec.title"><div><div class="txs fw7" style="color:var(--indigo);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs" style="color:var(--fg);padding:2px 0">▸ <span x-html="renderMdInline(item)"></span></div></template></div></template></div></template></div><div class="modal-foot"><button class="btn btn-p" @click="dismissWhatsNew()" x-text="t('got_it')"></button></div></div></div>
+<div x-show="showRecall" x-cloak class="modal-overlay modal-overlay-lg" role="dialog" aria-modal="true" @click.self="closeRecallPanel()" @keydown.escape.window="closeRecallPanel()"><div class="modal-card" style="max-width:780px"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('recall_view')"></span><span class="txs tm" x-text="t('recall_stat_entries')+' '+recall.entries"></span></div><div class="modal-title" x-text="t('recall_panel_title')"></div></div><div class="modal-body">
+  <template x-if="recallDetail">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <span class="bdg bdg-g" x-text="t('recall_kind_'+(recallDetail.entry.kind||''))"></span>
+        <span class="txs mono tm" x-text="recallDetail.entry.id"></span>
+        <span class="txs tm" x-text="fmtBytes(recallDetail.entry.bytes)"></span>
+        <span class="txs tm" x-text="fmtTime(recallDetail.entry.ts)"></span>
+        <span class="txs tm" x-show="recallDetail.entry.model" x-text="'· '+(recallDetail.entry.model||'')"></span>
+        <button class="btn btn-g" style="font-size:11px;margin-left:auto" @click="copyRecallContent()" x-text="recallCopied?'✓':'⧉'"></button>
+      </div>
+      <div class="txs tm" style="margin-bottom:6px" x-text="t('recall_detail_note')"></div>
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.5;max-height:52vh;overflow:auto;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px;margin:0" x-text="recallDetail.content"></pre>
+    </div>
+  </template>
+  <template x-if="!recallDetail">
+    <div>
+      <template x-if="recallEntries.length">
+        <div>
+          <template x-for="e in recallEntries" :key="e.id+e.ts">
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="viewRecall(e.id)">
+              <span class="bdg bdg-g" style="font-size:9px;flex-shrink:0" x-text="t('recall_kind_'+(e.kind||''))"></span>
+              <div style="min-width:0;flex:1">
+                <div class="txs mono" style="color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="e.preview||'—'"></div>
+                <div class="txs tm" style="margin-top:2px"><span x-text="fmtBytes(e.bytes)"></span> · <span x-text="fmtTime(e.ts)"></span><template x-if="e.model"><span x-text="' · '+e.model"></span></template></div>
+              </div>
+              <span class="txs tm" style="flex-shrink:0" x-text="t('recall_open')"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+      <template x-if="!recallEntries.length">
+        <div class="txs tm" style="padding:12px 0" x-text="t('recall_empty')"></div>
+      </template>
+    </div>
+  </template>
+</div><div class="modal-foot"><button class="btn btn-g" style="color:var(--err)" x-show="recallEntries.length&&!recallDetail" @click="clearRecall()" x-text="t('recall_clear_all')"></button><button class="btn btn-g" x-show="recallDetail" @click="recallDetail=null" x-text="t('recall_back')"></button><button class="btn btn-p" @click="closeRecallPanel()" x-text="t('close_label')"></button></div></div></div>
 <div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
 <template x-if="drawerProv">
 <div>
@@ -1215,7 +1284,19 @@ const I18N = {
     'strip_tc_proto_anthropic_note': 'Anthropic /messages 恒不剥离：该协议要求 thinking 块与 tool_use 并存，剥掉必然被上游拒绝', 
     'strip_tc_proto_model_override': '模型列表中的逐模型勾选优先级更高，可强制开启/关闭',
     'history_trim_label': '长会话历史裁剪', 'history_trim_desc': '仅保留最近 N 条 user 轮，更早历史整体丢弃（system 始终保留）', 'history_trim_keep': '保留最近', 'history_trim_unit': '条 user 轮', 
-    'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次', 
+    'auto_continue_label': '断流自动续写', 'auto_continue_desc': '上游中途断流时自动带已输出内容重发"继续"请求，新响应无缝拼进当前流', 'auto_continue_max': '最多续写', 'auto_continue_unit': '次',
+    'recall_label': '降级可回取（留存被移除的原文）', 'recall_desc': '转发优化会剥离推理链、截断超长工具输出 —— 这些内容原本删掉就查不到了。开启后留存原文，可在请求详情里回看、导出，并统计"留存内容是否真被查看过"',
+    'recall_view': '查看留存', 'recall_panel_title': '被移除的原文（留存）', 'recall_detail_note': '以下内容是被「转发优化」从发往上游的请求中移除的原文，仅本地留存，未发送给任何上游',
+    'recall_stat_entries': '条目', 'recall_stat_bytes': '占用', 'recall_stat_recalls': '已回取', 'recall_stat_evicted': '已淘汰',
+    'recall_privacy_note': '注意：留存内容是模型推理链与工具输出明文，会写入 data/recall/。请自行评估落盘风险，不需要时请关闭。',
+    'recall_empty': '暂无留存内容（开启后产生的请求才会留存）', 'recall_open': '查看', 'recall_back': '返回列表', 'recall_clear_all': '清空全部留存', 'recall_cleared': '已清空留存',
+    'recall_confirm_enable': '开启后将把「被移除的推理链与工具输出原文」保存到磁盘（data/recall/），内容为对话明文。确认开启？', 'recall_confirm_clear': '将删除全部留存内容，此操作不可撤销。确认清空？',
+    'recall_kind_reasoning_plain': '剥离推理链', 'recall_kind_reasoning_toolcall': '剥离推理链(工具轮次)', 'recall_kind_tool_output_truncated': '截断工具输出', 'recall_kind_history_trimmed': '历史裁剪', 'recall_kind_resp_cache_skipped': '响应缓存命中',
+    'tool_trunc_label': '常态截断超长工具输出', 'tool_trunc_desc': '单条工具结果超过阈值即截断（不等请求体超上限才处理）。这类内容每轮都会重发，属"注水"而非有效上下文；被截掉的原文可由「降级可回取」留存回看',
+    'tool_trunc_keep': '单条工具输出保留前', 'tool_trunc_unit': '字节', 'tool_trunc_note': '建议 32KB（32768）。设得过小会丢失工具返回的关键内容；被截断时会在原文末尾留下 "truncated N bytes" 标记，便于识别',
+    'tool_trunc_confirm': '开启后单条超长工具输出会被截断（有损，会影响模型看到的工具结果）。可同时开启「降级可回取」以便事后核查被截内容。确认开启？',
+    'degrade_title': '静默降级次数', 'degrade_note': '计数解析失败导致"优化/翻译未生效"的次数（进程级，重启清零）—— 这类失败请求会照常转发，只是省量或错误翻译没生效，容易与"这次确实没什么可省"混淆',
+    'degrade_upstream_error_parse_failed': '上游错误体解析失败', 'degrade_ok': '无降级记录', 
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
     'unit_secs': '秒', 'conn_params_hint': '空闲超时：上游超过该时长未吐出数据则断开（30~600 秒）；重试仅对连接/超时错误与 5xx 生效。修改即时生效，重启后回到环境变量默认值',
     'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 
@@ -1405,6 +1486,18 @@ const I18N = {
     'strip_tc_proto_model_override': 'Per-model checkboxes in the model list take precedence and can force either way', 
     'history_trim_label': 'Long-session history trim', 'history_trim_desc': 'Keep only the last N user turns; older history discarded (system always kept)', 'history_trim_keep': 'Keep last', 'history_trim_unit': 'user turns', 
     'auto_continue_label': 'Auto-continue on stream cut', 'auto_continue_desc': 'When upstream cuts mid-stream, automatically re-request with accumulated content and stitch the new response into the current stream', 'auto_continue_max': 'Max continuations', 'auto_continue_unit': 'times', 
+    'recall_label': 'Recall removed content', 'recall_desc': 'Forwarding optimization strips reasoning chains and truncates oversized tool output - once removed, it cannot be inspected. Enable to keep the removed text locally so you can review/export it and see whether it is ever actually consulted',
+    'recall_view': 'View recall', 'recall_panel_title': 'Removed content (recall)', 'recall_detail_note': 'The text below was removed from the outgoing request by forwarding optimization. It is kept locally only and was never sent upstream',
+    'recall_stat_entries': 'Entries', 'recall_stat_bytes': 'On disk', 'recall_stat_recalls': 'Retrieved', 'recall_stat_evicted': 'Evicted',
+    'recall_privacy_note': 'Note: retained content is plaintext model reasoning and tool output, written to data/recall/. Assess the on-disk risk yourself and turn it off when not needed.',
+    'recall_empty': 'Nothing retained yet (only requests made after enabling are kept)', 'recall_open': 'View', 'recall_back': 'Back to list', 'recall_clear_all': 'Clear all recalls', 'recall_cleared': 'Recall store cleared',
+    'recall_confirm_enable': 'This will save removed reasoning chains and tool output to disk (data/recall/) as plaintext conversation content. Enable?', 'recall_confirm_clear': 'This deletes all retained content and cannot be undone. Clear?',
+    'recall_kind_reasoning_plain': 'Stripped reasoning', 'recall_kind_reasoning_toolcall': 'Stripped reasoning (tool turn)', 'recall_kind_tool_output_truncated': 'Truncated tool output', 'recall_kind_history_trimmed': 'Trimmed history', 'recall_kind_resp_cache_skipped': 'Response cache hit',
+    'tool_trunc_label': 'Truncate oversized tool output', 'tool_trunc_desc': 'Truncate any single tool result larger than the threshold (proactive, not only when the request body exceeds a limit). Such content is re-sent every turn and dilutes context; removed text can be kept via Recall for later review',
+    'tool_trunc_keep': 'Keep first', 'tool_trunc_unit': 'bytes of each tool output', 'tool_trunc_note': '32KB (32768) is a reasonable default. Too small loses key tool output; a "truncated N bytes" marker is left at the cut point so it is identifiable',
+    'tool_trunc_confirm': 'Enabling this truncates oversized tool output (lossy; it changes what the model sees). Consider also enabling Recall to inspect what was removed. Enable?',
+    'degrade_title': 'Silent degradations', 'degrade_note': 'Counts of parse failures that silently skipped optimization/translation (process-wide, resets on restart). Such requests are forwarded anyway, so savings or error translation just did not apply - easily mistaken for "nothing to save this time"',
+    'degrade_upstream_error_parse_failed': 'Upstream error parse failed', 'degrade_ok': 'No degradations recorded',
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
     'unit_secs': 's', 'conn_params_hint': 'Idle timeout: disconnect if upstream sends nothing for this long (30~600 s); retries apply to connection/timeout errors and 5xx. Changes apply live; restart reverts to env defaults',
     'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 
@@ -1650,6 +1743,16 @@ function dashboard() {
     modelCosts: {},
     modelMetaLoading: false,
     _metaSig: '',
+    // 降级可回取: 留存开关/统计, 以及查看弹窗 (列表与详情两态)
+    recall: { enabled: false, entries: 0, bytes: 0, recalls: 0, evicted: 0 },
+    showRecall: false,
+    recallEntries: [],
+    recallDetail: null,
+    recallCopied: false,
+    // 常态截断超长 tool 输出的阈值 (字节, 0 = 关闭)
+    toolOutputLimit: 0,
+    // 静默降级计数 {body_parse_failed, upstream_error_parse_failed}
+    degradations: {},
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
     streamTimeoutSecs: 120,
     retryMax: 1,
@@ -1802,9 +1905,9 @@ function dashboard() {
       this.activeTab = tabId;
       this.logPage = 0;
       if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
-      if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); }
+      if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); this.fetchDegradations(); }
       if (tabId==='records') { this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); }
+      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
     },
 
     startPoll() {
@@ -1812,7 +1915,7 @@ function dashboard() {
       this.pollTimer = setInterval(() => {
         this.fetchLogs();
         if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
-        if (this.activeTab==='analytics') { this.fetchStats(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
+        if (this.activeTab==='analytics') { this.fetchStats(); this.fetchDegradations(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
       }, 3000);
     },
 
@@ -1946,6 +2049,92 @@ function dashboard() {
         if (r.ok) this.cache = await r.json();
         else { toast(t('save_failed'), 'error'); }
       } catch(e) { toast(t('network_error'), 'error'); }
+    },
+    // 常态截断超长 tool 输出 (0 = 关闭). 与"紧急瘦身"不同: 不等请求体超上限即生效.
+    async fetchToolOutputLimit() {
+      try { const r=await fetch('/admin/api/tool-output-limit',{headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.toolOutputLimit=Math.max(0,d.bytes|0); } } catch(e){}
+    },
+    async setToolOutputLimit(bytes) {
+      // 开启前确认: 截断有损, 但被截掉的原文可由「降级可回取」留存回看.
+      if(bytes>0 && !confirm(t('tool_trunc_confirm'))) return;
+      try {
+        const r=await fetch('/admin/api/tool-output-limit',{method:'POST',headers:authHeaders(),body:JSON.stringify({bytes:bytes})});
+        if(r.ok) { const d=await r.json(); this.toolOutputLimit=Math.max(0,d.bytes|0); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+    },
+    // 静默降级计数: 解析失败导致优化/翻译未生效的次数. 用于区分
+    // "这次确实没什么可省" 与 "我们根本没解析成功".
+    async fetchDegradations() {
+      try { const r=await fetch('/admin/api/degradations',{headers:authHeaders()}); if(r.ok) this.degradations=await r.json(); } catch(e){}
+    },
+    get degradationTotal() {
+      const d = this.degradations||{};
+      return Object.values(d).reduce((a,b)=>a+(Number(b)||0),0);
+    },
+    // ── 降级可回取 (recall): 留存被优化剔离的原文, 供事后核查 ──
+    async fetchRecall() {
+      try { const r=await fetch('/admin/api/recall', {headers:authHeaders()}); if(r.ok) this.recall=await r.json(); } catch(e){}
+    },
+    async setRecall(val) {
+      // 开启前必须明确告知隐私影响: 留存内容是推理链/tool 输出明文, 会写到磁盘.
+      if(val && !confirm(t('recall_confirm_enable'))) return;
+      try {
+        const r=await fetch('/admin/api/recall',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})});
+        if(r.ok) { const d=await r.json(); this.recall.enabled=!!d.enabled; await this.fetchRecall(); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+    },
+    async openRecallPanel() {
+      this.showRecall = true;
+      this.recallDetail = null;
+      await this.fetchRecall();
+      try {
+        const r=await fetch('/admin/api/recall/list', {headers:authHeaders()});
+        if(r.ok) { const d=await r.json(); this.recallEntries=d.entries||[]; }
+      } catch(e){}
+    },
+    closeRecallPanel() { this.showRecall=false; this.recallDetail=null; this.recallCopied=false; },
+    // 查看某条留存原文 (取回即计入后端 recalls 计数 —— 这是"留了到底有没有用"的依据).
+    async viewRecall(id) {
+      try {
+        const r=await fetch('/admin/api/recall/entry/'+encodeURIComponent(id), {headers:authHeaders()});
+        const d=await r.json();
+        if(r.ok && d.content!=null) {
+          const e=this.recallEntries.find(x=>x.id===id) || {id:id, bytes:0, ts:0, kind:''};
+          this.recallDetail={entry:e, content:d.content};
+          this.recallCopied=false;
+          this.fetchRecall();
+        } else { toast(d.error||t('recall_empty'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+    },
+    async copyRecallContent() {
+      if(!this.recallDetail) return;
+      const ok = await this.copyText(this.recallDetail.content||'', 'recall');
+      if(ok) { this.recallCopied=true; setTimeout(()=>this.recallCopied=false, 1500); }
+    },
+    async clearRecall() {
+      if(!confirm(t('recall_confirm_clear'))) return;
+      try {
+        const r=await fetch('/admin/api/recall/clear',{method:'POST',headers:authHeaders()});
+        if(r.ok) { this.recallEntries=[]; this.recallDetail=null; await this.fetchRecall(); toast(t('recall_cleared'), 'success'); }
+        else { toast(t('save_failed'), 'error'); }
+      } catch(e){ toast(t('network_error'), 'error'); }
+    },
+    // 字节数人类可读 (B / KB / MB). 与 fmtT (token 数) 不同: 这里必须说"字节", 不能混作 token.
+    fmtBytes(n) {
+      const v = Number(n)||0;
+      if(v < 1024) return v+' B';
+      if(v < 1024*1024) return (v/1024).toFixed(1)+' KB';
+      return (v/1024/1024).toFixed(2)+' MB';
+    },
+    // 秒级时间戳 -> 本地 MM/DD HH:MM:SS (与记录页时间列口径一致).
+    fmtTime(ts) {
+      const n = Number(ts)||0;
+      if(!n) return '—';
+      const d = new Date(n*1000);
+      const p = x => String(x).padStart(2,'0');
+      return p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
     },
     async clearCache() {
       try {

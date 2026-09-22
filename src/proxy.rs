@@ -79,6 +79,10 @@ pub struct AppState {
     /// anthropic 不设开关 —— 该协议下剥离必然 400, 代理层硬性跳过.
     pub strip_toolcall_on_chat: Arc<AtomicBool>,
     pub strip_toolcall_on_responses: Arc<AtomicBool>,
+    /// 降级可回取: 留存被优化剔离/截断的原文 (见 `recall` 模块与 `Config::recall_enabled`).
+    pub recall: Arc<crate::recall::RecallStore>,
+    /// 常态截断超长 tool 输出的阈值 (0 = 不截断; 见 `Config::tool_output_max_bytes`).
+    pub tool_output_max_bytes: Arc<AtomicUsize>,
     /// 模型元信息缓存 (models.dev): 面板悬停展示上下文/输出限制与视觉标签.
     pub model_meta: Arc<crate::model_meta::MetaCache>,
     /// 进程级稳定标识: 用于 OpenCode Go 等按 session 优化路由的上游自动注入
@@ -274,6 +278,13 @@ pub async fn chat_completions(
         state.strip_history_reasoning.load(Ordering::Relaxed),
         state.max_history_turns.load(Ordering::Relaxed),
         strip_toolcall,
+        state.tool_output_max_bytes.load(Ordering::Relaxed),
+        // 留存仅限于"剥离/截断确实会发生"的情况; 未启用时传 None 走零开销路径.
+        if state.recall.is_enabled() {
+            Some((&state.recall, Some(model_cfg.upstream_model.as_deref().unwrap_or(&model))))
+        } else {
+            None
+        },
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
@@ -636,11 +647,23 @@ pub async fn chat_completions(
         let err_body = if anthropic_mode {
             serde_json::from_str::<serde_json::Value>(&err_body)
                 .map(|v| crate::anthropic::anthropic_error_to_openai(&v).to_string())
-                .unwrap_or(err_body)
+                .unwrap_or_else(|_| {
+                    // 静默降级: 上游错误体不是 JSON (网关 502 HTML 等) → 无法按协议
+                    // 翻译, 原样透传. 客户端看到的是上游原文而非转换后的错误结构.
+                    crate::admin::note_degradation(
+                        crate::admin::Degradation::UpstreamErrorParseFailed,
+                    );
+                    err_body
+                })
         } else if responses_mode {
             serde_json::from_str::<serde_json::Value>(&err_body)
                 .map(|v| crate::responses::responses_error_to_openai(&v).to_string())
-                .unwrap_or(err_body)
+                .unwrap_or_else(|_| {
+                    crate::admin::note_degradation(
+                        crate::admin::Degradation::UpstreamErrorParseFailed,
+                    );
+                    err_body
+                })
         } else {
             err_body
         };
@@ -678,12 +701,23 @@ pub async fn chat_completions(
                     let body_text = if anthropic_mode {
                         match serde_json::from_str::<serde_json::Value>(&body_text) {
                             Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
-                            Err(_) => body_text,
+                            Err(_) => {
+                                // 静默降级: 上游错误体没翻译出来, 原样透传 (客户端看到上游原文).
+                                crate::admin::note_degradation(
+                                    crate::admin::Degradation::UpstreamErrorParseFailed,
+                                );
+                                body_text
+                            }
                         }
                     } else if responses_mode {
                         match serde_json::from_str::<serde_json::Value>(&body_text) {
                             Ok(v) => crate::responses::responses_to_openai_nonstream(&v).to_string(),
-                            Err(_) => body_text,
+                            Err(_) => {
+                                crate::admin::note_degradation(
+                                    crate::admin::Degradation::UpstreamErrorParseFailed,
+                                );
+                                body_text
+                            }
                         }
                     } else {
                         body_text
@@ -717,12 +751,23 @@ pub async fn chat_completions(
                     let body_text = if anthropic_mode {
                         match serde_json::from_str::<serde_json::Value>(&body_text) {
                             Ok(v) => crate::anthropic::anthropic_to_openai_nonstream(&v).to_string(),
-                            Err(_) => body_text,
+                            Err(_) => {
+                                // 静默降级: 上游错误体没翻译出来, 原样透传 (客户端看到上游原文).
+                                crate::admin::note_degradation(
+                                    crate::admin::Degradation::UpstreamErrorParseFailed,
+                                );
+                                body_text
+                            }
                         }
                     } else if responses_mode {
                         match serde_json::from_str::<serde_json::Value>(&body_text) {
                             Ok(v) => crate::responses::responses_to_openai_nonstream(&v).to_string(),
-                            Err(_) => body_text,
+                            Err(_) => {
+                                crate::admin::note_degradation(
+                                    crate::admin::Degradation::UpstreamErrorParseFailed,
+                                );
+                                body_text
+                            }
                         }
                     } else {
                         body_text
@@ -3125,9 +3170,14 @@ fn remove_reasoning_fields(m: &mut serde_json::Map<String, serde_json::Value>) -
 /// 又无推理价值 (推理链不应被"喂回"模型), 还会干扰 KV 缓存命中. 带 tool_calls 的
 /// assistant 消息保留推理链 (部分客户端规范要求 reasoning 与 tool_calls 并存).
 /// 返回 `(被剥离字符数, 被豁免字符数)`; 后者供「省量审计」评估放开豁免能省多少.
+///
+/// `on_removed`: 可选回调, 每移除一条消息的推理链时调用 `(内容, 是否带 tool_calls)`.
+/// 供「降级可回取」留存原文 —— 剥离是**有损且不可逆**的, 留档后用户才能事后核查
+/// "这次到底删了什么" (见 `recall` 模块). 传 `None` 则零开销.
 fn strip_history_reasoning_messages(
     body: &mut serde_json::Value,
     strip_with_tool_calls: bool,
+    mut on_removed: Option<&mut dyn FnMut(&str, bool)>,
 ) -> (usize, usize, usize) {
     let Some(obj) = body.as_object_mut() else {
         return (0, 0, 0);
@@ -3159,6 +3209,13 @@ fn strip_history_reasoning_messages(
         // 按来源分别记账: 工具调用轮次的剥离来自 strip_toolcall_reasoning 开关,
         // 单列出来用户才看得到这个开关到底省了多少.
         // 估算省量: 字段序列化文本的字节数 (JSON 转义后长度, 与上游 input 计费同源).
+        // 留存需在移除**之前**取原文 (移除后即无迹可寻).
+        if let Some(cb) = on_removed.as_deref_mut() {
+            let snapshot = reasoning_snapshot(m);
+            if !snapshot.is_empty() {
+                cb(&snapshot, has_tool_calls);
+            }
+        }
         let removed = remove_reasoning_fields(m);
         if has_tool_calls {
             saved_toolcall_chars += removed;
@@ -3167,6 +3224,23 @@ fn strip_history_reasoning_messages(
         }
     }
     (saved_chars, saved_toolcall_chars, exempt_chars)
+}
+
+/// 取出一条消息里全部推理链字段的原文 (供留存). 返回空串表示该消息无推理链.
+fn reasoning_snapshot(m: &serde_json::Map<String, serde_json::Value>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for k in REASONING_FIELDS.iter() {
+        if let Some(v) = m.get(*k) {
+            match v {
+                serde_json::Value::String(s) => parts.push(format!("{k}: {s}")),
+                other => parts.push(format!(
+                    "{k}: {}",
+                    serde_json::to_string(other).unwrap_or_default()
+                )),
+            }
+        }
+    }
+    parts.join("\n")
 }
 
 /// 长会话历史裁剪: 仅保留最近 `n` 条 user 轮, 更早的历史整体丢弃, 降低每轮 input token.
@@ -3248,7 +3322,7 @@ fn emergency_shrink_body(body: &mut serde_json::Value, target_bytes: usize) -> u
     let mut saved = 0usize;
     // 1) 截断超长 tool 输出: 每条 tool 消息 content 超 32KB 则截断并追加提示.
     const MAX_PER_TOOL: usize = 32 * 1024;
-    saved += truncate_tool_outputs(body, MAX_PER_TOOL);
+    saved += truncate_tool_outputs(body, MAX_PER_TOOL, None);
     if serde_json::to_vec(body).map(|v| v.len()).unwrap_or(usize::MAX) <= target_bytes {
         return saved;
     }
@@ -3295,8 +3369,16 @@ fn floor_char_boundary(s: &str, idx: usize) -> usize {
 ///
 /// 仅处理 role == "tool" 的消息, 若 content 为字符串且超过 `max_bytes`,
 /// 截断为 `前 max_bytes 字符 + "\n...[truncated X bytes]..."`.
+///
+/// `on_truncated`: 可选回调, 上报被**移除的那一段**原文 (供 `recall` 留存回看).
+/// 传 `None` 则零开销. 与静默丢弃相对: 用户应能事后核查"被截掉的是什么".
+///
 /// 返回总节省字符数.
-fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usize {
+fn truncate_tool_outputs(
+    body: &mut serde_json::Value,
+    max_bytes: usize,
+    mut on_truncated: Option<&mut dyn FnMut(&str)>,
+) -> usize {
     let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
         return 0;
     };
@@ -3329,6 +3411,10 @@ fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usiz
                 // 截断数组形式: 简化为单字符串截断.
                 let orig_len = combined.len();
                 let cut = floor_char_boundary(&combined, max_bytes);
+                // 留存被移除的那一段 (而非保留部分) —— 回看时关心的正是"丢掉了什么".
+                if let Some(cb) = on_truncated.as_deref_mut() {
+                    cb(&combined[cut..]);
+                }
                 combined.truncate(cut);
                 combined.push_str(&format!("\n...[truncated {} bytes]...", orig_len - cut));
                 *content_val = serde_json::Value::String(combined);
@@ -3344,6 +3430,9 @@ fn truncate_tool_outputs(body: &mut serde_json::Value, max_bytes: usize) -> usiz
         let orig_len = content_str.len();
         let mut truncated = content_str;
         let cut = floor_char_boundary(&truncated, max_bytes);
+        if let Some(cb) = on_truncated.as_deref_mut() {
+            cb(&truncated[cut..]);
+        }
         truncated.truncate(cut);
         truncated.push_str(&format!("\n...[truncated {} bytes, total {} -> {}]...", orig_len - cut, orig_len, cut));
         *content_val = serde_json::Value::String(truncated);
@@ -3504,8 +3593,15 @@ fn inject_model_params(
     strip_history_reasoning: bool,
     max_history_turns: usize,
     strip_toolcall_reasoning: bool,
+    // 常态截断超长 tool 输出的阈值 (0 = 不截断).
+    tool_output_max_bytes: usize,
+    // 降级可回取 (可为 None = 不留存). 留存是旁路, 失败不影响转发.
+    recall: Option<(&crate::recall::RecallStore, Option<&str>)>,
 ) -> (bytes::Bytes, bool, usize, usize, TokenAudit) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        // 注: 此分支**正常不可达** —— 调用前 `parse_model` 已用同一个 `serde_json::from_slice`
+        // 完整解析过 body, 失败会在入口直接返回 400 (见 chat_completions 步骤 2).
+        // 保留它只为"入口若将来放宽校验"时能安全降级, 故不做埋点计数 (不可达的计数只会误导).
         return (bytes, false, 0, 0, TokenAudit::default()); // 解析失败, 原样返回
     };
     let had_effort = v.get("reasoning_effort").is_some();
@@ -3522,8 +3618,28 @@ fn inject_model_params(
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
     let mut strip_saved = 0usize;
     if strip_history_reasoning {
-        let (saved, saved_tc, exempt) =
-            strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning);
+        // 降级可回取: 若启用留存, 把每条被删的推理链原文存下来 (供事后核查).
+        // 参照 RTK 的 recall 设计; 内容是模型思考明文, 故仅在用户显式启用时落盘.
+        // 注意 `+ '_`: 闭包捕获的是 `&RecallStore` / `Option<&str>` 这类非 'static 引用,
+        // 不标注生命周期会被默认要求 'static 而编译失败.
+        let mut on_removed: Option<Box<dyn FnMut(&str, bool) + '_>> = recall.map(|(store, model)| {
+            Box::new(move |content: &str, with_tool: bool| {
+                let kind = if with_tool {
+                    crate::recall::RecallKind::ReasoningToolcall
+                } else {
+                    crate::recall::RecallKind::ReasoningPlain
+                };
+                let _ = store.store(kind, content, model);
+            }) as Box<dyn FnMut(&str, bool) + '_>
+        });
+        let (saved, saved_tc, exempt) = match on_removed.as_mut() {
+            Some(cb) => strip_history_reasoning_messages(
+                &mut v,
+                strip_toolcall_reasoning,
+                Some(&mut **cb),
+            ),
+            None => strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning, None),
+        };
         strip_saved = saved + saved_tc;
         audit.exempt_reasoning_tokens = (exempt / 4) as u32;
         audit.strip_toolcall_saved_tokens = (saved_tc / 4) as u32;
@@ -3533,6 +3649,22 @@ fn inject_model_params(
     let mut trim_saved = 0usize;
     if max_history_turns > 0 {
         trim_saved = trim_history_turns(&mut v, max_history_turns);
+    }
+
+    // 常态截断超长 tool 输出 (0 = 不截断). 与 emergency_shrink 的区别是这里**不等**超限:
+    // 实测 6.5% 的请求体 >1MB (p99 2.8MB), 单条 tool 消息可含整个文件内容 —— 这类内容
+    // 每轮都会重发, 属"注水"而非有效上下文. 被截掉的原文可由 recall 留存回看.
+    if tool_output_max_bytes > 0 {
+        let mut on_truncated: Option<Box<dyn FnMut(&str) + '_>> = recall.map(|(store, model)| {
+            Box::new(move |removed: &str| {
+                store.store(crate::recall::RecallKind::ToolOutputTruncated, removed, model);
+            }) as Box<dyn FnMut(&str) + '_>
+        });
+        let saved = match on_truncated.as_mut() {
+            Some(cb) => truncate_tool_outputs(&mut v, tool_output_max_bytes, Some(&mut **cb)),
+            None => truncate_tool_outputs(&mut v, tool_output_max_bytes, None),
+        };
+        trim_saved += saved;
     }
 
     // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
@@ -3937,7 +4069,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -3948,7 +4080,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -3958,7 +4090,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -3968,7 +4100,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false);
+        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -3984,7 +4116,7 @@ mod tests {
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[1].get("reasoning_content").is_none());
         assert!(msgs[1].get("reasoning").is_none());
@@ -4011,7 +4143,7 @@ mod tests {
                   "reasoning_details": [ {"type":"reasoning.text","text":"rd"} ] }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None);
         let m = &body["messages"][0];
         for k in ["reasoning_content", "reasoning", "reasoning_details"] {
             assert!(m.get(k).is_none(), "{k} 应被剥离");
@@ -4034,13 +4166,13 @@ mod tests {
         });
         // 豁免: 保留且计入 exempt
         let mut b1 = mk();
-        let (sv, tc, ex) = strip_history_reasoning_messages(&mut b1, false);
+        let (sv, tc, ex) = strip_history_reasoning_messages(&mut b1, false, None);
         assert!(b1["messages"][0].get("reasoning_details").is_some(), "未开启应保留");
         assert_eq!((sv, tc), (0, 0));
         assert!(ex > 0, "豁免量应计入");
         // 剥离: 归入 tool_calls 桶
         let mut b2 = mk();
-        let (sv2, tc2, ex2) = strip_history_reasoning_messages(&mut b2, true);
+        let (sv2, tc2, ex2) = strip_history_reasoning_messages(&mut b2, true, None);
         assert!(b2["messages"][0].get("reasoning_details").is_none(), "开启应剥离");
         assert_eq!((sv2, ex2), (0, 0));
         assert!(tc2 > 0, "应归入 tool_calls 桶以在面板单列");
@@ -4056,7 +4188,7 @@ mod tests {
                   "reasoning_content": "R".repeat(300) }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, true);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, true, None);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
         assert_eq!(saved, 0, "非 tool_calls 轮次无省量");

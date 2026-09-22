@@ -404,6 +404,15 @@ pub fn msg_provider_not_found(name: &str) -> String {
     fmt_msg!("未找到供应商: {}", "Provider not found: {}", name)
 }
 
+/// 未找到指定的留存条目 (id 不存在或已被 FIFO 淘汰).
+pub fn msg_recall_not_found(id: &str) -> String {
+    fmt_msg!(
+        "未找到留存内容 (id={}); 该条目可能已被淘汰或留存从未开启",
+        "Recall entry not found (id={}); it may have been evicted or recall was never enabled",
+        id
+    )
+}
+
 /// 从上游拉取模型后的汇总反馈.
 pub fn msg_models_fetched(ids: usize, added: usize, skipped: usize) -> String {
     fmt_msg!(

@@ -55,6 +55,7 @@ mod currency;
 mod proxy_cfg;
 mod seen_version;
 mod model_meta;
+mod recall;
 
 use admin::compute_realtime_stats_sync;
 
@@ -627,6 +628,16 @@ fn main() {
         auto_continue: Arc::new(AtomicUsize::new(config.auto_continue)),
         strip_toolcall_on_chat: Arc::new(AtomicBool::new(config.strip_toolcall_on_chat)),
         strip_toolcall_on_responses: Arc::new(AtomicBool::new(config.strip_toolcall_on_responses)),
+        recall: Arc::new(recall::RecallStore::new(
+            &resolved_data_dir,
+            recall::RecallConfig {
+                enabled: config.recall_enabled,
+                max_entry_bytes: config.recall_max_entry_bytes,
+                max_entries: config.recall_max_entries,
+                ..Default::default()
+            },
+        )),
+        tool_output_max_bytes: Arc::new(AtomicUsize::new(config.tool_output_max_bytes)),
         model_meta: Arc::new(model_meta::MetaCache::new()),
         // 进程级稳定 session id: 启动时生成一次, 用于 OpenCode Go 等
         // 要求 x-opencode-session 头的上游做兜底注入. 不覆盖客户端自传.
@@ -661,6 +672,14 @@ fn main() {
         .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
         .route("/admin/api/strip-toolcall-protocols", get(admin::api_strip_toolcall_protocols_get).post(admin::api_strip_toolcall_protocols_set))
         .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
+        // 降级可回取: 配置开关 / 留存列表 / 取回原文 / 统计与清空.
+        .route("/admin/api/recall", get(admin::api_recall_get).post(admin::api_recall_set))
+        .route("/admin/api/recall/list", get(admin::api_recall_list))
+        .route("/admin/api/recall/entry/:id", get(admin::api_recall_entry))
+        .route("/admin/api/recall/clear", post(admin::api_recall_clear))
+        // 降级埋点: 静默降级计数 (解析失败导致优化/翻译未生效).
+        .route("/admin/api/degradations", get(admin::api_degradations))
+        .route("/admin/api/tool-output-limit", get(admin::api_tool_output_limit_get).post(admin::api_tool_output_limit_set))
         .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
         .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))
         .route("/admin/api/retry", get(admin::api_retry_get).post(admin::api_retry_set))
