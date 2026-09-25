@@ -2,7 +2,7 @@
 
 所有重要改动记录于此文件。格式参考 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.5.7] - 2026-09-22
+## [0.5.7] - 2026-09-23
 
 ### 新增
 - **思考强度优先级链补齐为「客户端档位 > 面板配置档 > 不注入」，覆盖原生直通路径**：跨协议转换路径本就客户端优先，但**同协议原生直通（Claude Code → Anthropic 上游、Responses → Responses 上游）此前只换模型名 + 合 extra_body，面板配的思考强度完全不注入**——最常见的直通场景里配置形同虚设；且直通的 extra_body 合并是**无条件覆盖**客户端字段（chat 路径是补缺不覆盖），软件配置反而会反杀工具自带档位。现直通请求体按上游协议格式注入配置档（Anthropic → `thinking:{type:"enabled",budget_tokens}`、Responses → `reasoning:{effort,summary}`），客户端带了任何思考字段（含 `thinking:false`、`type:"disabled"`）一律不碰；extra_body 改为与 chat 路径一致的逐字段补缺。注入走纯函数 `rewrite_passthrough_body` / `inject_config_effort_passthrough`，7 个单测覆盖两个协议的注入/跳过/护栏分支。
@@ -11,6 +11,9 @@
 - **配置档注入 Anthropic 时补预算护栏**：原 `reasoning_effort→thinking` 不看 `max_tokens`，配置 max（budget 8000）遇上限 4096 的请求会必然 400；预算贴满上限还会把可见正文饿成空字符串（同 HANDOFF §G 的实测根因）。现注入前经 `anthropic_thinking_budget` 检查：预算须 < max_tokens 且预留 ≥1024 可见输出，放不下则放弃注入（宁可不思考也不制造必然失败），略紧则钳到 `max_tokens-1024`。
 - **配置档空串（`reasoning_effort: ""`）视为「无」而非注入空值**：判空统一收口到 `config_effort()`，三处注入点（chat 路径、thinking:true 兜底、直通）共用。
 - **面板思考强度列表头/下拉新增优先级口径提示**（悬停可见，中英各一条 `tbl.reasoning_hint`）：写明「客户端自带档位时以客户端为准，此配置仅在客户端未指定时生效，客户端显式关闭不会被注入」——把这条已在代码中成立的优先级链显式告知，避免用户误以为面板配置是强制档。
+
+### 界面与交互
+- **「工具轮次推理链剥离（按协议）」补「实验功能」徽标**（画面）：该功能与「响应缓存」同属带风险的实验性开关（Responses 协议上游是否校验 item 序列未经实测，说明文案里已写明"请试开后观察报错"），但标题旁一直没有徽标，与响应缓存的标注不一致，容易被当成稳定功能放心打开。现标题旁补上与响应缓存同款的琥珀色 `实验功能` / `Experimental` 徽标（复用现有 `experimental_badge` 键与 `bdg bdg-w` 样式，中英各一，未新增 i18n）。
 
 ## [0.5.6] - 2026-09-22
 
