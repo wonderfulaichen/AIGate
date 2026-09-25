@@ -235,6 +235,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .chart-legend-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px}
 .chart-legend-row .tm{margin-left:8px}
 .chart-summary{padding:6px 16px 12px;font-size:10px;color:var(--muted);line-height:1.6}
+.panel-takeaway{padding:10px 16px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);line-height:1.55;margin-top:4px}
 .token-trend-body{overflow-x:auto;min-height:260px;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);padding:16px}
 .model-trend-legend{display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px 0}
 .model-trend-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid var(--border);border-radius:999px;font-size:10px;color:var(--muted);cursor:pointer;transition:opacity .15s}
@@ -502,9 +503,9 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:#34d399">⚡</span></div><div class="ov-kpi-value" style="color:#34d399" x-text="fmtT((stats.today_strip_saved_tokens||0)+(stats.today_trim_saved_tokens||0)+(stats.today_resp_cache_saved_tokens||0))"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:rgba(34,211,238,.12);color:#22d3ee">📊</span></div><div class="ov-kpi-value" style="color:#22d3ee" x-text="fmtT(stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+t('opt_saved_30d')"></div></div></div></div></div>
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:11px" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
-          <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms||0)"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms)"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
-        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div></div></div>
+        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'#34d399':m.errors<m.requests/5?'#f59e0b':'#ef4444')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div><div class="panel-takeaway" x-show="healthTakeaway" x-text="healthTakeaway"></div></div></div>
       </div>
       <div class="ov-side">
         <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('balance_cost')"></span><button class="btn btn-g" style="font-size:11px" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider"><div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)"><div style="display:flex;align-items:center;gap:8px"><div style="width:24px;height:24px;border-radius:6px;overflow:hidden" x-html="providerLogo(row.provider)"></div><span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span><span class="txsm mono fw6" x-text="row.hasBalance?fmtMoney(row.balance):'—'"></span></div><div style="display:flex;justify-content:space-between;padding-left:32px;margin-top:4px"><span class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span><span class="txs tm" x-text="row.source||''"></span></div><template x-if="row.error"><div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div></template></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template></div></div>
@@ -572,7 +573,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('degrade_note')"></div>
       </div>
     </div></div>
-    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template></div></div></div>
+    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:#3b3d48"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div><div class="panel-takeaway" x-show="distTopTakeaway" x-text="distTopTakeaway"></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['#fbbf24','#9ca3af','#cd7f32'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template><div class="panel-takeaway" x-show="rankTopTakeaway" x-text="rankTopTakeaway"></div></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:9px" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('provider_performance')"></span><div class="txs tm" style="margin-top:3px" x-text="t('current_window_aggregate')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('kv_cache_saved')"></th><th x-text="t('optimization_saved_tokens')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="Math.max(0,(p.requests||0)-(p.errors||0))"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?fmtPct(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100):'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="p.billing?fmtMoney(p.cache_saved||0):'—'"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template><template x-if="!(stats.per_provider||[]).length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_data')"></td></tr></template></tbody></table></div></div>
   </div></template>
@@ -1348,6 +1349,7 @@ const I18N = {
     
     'line_chart': '线', 'bar_chart': '柱',
     'call_distribution': '调用分布', 'aggregate_provider_model': '按供应商 / 上游模型聚合', 'call_ranking': '调用排名',
+    'takeaway_dist_top': '请求最多的是 {0}，占 {1}', 'takeaway_rank_top': '排名第一 {0} · {1} 次请求 · 占 {2}', 'takeaway_health': '成功率 {0} · 错误 {1} · 平均延迟 {2}',
     'top_model_routes': '请求量最多的模型路由', 'model_details': '模型明细',
     'model_details_desc': '按供应商 / 上游模型聚合，可搜索并筛选供应商', 'analytics_search_models': '搜索模型、上游模型或别名...',
     'provider_all': '供应商：全部', 'instant_filter': '即时筛选 · {0} 条', 
@@ -1549,6 +1551,7 @@ const I18N = {
     
     'line_chart': 'Line', 'bar_chart': 'Bar',
     'call_distribution': 'Call distribution', 'aggregate_provider_model': 'Aggregated by provider / upstream model', 'call_ranking': 'Call ranking',
+    'takeaway_dist_top': 'Top model: {0} ({1} of requests)', 'takeaway_rank_top': '#1 {0} · {1} requests · {2}', 'takeaway_health': 'Success {0} · Errors {1} · Avg latency {2}',
     'top_model_routes': 'Model routes with the most requests', 'model_details': 'Model details',
     'model_details_desc': 'Aggregated by provider / upstream model; searchable and filterable by provider', 'analytics_search_models': 'Search model, upstream model, or alias...',
     'provider_all': 'Provider: All', 'instant_filter': 'Instant filter · {0} entries', 
@@ -1837,6 +1840,7 @@ function dashboard() {
         document.documentElement.lang = (Alpine.store('i18n').lang === 'en-US') ? 'en' : 'zh';
       }
       document.title = t('app_title');
+      this.restoreAnalyticsSpan();
       await this.fetchCurrencyConfig();
       await this.fetchPeakSchedule();
       await this.switchTab('dashboard');
@@ -2350,7 +2354,18 @@ function dashboard() {
       const map = { hour: ['1d','hour'], day: ['29d','day'], month: ['365d','month'] };
       const m = map[span];
       if (m) { this.analyticsRange = m[0]; this.trendGranularity = m[1]; }
+      try { localStorage.setItem('aigate.analyticsSpan', span); } catch (e) { /* privacy mode */ }
       this.fetchStats();
+    },
+    // 恢复上次选择的时间范围; 非法值回退 day. 仅恢复状态, 不额外 fetch (走既有首载).
+    restoreAnalyticsSpan() {
+      const map = { hour: ['1d','hour'], day: ['29d','day'], month: ['365d','month'] };
+      let span = 'day';
+      try { span = localStorage.getItem('aigate.analyticsSpan') || 'day'; } catch (e) { span = 'day'; }
+      if (!map[span]) span = 'day';
+      this.analyticsSpan = span;
+      this.analyticsRange = map[span][0];
+      this.trendGranularity = map[span][1];
     },
     // ── 更新亮点：取最新一条 changelog 作为弹窗内容 ──
     get whatsNewEntry() {
@@ -3240,6 +3255,28 @@ function dashboard() {
       if(!this.stats||!this.stats.total_requests) return '—';
       return this.fmtPct(this.sRate);
     },
+    // ── 面板底部一句话结论 (只陈述已有数字, 百分比走 fmtPct) ──
+    get distTopTakeaway() {
+      const rows = (this.stats && this.stats.per_model) || [];
+      const total = Number((this.stats && this.stats.total_requests) || 0);
+      if (!rows.length || !total) return '';
+      let top = rows[0];
+      for (const r of rows) if ((r.requests || 0) > (top.requests || 0)) top = r;
+      const name = top.upstream_model || top.model || '—';
+      return t('takeaway_dist_top', name, this.fmtPct((top.requests || 0) / total * 100));
+    },
+    get rankTopTakeaway() {
+      const rows = (this.stats && this.stats.top_models) || [];
+      const total = Number((this.stats && this.stats.total_requests) || 0);
+      if (!rows.length || !total) return '';
+      const top = rows[0];
+      const name = top.model || '—';
+      return t('takeaway_rank_top', name, top.requests || 0, this.fmtPct((top.requests || 0) / total * 100));
+    },
+    get healthTakeaway() {
+      if (!this.stats || !this.stats.total_requests) return '';
+      return t('takeaway_health', this.sRateText, this.heroErrors, this.fmtMs(this.stats.avg_latency_ms));
+    },
     // ── 概览 hero 的作用域 ──
     //
     // **主数字一律用「窗口累计」口径**, 与卡片里的迷你折线严格同口径
@@ -3402,7 +3439,13 @@ function dashboard() {
       return p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
     },
     fmtDateTime(ts){ const d=new Date(ts*1000); const loc=(window.Alpine&&Alpine.store('i18n')&&Alpine.store('i18n').lang==='en-US')?'en-US':'zh-CN'; return d.toLocaleString(loc); },
-    fmtMs(ms) { if(ms<1000) return Math.round(ms)+'ms'; return (ms/1000).toFixed(1)+'s'; },
+    fmtMs(ms) {
+      const n = Number(ms);
+      // 无数据 ≠ 0: null/undefined/NaN/0 都不当成有效延迟.
+      if (!Number.isFinite(n) || n <= 0) return '—';
+      if (n < 1000) return Math.round(n) + 'ms';
+      return (n / 1000).toFixed(1) + 's';
+    },
     // 百分比格式化 (入参为 0..100 的百分值).
     //
     // 两处舍入都会把"事实"改掉, 必须挡住:
