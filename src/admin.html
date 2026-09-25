@@ -1706,8 +1706,9 @@ function providerLogo(providerName) {
   if (txt.length < 1) txt = '?';
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0xffffffff;
-  const palette = ['#4d6bfe', '#7c5cff', '#10b981', '#ff6b35', '#d97757', '#0ea5e9', '#ef4444', '#8b5cf6', '#14b8a6', '#f59e0b'];
-  const bg = palette[Math.abs(h) % palette.length];
+  // 未收录供应商的兜底底色板: 属品牌标识而非图表序列, 与 CHART_PALETTE 分开维护。
+  const PROVIDER_LOGO_PALETTE = ['#4d6bfe', '#7c5cff', '#10b981', '#ff6b35', '#d97757', '#0ea5e9', '#ef4444', '#8b5cf6', '#14b8a6', '#f59e0b'];
+  const bg = PROVIDER_LOGO_PALETTE[Math.abs(h) % PROVIDER_LOGO_PALETTE.length];
   return _plogo(bg, txt, '#fff');
 }
 // 官方 SVG 自适应容器包裹
@@ -1715,6 +1716,23 @@ function _logoWrap(svg) {
   if (!svg) return _plogo('#374151', '?');
   return '<span style="width:100%;height:100%;display:inline-flex">' + svg + '</span>';
 }
+// ── 图表共享色板 ──
+// 面板里所有"序列取色"的地方(环图 / 模型趋势图 / 趋势图图例 / 构成比例条)统一从这里取,
+// 避免同一份数据在不同图上换色导致"图例对不上颜色"。改色只改这一处。
+// 注: 供应商 logo 的兜底底色 (PROVIDER_LOGO_PALETTE) 与品牌 SVG 是品牌标识, 不属图表语言, 单独保留。
+const CHART_PALETTE = ['#6366f1', '#06b6d4', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf'];
+// 语义色: 表达"这一类省量/这一类缓存状态", 与文案一一对应, 不参与上面按序取色的轮转。
+const CHART_SEMANTIC = {
+  strip: '#6366f1',   // 剥离推理链(普通轮次)
+  stripTc: '#06b6d4', // 剥离推理链(工具轮次)
+  trim: '#a78bfa',    // 历史裁剪
+  respCache: '#34d399', // 响应缓存
+  exempt: '#f59e0b',  // 被豁免的推理链
+  dup: '#fb923c',     // 重复内容块
+  kvHit: '#06b6d4',   // KV 命中
+  kvMiss: '#f59e0b',  // KV 未命中
+  kvCreation: '#a78bfa', // KV 缓存写入
+};
 function dashboard() {
   return {
     activeTab: 'dashboard',
@@ -1814,7 +1832,7 @@ function dashboard() {
     logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, pageSize: 20,
 
     // Donut chart
-    donutColors: ['#6366f1','#06b6d4','#f59e0b','#34d399','#f472b6','#a78bfa','#fb923c','#2dd4bf'],
+    donutColors: CHART_PALETTE,
 
     // Polling
     pollTimer: null,
@@ -2408,7 +2426,7 @@ function dashboard() {
       if(!dates.length){this.modelTrendSvgHtml='';return;}
       // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
       const W=900,H=280,left=52,right=18,top=18,bottom=36,pw=W-left-right,ph=H-top-bottom;
-      const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
+      const palette=CHART_PALETTE;
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
       const values=keys.map(k=>dates.map(([ts])=>{const [p,...u]=k.split('/');const r=map.get(ts+'/'+p+'/'+u.join('/'));return r?Number(r.prompt_tokens||0)+Number(r.completion_tokens||0):0;}));
@@ -2486,7 +2504,7 @@ function dashboard() {
     },
     get trendLegendItems() {
       const d=this.modelTrendData||{}; const keys=d.keys||[]; const sums=d.sums||{};
-      const palette=['#3b9cff','#45c97a','#7956e8','#ff5b63','#ff7b27','#42c6c6'];
+      const palette=CHART_PALETTE;
       const total=Object.keys(sums).reduce((a,k)=>a+(sums[k]||0),0)||1;
       return keys.map((k,i)=>({k,label:k.split('/').slice(1).join('/')||k,color:palette[i%palette.length],tokens:sums[k]||0,pct:(sums[k]||0)/total*100,hidden:!!this.hiddenModels[k]}));
     },
@@ -3581,18 +3599,18 @@ function dashboard() {
     get auditAppliedSegs() {
       const a=(this.stats&&this.stats.audit)||{};
       const items=[
-        {k:'strip',label:t('saved_strip'),v:Number(a.applied_strip_tokens||0),color:'#3b9cff'},
-        {k:'tc',label:t('saved_strip_tc'),v:Number(a.applied_strip_toolcall_tokens||0),color:'#22d3ee'},
-        {k:'trim',label:t('saved_trim'),v:Number(a.applied_trim_tokens||0),color:'#a78bfa'},
-        {k:'resp',label:t('saved_resp'),v:Number(a.applied_resp_cache_tokens||0),color:'#34d399'},
+        {k:'strip',label:t('saved_strip'),v:Number(a.applied_strip_tokens||0),color:CHART_SEMANTIC.strip},
+        {k:'tc',label:t('saved_strip_tc'),v:Number(a.applied_strip_toolcall_tokens||0),color:CHART_SEMANTIC.stripTc},
+        {k:'trim',label:t('saved_trim'),v:Number(a.applied_trim_tokens||0),color:CHART_SEMANTIC.trim},
+        {k:'resp',label:t('saved_resp'),v:Number(a.applied_resp_cache_tokens||0),color:CHART_SEMANTIC.respCache},
       ].filter(x=>x.v>0);
       return items.length>1?items:[];
     },
     get auditPotentialSegs() {
       const a=(this.stats&&this.stats.audit)||{};
       const items=[
-        {k:'exempt',label:t('audit_exempt_reasoning'),v:Number(a.exempt_reasoning_tokens||0),color:'#f59e0b'},
-        {k:'dup',label:t('audit_dup_blocks'),v:Number(a.dup_block_tokens||0),color:'#ff7b27'},
+        {k:'exempt',label:t('audit_exempt_reasoning'),v:Number(a.exempt_reasoning_tokens||0),color:CHART_SEMANTIC.exempt},
+        {k:'dup',label:t('audit_dup_blocks'),v:Number(a.dup_block_tokens||0),color:CHART_SEMANTIC.dup},
       ].filter(x=>x.v>0);
       return items.length>1?items:[];
     },
@@ -3600,9 +3618,9 @@ function dashboard() {
       const a=(this.stats&&this.stats.audit)||{};
       const hit=Number(a.cache_read_tokens||0), miss=Number(a.cache_miss_tokens||0), cre=Number(a.cache_creation_tokens||0);
       const items=[
-        {k:'hit',label:t('audit_kv_read'),v:hit,color:'#22d3ee'},
-        {k:'miss',label:t('audit_kv_miss'),v:miss,color:'#f59e0b'},
-        {k:'cre',label:t('audit_kv_creation'),v:cre,color:'#a78bfa'},
+        {k:'hit',label:t('audit_kv_read'),v:hit,color:CHART_SEMANTIC.kvHit},
+        {k:'miss',label:t('audit_kv_miss'),v:miss,color:CHART_SEMANTIC.kvMiss},
+        {k:'cre',label:t('audit_kv_creation'),v:cre,color:CHART_SEMANTIC.kvCreation},
       ].filter(x=>x.v>0);
       return items.length>1?items:[];
     },
