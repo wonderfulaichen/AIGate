@@ -878,10 +878,14 @@ impl ResponsesStreamConv {
                         }
                     }
                     acc.push_str(partial);
-                    let (id_c, name_c, args) = (id.clone(), name.clone(), acc.clone());
+                    let (id_c, name_c) = (id.clone(), name.clone());
+                    // ⚠️ 必须发**增量** partial, 不能发累积串 acc — OpenAI chat SSE 契约是
+                    // "客户端把各帧 arguments 依次拼接"; 发累积串会让按契约拼接的客户端
+                    // (CodeBuddy 等) 得到重复垃圾 JSON, 工具参数解析必失败
+                    // (实测坏在 char 21, 与 CodeBuddy 报错 position 21 一字不差).
                     vec![json!({
                         "choices": [{"index": 0, "delta": {
-                            "tool_calls": [{"index": idx, "id": id_c, "type": "function", "function": {"name": name_c, "arguments": args}}]
+                            "tool_calls": [{"index": idx, "id": id_c, "type": "function", "function": {"name": name_c, "arguments": partial}}]
                         }, "finish_reason": null}]
                     })
                     .to_string()]
@@ -1942,6 +1946,50 @@ mod tests {
         let out = conv.feed_line(r#"data: {"type":"response.cancelled","response":{"status":"cancelled"}}"#);
         assert!(out.iter().any(|s| s.contains("\"finish_reason\":\"stop\"")), "缺 stop 收尾: {out:?}");
         assert_eq!(out.last().map(|s| s.as_str()), Some("[DONE]"));
+    }
+
+    /// 回归: responses→chat 流转换的 tool_calls arguments 必须发**增量**,
+    /// 客户端按 OpenAI SSE 契约拼接后必须等于完整 JSON.
+    ///
+    /// 事故: 曾发累积串 acc, 按契约拼接的客户端 (CodeBuddy) 得到重复垃圾
+    /// `{"glob": {"glob": ...`, 解析必失败 (实测坏在 char 21, 与 CodeBuddy
+    /// 报错 "position 21 line 1 column 22" 一字不差) → 工具参数全坏 → 搜索失败循环.
+    #[test]
+    fn function_call_args_streamed_as_increments() {
+        let mut conv = ResponsesStreamConv::new();
+        let mut frames = vec![];
+        frames.extend(conv.feed_line(
+            r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_0","call_id":"call_1","name":"search_content","arguments":"","status":"in_progress"}}"#,
+        ));
+        // 三个增量帧: 拼起来恰为合法 JSON
+        for inc in ["{\"glob\":\"", "**/*\",", "\"pattern\":\"workspace\"}"] {
+            let payload = json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_0", "output_index": 0, "delta": inc
+            });
+            frames.extend(conv.feed_line(&format!("data: {payload}")));
+        }
+        frames.extend(conv.feed_line(
+            r#"data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        ));
+
+        // 按 OpenAI SSE 契约拼接所有帧的 arguments
+        let mut joined = String::new();
+        for f in &frames {
+            let Ok(v) = serde_json::from_str::<Value>(f) else { continue };
+            if let Some(tc) = v["choices"][0]["delta"].get("tool_calls") {
+                if let Some(args) = tc[0]["function"]["arguments"].as_str() {
+                    joined.push_str(args);
+                }
+            }
+        }
+        assert_eq!(
+            joined,
+            r#"{"glob":"**/*","pattern":"workspace"}"#,
+            "拼接结果必须等于完整 JSON (发的是增量)"
+        );
+        serde_json::from_str::<Value>(&joined).expect("拼接结果必须可解析");
+        assert!(frames.iter().any(|f| f.contains("\"finish_reason\":\"tool_calls\"")));
     }
 
     /// 非流式 usage 字段名映射: Responses 的 input_tokens/output_tokens 必须转成
