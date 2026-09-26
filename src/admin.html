@@ -482,6 +482,60 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .txs{font-size:var(--fs-11)}.txsm{font-size:var(--fs-125)}
 .fw6{font-weight:600}.fw7{font-weight:700}
 .tm{color:var(--muted)}
+/* ── 接入引导 (Get started checklist) ── */
+.onb-list{display:flex;flex-direction:column;gap:6px}
+.onb-step{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent}
+.onb-step.cur{background:var(--primary-soft);border-color:rgba(99,102,241,.28)}
+.onb-num{flex:none;width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-11);font-weight:700;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid var(--border-s)}
+.onb-step.done .onb-num{background:var(--ok-bg-strong);color:var(--ok);border-color:var(--ok-bd-strong)}
+.onb-body{flex:1;min-width:0}
+.onb-t{font-size:var(--fs-13);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
+.onb-d{font-size:var(--fs-11);color:var(--muted);margin-top:2px}
+.onb-tag{font-size:var(--fs-9);font-weight:700;padding:1px 6px;border-radius:999px;background:var(--ok-bg-strong);color:var(--ok);border:1px solid var(--ok-bd-strong)}
+/* ── 第一次请求示例 (first request snippet) ── */
+.fr-code{background:var(--input);border:1px solid var(--border);border-radius:10px;padding:12px 14px;overflow-x:auto}
+.fr-code pre{margin:0;font-family:'JetBrains Mono',monospace;font-size:var(--fs-11);line-height:1.65;color:var(--fg);white-space:pre}
+.fr-hints{display:flex;gap:14px;flex-wrap:wrap;align-items:center;min-width:0}
+/* ── 统一空状态 (unified empty state: icon + title + desc + CTA) ── */
+.empty-state{display:flex;flex-direction:column;align-items:center;text-align:center;padding:44px 16px}
+.empty-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);margin-bottom:12px}
+.empty-t{font-size:var(--fs-14);font-weight:600;color:var(--fg);margin:0 0 6px}
+.empty-d{font-size:var(--fs-12);color:var(--muted);max-width:420px;margin:0 0 14px;line-height:1.6}
+/* ── 供应商抽屉分节导航 (sticky, 每节状态 + 点击跳转) ── */
+.dr-secnav{position:sticky;top:0;z-index:3;display:flex;gap:6px;align-items:center;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.dr-secchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:var(--fs-11);font-weight:600;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--border);cursor:pointer;transition:border-color .15s,color .15s}
+.dr-secchip:hover{color:var(--fg);border-color:var(--border-s)}
+.dr-secchip.done{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.dr-secdot{width:6px;height:6px;border-radius:50%;background:var(--warn);flex:none}
+.dr-secchip.done .dr-secdot{background:var(--ok)}
+.sec{scroll-margin-top:54px}
+/* ── 统一 Toast (渲染层; store 负责合并计数) ── */
+.toast-wrap{position:fixed;top:14px;right:14px;z-index:95;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 28px));pointer-events:none}
+.toast-it{pointer-events:auto;display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:10px;font-size:var(--fs-12);line-height:1.5;background:var(--elevated);border:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--fg);animation:toastIn .18s ease-out}
+.toast-it.toast-error{background:#2a1416;border-color:var(--err-bd);color:var(--err-fg)}
+.toast-it.toast-success{background:#0f2a20;border-color:var(--ok-bd);color:var(--ok-fg)}
+.toast-it.toast-warn{background:#2a2110;border-color:var(--warn-bd);color:var(--warn-fg)}
+.toast-cnt{flex:none;font-weight:700;opacity:.85}
+.toast-x{margin-left:auto;flex:none;background:none;border:none;color:inherit;opacity:.55;cursor:pointer;font-size:var(--fs-11);padding:0 2px}
+.toast-x:hover{opacity:1}
+@keyframes toastIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+/* 统一确认弹窗的危险主按钮 */
+.btn-d{background:var(--err);color:#fff;border:1px solid transparent}
+.btn-d:hover{background:#dc2626}
+/* ── 概览页 FAQ 手风琴 ── */
+.faq-list{display:flex;flex-direction:column;gap:2px}
+.faq-item{border-radius:8px;transition:background .15s}
+.faq-item.open{background:rgba(255,255,255,.03)}
+.faq-q{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:10px 12px;background:none;border:none;cursor:pointer;text-align:left;font-size:var(--fs-13);font-weight:600;color:var(--fg)}
+.faq-q:hover{color:var(--indigo)}
+.faq-caret{flex:none;color:var(--muted);font-size:var(--fs-12)}
+.faq-a{padding:0 12px 12px}
+.faq-a-in{font-size:var(--fs-12);line-height:1.7;color:var(--muted)}
+/* ── 页脚 ── */
+.app-foot{display:flex;justify-content:center;align-items:center;gap:12px;padding:16px 0 26px;font-size:var(--fs-11);color:var(--muted)}
+.app-foot a{color:var(--muted);text-decoration:none;transition:color .15s}
+.app-foot a:hover{color:var(--fg);text-decoration:underline}
+.foot-sep{opacity:.5}
 [x-cloak]{display:none!important}
 
 </style>
@@ -521,15 +575,39 @@ tr:hover td{background:rgba(99,102,241,.04)}
 <div x-show="activeTab==='dashboard'" class="page-enter ov-page">
   <div class="phd">
     <div><h1 class="pt" x-text="t('dashboard_title')"></h1><p class="ps" x-text="t('dashboard_subtitle')"></p></div>
-    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
+    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><span class="bdg bdg-s" x-show="!loading && onboardAllDone" style="background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)">✓ <span x-text="t('onboard_done_badge')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
+  </div>
+  <div class="pnl mb3" x-show="!loading && !statsError && providersFormData!==null && !onboardAllDone" x-cloak>
+    <div class="pnl-h"><div><span class="pnl-ht" x-text="t('onboard_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('onboard_desc')"></div></div><span class="bdg bdg-g" x-text="t('onboard_progress',onboardDone)"></span></div>
+    <div class="pnl-b"><div class="onb-list">
+      <template x-for="(s,i) in onboardSteps" :key="s.k">
+        <div class="onb-step" :class="{'done':s.done,'cur':!s.done && i===onboardFirstPending}">
+          <div class="onb-num"><span x-show="s.done">✓</span><span x-show="!s.done" x-text="i+1"></span></div>
+          <div class="onb-body"><div class="onb-t"><span x-text="t('onboard_step_'+s.k+'_title')"></span><span class="onb-tag" x-show="s.done" x-text="t('onboard_step_done')"></span></div><div class="onb-d" x-text="t('onboard_step_'+s.k+'_desc')"></div></div>
+          <button class="btn btn-o" style="font-size:var(--fs-11);flex:none" x-show="!s.done" @click="onboardAction(s.k)" x-text="t('onboard_step_'+s.k+'_action')"></button>
+        </div>
+      </template>
+    </div></div>
   </div>
   <template x-if="!statsError && (!stats || stats.total_requests===0)">
+    <div>
     <div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px">
       <span class="bdg bdg-s mb2" x-text="t('service_running')"></span>
       <h2 style="font-size:1.1rem;font-weight:600;color:var(--fg);margin:8px 0" x-text="t('waiting_first_request')"></h2>
       <p class="txsm tm mb3" x-text="t('setup_hint')"></p>
       <div class="fb" style="max-width:460px;margin:0 auto;padding:10px 14px;background:var(--input);border-radius:8px;border:1px solid var(--border)"><span class="mono txsm" style="color:var(--fg);overflow:hidden;text-overflow:ellipsis" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:var(--fs-11)" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
     </div></div>
+    <div class="pnl" style="margin-top:12px">
+      <div class="pnl-h"><div><span class="pnl-ht" x-text="t('first_req_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('first_req_desc')"></div></div><div class="seg"><span class="seg-i" :class="{'a':firstReqTab==='curl'}" @click="firstReqTab='curl'">curl</span><span class="seg-i" :class="{'a':firstReqTab==='python'}" @click="firstReqTab='python'">Python</span><span class="seg-i" :class="{'a':firstReqTab==='node'}" @click="firstReqTab='node'">Node.js</span></div></div>
+      <div class="pnl-b">
+        <div class="fr-code"><pre x-text="firstRequestCode()"></pre></div>
+        <div class="fb" style="margin-top:10px">
+          <div class="fr-hints"><span class="txs tm" x-text="t('first_req_nokey')"></span><span class="txs tm" x-text="t('first_req_local')"></span></div>
+          <button class="btn btn-p" style="font-size:var(--fs-11);flex:none" @click="copyFirstRequest()" x-text="copiedField==='firstreq'?t('copied'):t('copy')"></button>
+        </div>
+      </div>
+    </div>
+    </div>
   </template>
   <template x-if="stats && stats.total_requests>0">
     <div class="ov-grid">
@@ -553,11 +631,24 @@ tr:hover td{background:rgba(99,102,241,.04)}
       </div>
     </div>
   </template>
+  <!-- 常见问题 (数组驱动, 手风琴一次展开一项) -->
+  <div class="pnl" style="margin-top:16px">
+    <div class="pnl-h"><div><span class="pnl-ht" x-text="t('faq_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('faq_desc')"></div></div></div>
+    <div class="pnl-b"><div class="faq-list">
+      <template x-for="(q,i) in [{k:'cost'},{k:'protocol'},{k:'breaker'},{k:'slow'}]" :key="q.k">
+        <div class="faq-item" :class="{'open':faqOpen===i}">
+          <button type="button" class="faq-q" @click="faqOpen=(faqOpen===i?-1:i)"><span x-text="t('faq_'+q.k+'_q')"></span><span class="faq-caret" x-text="faqOpen===i?'⌃':'⌄'"></span></button>
+          <div class="faq-a" x-show="faqOpen===i" x-cloak><div class="faq-a-in" x-text="t('faq_'+q.k+'_a')"></div></div>
+        </div>
+      </template>
+    </div></div>
+  </div>
 </div>
 <div x-show="activeTab==='analytics'" class="page-enter ov-page">
   <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats()" x-text="t('refresh')"></button></div></div>
   <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="statsError?t('fetch_failed'):t('no_data')"></span><button x-show="statsError" class="btn btn-g" style="margin-left:10px" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>
   <template x-if="stats"><div style="display:flex;flex-direction:column;gap:16px">
+    <template x-if="!stats.total_requests"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_analytics_title')"></h2><p class="empty-d" x-text="t('empty_analytics_desc')"></p><button class="btn btn-p" @click="switchTab('dashboard')" x-text="t('empty_analytics_cta')"></button></div></div></template>
     <div class="an-stat-strip">
       <div class="an-stat"><div class="an-stat-label" x-text="t('total_requests')"></div><div class="an-stat-value" x-text="stats.total_requests||0"></div><div class="an-stat-hint"></div></div>
       <div class="an-stat"><div class="an-stat-label" x-text="t('total_cost')"></div><div class="an-stat-value" x-text="fmtMoney(stats.total_cost||0)"></div><div class="an-stat-hint"></div></div>
@@ -612,7 +703,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('degrade_note')"></div>
       </div>
     </div></div>
-    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:var(--chart-rest)"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div><div class="panel-takeaway" x-show="distTopTakeaway" x-text="distTopTakeaway"></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" style="width:22px" :style="'color:'+(i<3?['var(--rank-1)','var(--rank-2)','var(--rank-3)'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template><div class="panel-takeaway" x-show="rankTopTakeaway" x-text="rankTopTakeaway"></div></div></div>
+    <div class="g2"><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:0"><template x-for="(m,i) in (stats.per_model||[]).slice(0,8)" :key="m.model"><div class="dist-legend"><span class="dist-dot" :style="'background:'+donutColors[i%donutColors.length]"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="m.requests"></span><span class="dist-pct" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div></template><template x-if="(stats.per_model||[]).length>8"><div class="dist-legend"><span class="dist-dot" style="background:var(--chart-rest)"></span><span class="txs" style="flex:1" x-text="t('other_n',(stats.per_model||[]).length-8)"></span><span class="dist-pct" x-text="(((stats.total_requests-(stats.per_model||[]).slice(0,8).reduce((s,m)=>s+m.requests,0))/(stats.total_requests||1))*100)"></span></div></template></div></div><div class="panel-takeaway" x-show="distTopTakeaway" x-text="distTopTakeaway"></div></div></div><div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_ranking')"></span><div class="txs tm" style="margin-top:3px" x-text="t('top_model_routes')"></div></div></div><div class="pnl-b"><template x-for="(m,i) in (stats.top_models||[]).slice(0,8)" :key="m.model"><div class="an-rank"><span class="mono txs fw7" :style="'width:22px;color:'+(i<3?['var(--rank-1)','var(--rank-2)','var(--rank-3)'][i]:'var(--muted)')" x-text="'#'+(i+1)"></span><div style="flex:1;min-width:0"><div class="fb"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="m.model" x-text="m.model"></span><span class="txs tm" x-text="fmtPct((m.requests/(stats.total_requests||1))*100)"></span></div><div style="height:7px;margin-top:5px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div class="an-rank-bar" :style="'width:'+((m.requests/(stats.top_models[0].requests||1))*100)+'%'"></div></div></div><span class="txs tm" x-text="m.requests"></span></div></template><div class="panel-takeaway" x-show="rankTopTakeaway" x-text="rankTopTakeaway"></div></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs" x-text="fmtT(m.total_prompt_tokens)"></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('provider_performance')"></span><div class="txs tm" style="margin-top:3px" x-text="t('current_window_aggregate')"></div></div></div><div class="pnl-b" style="overflow-x:auto"><table><thead><tr><th x-text="t('balance_provider')"></th><th x-text="t('tbl.requests')"></th><th x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-text="t('tbl.avg_latency')"></th><th x-text="t('tbl.input_tokens')"></th><th x-text="t('tbl.output_tokens')"></th><th x-text="t('tbl.cache_hit')"></th><th x-text="t('tbl.gen_speed')"></th><th x-text="t('tbl.cost')"></th><th x-text="t('kv_cache_saved')"></th><th x-text="t('optimization_saved_tokens')"></th></tr></thead><tbody><template x-for="p in (stats.per_provider||[])" :key="p.provider"><tr><td class="fw6" x-text="p.provider"></td><td x-text="p.requests"></td><td x-text="Math.max(0,(p.requests||0)-(p.errors||0))"></td><td x-text="p.errors||0"></td><td x-text="fmtMs(p.avg_latency_ms)"></td><td x-text="fmtT(p.total_prompt_tokens)"></td><td x-text="fmtT(p.total_completion_tokens)"></td><td x-text="p.total_cache_hit_tokens?fmtPct(p.total_cache_hit_tokens/(p.total_prompt_tokens||1)*100):'—'"></td><td x-text="p.gen_speed?(p.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td x-text="fmtMoney(p.total_cost)"></td><td x-text="p.billing?fmtMoney(p.cache_saved||0):'—'"></td><td x-text="fmtT(p.today_opt_saved_tokens||0)"></td></tr></template><template x-if="!(stats.per_provider||[]).length"><tr><td colspan="12" style="text-align:center;padding:32px" class="tm" x-text="t('no_data')"></td></tr></template></tbody></table></div></div>
   </div></template>
@@ -621,7 +712,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div class="phd"><div><h1 class="pt" x-text="t('records_title')"></h1><p class="ps" x-text="t('records_subtitle')"></p></div><div class="ov-actions"><button class="btn btn-g" @click="fetchLogs()" x-text="t('refresh')"></button><button class="btn btn-g" @click="exportLogs()" x-text="t('export_json')"></button><button class="btn btn-g" style="color:var(--err)" :disabled="clearingLogs" @click="clearAllLogs()" x-text="clearingLogs?t('saving'):t('clear_all_records')"></button></div></div>
   <div class="rec-stats">
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
-    <div class="rec-stat"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
+    <div class="rec-stat" :style="'cursor:pointer;'+(logStatusFilter==='error'?'outline:1px solid var(--err-bd)':'')" :title="t('opt.error')" @click="logStatusFilter=(logStatusFilter==='error'?'':'error');resetLogView()"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" :style="'color:'+rateColor(recordSuccessRate,recordSuccessRateText)" x-text="recordSuccessRateText"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
   </div>
@@ -629,7 +720,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <div class="rec-layout">
     <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_records')"></span><span class="txs tm" style="margin-left:8px" x-text="filteredLogs.length+' / '+logs.length"></span></div></div>
       <div class="an-filter"><input type="text" class="inp" style="width:220px" :placeholder="t('search_placeholder')" x-model="logSearch" @input="resetLogView()"><select class="sel" x-model="logProviderFilter" @change="resetLogView()"><option value="" x-text="t('opt.all_providers')"></option><template x-for="p in logProviders" :key="p"><option :value="p" x-text="p"></option></template></select><div class="seg"><span class="seg-i" :class="{'a':logStatusFilter===''}" @click="logStatusFilter='';resetLogView()" x-text="t('opt_all')"></span><span class="seg-i" :class="{'a':logStatusFilter==='success'}" @click="logStatusFilter='success';resetLogView()" x-text="t('opt.success')"></span><span class="seg-i" :class="{'a':logStatusFilter==='error'}" @click="logStatusFilter='error';resetLogView()" x-text="t('opt.error')"></span></div><select class="sel" x-model="logTimeFilter" @change="resetLogView()"><option value="" x-text="t('time_all')"></option><option value="1h" x-text="t('time_1h')"></option><option value="24h" x-text="t('time_24h')"></option><option value="7d" x-text="t('time_7d')"></option></select><button class="btn btn-g" style="font-size:var(--fs-11)" @click="logSearch='';logProviderFilter='';logStatusFilter='';logTimeFilter='';resetLogView()" x-text="t('filter_reset')"></button></div>
-      <div style="overflow-x:auto"><table><thead><tr><th x-text="t('detail.time')"></th><th x-text="t('status')"></th><th x-text="t('detail.model')"></th><th x-text="t('detail.reasoning')"></th><th x-text="t('detail.provider')"></th><th x-text="t('unit_tokens')"></th><th x-text="t('detail.cache_hit_rate')"></th><th x-text="t('latency')"></th></tr></thead><tbody><template x-for="(log,i) in paginatedLogs" :key="i"><tr @click="openLogDetail(log)" style="cursor:pointer"><td class="mono txs tm" x-text="fmtTs(log.timestamp)"></td><td><span class="bdg" :class="log.status<400?'bdg-s':'bdg-e'" x-text="log.status"></span></td><td><div class="mono txs fw6 cell-clip" :title="log.model" x-text="log.model"></div><div class="txs tm cell-clip" :title="log.upstream_model||''" x-text="log.upstream_model&&log.upstream_model!==log.model?log.upstream_model:''"></div></td><td><template x-if="log.reasoning_effort"><span class="bdg bdg-p" x-text="log.reasoning_effort"></span></template><span class="txs tm" x-show="!log.reasoning_effort">—</span></td><td class="txs cell-clip" :title="log.provider" x-text="log.provider"></td><td class="mono txs"><span x-show="log.usage_estimated" :title="t('usage_estimated_hint')" style="color:var(--warn);margin-right:3px">≈</span><span x-text="fmtT(log.prompt_tokens||0)+' → '+fmtT(log.completion_tokens||0)"></span></td><td><span class="bdg bdg-g" x-show="log.cached" x-text="t('badge.cached')"></span><span class="mono txs" x-show="!log.cached" x-text="logCacheRate(log)"></span></td><td class="mono txs" x-text="fmtMs(log.latency_ms)+' / '+(log.first_token_ms?fmtMs(log.first_token_ms):'—')"></td></tr></template><template x-if="!filteredLogs.length"><tr><td colspan="8" style="text-align:center;padding:40px" class="tm" x-text="logs.length?t('no_match'):t('no_logs')"></td></tr></template></tbody></table></div>
+      <div style="overflow-x:auto"><table><thead><tr><th x-text="t('detail.time')"></th><th x-text="t('status')"></th><th x-text="t('detail.error')"></th><th x-text="t('detail.model')"></th><th x-text="t('detail.reasoning')"></th><th x-text="t('detail.provider')"></th><th x-text="t('unit_tokens')"></th><th x-text="t('detail.cache_hit_rate')"></th><th x-text="t('latency')"></th></tr></thead><tbody><template x-for="(log,i) in paginatedLogs" :key="i"><tr @click="openLogDetail(log)" style="cursor:pointer"><td class="mono txs tm" x-text="fmtTs(log.timestamp)"></td><td><span class="bdg" :class="log.status<400?'bdg-s':'bdg-e'" x-text="log.status"></span></td><td style="max-width:200px"><template x-if="log.error"><div style="min-width:0"><div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click.stop="logErrOpen[String(log.timestamp)]=!logErrOpen[String(log.timestamp)]" x-text="testErrFirst(log.error)"></div><template x-if="logErrOpen[String(log.timestamp)]"><div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg);max-width:280px"><div x-text="log.error"></div><button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyText(log.error,'logerr')" x-text="copiedField==='logerr'?t('copied'):t('copy')"></button></div></template></div></template><template x-if="!log.error"><span class="tm">—</span></template></td><td><div class="mono txs fw6 cell-clip" :title="log.model" x-text="log.model"></div><div class="txs tm cell-clip" :title="log.upstream_model||''" x-text="log.upstream_model&&log.upstream_model!==log.model?log.upstream_model:''"></div></td><td><template x-if="log.reasoning_effort"><span class="bdg bdg-p" x-text="log.reasoning_effort"></span></template><span class="txs tm" x-show="!log.reasoning_effort">—</span></td><td class="txs cell-clip" style="cursor:pointer;color:var(--indigo)" :title="t('view_providers')" @click.stop="openLogProvider(log)" x-text="log.provider"></td><td class="mono txs"><span x-show="log.usage_estimated" :title="t('usage_estimated_hint')" style="color:var(--warn);margin-right:3px">≈</span><span x-text="fmtT(log.prompt_tokens||0)+' → '+fmtT(log.completion_tokens||0)"></span></td><td><span class="bdg bdg-g" x-show="log.cached" x-text="t('badge.cached')"></span><span class="mono txs" x-show="!log.cached" x-text="logCacheRate(log)"></span></td><td class="mono txs" x-text="fmtMs(log.latency_ms)+' / '+(log.first_token_ms?fmtMs(log.first_token_ms):'—')"></td></tr></template><template x-if="!filteredLogs.length && logs.length"><tr><td colspan="9" style="text-align:center;padding:40px" class="tm" x-text="t('no_match')"></td></tr></template><template x-if="!filteredLogs.length && !logs.length"><tr><td colspan="9" style="padding:0"><div class="empty-state" style="padding:40px 16px"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_records_title')"></h2><p class="empty-d" x-text="t('empty_records_desc')"></p><button class="btn btn-p" @click="switchTab('dashboard')" x-text="t('empty_records_cta')"></button></div></td></tr></template></tbody></table></div>
       <div class="fb" style="padding:10px 16px;border-top:1px solid var(--border)"><span class="txs tm" x-text="t('total_count',filteredLogs.length)"></span><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-g" :disabled="logPage===0" @click="logPage--" x-text="t('prev_page')"></button><span class="txs tm" x-text="(logPage+1)+'/'+totalLogPages"></span><button class="btn btn-g" :disabled="logPage>=totalLogPages-1" @click="logPage++" x-text="t('next_page')"></button></div></div>
     </div>
   </div>
@@ -849,7 +940,8 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <span style="margin-left:auto" class="txs tm" x-text="t('plaza_showing')+' '+visibleProviders.length+' / '+(providersFormData?providersFormData.length:0)"></span>
   <div class="seg"><span class="seg-i" :class="{'a':provViewMode==='table'}" @click="provViewMode='table'" x-text="t('plaza_view_table')"></span><span class="seg-i" :class="{'a':provViewMode==='card'}" @click="provViewMode='card'" x-text="t('plaza_view_card')"></span></div>
 </div></div>
-<template x-if="visibleProviders.length===0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:var(--fs-11)" @click="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
+<template x-if="visibleProviders.length===0 && providersFormData!==null && (providersFormData||[]).length===0"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_prov_title')"></h2><p class="empty-d" x-text="t('empty_prov_desc')"></p><button class="btn btn-p" @click="showAddProvider=true" x-text="t('empty_prov_cta')"></button></div></div></template>
+<template x-if="visibleProviders.length===0 && (providersFormData||[]).length>0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:var(--fs-11)" @click="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
 <template x-if="provViewMode==='table' && visibleProviders.length>0"><div class="pnl"><div style="overflow-x:auto">
 <table><thead><tr>
 <th style="width:5%"></th>
@@ -866,9 +958,21 @@ tr:hover td{background:rgba(99,102,241,.04)}
   <td><div class="txsm fw6" x-text="prov.name"></div><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
   <td>
     <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
-    <template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span class="bdg" :class="prov._testResult.success?'bdg-s':'bdg-e'" x-text="prov._testResult.success?t('health_ok'):t('health_err')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span class="txs tm" x-text="t('health_na')"></span></template>
+    <template x-if="prov._testResult && !prov._testResult.success">
+      <div style="margin-top:4px;max-width:210px">
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <template x-if="prov._errOpen">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+            <div x-text="prov._testResult.status"></div>
+            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
   </td>
-  <td class="txs tm mono" x-text="health.find(h => h.provider === prov.name) ? fmtMs(health.find(h => h.provider === prov.name).latency_ms) : t('health_na')"></td>
+  <td class="txs tm mono"><template x-if="health.find(h => h.provider === prov.name)"><span x-text="fmtMs(health.find(h => h.provider === prov.name).latency_ms)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span x-text="fmtMs(prov._testResult.latency_ms||0)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span x-text="t('health_na')"></span></template></td>
   <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).circuit==='closed'?'bdg-s':health.find(h=>h.provider===prov.name).circuit==='half-open'?'bdg-w':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
   <td><span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span></td>
   <td>
@@ -899,10 +1003,22 @@ tr:hover td{background:rgba(99,102,241,.04)}
       <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span x-text="t('fetch_models')"></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
       <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err);margin-left:auto" @click="deleteProvider(providersFormData.indexOf(prov))" x-text="t('delete')"></button>
     </div>
+    <template x-if="prov._testResult && !prov._testResult.success">
+      <div style="margin-top:6px">
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <template x-if="prov._errOpen">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+            <div x-text="prov._testResult.status"></div>
+            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
   </div></template>
   </div></template>
 </div>
@@ -920,6 +1036,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
     </div>
   </div>
 </div>
+<!-- 页脚: 文档 / 仓库 / 问题反馈 -->
+<footer class="app-foot">
+  <a href="https://github.com/wonderfulaichen/AIGate#readme" target="_blank" rel="noopener" x-text="t('foot_docs')"></a>
+  <span class="foot-sep">·</span>
+  <a href="https://github.com/wonderfulaichen/AIGate" target="_blank" rel="noopener" x-text="t('foot_repo')"></a>
+  <span class="foot-sep">·</span>
+  <a href="https://github.com/wonderfulaichen/AIGate/issues" target="_blank" rel="noopener" x-text="t('foot_issue')"></a>
+</footer>
 </main>
 </div>
 <div x-show="showWhatsNew" x-cloak class="modal-overlay" role="dialog" aria-modal="true" @click.self="dismissWhatsNew()" @keydown.escape.window="dismissWhatsNew()"><div class="modal-card modal-card-sm"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('whats_new')"></span><span class="txs mono tm" x-text="whatsNewEntry?(whatsNewEntry.version+(whatsNewEntry.date?' · '+whatsNewEntry.date:'')):''"></span></div><div class="modal-title" x-text="t('whats_new_title')"></div></div><div class="modal-body"><template x-if="whatsNewEntry"><div style="display:flex;flex-direction:column;gap:12px;padding:8px 0"><template x-for="sec in whatsNewEntry.sections" :key="sec.title"><div><div class="txs fw7" style="color:var(--indigo);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs" style="color:var(--fg);padding:2px 0">▸ <span x-html="renderMdInline(item)"></span></div></template></div></template></div></template></div><div class="modal-foot"><button class="btn btn-p" @click="dismissWhatsNew()" x-text="t('got_it')"></button></div></div></div>
@@ -955,12 +1079,61 @@ tr:hover td{background:rgba(99,102,241,.04)}
         </div>
       </template>
       <template x-if="!recallEntries.length">
-        <div class="txs tm" style="padding:12px 0" x-text="t('recall_empty')"></div>
+        <div class="empty-state" style="padding:24px 16px"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_recall_title')"></h2><p class="empty-d" x-text="t('empty_recall_desc')"></p><button class="btn btn-p" @click="closeRecallPanel()" x-text="recall.enabled?t('close_label'):t('empty_recall_cta')"></button></div>
       </template>
     </div>
   </template>
 </div><div class="modal-foot"><button class="btn btn-g" style="color:var(--err)" x-show="recallEntries.length&&!recallDetail" @click="clearRecall()" x-text="t('recall_clear_all')"></button><button class="btn btn-g" x-show="recallDetail" @click="recallDetail=null" x-text="t('recall_back')"></button><button class="btn btn-p" @click="closeRecallPanel()" x-text="t('close_label')"></button></div></div></div>
 <div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
+<!-- 拉取模型差异结果: 新增(可勾选)/已存在/下架 三 Tab + 前缀分组全选 + 选择汇总 -->
+<div x-show="showFetchDiff && fetchDiff" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true"><div class="modal-card modal-card-add" style="max-width:660px">
+  <div class="modal-head"><div><div class="modal-title" x-text="t('fd_title')"></div><div class="txs tm" style="margin-top:2px" x-text="fetchDiff?fetchDiff.message:''"></div></div></div>
+  <div class="modal-body">
+    <div class="seg" style="margin-bottom:10px">
+      <span class="seg-i" :class="{'a':fetchDiffTab==='new'}" @click="fetchDiffTab='new'" x-text="t('fd_tab_new')+' ('+(fetchDiff?fetchDiff.added.length:0)+')'"></span>
+      <span class="seg-i" :class="{'a':fetchDiffTab==='existing'}" @click="fetchDiffTab='existing'" x-text="t('fd_tab_existing')+' ('+(fetchDiff?fetchDiff.existing.length:0)+')'"></span>
+      <span class="seg-i" :class="{'a':fetchDiffTab==='removed'}" @click="fetchDiffTab='removed'" x-text="t('fd_tab_removed')+' ('+(fetchDiff?fetchDiff.removed.length:0)+')'"></span>
+    </div>
+    <div class="txs tm" style="margin-bottom:8px" x-text="t('fd_hint')"></div>
+    <template x-if="fetchDiffTab==='new'">
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto">
+        <template x-for="g in fetchDiffGroups()" :key="g.prefix">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 2px">
+              <input type="checkbox" class="chkbox" :checked="g.items.every(it=>fetchDiffSel[it.model_id])" @change="fetchDiffGroupAll(g.prefix,$event.target.checked)">
+              <span class="txsm fw6" x-text="g.prefix"></span><span class="txs tm" x-text="'· '+g.items.length"></span>
+            </div>
+            <template x-for="it in g.items" :key="it.model_id">
+              <label style="display:flex;align-items:center;gap:8px;padding:4px 8px 4px 26px;cursor:pointer">
+                <input type="checkbox" class="chkbox" x-model="fetchDiffSel[it.model_id]">
+                <span class="mono txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="it.model_id" x-text="it.model_id"></span>
+                <span class="txs tm" style="flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="it.upstream_model"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+        <template x-if="!fetchDiffGroups().length"><div class="txs tm" style="padding:12px 4px" x-text="t('no_data')"></div></template>
+      </div>
+    </template>
+    <template x-if="fetchDiffTab==='existing'">
+      <div style="max-height:320px;overflow:auto">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('fd_existing_note',(fetchDiff?fetchDiff.existing.length:0))"></div>
+        <template x-for="id in (fetchDiff?fetchDiff.existing:[])" :key="'e'+id"><div class="mono txs tm" style="padding:3px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="id" x-text="id"></div></template>
+      </div>
+    </template>
+    <template x-if="fetchDiffTab==='removed'">
+      <div style="max-height:320px;overflow:auto">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('fd_removed_note',(fetchDiff?fetchDiff.removed.length:0))"></div>
+        <template x-for="id in (fetchDiff?fetchDiff.removed:[])" :key="'r'+id"><div class="mono txs" style="padding:3px 8px;color:var(--err);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="id" x-text="id"></div></template>
+      </div>
+    </template>
+  </div>
+  <div class="modal-foot">
+    <span class="txs tm" style="margin-right:auto" x-text="t('fd_summary',fetchDiffSelCount(),fetchDiff?fetchDiff.added.length:0)"></span>
+    <button class="btn btn-g" @click="cancelFetchDiff()" x-text="t('cancel')"></button>
+    <button class="btn btn-p" @click="applyFetchDiff()" x-text="t('fd_apply')"></button>
+  </div>
+</div></div>
 <template x-if="drawerProv">
 <div>
   <div class="dr-bk" @click="closeProviderDrawer()"></div>
@@ -971,6 +1144,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
         <div style="display:flex;align-items:center;gap:10px">
           <input type="text" class="inp" style="font-size:var(--fs-15);font-weight:600;color:var(--fg);width:auto;min-width:80px;border:none;background:transparent;box-shadow:none;padding:0" x-model="drawerProv.name" @input="markDirty()">
           <span class="bdg bdg-p" style="font-size:var(--fs-10)" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
+          <span class="bdg" :class="drawerSecCount(drawerProv)>=3?'bdg-s':'bdg-w'" style="font-size:var(--fs-10)" :title="t('dr_sec_hint')" x-text="t('dr_sec_progress',drawerSecCount(drawerProv))"></span>
           <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg" style="background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-bd);font-size:var(--fs-10)">● <span x-text="t('health_ok')"></span></span></template>
           <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:var(--err-bg);color:var(--err);border:1px solid var(--err-bd);font-size:var(--fs-10)">● <span x-text="t('health_err')"></span></span></template>
           <template x-if="healthOf(drawerProv.name)===''"><span class="bdg" style="background:var(--neutral-bg);color:var(--neutral-fg);border:1px solid var(--neutral-bd);font-size:var(--fs-10)">○ <span x-text="t('health_na')"></span></span></template>
@@ -979,8 +1153,14 @@ tr:hover td{background:rgba(99,102,241,.04)}
       </div>
 
       <div class="dr-body">
+        <!-- 分节导航: 每节状态 (绿=就绪/黄=待完善), 点击滚动到对应分区 -->
+        <div class="dr-secnav">
+          <template x-for="s in [{k:'basic',label:t('dr_sec_basic')},{k:'key',label:t('dr_sec_key')},{k:'models',label:t('unit_models')}]" :key="s.k">
+            <button type="button" class="dr-secchip" :class="{'done':drawerSecDone(s.k,drawerProv)}" :title="drawerSecDone(s.k,drawerProv)?t('onboard_step_done'):t('dr_sec_todo')" @click="scrollDrawerSec(s.k)"><span class="dr-secdot"></span><span x-text="s.label"></span></button>
+          </template>
+        </div>
         <!-- Section: Endpoints -->
-        <div class="sec">
+        <div class="sec" id="drsec-basic">
           <div class="sec-hdr">
             <div class="sec-ic blue">🔗</div>
             <div style="flex:1"><div class="sec-title" x-text="t('addprov.endpoint')"></div><div class="sec-sub" x-text="t('endpoint_protocol_desc')"></div></div>
@@ -992,24 +1172,37 @@ tr:hover td{background:rgba(99,102,241,.04)}
           <div class="sec-body">
             <!-- Test result -->
             <template x-if="drawerProv._testResult">
-            <div style="margin-bottom:12px;padding:8px 12px;border-radius:6px;font-size:var(--fs-12);display:flex;align-items:center;gap:8px"
-              :style="drawerProv._testResult.success?'background:var(--ok-bg-soft);color:var(--ok);border:1px solid var(--ok-bd-soft)':'background:var(--err-bg-soft);color:var(--err);border:1px solid var(--err-bd-soft)'">
-              <span x-text="drawerProv._testResult.success?'✓':'✗'"></span>
-              <span x-text="drawerProv._testResult.status"></span>
-              <span style="margin-left:auto;opacity:.7" x-text="drawerProv._testResult.latency_ms+'ms'"></span>
+            <div style="margin-bottom:12px">
+              <div :style="'padding:8px 12px;border-radius:6px;font-size:var(--fs-12);display:flex;align-items:center;gap:8px;'+(drawerProv._testResult.success?'background:var(--ok-bg-soft);color:var(--ok);border:1px solid var(--ok-bd-soft)':'background:var(--err-bg-soft);color:var(--err);border:1px solid var(--err-bd-soft)')">
+                <span x-text="drawerProv._testResult.success?'✓':'✗'"></span>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" :title="drawerProv._testResult.success?'':t('err_view_full')" @click="!drawerProv._testResult.success&&(drawerProv._errOpen=!drawerProv._errOpen)" x-text="drawerProv._testResult.success?drawerProv._testResult.status:testErrFirst(drawerProv._testResult.status)"></span>
+                <span style="flex:none;opacity:.7" x-text="drawerProv._testResult.latency_ms+'ms'"></span>
+              </div>
+              <template x-if="!drawerProv._testResult.success && drawerProv._errOpen">
+                <div style="margin-top:6px;padding:8px 12px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);font-size:var(--fs-11);color:var(--err-fg);white-space:pre-wrap;word-break:break-all">
+                  <div x-text="drawerProv._testResult.status"></div>
+                  <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:6px" @click="copyTestErr(drawerProv)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+                </div>
+              </template>
             </div>
             </template>
             <div class="f-grid">
               <div class="f-row"><label x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint" @input="markDirty()" placeholder="https://api.example.com"></div>
-              <div class="f-row"><label x-text="t('anthropic_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" @input="markDirty()"></div>
-              <div class="f-row"><label x-text="t('responses_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_responses" :placeholder="t('responses_endpoint_ph')" @input="markDirty()"></div>
-              <div class="f-row"><label x-text="t('balance_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.balance_endpoint" :placeholder="t('balance_endpoint_ph')" @input="markDirty()"></div>
+            </div>
+            <!-- 高级端点: 多协议覆盖 + 余额查询 (折叠, 偏好存 localStorage) -->
+            <button type="button" class="btn btn-g" style="font-size:var(--fs-11);margin-top:10px" @click="toggleDrawerAdv()"><span x-text="t('dr_adv')"></span> <span x-text="drawerAdvOpen?'⌃':'⌄'"></span></button>
+            <div x-show="drawerAdvOpen" style="margin-top:10px">
+              <div class="f-grid">
+                <div class="f-row"><label x-text="t('anthropic_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" @input="markDirty()"></div>
+                <div class="f-row"><label x-text="t('responses_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_responses" :placeholder="t('responses_endpoint_ph')" @input="markDirty()"></div>
+                <div class="f-row"><label x-text="t('balance_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.balance_endpoint" :placeholder="t('balance_endpoint_ph')" @input="markDirty()"></div>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- Section: API Key -->
-        <div class="sec">
+        <div class="sec" id="drsec-key">
           <div class="sec-hdr">
             <div class="sec-ic green">🔑</div>
             <div><div class="sec-title" x-text="t('apikey_mgmt')"></div><div class="sec-sub" x-text="t('key_save_hint')"></div></div>
@@ -1022,13 +1215,13 @@ tr:hover td{background:rgba(99,102,241,.04)}
               <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" x-text="drawerProv._keySaving?t('saving'):t('save')"></button>
               <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
             </div>
-            <template x-if="drawerProv._keyMsg"><div style="margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:6px" :style="drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)'" x-text="drawerProv._keyMsg"></div></template>
+            <template x-if="drawerProv._keyMsg"><div :style="'margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:6px;'+(drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)')" x-text="drawerProv._keyMsg"></div></template>
           </div>
           </div>
         </div>
 
         <!-- Section: Models -->
-        <div class="sec">
+        <div class="sec" id="drsec-models">
           <div class="sec-hdr">
             <div class="sec-ic amber">📦</div>
             <div style="flex:1"><div class="sec-title" x-text="t('unit_models')"></div><div class="sec-sub" x-text="t('model_routing_config')"></div></div>
@@ -1100,10 +1293,10 @@ tr:hover td{background:rgba(99,102,241,.04)}
                 </thead>
                 <tbody>
                   <template x-for="(m,ei) in drawerProv.models" :key="ei">
-                  <tr x-show="modelVisible(m,drawerProv)" style="border-bottom:1px solid rgba(255,255,255,.04)" :style="(m._removed?'opacity:.4':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
+                  <tr x-show="modelVisible(m,drawerProv)" :style="'border-bottom:1px solid rgba(255,255,255,.04);'+(m._removed?'opacity:.4;':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
                     <td style="padding:6px 10px"><input type="checkbox" :checked="!!(drawerProv._selected&&drawerProv._selected[ei])" @change="drawerProv._selected=drawerProv._selected||{};drawerProv._selected[ei]=$event.target.checked;markDirty()"></td>
                     <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-                      <span class="bdg bdg-p" style="font-size:var(--fs-10)" x-text="brandFor(m.upstream_model,drawerProv.name).label" :style="'background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'"></span>
+                      <span class="bdg bdg-p" :style="'font-size:var(--fs-10);background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'" x-text="brandFor(m.upstream_model,drawerProv.name).label"></span>
                       <template x-if="m._isNew"><span class="bdg-mini" style="background:var(--ok-bg-strong);color:var(--ok);border:1px solid var(--ok-bd-strong)">NEW</span></template>
                       <template x-if="m._removed"><span class="bdg-mini" style="background:var(--err-bg-strong);color:var(--err-fg);border:1px solid var(--err-bd-strong)">下架</span></template>
                       <template x-if="m.origin==='manual'"><span class="bdg-mini" style="background:var(--warn-bg);color:var(--amber);border:1px solid var(--warn-bd)">手动</span></template>
@@ -1366,6 +1559,10 @@ const I18N = {
     
     'plaza_clear_filters': '清除筛选', 'plaza_view_card': '卡片', 'plaza_view_table': '表格', 'plaza_showing': '显示',
     'plaza_no_match': '没有符合筛选条件的供应商', 'plaza_summary': '{0} 个供应商 · {1} 个模型',
+    'empty_prov_title': '还没有供应商', 'empty_prov_desc': '添加第一家供应商，填入上游地址与 API Key', 'empty_prov_cta': '+ 添加供应商',
+    'empty_records_title': '还没有请求记录', 'empty_records_desc': '发出第一次请求后，这里会显示每次调用的状态、耗时与费用', 'empty_records_cta': '查看接入指引 →',
+    'empty_analytics_title': '暂无分析数据', 'empty_analytics_desc': '累计请求后，这里会呈现流量、费用与省量趋势', 'empty_analytics_cta': '查看接入指引 →',
+    'empty_recall_title': '暂无留存内容', 'empty_recall_desc': '开启「降级可回取」后，被移除的推理链与工具输出会保存在这里', 'empty_recall_cta': '关闭，去开启',
     'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'health_ok': '正常', 'health_err': '异常', 'health_na': '未检测', 'test_connection': '测试连接', 'testing': '测试中...', 'saving': '保存中...', 'search_models': '搜索模型 ID 或上游模型名...', 'unsaved_confirm': '有未保存的供应商配置，切换将丢失改动，是否继续？', 'meta_loading': '加载模型信息...', 'meta_unavailable': '暂无公开模型信息', 'request_failed': '请求失败', 'fetch_failed': '拉取失败',
     'nav_group.monitor': '监控', 'nav_group.config': '配置', 'nav_group.system': '系统', 'unsaved_changes': '未保存', 'unit_ms': '毫秒',
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
@@ -1379,6 +1576,25 @@ const I18N = {
     'api_information_desc': '用于客户端接入的地址', 'view_providers': '查看供应商', 'api_base_url_desc': '兼容 OpenAI 的 API 基地址',
     'available_models': '可用模型', 'chat_completions': 'Chat Completions', 'balance_cost': '余额与费用', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': '快速开始', 'quick_start_desc': '将以下地址填入 Cursor、Trae 或其他客户端的 API Base URL。',
+    'onboard_title': '接入引导', 'onboard_desc': '三步完成接入，全部完成自动收起', 'onboard_progress': '{0}/3', 'onboard_done_badge': '引导完成 3/3',
+    'onboard_step_provider_title': '配置供应商', 'onboard_step_provider_desc': '添加一个上游供应商，填入接口地址与 API Key', 'onboard_step_provider_action': '去配置 →',
+    'onboard_step_model_title': '配置模型', 'onboard_step_model_desc': '填入上游模型 ID，模型才能被调用', 'onboard_step_model_action': '配置模型 →',
+    'onboard_step_request_title': '发出第一次请求', 'onboard_step_request_desc': '复制下方示例命令，验证端到端可用', 'onboard_step_request_action': '复制示例',
+    'onboard_step_done': '已完成',
+    'first_req_title': '第一次请求', 'first_req_desc': '复制任一段示例，直接跑通端到端（返回 JSON 即成功）', 'first_req_nokey': '本机网关无需 API Key，任意填写即可', 'first_req_local': '网关仅监听 127.0.0.1，仅本机可访问', 'first_req_model_ph': '供应商/模型ID', 'first_req_no_model': '还没有模型，示例为占位符——先完成第 2 步',
+    'dr_sec_basic': '基本信息', 'dr_sec_key': '密钥', 'dr_sec_progress': '{0}/3', 'dr_sec_hint': '完成度：基本信息 / 密钥 / 模型', 'dr_sec_todo': '待完善', 'dr_adv': '高级设置',
+    'err_view_full': '点击展开全文',
+    'cf_title': '请确认', 'cf_ok': '确认',
+    'faq_title': '常见问题', 'faq_desc': '高频问题的简短答案（点击展开）',
+    'faq_cost_q': '费用是怎么统计的？', 'faq_cost_a': '按每个模型配置的单价 × 实际用量估算，价格在供应商页逐模型设置（元/百万 tokens）；未配置价格的模型显示「未配置」、不计入费用。可在设置页开启高峰/空闲分时段计价。',
+    'faq_protocol_q': '协议（api_format）怎么选？', 'faq_protocol_a': '每个模型的「协议」列决定发往上游的格式：OpenAI（默认）/ Anthropic / Responses。客户端走 /v1/chat/completions 或 /v1/messages 都可以，AIGate 按模型配置自动转换；只有上游强制 Responses 协议的模型才需要选 responses。',
+    'faq_breaker_q': '熔断是什么？会自动恢复吗？', 'faq_breaker_a': '同一供应商连续失败达到阈值后会暂停转发并返回 503（写明是熔断），冷却后自动放探测请求试探，上游恢复即自动放行；记录页能看到熔断与恢复事件。',
+    'faq_slow_q': '为什么有时很慢或超时？', 'faq_slow_a': '先看记录页该条请求：总耗时长但首字快 = 上游生成慢；「连接被断开」= 链路中断（换供应商或检查代理）；客户端报超时但记录是 200 = 客户端自己的超时，网关已成功。',
+    'foot_docs': '使用说明', 'foot_repo': 'GitHub 仓库', 'foot_issue': '问题反馈',
+    'fd_title': '拉取模型结果', 'fd_tab_new': '新增', 'fd_tab_existing': '已存在', 'fd_tab_removed': '下架',
+    'fd_hint': '勾选要导入的新增模型，取消勾选将不导入；已存在与下架仅供对照。',
+    'fd_existing_note': '{0} 个模型已存在于表单，未改动', 'fd_removed_note': '{0} 个模型已不在上游列表，已标记下架（保存后生效）',
+    'fd_summary': '已选 {0} / {1}', 'fd_apply': '应用所选',
     'manage_providers': '管理供应商', 'view_records': '查看请求记录',
     'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
     'current_log_window': '当前日志窗口', 'total_requests': '总请求数', 'total_cost': '总费用', 'total_tokens': '总 Tokens',
@@ -1568,6 +1784,10 @@ const I18N = {
     
     'plaza_clear_filters': 'Clear filters', 'plaza_view_card': 'Cards', 'plaza_view_table': 'Table', 'plaza_showing': 'Showing',
     'plaza_no_match': 'No providers match the filters', 'plaza_summary': '{0} providers · {1} models',
+    'empty_prov_title': 'No providers yet', 'empty_prov_desc': 'Add your first provider with its upstream endpoint and API key', 'empty_prov_cta': '+ Add provider',
+    'empty_records_title': 'No request logs yet', 'empty_records_desc': 'After your first request, each call’s status, latency and cost appear here', 'empty_records_cta': 'View setup guide →',
+    'empty_analytics_title': 'No analytics yet', 'empty_analytics_desc': 'Once requests accumulate, trends for traffic, cost and savings appear here', 'empty_analytics_cta': 'View setup guide →',
+    'empty_recall_title': 'Nothing retained yet', 'empty_recall_desc': 'Enable Recall to keep stripped reasoning chains and tool output here', 'empty_recall_cta': 'Close and enable',
     'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'health_ok': 'Healthy', 'health_err': 'Error', 'health_na': 'Not checked', 'test_connection': 'Test connection', 'testing': 'Testing...', 'saving': 'Saving...', 'search_models': 'Search model ID or upstream model...', 'unsaved_confirm': 'You have unsaved provider changes. Switching tabs will discard them. Continue?', 'meta_loading': 'Loading model info...', 'meta_unavailable': 'No public model metadata', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed',
     'nav_group.monitor': 'Monitoring', 'nav_group.config': 'Configuration', 'nav_group.system': 'System', 'unsaved_changes': 'Unsaved', 'unit_ms': 'ms',
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
@@ -1581,6 +1801,25 @@ const I18N = {
     'api_information_desc': 'Endpoints for client access', 'view_providers': 'View providers', 'api_base_url_desc': 'OpenAI-compatible API base URL',
     'available_models': 'Available models', 'chat_completions': 'Chat Completions', 'balance_cost': 'Balance & cost', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': 'Quick start', 'quick_start_desc': 'Paste the following address into Cursor, Trae, or another client as the API Base URL.',
+    'onboard_title': 'Get started', 'onboard_desc': 'Three steps to go live; this panel collapses when done', 'onboard_progress': '{0}/3', 'onboard_done_badge': 'Setup complete 3/3',
+    'onboard_step_provider_title': 'Add a provider', 'onboard_step_provider_desc': 'Add an upstream provider with its endpoint and API key', 'onboard_step_provider_action': 'Configure →',
+    'onboard_step_model_title': 'Configure a model', 'onboard_step_model_desc': 'Set the upstream model ID so the model can be called', 'onboard_step_model_action': 'Configure →',
+    'onboard_step_request_title': 'Send your first request', 'onboard_step_request_desc': 'Copy an example below to verify end to end', 'onboard_step_request_action': 'Copy example',
+    'onboard_step_done': 'Done',
+    'first_req_title': 'First request', 'first_req_desc': 'Copy any example and run it — a JSON response means it works', 'first_req_nokey': 'Local gateway needs no API key — any value works', 'first_req_local': 'Gateway listens on 127.0.0.1 only (local machine)', 'first_req_model_ph': 'provider/model-id', 'first_req_no_model': 'No model yet — the example uses a placeholder; finish step 2 first',
+    'dr_sec_basic': 'Basic', 'dr_sec_key': 'Keys', 'dr_sec_progress': '{0}/3', 'dr_sec_hint': 'Completion: basic / keys / models', 'dr_sec_todo': 'Incomplete', 'dr_adv': 'Advanced',
+    'err_view_full': 'Click to expand',
+    'cf_title': 'Please confirm', 'cf_ok': 'Confirm',
+    'faq_title': 'FAQ', 'faq_desc': 'Short answers to common questions (click to expand)',
+    'faq_cost_q': 'How is cost calculated?', 'faq_cost_a': 'Estimated as each model’s configured unit price × actual usage (set per model on the Providers page, CNY per 1M tokens). Models without a price show “Not set” and are excluded from cost. Peak/off-peak pricing can be enabled in Settings.',
+    'faq_protocol_q': 'Which protocol (api_format) should I pick?', 'faq_protocol_a': 'The protocol column decides the upstream format: OpenAI (default) / Anthropic / Responses. Both /v1/chat/completions and /v1/messages work from clients — AIGate converts per model config. Pick responses only when the upstream requires it.',
+    'faq_breaker_q': 'What is the circuit breaker? Does it self-recover?', 'faq_breaker_a': 'After repeated failures for one provider, forwarding pauses and returns 503 (stating it is the breaker). A probe is sent after cooldown and traffic resumes automatically when the provider recovers; breaker events show up in Records.',
+    'faq_slow_q': 'Why is it sometimes slow or timing out?', 'faq_slow_a': 'Check that request in Records: long total but fast first token = slow upstream generation; “connection closed” = network path issue (switch provider or check proxy); client timeout with a 200 in Records = the client’s own timeout — the gateway succeeded.',
+    'foot_docs': 'Docs', 'foot_repo': 'GitHub repo', 'foot_issue': 'Report an issue',
+    'fd_title': 'Fetch models result', 'fd_tab_new': 'New', 'fd_tab_existing': 'Existing', 'fd_tab_removed': 'Removed',
+    'fd_hint': 'Check new models to import; unchecked ones will be skipped. Existing/removed rows are informational.',
+    'fd_existing_note': '{0} models already exist in the form and were left unchanged', 'fd_removed_note': '{0} models are no longer upstream and were marked delisted (applies after save)',
+    'fd_summary': 'Selected {0} / {1}', 'fd_apply': 'Apply selected',
     'manage_providers': 'Manage providers', 'view_records': 'View request logs',
     'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
     'current_log_window': 'Current log window', 'total_requests': 'Total requests', 'total_cost': 'Total cost', 'total_tokens': 'Total tokens',
@@ -1618,20 +1857,71 @@ const I18N = {
 };
 document.addEventListener('alpine:init', function() {
   Alpine.store('i18n', { lang: (window.AIGATE_LANG || 'zh-CN') });
-  // 全局轻量 Toast 通知：toast(msg, type) / Alpine.store('toast').push(msg, type)
+  // 全局轻量 Toast 通知：toast(msg, type, key) / Alpine.store('toast').push(msg, type, key)
+  // 传 key 时, 相同 key 的 toast 在 3s 窗口内合并计数 (×n), 防止重复刷屏.
   Alpine.store('toast', {
     items: [],
-    push(msg, type) {
+    push(msg, type, key) {
       type = type || 'info';
+      if (key) {
+        const ex = this.items.find(x => x.key === key);
+        if (ex) {
+          ex.msg = msg; ex.count = (ex.count || 1) + 1;
+          if (ex._t) clearTimeout(ex._t);
+          ex._t = setTimeout(() => this.dismiss(ex.id), 3000);
+          return;
+        }
+      }
       const id = Date.now() + Math.random();
-      this.items.push({ id, msg, type });
-      setTimeout(() => this.dismiss(id), 3000);
+      const item = { id, msg, type, key: key || null, count: 1 };
+      if (key) item._t = setTimeout(() => this.dismiss(id), 3000);
+      else setTimeout(() => this.dismiss(id), 3000);
+      this.items.push(item);
     },
     dismiss(id) { this.items = this.items.filter(x => x.id !== id); },
   });
+  // 统一确认弹窗 (红按钮 + 后果文案 + loading): confirmAsk(body, {title, danger, onOk}) -> Promise<bool>
+  // 不传 onOk: 点确认立即 resolve(true); 传 onOk: 弹窗转圈执行完才关闭, 抛错 resolve(false).
+  Alpine.store('cf', {
+    show: false, title: '', body: '', danger: true, loading: false,
+    _res: null, _onOk: null,
+    ask(title, body, danger) {
+      this.title = title; this.body = body; this.danger = danger !== false;
+      this.loading = false; this.show = true;
+      const self = this;
+      return new Promise(res => { self._res = res; });
+    },
+    settle(v) {
+      if (!this.show) return;
+      this.show = false; this.loading = false; this._onOk = null;
+      const r = this._res; this._res = null; if (r) r(v);
+    },
+    confirmNow() {
+      const fn = this._onOk;
+      if (!fn) { this.settle(true); return; }
+      const self = this;
+      self.loading = true;
+      Promise.resolve().then(fn).then(() => self.settle(true), () => self.settle(false));
+    },
+  });
   Alpine.data('dashboard', dashboard);
 });
-function toast(msg, type) { if (window.Alpine) Alpine.store('toast').push(msg, type); }
+function toast(msg, type, key) { if (window.Alpine) Alpine.store('toast').push(msg, type, key); }
+// 统一确认弹窗: 返回 Promise<是否继续>. onOk 为 async 时弹窗自带 loading 转圈.
+function confirmAsk(body, opts) {
+  opts = opts || {};
+  if (!(window.Alpine && Alpine.store('cf'))) return Promise.resolve(window.confirm(body));
+  const cf = Alpine.store('cf');
+  cf._onOk = opts.onOk || null;
+  return cf.ask(opts.title != null ? opts.title : t('cf_title'), body, opts.danger);
+}
+// 后端错误透传: 失败响应体的 .error/.message 优先, 拿不到退回兜底文案.
+async function errToastMsg(r, fb) {
+  try { const e = await r.json(); const m = e && (e.error || e.message); if (m) return String(m); } catch (_) {}
+  return fb || t('save_failed');
+}
+// 统一空状态图标 (icon box 内容, 4 处空态共用)
+const EMPTY_ICO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>';
 function t(key) {
   var lang = (window.Alpine && Alpine.store('i18n')) ? Alpine.store('i18n').lang : (window.AIGATE_LANG || 'zh-CN');
   var dict = I18N[lang] || I18N['zh-CN'];
@@ -1766,6 +2056,10 @@ function dashboard() {
     baseUrl: (window.location.origin ? window.location.origin : 'http://127.0.0.1:8787') + '/v1',
     copiedField: '',
     copyTimer: null,
+    // 第一次请求示例的当前语言页签: 'curl' | 'python' | 'node'
+    firstReqTab: 'curl',
+    // 概览页 FAQ 手风琴: -1 = 全部收起
+    faqOpen: -1,
 
     // Data
     logs: [], selectedLog: null, health: [], stats: null, cache: null,
@@ -1827,6 +2121,13 @@ function dashboard() {
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provViewMode: 'table', drawerProv: null,
+    // 抽屉「高级端点」折叠状态 (偏好存 localStorage, 跨次打开保留)
+    drawerAdvOpen: false,
+    // 拉取模型结果弹窗: 新增/已存在/下架 三 Tab 差异视图 + 前缀分组勾选 (参照 new-api fetch-models-dialog)
+    showFetchDiff: false,
+    fetchDiff: null,    // {pi, added:[{model_id,upstream_model}], existing:[id], removed:[id], message}
+    fetchDiffTab: 'new',
+    fetchDiffSel: {},   // {model_id: bool} 新增模型的导入勾选
     pricePanelModel: null, pricePanel: {},
     // 价格剪贴板: 复制后可在其他模型面板"粘贴", 或批量应用到勾选的模型.
     priceClipboard: null, priceClipboardSet: false, priceClipMsg: '',
@@ -1844,6 +2145,8 @@ function dashboard() {
 
     // Logs
     logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, pageSize: 20,
+    // 记录页错误单元格的展开态 {timestamp: bool} —— 按日志时间戳存, 轮询重取 logs 不丢展开.
+    logErrOpen: {},
 
     // Donut chart
     donutColors: CHART_PALETTE,
@@ -1890,6 +2193,67 @@ function dashboard() {
         });
       });
       return rows;
+    },
+
+    // ── 接入引导 (Get started): 完成态由真实数据推导, 3/3 自动收起为页头徽章 ──
+    // 信号: ① 已配供应商 (providersFormData) ② 有已填上游 ID 的模型 ③ 发出过请求 (stats).
+    get onboardSteps() {
+      const provs = this.providersFormData || [];
+      return [
+        { k: 'provider', done: provs.length > 0 },
+        { k: 'model', done: provs.some(p => (p.models || []).some(m => !m._removed && m.upstream_model)) },
+        { k: 'request', done: !!(this.stats && this.stats.total_requests > 0) },
+      ];
+    },
+    get onboardDone() { return this.onboardSteps.filter(s => s.done).length; },
+    get onboardAllDone() { return this.onboardDone >= 3; },
+    // 当前待办步 (未完成里的第一个) —— 供高亮; 全部完成时无意义, 返回 99 保证不高亮.
+    get onboardFirstPending() { const i = this.onboardSteps.findIndex(s => !s.done); return i < 0 ? 99 : i; },
+    onboardAction(k) {
+      if (k === 'request') { this.copyFirstRequest(); return; }
+      this.switchTab('providers');
+    },
+    // 第一次请求示例: 模型取第一个「已填上游 ID」的中转 ID; 无模型时用占位符 (复制时 toast 提醒).
+    firstReqModel() {
+      const provs = this.providersFormData || [];
+      for (const p of provs) for (const m of (p.models || [])) if (!m._removed && m.upstream_model) return m.model_id || '';
+      return '';
+    },
+    firstRequestCode() {
+      const base = (window.location.origin || 'http://127.0.0.1:8787') + '/v1';
+      const endpoint = base + '/chat/completions';
+      const model = this.firstReqModel() || t('first_req_model_ph');
+      if (this.firstReqTab === 'python') {
+        return 'from openai import OpenAI  # pip install openai\n'
+          + '\n'
+          + 'client = OpenAI(base_url="' + base + '", api_key="local")\n'
+          + 'resp = client.chat.completions.create(\n'
+          + '    model="' + model + '",\n'
+          + '    messages=[{"role": "user", "content": "ping"}],\n'
+          + ')\n'
+          + 'print(resp.choices[0].message.content)';
+      }
+      if (this.firstReqTab === 'node') {
+        return '(async () => {\n'
+          + '  const res = await fetch("' + endpoint + '", {\n'
+          + '    method: "POST",\n'
+          + '    headers: { "Content-Type": "application/json" },\n'
+          + '    body: JSON.stringify({\n'
+          + '      model: "' + model + '",\n'
+          + '      messages: [{ role: "user", content: "ping" }],\n'
+          + '      stream: false,\n'
+          + '    }),\n'
+          + '  });\n'
+          + '  console.log(await res.json());\n'
+          + '})();';
+      }
+      return 'curl ' + endpoint + ' \\\n'
+        + '  -H "Content-Type: application/json" \\\n'
+        + "  -d '{\"model\":\"" + model + "\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"stream\":false}'";
+    },
+    copyFirstRequest() {
+      if (!this.firstReqModel()) toast(t('first_req_no_model'), 'warn');
+      this.copyText(this.firstRequestCode(), 'firstreq');
     },
 
     async init() {
@@ -1958,14 +2322,17 @@ function dashboard() {
 
     switchTab(tabId) {
       if(this.isDirty && tabId!==this.activeTab){
-        if(!confirm(t('unsaved_confirm'))){
-          return;
-        }
-        this.isDirty=false;
+        // 统一确认弹窗 (异步): 用户确认后重入本函数继续切换.
+        confirmAsk(t('unsaved_confirm'), { danger: true }).then(ok => {
+          if (!ok) return;
+          this.isDirty = false;
+          this.switchTab(tabId);
+        });
+        return;
       }
       this.activeTab = tabId;
       this.logPage = 0;
-      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); }
+      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); this.fetchDegradations(); }
       if (tabId==='records') { this.fetchLogs(); }
       if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
@@ -2094,8 +2461,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})});
         if(r.ok){ await this.fetchHealth(); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchCache() {
       try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
@@ -2108,8 +2475,8 @@ function dashboard() {
       try {
         const r = await fetch('/admin/api/cache', {method:'POST', headers:authHeaders(), body:JSON.stringify(cfg)});
         if (r.ok) this.cache = await r.json();
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e) { toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e) { toast(t('network_error'), 'error', 'net_err'); }
     },
     // 常态截断超长 tool 输出 (0 = 关闭). 与"紧急瘦身"不同: 不等请求体超上限即生效.
     async fetchToolOutputLimit() {
@@ -2117,12 +2484,18 @@ function dashboard() {
     },
     async setToolOutputLimit(bytes) {
       // 开启前确认: 截断有损, 但被截掉的原文可由「降级可回取」留存回看.
-      if(bytes>0 && !confirm(t('tool_trunc_confirm'))) return;
+      if (bytes > 0) {
+        await confirmAsk(t('tool_trunc_confirm'), { danger: false, onOk: () => this._saveToolOutputLimit(bytes) });
+        return;
+      }
+      await this._saveToolOutputLimit(bytes);
+    },
+    async _saveToolOutputLimit(bytes) {
       try {
         const r=await fetch('/admin/api/tool-output-limit',{method:'POST',headers:authHeaders(),body:JSON.stringify({bytes:bytes})});
         if(r.ok) { const d=await r.json(); this.toolOutputLimit=Math.max(0,d.bytes|0); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     // 静默降级计数: 解析失败导致优化/翻译未生效的次数. 用于区分
     // "这次确实没什么可省" 与 "我们根本没解析成功".
@@ -2139,12 +2512,18 @@ function dashboard() {
     },
     async setRecall(val) {
       // 开启前必须明确告知隐私影响: 留存内容是推理链/tool 输出明文, 会写到磁盘.
-      if(val && !confirm(t('recall_confirm_enable'))) return;
+      if (val) {
+        await confirmAsk(t('recall_confirm_enable'), { danger: false, onOk: () => this._setRecallDo(val) });
+        return;
+      }
+      await this._setRecallDo(val);
+    },
+    async _setRecallDo(val) {
       try {
         const r=await fetch('/admin/api/recall',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})});
         if(r.ok) { const d=await r.json(); this.recall.enabled=!!d.enabled; await this.fetchRecall(); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async openRecallPanel() {
       this.showRecall = true;
@@ -2166,8 +2545,8 @@ function dashboard() {
           this.recallDetail={entry:e, content:d.content};
           this.recallCopied=false;
           this.fetchRecall();
-        } else { toast(d.error||t('recall_empty'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        } else { toast(d.error||t('recall_empty'), 'error', 'recall_view'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async copyRecallContent() {
       if(!this.recallDetail) return;
@@ -2175,12 +2554,14 @@ function dashboard() {
       if(ok) { this.recallCopied=true; setTimeout(()=>this.recallCopied=false, 1500); }
     },
     async clearRecall() {
-      if(!confirm(t('recall_confirm_clear'))) return;
+      await confirmAsk(t('recall_confirm_clear'), { danger: true, onOk: () => this._clearRecallDo() });
+    },
+    async _clearRecallDo() {
       try {
         const r=await fetch('/admin/api/recall/clear',{method:'POST',headers:authHeaders()});
         if(r.ok) { this.recallEntries=[]; this.recallDetail=null; await this.fetchRecall(); toast(t('recall_cleared'), 'success'); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     // 字节数人类可读 (B / KB / MB). 与 fmtT (token 数) 不同: 这里必须说"字节", 不能混作 token.
     fmtBytes(n) {
@@ -2201,8 +2582,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/cache/clear',{method:'POST',headers:authHeaders()});
         if(r.ok) { this.cache=await r.json(); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchStripReasoning() {
       try { const r=await fetch('/admin/api/strip-reasoning', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; } } catch(e){}
@@ -2212,8 +2593,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/strip-reasoning',{method:'POST',headers:authHeaders(),body:JSON.stringify({enabled:val})});
         if(r.ok) { const d=await r.json(); this.stripReasoning=!!d.enabled; }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchStripTcProtocols() {
       try { const r=await fetch('/admin/api/strip-toolcall-protocols', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.stripTcChat=!!d.chat; this.stripTcResp=!!d.responses; } } catch(e){}
@@ -2223,8 +2604,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/strip-toolcall-protocols',{method:'POST',headers:authHeaders(),body:JSON.stringify(patch)});
         if(r.ok) { const d=await r.json(); this.stripTcChat=!!d.chat; this.stripTcResp=!!d.responses; }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchMaxHistoryTurns() {
       try { const r=await fetch('/admin/api/max-history-turns', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); } } catch(e){}
@@ -2234,8 +2615,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/max-history-turns',{method:'POST',headers:authHeaders(),body:JSON.stringify({turns:turns})});
         if(r.ok) { const d=await r.json(); this.maxHistoryTurns=Math.max(0, d.turns|0); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchAutoContinue() {
       try { const r=await fetch('/admin/api/auto-continue', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); } } catch(e){}
@@ -2245,8 +2626,8 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/auto-continue',{method:'POST',headers:authHeaders(),body:JSON.stringify({count:count})});
         if(r.ok) { const d=await r.json(); this.autoContinue=Math.max(0, d.count|0); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchConnParams() {
       try {
@@ -2264,15 +2645,15 @@ function dashboard() {
       try {
         const r=await fetch('/admin/api/stream-timeout',{method:'POST',headers:authHeaders(),body:JSON.stringify({secs:secs})});
         if(r.ok) { const d=await r.json(); this.streamTimeoutSecs=Math.max(30,d.secs|0); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     async setRetry(max, backoffMs) {
       try {
         const r=await fetch('/admin/api/retry',{method:'POST',headers:authHeaders(),body:JSON.stringify({max:max|0, backoff_ms:backoffMs|0})});
         if(r.ok) { const d=await r.json(); this.retryMax=Math.max(0,d.max|0); this.retryBackoffMs=Math.max(0,d.backoff_ms|0); }
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
     // ── 模型元信息 (models.dev): 点击展开 chips 面板 (上下文/输出/视觉/推理/工具) ──
     async fetchModelMeta() {
@@ -2556,14 +2937,16 @@ function dashboard() {
       // 文案里的条数取实时的 logs.length —— 导出只覆盖已加载的这部分, 写明它才能避免
       // 用户误以为"先导出就没损失"(实测磁盘 4290 条时导出仅 1000 条, 覆盖率 23%).
       if(this.clearingLogs) return;                                  // 进行中, 忽略重复点击
-      if(!confirm(t('confirm_clear_logs', this.logs.length))) return;
+      await confirmAsk(t('confirm_clear_logs', this.logs.length), { danger: true, onOk: () => this._clearAllLogsDo() });
+    },
+    async _clearAllLogsDo() {
       this.clearingLogs = true;
       try {
         const r=await fetch('/admin/api/logs',{method:'DELETE',headers:authHeaders()});
         if(r.ok){ this.logs=[]; this.stats=null; this.logPage=0; }
         // 失败必须提示: 数据没被清掉却无声无息, 用户会以为已经清空.
-        else { toast(t('save_failed'), 'error'); }
-      } catch(e){ toast(t('network_error'), 'error'); }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
       finally { this.clearingLogs = false; }                         // 失败也要复位, 否则按钮永久禁用
     },
 
@@ -2601,7 +2984,7 @@ function dashboard() {
           this.tooltipMsg=d.error||t('save_failed');
           toast(this.tooltipMsg, 'error');
         }
-      } catch(e){ this.tooltipMsg=t('network_error'); toast(t('network_error'), 'error'); }
+      } catch(e){ this.tooltipMsg=t('network_error'); toast(t('network_error'), 'error', 'net_err'); }
     },
     async fetchKeys() {
       try { const r=await fetch('/admin/api/keys', {headers:authHeaders()});
@@ -2631,7 +3014,7 @@ function dashboard() {
           this.currencyMsg=d.error||t('save_failed');
           toast(this.currencyMsg, 'error');
         }
-      } catch(e){ this.currencyMsg=t('network_error'); toast(t('network_error'), 'error'); }
+      } catch(e){ this.currencyMsg=t('network_error'); toast(t('network_error'), 'error', 'net_err'); }
     },
     onCurrencyChange() {
       this.currencyRateEdit = this.currencyConfig.rates[this.currencyConfig.currency] || 1;
@@ -2716,7 +3099,7 @@ function dashboard() {
     // 删除供应商 (仅从表单移除, 需点"保存配置"后生效; 后端级联清除其密钥).
     async deleteProvider(pi) {
       const prov = this.providersFormData[pi];
-      if (!confirm(t('confirm_delete_provider',prov.name))) return;
+      if (!(await confirmAsk(t('confirm_delete_provider', prov.name), { danger: true }))) return;
       this.providersFormData.splice(pi,1);
       this.providersFormMsg = t('provider_removed',prov.name);
       this.providersFormOk = true;
@@ -2800,7 +3183,26 @@ function dashboard() {
       if(prov._filter===undefined) prov._filter='';
       if(prov._brandFilter===undefined) prov._brandFilter='';
       if(prov._effFilter===undefined) prov._effFilter='';
+      try { this.drawerAdvOpen = localStorage.getItem('aigate_drawer_adv') === '1'; } catch(e) {}
       this.drawerProv=prov;
+    },
+    // ── 抽屉分节完成度 (参照 new-api channel-mutate-drawer 精简版) ──
+    // basic=名称+endpoint; key=已保存 Key; models=存在已填上游 ID 的模型 (与接入引导同口径).
+    drawerSecDone(k, p){
+      if(!p) return false;
+      if(k==='basic') return !!(String(p.name||'').trim() && String(p.endpoint||'').trim());
+      if(k==='key'){ const kb=this.keysByProvider[p.name]; return !!(kb && kb.configured); }
+      if(k==='models') return (p.models||[]).some(m=>!m._removed && m.upstream_model);
+      return false;
+    },
+    drawerSecCount(p){ return ['basic','key','models'].filter(k=>this.drawerSecDone(k,p)).length; },
+    scrollDrawerSec(k){
+      const el=document.getElementById('drsec-'+k);
+      if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+    },
+    toggleDrawerAdv(){
+      this.drawerAdvOpen=!this.drawerAdvOpen;
+      try { localStorage.setItem('aigate_drawer_adv', this.drawerAdvOpen ? '1' : '0'); } catch(e) {}
     },
     closeProviderDrawer(){
       this.drawerProv=null;
@@ -2924,6 +3326,7 @@ function dashboard() {
                 _expanded: false,
                 _testing: false,
                 _testResult: null,
+                _errOpen: false,
                 _filter: '',
                 _selected: {},
                 _bulkEffort: '',
@@ -3025,20 +3428,20 @@ function dashboard() {
         });
         this.markDirty();
       },
-      deleteSelected(pi){
+      async deleteSelected(pi){
         const prov=this.providersFormData[pi];
         const idxs=Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(Number).sort((a,b)=>b-a);
         if(!idxs.length) return;
-        if(!confirm(t('confirm_delete_models',idxs.length))) return;
+        if(!(await confirmAsk(t('confirm_delete_models', idxs.length), { danger: true }))) return;
         idxs.forEach(i=> prov.models.splice(i,1));
         prov._selected={};
         this.markDirty();
       },
-      clearRemoved(pi){
+      async clearRemoved(pi){
         const prov=this.providersFormData[pi];
         const idxs=prov.models.map((m,i)=> m._removed ? i : -1).filter(i=>i>=0).sort((a,b)=>b-a);
         if(!idxs.length) return;
-        if(!confirm(t('confirm_clear_removed_models',idxs.length))) return;
+        if(!(await confirmAsk(t('confirm_clear_removed_models', idxs.length), { danger: true }))) return;
         idxs.forEach(i=> prov.models.splice(i,1));
         this.markDirty();
         toast(t('removed_models_cleaned',idxs.length), 'success');
@@ -3084,6 +3487,7 @@ function dashboard() {
        const prov = this.providersFormData[pi];
        prov._testing = true;
        prov._testResult = null;
+       prov._errOpen = false;
        try {
          const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint})});
          if(r.ok) prov._testResult = await r.json();
@@ -3097,6 +3501,64 @@ function dashboard() {
        // 测试完成后刷新健康数据, 确保 circuit 状态与后端 breakers 一致.
        await this.fetchHealth();
      },
+     // 测试错误展示: 首行截断 96 字 (参照 new-api channel-actions), 点击展开全文 + 复制.
+     testErrFirst(s){ const str=String(s||'').split('\n')[0]; return str.length>96?str.slice(0,96)+'…':str; },
+     copyTestErr(prov){ if(prov&&prov._testResult) this.copyText(String(prov._testResult.status||''), 'terr'); },
+     // 记录页供应商单元格 → 跳供应商页并打开该供应商抽屉 (表单未加载时先加载).
+     openLogProvider(log){
+       const self=this;
+       const go=()=>{
+         self.switchTab('providers');
+         const i=(self.providersFormData||[]).findIndex(p=>p.name===log.provider);
+         if(i>=0) self.openProviderDrawer(i);
+       };
+       if(!this.providersFormData){ this.loadProvidersForm().then(go); } else go();
+     },
+     // ── 拉取结果差异视图: 按上游 ID 前缀 (末段首个 '-' 前) 分组, 组头整组勾选 ──
+     fetchDiffGroups(){
+       const fd=this.fetchDiff; if(!fd) return [];
+       const map={};
+       for(const it of fd.added){
+         const up=String(it.upstream_model||'');
+         const seg=up.indexOf('/')>=0?up.slice(up.lastIndexOf('/')+1):up;
+         const p=seg.split('-')[0]||seg||'?';
+         (map[p]||(map[p]=[])).push(it);
+       }
+       return Object.keys(map).sort().map(k=>({prefix:k, items:map[k]}));
+     },
+     fetchDiffSelCount(){ return this.fetchDiff ? this.fetchDiff.added.filter(it=>this.fetchDiffSel[it.model_id]).length : 0; },
+     fetchDiffGroupAll(prefix, on){
+       const g=this.fetchDiffGroups().find(x=>x.prefix===prefix); if(!g) return;
+       for(const it of g.items) this.fetchDiffSel[it.model_id]=!!on;
+     },
+     // 应用所选: 保留勾选的新增模型, 未勾选的从表单移除 (尚未保存, 只影响表单).
+     applyFetchDiff(){
+       const fd=this.fetchDiff;
+       if(fd){
+         const prov=this.providersFormData[fd.pi];
+         const drop=new Set(fd.added.filter(it=>!this.fetchDiffSel[it.model_id]).map(it=>it.model_id));
+         if(prov && drop.size){
+           prov.models=prov.models.filter(m=>!drop.has(m.model_id));
+           prov._newModels=Math.max(0,(prov._newModels||0)-drop.size);
+           this.markDirty();
+         }
+       }
+       this.showFetchDiff=false; this.fetchDiff=null;
+     },
+     // 取消: 不导入任何新增 (全部移除); 已存在的下架标记保留 (反映上游事实).
+     cancelFetchDiff(){
+       const fd=this.fetchDiff;
+       if(fd && fd.added.length){
+         const prov=this.providersFormData[fd.pi];
+         const drop=new Set(fd.added.map(it=>it.model_id));
+         if(prov){
+           prov.models=prov.models.filter(m=>!drop.has(m.model_id));
+           prov._newModels=Math.max(0,(prov._newModels||0)-fd.added.length);
+           this.markDirty();
+         }
+       }
+       this.showFetchDiff=false; this.fetchDiff=null;
+     },
      // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
     // 待用户点"保存配置"才持久化 —— 避免直接写盘冲掉表单里其它未保存改动.
     async fetchProviderModels(pi) {
@@ -3109,6 +3571,7 @@ function dashboard() {
           // 去重: 基于 upstream_model (与后端 add_models 一致), 而非 model_id.
           const existingUpstream = new Set(prov.models.map(m=>m.upstream_model||m.model_id));
           let added=0;
+          const addedItems=[];
           for (const id of (d.models||[])) {
             if (!existingUpstream.has(id)) {
               // 中转 ID 一律生成为「供应商/上游模型ID」(上游自带斜杠也照加, 见 transitId),
@@ -3117,6 +3580,7 @@ function dashboard() {
               prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
+              addedItems.push({ model_id:prefixed, upstream_model:id });
             }
           }
           // 标记已下架: 仅按【上游模型ID】(upstream_model, 缺省回落中转ID) 比对,
@@ -3138,6 +3602,17 @@ function dashboard() {
           }
           this.providersFormOk = true;
           this.providersFormMsg = d.message + (removedSet.size ? t('removed_models_suffix',removedSet.size) : '');
+          // 打开差异结果弹窗 (三 Tab): 上游有清单可对照才开.
+          if((d.models||[]).length || (d.removed||[]).length){
+            const newUpstream = new Set(addedItems.map(x=>x.upstream_model));
+            const existingList = (d.models||[]).filter(id=>!newUpstream.has(id));
+            const removedList = Array.from(removedSet);
+            const sel={}; addedItems.forEach(it=>{ sel[it.model_id]=true; });
+            this.fetchDiff = { pi:pi, added:addedItems, existing:existingList, removed:removedList, message:this.providersFormMsg };
+            this.fetchDiffSel = sel;
+            this.fetchDiffTab = addedItems.length ? 'new' : (removedList.length ? 'removed' : 'existing');
+            this.showFetchDiff = true;
+          }
         } else {
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
@@ -3649,6 +4124,32 @@ function dashboard() {
   };
 }
 </script>
+
+<!-- 全局 Toast 渲染层 (Alpine.store('toast')) -->
+<div class="toast-wrap" x-cloak>
+  <template x-for="it in $store.toast.items" :key="it.id">
+    <div class="toast-it" :class="'toast-'+it.type">
+      <span x-text="it.msg"></span>
+      <span class="toast-cnt" x-show="it.count>1" x-text="'×'+it.count"></span>
+      <button class="toast-x" @click="$store.toast.dismiss(it.id)" :aria-label="t('close_label')" :title="t('close_label')">✕</button>
+    </div>
+  </template>
+</div>
+
+<!-- 统一确认弹窗 (Alpine.store('cf'), confirmAsk 驱动) -->
+<div x-show="$store.cf.show" x-cloak class="modal-overlay" role="dialog" aria-modal="true" style="z-index:90" @keydown.escape.window="$store.cf.settle(false)">
+  <div class="modal-card" style="max-width:440px" @click.stop>
+    <div class="modal-head"><div class="modal-title" x-text="$store.cf.title"></div></div>
+    <div class="modal-body"><span style="font-size:var(--fs-13);line-height:1.65;white-space:pre-wrap;word-break:break-word" x-text="$store.cf.body"></span></div>
+    <div class="modal-foot">
+      <button class="btn btn-g" :disabled="$store.cf.loading" @click="$store.cf.settle(false)" x-text="t('cancel')"></button>
+      <button class="btn" :class="$store.cf.danger?'btn-d':'btn-p'" :disabled="$store.cf.loading" @click="$store.cf.confirmNow()">
+        <template x-if="!$store.cf.loading"><span x-text="t('cf_ok')"></span></template>
+        <template x-if="$store.cf.loading"><span class="spin"></span></template>
+      </button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
