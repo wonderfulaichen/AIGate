@@ -115,6 +115,9 @@ impl CircuitBreaker {
     }
 
     /// 是否允许发请求. 调用后会消费 HalfOpen 的探测名额.
+    ///
+    /// ⚠️ 只应在**请求入口**调用一次: 每次调用都会尝试认领探测名额.
+    /// 同一请求的重试循环复检请用 [`Self::allows_retry`].
     pub fn allow_request(&mut self) -> bool {
         match self.state() {
             CircuitState::Closed => true,
@@ -139,6 +142,35 @@ impl CircuitBreaker {
                 }
             }
         }
+    }
+
+    /// 非消费式复检: 判断「已持有探测名额的本次请求」是否仍可继续发送.
+    ///
+    /// 供重试循环使用. 与 [`Self::allow_request`] 的区别是**不认领也不消费**探测名额:
+    /// - Closed → 放行;
+    /// - Open → 拒绝 (可能是本次探测之外的原因重新断开, 如并发的另一次探测失败);
+    /// - HalfOpen → 放行 (探测名额已在入口由本次请求认领, 重试属于同一次探测).
+    ///
+    /// 不能在这里再调 `allow_request`: 名额已被本次请求自己占住, 再调必返回 false,
+    /// 于是请求在发出一字节之前就被自己挡成 503, 探测永远打不到上游 ——
+    /// 熔断器因此无法自动恢复, 只能手动重置 (实测事故根因).
+    pub fn allows_retry(&mut self) -> bool {
+        match self.state() {
+            CircuitState::Closed | CircuitState::HalfOpen => true,
+            CircuitState::Open => false,
+        }
+    }
+
+    /// Open 状态下距转入 HalfOpen (允许探测) 还需等待的秒数; 非 Open 返回 None.
+    /// 供错误响应告知调用方"多久后自动恢复".
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        if self.state != CircuitState::Open {
+            return None;
+        }
+        let opened = self.opened_at?;
+        let timeout = self.config.timeout.as_secs_f64();
+        let elapsed = opened.elapsed().as_secs_f64();
+        Some(if elapsed >= timeout { 0 } else { (timeout - elapsed).ceil() as u64 })
     }
 
     /// 记录一次成功.
@@ -314,5 +346,89 @@ mod tests {
         std::thread::sleep(Duration::from_millis(3));
         assert!(cb.allow_request()); // 第一个探测占用名额
         assert!(!cb.allow_request()); // 第二个被拒
+    }
+
+    /// 回归: HalfOpen 下「入口认领名额 + 重试复检」不得把同一请求挡成 503.
+    ///
+    /// 事故形态: 入口 allow_request() 认领名额后, 重试循环又调 allow_request(),
+    /// 名额已被自己占用 → false → 请求在发出前被自己挡下, 探测永远到不了上游,
+    /// 熔断只能手动重置 (实测 aigate.log 中出现 8 次「入口通过 0~3ms 后 circuit open」).
+    #[test]
+    fn retry_recheck_does_not_consume_probe() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 2,
+            timeout: Duration::from_millis(1),
+            error_rate_threshold: 0.6,
+            min_requests: 2,
+        };
+        let mut cb = CircuitBreaker::with_config(cfg);
+        cb.record_failure(); // -> Open
+        std::thread::sleep(Duration::from_millis(3));
+
+        assert!(cb.allow_request(), "入口应认领探测名额");
+        // 同一请求重试复检: 必须放行, 且不得再次消费/释放名额
+        assert!(cb.allows_retry(), "重试复检必须放行 (否则探测发不出去)");
+        assert!(cb.allows_retry(), "多次重试复检同样放行");
+        // 名额仍被本次探测持有 —— 并发的另一个请求不得插队
+        assert!(!cb.allow_request(), "名额应仍被本次探测占用, 其他请求不得插队");
+    }
+
+    /// allows_retry 在 Closed / Open 下的语义: Closed 放行, Open 拒绝.
+    #[test]
+    fn allows_retry_semantics() {
+        let mut cb = CircuitBreaker::new();
+        assert!(cb.allows_retry(), "Closed 应放行");
+        for _ in 0..4 {
+            cb.record_failure();
+        }
+        assert_eq!(cb.state(), CircuitState::Open);
+        assert!(!cb.allows_retry(), "Open 应拒绝");
+    }
+
+    /// retry_after_secs: Open 时给出剩余等待秒数, 其他状态为 None.
+    #[test]
+    fn retry_after_secs_reports_remaining() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+            error_rate_threshold: 0.6,
+            min_requests: 2,
+        };
+        let mut cb = CircuitBreaker::with_config(cfg);
+        assert_eq!(cb.retry_after_secs(), None, "Closed 无等待");
+        cb.record_failure(); // -> Open
+        let w = cb.retry_after_secs().expect("Open 应给出等待秒数");
+        assert!(w <= 60 && w > 0, "等待秒数应在 (0,60], 实际 {w}");
+    }
+
+    /// 端到端: 探测成功两次后熔断自动恢复 (证明无需手动重置).
+    #[test]
+    fn half_open_recovers_without_manual_reset() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 4,
+            success_threshold: 2,
+            timeout: Duration::from_millis(1),
+            error_rate_threshold: 0.6,
+            min_requests: 10,
+        };
+        let mut cb = CircuitBreaker::with_config(cfg);
+        for _ in 0..4 {
+            cb.record_failure();
+        }
+        assert_eq!(cb.state(), CircuitState::Open);
+        std::thread::sleep(Duration::from_millis(3));
+        assert_eq!(cb.state(), CircuitState::HalfOpen);
+        // 探测 1: 入口认领 + 复检放行 + 成功
+        assert!(cb.allow_request());
+        assert!(cb.allows_retry());
+        cb.record_success();
+        // 探测 2
+        assert!(cb.allow_request());
+        assert!(cb.allows_retry());
+        cb.record_success();
+        assert_eq!(cb.state(), CircuitState::Closed, "两次探测成功后应自动恢复");
+        assert!(cb.allows_retry());
     }
 }

@@ -99,11 +99,32 @@ pub type BreakerMap = Arc<Mutex<HashMap<String, CircuitBreaker>>>;
 ///
 /// 返回 false 表示熔断处于 Open, 或 HalfOpen 下探测名额已占用,
 /// 调用方应快速失败 (503) 而非打向上游.
+///
+/// ⚠️ 每个请求**只在入口调用一次**. 重试循环复检请用 [`breaker_allows_retry`].
 pub fn check_breaker(breakers: &BreakerMap, provider: &str) -> bool {
     let mut g = breakers.lock().expect("breaker lock poisoned");
     g.entry(provider.to_string())
         .or_insert_with(CircuitBreaker::new)
         .allow_request()
+}
+
+/// 重试循环用的非消费式复检 (不重复认领探测名额).
+///
+/// 背景: 入口已用 [`check_breaker`] 认领了 HalfOpen 的探测名额, 重试时若再调
+/// `check_breaker`, 名额已被本次请求自己占住 → 必然 false → 请求在发出前被自己
+/// 挡成 503, 探测永远到不了上游, 熔断无法自动恢复 (实测事故根因:
+/// aigate.log 中 8 次「入口通过 0~3ms 后 circuit open」).
+pub fn breaker_allows_retry(breakers: &BreakerMap, provider: &str) -> bool {
+    let mut g = breakers.lock().expect("breaker lock poisoned");
+    g.entry(provider.to_string())
+        .or_insert_with(CircuitBreaker::new)
+        .allows_retry()
+}
+
+/// 熔断为 Open 时, 距自动转入 HalfOpen (放行探测) 还需的秒数; 非 Open 返回 None.
+pub fn breaker_retry_after_secs(breakers: &BreakerMap, provider: &str) -> Option<u64> {
+    let g = breakers.lock().expect("breaker lock poisoned");
+    g.get(provider).and_then(|cb| cb.retry_after_secs())
 }
 
 /// 上报一次上游请求结果. success=true 记成功, false 记失败.
@@ -240,10 +261,7 @@ pub async fn chat_completions(
             &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start, bytes.len(),
             Some("circuit breaker open".to_string()),
         ).await;
-        return Err(error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
-        ));
+        return Err(circuit_open_response(&state, &provider_name));
     }
 
     info!(
@@ -549,17 +567,16 @@ pub async fn chat_completions(
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        // 每次重试前重新确认熔断状态, 若已 Open 则快速失败 (503).
-        if !check_breaker(&state.breakers, &provider_name) {
-            warn!("proxy: circuit open for provider={provider_name}, fast-fail 503");
+        // 每次重试前复检熔断状态. 必须用**非消费式**的 breaker_allows_retry: 入口已认领
+        // HalfOpen 探测名额, 再调 check_breaker 会被自己占用的名额挡下, 探测永远发不出去
+        // (熔断因此只能手动重置 — 实测事故根因).
+        if !breaker_allows_retry(&state.breakers, &provider_name) {
+            warn!("proxy: circuit re-opened for provider={provider_name} during retry, fast-fail 503");
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start,
                 body_len_val, Some("circuit breaker open".to_string()),
             ).await;
-            return Err(error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
-            ));
+            return Err(circuit_open_response(&state, &provider_name));
         }
         match state
             .client
@@ -1033,6 +1050,29 @@ impl NativeProto {
             NativeProto::Responses => "proxy(native-responses)",
         }
     }
+
+    /// 熔断 (Open) 时的响应: 保持本协议风格的错误体, 并说明是熔断导致 + 恢复倒计时.
+    ///
+    /// Anthropic 入口必须用 `{"type":"error",...}` 形态, 否则 Claude Code 等客户端
+    /// 解析不出错误原因.
+    fn circuit_open_response(self, state: &AppState, provider: &str) -> Response {
+        match self {
+            NativeProto::Anthropic => {
+                let wait = breaker_retry_after_secs(&state.breakers, provider).unwrap_or(0);
+                let msg = format!(
+                    "供应商 '{provider}' 已被熔断保护: 连续失败达阈值后暂停转发, \
+                     避免把请求继续打向故障上游。约 {wait} 秒后自动放行一次探测, \
+                     探测成功即恢复; 也可在设置面板手动重置熔断。"
+                );
+                let mut resp = anthropic_error(StatusCode::SERVICE_UNAVAILABLE, &msg);
+                if let Ok(v) = axum::http::HeaderValue::from_str(&wait.to_string()) {
+                    resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+                }
+                resp
+            }
+            NativeProto::Responses => circuit_open_response(state, provider),
+        }
+    }
 }
 
 /// 直通路径的配置档思考强度注入 (纯函数, 便于单测).
@@ -1184,10 +1224,7 @@ async fn relay_native_passthrough(
             model_cfg.upstream_model.as_deref(), 503, start, body.len(),
             Some("circuit breaker open".to_string()),
         ).await;
-        return Err(proto.error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            &format!("provider '{provider_name}' circuit open (recovering, will retry shortly)"),
-        ));
+        return Err(proto.circuit_open_response(&state, &provider_name));
     }
 
     // API key.
@@ -1250,16 +1287,14 @@ async fn relay_native_passthrough(
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        if !check_breaker(&state.breakers, &provider_name) {
+        // 非消费式复检 (入口已认领 HalfOpen 探测名额, 不能再调 check_breaker).
+        if !breaker_allows_retry(&state.breakers, &provider_name) {
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint,
                 model_cfg.upstream_model.as_deref(), 503, start, body_len_val,
                 Some("circuit breaker open".to_string()),
             ).await;
-            return Err(proto.error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "provider circuit open",
-            ));
+            return Err(proto.circuit_open_response(&state, &provider_name));
         }
         match state
             .client
@@ -4011,6 +4046,34 @@ fn error_response(status: StatusCode, message: &str) -> Response {
         "error": { "message": message, "type": "bridge_error" }
     });
     (status, axum::Json(body)).into_response()
+}
+
+/// 构造熔断 (Open) 时的 503 响应.
+///
+/// 与通用 503 的区别是**明确告知调用方这是熔断导致的**, 并给出 `Retry-After` 与
+/// 距离自动恢复的秒数 —— 此前只回一句 "circuit open (recovering, will retry shortly)",
+/// 客户端无法区分「上游挂了」与「网关主动挡下」, 也不知道该等待而非去点「重置熔断」
+/// (实测用户就是这么做的).
+fn circuit_open_response(state: &AppState, provider: &str) -> Response {
+    let wait = breaker_retry_after_secs(&state.breakers, provider).unwrap_or(0);
+    let msg = format!(
+        "供应商 '{provider}' 已被熔断保护: 连续失败达阈值后暂停转发, 避免把请求继续打向故障上游。\
+         约 {wait} 秒后自动放行一次探测, 探测成功即恢复; 也可在设置面板手动重置熔断。\
+         (circuit breaker open — provider '{provider}' is temporarily suspended; \
+         auto-recovery probe in ~{wait}s)"
+    );
+    let mut resp = (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({
+        "error": {
+            "message": msg,
+            "type": "circuit_breaker_open",
+            "provider": provider,
+            "retry_after_secs": wait,
+        }
+    }))).into_response();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&wait.to_string()) {
+        resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+    }
+    resp
 }
 
 /// 格式化完整错误链 — 遍历 std::error::Error::source(), 打印每一层原因.
