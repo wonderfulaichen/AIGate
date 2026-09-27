@@ -51,6 +51,7 @@ cargo test --release && cargo build --release    # ⑦ 247 绿 + 0 警告
 python .openbitfun\tmp\theme_complete.py  # ⑧ 浅色完整性: 主题相关 token 是否有浅色取值
 python .openbitfun\tmp\theme_dark_diff.py # ⑨ 暗色零变化: 逐文件比对 HEAD 与新版的"实际生效颜色集合"
 python .openbitfun\tmp\theme_contrast.py  # ⑩ 浅色可读性: 关键前景/背景组合的 WCAG 对比度
+python .openbitfun\tmp\balance.py         # ⑪ 标签配平: 逐文件查未闭合标签 (会吞掉后续页面)
 ```
 
 `theme_dark_diff.py` 的口径值得记住：它把 `var(--token)` 用**各自版本**的 `:root` 解析成字面量，
@@ -249,6 +250,17 @@ Alpine 从 `x-data` 根往下遍历，**框外的元素根本不被处理** —�
 求值抛 `ReferenceError`（实测每次加载 7 个未捕获异常）。
 
 规则：需要"文本 + 子元素"时，把文本也放进自己的 `<span>`，父元素不写 `x-text`。
+
+### 4.11 部件拼接是一份文档：标签必须逐文件配平
+
+全部 HTML 部件由 `concat!` 拼成**一份文档**，所以**一个文件里未闭合的 `</div>` 会吞掉其后所有页面**
+（实测：分析页一个未闭合的 `g2 stagger` 导致关于页整体发暗、设置页层次错乱）。
+
+改完 HTML 必须跑 `python .openbitfun\tmp\balance.py`：逐文件比对 `<tag` 与 `</tag>` 计数。
+只有 `body-shell.html`（开 `<main>`）与 `panel-price.html`（关 `</main>`）跨文件，其余文件必须为零差。
+
+**插入容器时按标签计数校验，不要按字符串后缀判断** —— 曾因为"只给最后一格补了 `</div>`"
+而遗漏 4 处，触发上述污染。
 
 ## 5. 状态色与分级（单一事实源）
 

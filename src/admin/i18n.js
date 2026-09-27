@@ -69,7 +69,7 @@ const I18N = {
     'export_json': '导出 JSON', 'clear': '清除',
     'opt_all': '全部', 'time_all': '全部时间', 'time_1h': '近1小时', 'time_24h': '近24小时', 'time_7d': '近7天',
     'filter_reset': '清空筛选',
-    'search_placeholder': '搜索模型/供应商/错误...',
+    'clear_search': '清空搜索', 'search_placeholder': '搜索模型/供应商/错误...',
     'opt.all_providers': '全部供应商', 'opt.success': '成功', 'opt.error': '错误',
     'no_match': '无匹配结果', 'no_logs': '暂无请求记录',
   
@@ -302,7 +302,7 @@ const I18N = {
     'export_json': 'Export JSON', 'clear': 'Clear',
     'opt_all': 'All', 'time_all': 'All time', 'time_1h': 'Last 1h', 'time_24h': 'Last 24h', 'time_7d': 'Last 7d',
     'filter_reset': 'Reset filters',
-    'search_placeholder': 'Search model/provider/error...',
+    'clear_search': 'Clear search', 'search_placeholder': 'Search model/provider/error...',
     'opt.all_providers': 'All providers', 'opt.success': 'Success', 'opt.error': 'Error',
     'no_match': 'No matches', 'no_logs': 'No request logs',
   

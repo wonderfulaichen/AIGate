@@ -14,7 +14,7 @@
   <div class="skel-card"><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>
 </div>
 <div class="pnl mb3" x-show="!provLoading" x-cloak><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 16px">
-  <input type="text" class="inp" style="width:230px" x-model="provSearch" :placeholder="t('plaza_search_ph')">
+  <span class="search-wrap no-kbd"><input type="text" class="inp" style="width:240px" x-model="provSearch" :placeholder="t('plaza_search_ph')" @keydown.escape="provSearch=''"><button type="button" class="search-clear" x-show="provSearch" @click="provSearch=''" :aria-label="t('clear_search')" :title="t('clear_search')">✕</button></span>
   <span class="txs tm" x-text="(providersFormData||[]).length+' '+t('unit_providers')+' · '+(providersFormData||[]).reduce((s,p)=>s+(p.models||[]).length,0)+' '+t('unit_models')"></span>
   <span style="margin-left:auto" class="txs tm" x-text="t('plaza_showing')+' '+visibleProviders.length+' / '+(providersFormData?providersFormData.length:0)"></span>
   <div class="seg"><span class="seg-i" :class="{'a':provViewMode==='table'}" @click="provViewMode='table'" x-text="t('plaza_view_table')"></span><span class="seg-i" :class="{'a':provViewMode==='card'}" @click="provViewMode='card'" x-text="t('plaza_view_card')"></span></div>

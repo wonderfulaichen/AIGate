@@ -151,19 +151,26 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .page-wide{width:100%;max-width:1600px;margin:0 auto}
 .about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.about-capability{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--fill-1);min-width:0}
-.about-capability-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:var(--primary-soft);color:var(--indigo);font-size:var(--fs-15);font-weight:700}
+.about-capability{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card-nest);min-width:0;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out)}
+.about-capability:hover{border-color:var(--border-s);box-shadow:var(--elev-2)}
+.about-capability-icon{display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex:0 0 32px;border-radius:10px;background:var(--primary-soft);color:var(--indigo);font-size:var(--fs-15);font-weight:700;box-shadow:var(--inset-hi)}
 @media(max-width:640px){.about-capabilities{grid-template-columns:1fr}}
 .about-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:4px 2px 0}
+.about-hero-lead{display:flex;align-items:center;gap:16px;min-width:0}
+/* 应用图标: 与顶栏品牌同源 (菱形), 但放大为 Hero 尺度 */
+.about-logo{width:56px;height:56px;border-radius:17px;flex:none;display:flex;align-items:center;justify-content:center;font-size:24px;background:var(--primary-soft);color:var(--indigo);box-shadow:var(--elev-2),var(--inset-hi)}
+.about-ver{font-size:var(--fs-12);font-weight:600;color:var(--muted);background:var(--fill-4);padding:3px 8px;border-radius:8px;vertical-align:4px;letter-spacing:0}
 .about-eyebrow{font-size:var(--fs-11);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--indigo);margin-bottom:6px}
 .about-hero-title{font-size:clamp(1.5rem,3vw,2rem);font-weight:800;letter-spacing:-.03em;color:var(--fg);line-height:1.15}
 .about-hero-desc{font-size:var(--fs-13);color:var(--muted);margin-top:6px}
 .about-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.8fr);gap:16px;align-items:start}
-.about-main{height:100%;display:flex;flex-direction:column;gap:24px;padding:24px}
+/* 关于页主列: 只做纵向容器 —— 三张卡各自成块, 不再用 border-top 硬分一堵墙 */
+.about-main{height:100%;display:flex;flex-direction:column;gap:16px;min-width:0}
 .about-intro{max-width:760px}
 .about-intro-title{font-size:var(--fs-18);font-weight:700;color:var(--fg);margin-bottom:8px}
 .about-intro-desc{font-size:var(--fs-13);line-height:1.8;color:var(--muted)}
-.about-section{padding-top:20px;border-top:1px solid var(--border)}
+.about-card{padding:20px 22px}
+.about-card .about-section-title{margin-bottom:12px}
 .about-section-title{font-size:var(--fs-12);font-weight:700;color:var(--fg);margin-bottom:10px}
 .about-endpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--fill-1);min-width:0}
