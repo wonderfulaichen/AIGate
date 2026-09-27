@@ -1703,6 +1703,7 @@ mod tests {
             free: None,
             extra_body: None,
             api_format: None,
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,

@@ -41,6 +41,21 @@ pub struct ModelConfig {
     /// 点「获取」拉取上游模型时, 见 [`default_api_format`] 自动打标.
     #[serde(default)]
     pub api_format: Option<String>,
+    /// **多协议候选集** (可选): 该上游模型同时支持哪些协议, 如 `["responses", "openai"]`.
+    ///
+    /// 与 [`Self::api_format`] 的关系: `api_format` 是**单一主协议**(向后兼容, 仍优先);
+    /// 本字段声明"还能用哪些". 入口按**客户端来的协议优先匹配**候选集
+    /// (见 [`ModelConfig::pick_api_format`]): 客户端打 `/v1/responses` 而候选集含
+    /// `responses` 时就走 responses 原生直通, 避免跨协议往返转换;
+    /// 客户端协议不在候选集时才回落到主协议 + 转换。
+    ///
+    /// 动机: 官方 API 是「同一个 model 名, 多个端点都能用」(DeepSeek 官方即如此),
+    /// 而单值 `api_format` 做不到 —— 同一模型想同时用 chat 与 responses 只能起两个中转 ID。
+    /// 声明候选集后, 一个 ID 即可覆盖多协议, 由请求决定实际走哪条 (更接近官方体验)。
+    ///
+    /// 空 / 省略 = 单协议 (行为与旧版完全一致)。
+    #[serde(default)]
+    pub api_formats: Option<Vec<String>>,
     /// 模型价格（元 / 百万 tokens）— 费用统计用.
     ///
     /// 优先级高于内置默认价格表（见 `crate::pricing`）. 缺省时回退内置表;
@@ -133,6 +148,38 @@ impl ModelConfig {
         default_api_format(&provider.name, model_id)
             .or_else(|| default_api_format(&provider.name, upstream_id))
             .map(|s| s.to_string())
+    }
+
+    /// 按**客户端入口协议**在候选集里挑实际使用的上游协议 (多协议模型专用).
+    ///
+    /// `client_format`: 客户端打进来的入口协议 —— `"anthropic"` (/v1/messages) /
+    /// `"responses"` (/v1/responses) / `"openai"` (/v1/chat/completions)。
+    ///
+    /// 规则 (按优先级):
+    ///   1. `api_formats` 为空 → 返回 `None`, 调用方走既有的 [`Self::resolve_api_format`]
+    ///      (**单协议语义完全不变**, 向后兼容)。
+    ///   2. 候选集含客户端入口协议 → 用它 (可走原生直通, 无跨协议转换损耗)。
+    ///   3. 否则用候选集第一项 (声明顺序即优先级, 由用户/推断决定谁是主协议)。
+    ///
+    /// 注意: 这里不看 `api_format` —— 声明了候选集即表示"以候选集为准";
+    /// 未声明候选集时 `api_format` 仍走原路径。两者互斥, 避免"候选集与主协议谁优先"的歧义。
+    pub fn pick_api_format(&self, client_format: &str) -> Option<&str> {
+        let cands = self.api_formats.as_ref()?;
+        let list: Vec<&str> = cands
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| matches!(*s, "openai" | "anthropic" | "responses"))
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        // 客户端入口协议优先: 命中即可直通, 不必跨协议往返 (这才是"由请求决定协议")
+        let client = normalize_format(client_format);
+        if let Some(hit) = list.iter().find(|f| **f == client.as_str()) {
+            return Some(hit);
+        }
+        // 回落: 候选集首项 (声明顺序即优先级)
+        list.first().copied()
     }
 }
 
@@ -380,6 +427,7 @@ impl ProviderRegistry {
                         free: None,
                         extra_body: None,
                         api_format: default_api_format(&provider.name, id).map(|s| s.to_string()),
+                        api_formats: None,
                         price: None,
                         strip_toolcall_reasoning: None,
                         origin: Some("fetched".to_string()),
@@ -471,7 +519,21 @@ pub fn default_api_format(provider_name: &str, model_id: &str) -> Option<&'stati
     }
 }
 
-/// 从上游 `/v1/models` 拉取模型 ID 列表.
+/// 入口协议名归一: 把客户端入口的称呼统一成配置里用的三个值.
+///
+/// 入口与配置的用词本就不完全一致 (`/v1/chat/completions` 习惯叫 "chat",
+/// 而配置里写 "openai"), 集中在此转换, 避免各处手写映射表而漂移.
+/// 未知值原样返回 (不猜), 由调用方的候选集匹配决定是否命中.
+pub fn normalize_format(name: &str) -> String {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "openai" | "openai_chat" | "chat" | "chat_completions" => "openai".to_string(),
+        "anthropic" | "messages" | "claude" => "anthropic".to_string(),
+        "responses" | "openai_responses" | "response" => "responses".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 从 providers.json 拉取模型 ID 列表.
 ///
 /// - 端点推导: 把 provider.endpoint 中的 `/chat/completions` 替换为 `/models`
 ///   (兼容 DeepSeek / opencode(zen/go) 等 OpenAI 兼容网关).
@@ -588,6 +650,7 @@ mod tests {
             free,
             extra_body: None,
             api_format: None,
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,
@@ -651,6 +714,7 @@ mod tests {
                     free: None,
                     extra_body: None,
                     api_format: None,
+                    api_formats: None,
                     price: None,
                     strip_toolcall_reasoning: None,
                     origin: None,
@@ -877,6 +941,7 @@ mod tests {
             free: None,
             extra_body: None,
             api_format: None,
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,
@@ -890,6 +955,7 @@ mod tests {
             free: None,
             extra_body: None,
             api_format: Some("anthropic".into()),
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,
@@ -902,5 +968,86 @@ mod tests {
             ..openai_provider.clone()
         };
         assert!(m_default.is_anthropic(&anthropic_provider));
+    }
+
+    fn mc(api_format: Option<&str>, api_formats: Option<Vec<&str>>) -> ModelConfig {
+        ModelConfig {
+            upstream_model: None,
+            reasoning_effort: None,
+            free: None,
+            extra_body: None,
+            api_format: api_format.map(|s| s.to_string()),
+            api_formats: api_formats.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
+            price: None,
+            strip_toolcall_reasoning: None,
+            origin: None,
+            loop_guard: None,
+        }
+    }
+
+    /// 未声明候选集 → pick 返回 None, 调用方走既有 resolve (单协议语义完全不变).
+    #[test]
+    fn pick_api_format_none_when_no_candidates() {
+        assert_eq!(mc(None, None).pick_api_format("responses"), None);
+        // 只有单值 api_format 时也不接管 —— 向后兼容的关键断言
+        assert_eq!(mc(Some("responses"), None).pick_api_format("openai"), None);
+        // 空候选集 = 未声明
+        assert_eq!(mc(None, Some(vec![])).pick_api_format("openai"), None);
+        // 候选集全是非法值 = 未声明 (不猜)
+        assert_eq!(mc(None, Some(vec!["weird", ""])).pick_api_format("openai"), None);
+    }
+
+    /// 客户端入口协议命中候选集 → 用客户端那个 (可走原生直通, 避免跨协议转换).
+    #[test]
+    fn pick_api_format_prefers_client_entry_protocol() {
+        let m = mc(None, Some(vec!["openai", "responses"]));
+        // 候选集顺序是 [openai, responses]: 但客户端打 responses 时应挑 responses,
+        // 而不是"第一项"——这正是"由请求决定协议"
+        assert_eq!(m.pick_api_format("responses"), Some("responses"));
+        assert_eq!(m.pick_api_format("openai"), Some("openai"));
+        // 反向声明的候选集也一样
+        let m2 = mc(None, Some(vec!["responses", "openai"]));
+        assert_eq!(m2.pick_api_format("openai"), Some("openai"));
+        assert_eq!(m2.pick_api_format("responses"), Some("responses"));
+        // 三个协议共存
+        let m3 = mc(None, Some(vec!["openai", "anthropic", "responses"]));
+        assert_eq!(m3.pick_api_format("anthropic"), Some("anthropic"));
+        assert_eq!(m3.pick_api_format("responses"), Some("responses"));
+        assert_eq!(m3.pick_api_format("openai"), Some("openai"));
+    }
+
+    /// 客户端协议不在候选集 → 回落候选集首项 (声明顺序即优先级).
+    #[test]
+    fn pick_api_format_falls_back_to_first_candidate() {
+        let m = mc(None, Some(vec!["responses", "openai"]));
+        // 客户端打 anthropic, 候选集没有 → 用第一项 responses (由本管线转换)
+        assert_eq!(m.pick_api_format("anthropic"), Some("responses"));
+        let m2 = mc(None, Some(vec!["openai"]));
+        assert_eq!(m2.pick_api_format("responses"), Some("openai"));
+    }
+
+    /// 入口协议名归一: `/v1/chat/completions` 习惯叫法要能匹配配置里的 "openai".
+    #[test]
+    fn pick_api_format_normalizes_entry_names() {
+        let m = mc(None, Some(vec!["openai", "anthropic", "responses"]));
+        assert_eq!(m.pick_api_format("chat"), Some("openai"));
+        assert_eq!(m.pick_api_format("chat_completions"), Some("openai"));
+        assert_eq!(m.pick_api_format("openai_chat"), Some("openai"));
+        assert_eq!(m.pick_api_format("messages"), Some("anthropic"));
+        assert_eq!(m.pick_api_format("claude"), Some("anthropic"));
+        assert_eq!(m.pick_api_format("openai_responses"), Some("responses"));
+        // 大小写/空白容错
+        assert_eq!(m.pick_api_format("  RESPONSES  "), Some("responses"));
+    }
+
+    /// normalize_format 本身的映射表.
+    #[test]
+    fn normalize_format_maps_entry_names() {
+        assert_eq!(normalize_format("chat"), "openai");
+        assert_eq!(normalize_format("messages"), "anthropic");
+        assert_eq!(normalize_format("response"), "responses");
+        assert_eq!(normalize_format("openai"), "openai");
+        // 未知值原样返回 (不猜)
+        assert_eq!(normalize_format("gemini"), "gemini");
     }
 }

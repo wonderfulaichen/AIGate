@@ -88,6 +88,11 @@
              if (m.reasoning_effort) cfg.reasoning_effort = m.reasoning_effort;
              // 协议: 仅当显式选 anthropic 才写字段, 选 openai(空)则省略回落默认.
              if (m.api_format) cfg.api_format = m.api_format;
+             // 多协议候选集: 仅当勾选 ≥2 个才写 (勾 1 个等价单协议, 由上面的 api_format 表达,
+             // 免得同一件事两处字段并存而含义重叠). 顺序保留勾选先后 = 优先级.
+             if (Array.isArray(m.api_formats) && m.api_formats.length > 1) {
+               cfg.api_formats = m.api_formats.slice();
+             }
              // 免费: 仅在与自动判定结果不同时才写显式字段, 保持配置干净;
              // 取消自动判定的免费需用户手动勾掉开关 (_freeTouched) 才写 free: false
               const autoFree = this.autoFree(m.model_id, m.upstream_model);

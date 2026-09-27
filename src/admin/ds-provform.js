@@ -54,6 +54,7 @@
                   upstream_model: cfg.upstream_model||'',
                   reasoning_effort: cfg.reasoning_effort||'',
                   api_format: cfg.api_format||'',
+                  api_formats: Array.isArray(cfg.api_formats) ? cfg.api_formats.slice() : null,
                   origin: cfg.origin||'',
                   strip_toolcall_reasoning: !!cfg.strip_toolcall_reasoning,
                   price: cfg.price||null,

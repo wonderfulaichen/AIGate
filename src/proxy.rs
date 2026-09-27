@@ -223,8 +223,16 @@ pub async fn chat_completions(
     // 端点取值 (供应商级): 缺省用供应商 endpoint.
     let mut endpoint = provider.endpoint.clone();
 
-    // 三层回落解析 API 格式: 模型级显式 → 供应商级显式 → 模型名自动推断.
-    let resolved_format = model_cfg.resolve_api_format(&provider, &model)
+    // 上游协议解析 (本函数是 /v1/chat/completions 与两个转换入口的公共管线):
+    //   1) 模型声明了 api_formats 候选集 → 按**客户端入口协议**挑
+    //      (chat 入口优先挑 openai: 命中即直通; 挑中别的协议则本管线做转换)
+    //   2) 未声明候选集 → 三层回落 (模型级 → 供应商级 → 模型名推断), 与旧版一致
+    // 注意: 转换入口 (/v1/messages、/v1/responses) 会**先改写成 chat 请求**再进本函数,
+    // 故这里的 client_format 恒为 "openai" —— 那里挑协议的逻辑在各自入口内 (见调用处注释)。
+    let resolved_format = model_cfg
+        .pick_api_format("openai")
+        .map(|s| s.to_string())
+        .or_else(|| model_cfg.resolve_api_format(&provider, &model))
         .unwrap_or_else(|| "openai".to_string());
     let anthropic_mode = resolved_format == "anthropic";
     let responses_mode = resolved_format == "responses";
@@ -889,8 +897,13 @@ pub async fn messages_completions(
     let model_cfg = route.model.clone();
     let provider = route.provider.clone();
     drop(route);
+    // 本入口的客户端协议是 anthropic: 模型若声明了候选集, 优先挑 anthropic
+    // (命中即可走下面的原生直通 —— 该协议下 thinking 块与 signature 全程不被往返转换,
+    //  Claude Code 等原生客户端的多轮思考/工具链不丢字段)。
     let resolved_format = model_cfg
-        .resolve_api_format(&provider, &model)
+        .pick_api_format("anthropic")
+        .map(|s| s.to_string())
+        .or_else(|| model_cfg.resolve_api_format(&provider, &model))
         .unwrap_or_else(|| "openai".to_string());
 
     // ── 上游 Anthropic → 原生直通 ──
@@ -966,8 +979,12 @@ pub async fn responses_completions(
     let model_cfg = route.model.clone();
     let provider = route.provider.clone();
     drop(route);
+    // 本入口的客户端协议是 responses: 模型若声明了候选集, 优先挑 responses
+    // (命中即可走下面的原生直通, 避免 responses→chat→responses 的往返转换损耗)。
     let resolved_format = model_cfg
-        .resolve_api_format(&provider, &model)
+        .pick_api_format("responses")
+        .map(|s| s.to_string())
+        .or_else(|| model_cfg.resolve_api_format(&provider, &model))
         .unwrap_or_else(|| "openai".to_string());
 
     // ── 上游 Responses → 原生直通 ──
@@ -4370,6 +4387,7 @@ mod tests {
             free: None,
             extra_body: None,
             api_format: None,
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,
@@ -4384,6 +4402,7 @@ mod tests {
             free: None,
             extra_body: None,
             api_format: None,
+            api_formats: None,
             price: None,
             strip_toolcall_reasoning: None,
             origin: None,

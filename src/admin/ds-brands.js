@@ -151,6 +151,22 @@
     apiFormatInferred(m, prov) {
       return !(m && m.api_format) && !(prov && prov.api_format);
     },
+    // 多协议候选集开关 (勾选即把该协议加入/移出候选集).
+    //
+    // 规则与后端 providers.rs::pick_api_format 对应:
+    //  · 候选集只有 1 项 = 等价于单一协议 (向后兼容), 故允许;
+    //  · 候选集为空 → 清掉字段 (回到"未声明", 由 api_format / 推断决定), 而不是存个空数组;
+    //  · 顺序 = 优先级: 客户端入口协议不在候选集时用**第一项** —— 保持勾选先后可见.
+    toggleModelFormat(m, f) {
+      if (!m) return;
+      const cur = Array.isArray(m.api_formats) ? m.api_formats.slice() : [];
+      const i = cur.indexOf(f);
+      if (i >= 0) cur.splice(i, 1);
+      else cur.push(f);
+      m.api_formats = cur.length ? cur : null;
+      m._fmtTouched = true;
+      this.markDirty();
+    },
     async resetCircuit(provider) {
       try {
         const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})});
