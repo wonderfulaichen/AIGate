@@ -565,9 +565,11 @@ tr:hover td.th-sticky{background:var(--card)}
    图表外观 (SVG chrome) —— 颜色一律走 token, 只有"数据系列色"保留内联属性。
    这样浅色主题自动正确, 切主题也即时生效(无需重算 SVG)。
    ══════════════════════════════════════════════════════════════════════════ */
-.chart-grid{stroke:var(--border);stroke-width:1;stroke-dasharray:3 3;opacity:.45}
-.chart-base{stroke:var(--border-s);stroke-width:1;opacity:.55}
+.chart-grid{stroke:var(--border);stroke-width:1;stroke-dasharray:3 3;opacity:.45;vector-effect:non-scaling-stroke}
+.chart-base{stroke:var(--border-s);stroke-width:1;opacity:.55;vector-effect:non-scaling-stroke}
 .chart-axis{fill:var(--muted);font-size:11.5px;font-family:inherit;font-variant-numeric:tabular-nums;opacity:.9}
+/* 数据系列折线: 固定 2px 渲染 (对齐 cc 的 strokeWidth=2), 不随画布缩放变粗 */
+.chart-line{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 /* 趋势圆点: 用卡片色描边"打孔", 让它从线与面上浮出来 (原为旧卡片色硬编码) */
 .chart-dot{stroke:var(--card);stroke-width:1.6}
 /* 环图: 轨道 / 中心两行文字 */

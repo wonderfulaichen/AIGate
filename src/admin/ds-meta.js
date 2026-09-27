@@ -64,13 +64,13 @@
       const vals=(values||[]).map(Number).filter(v=>Number.isFinite(v));
       if(vals.length<2) return '';
       const w=160,h=28,p=2,mx=Math.max(...vals),mn=Math.min(...vals),span=Math.max(mx-mn,1);
-      const xy=vals.map((v,i)=>[p+(w-2*p)*i/(vals.length-1), h-p-(v-mn)/span*(h-2*p)]);
-      // 平滑曲线 (与趋势图同法: 控制点取相邻两点的水平中点), 原为直折线 —— 直折线在
-      // 迷你图里会呈现成锯齿, 与全站图表的 monotone 观感不一致。
-      let d='M'+xy[0][0]+','+xy[0][1];
-      for(let i=0;i<xy.length-1;i++){const cx=(xy[i][0]+xy[i+1][0])/2;d+=' C'+cx+','+xy[i][1]+' '+cx+','+xy[i+1][1]+' '+xy[i+1][0]+','+xy[i+1][1];}
-      const area=d+' L'+xy[xy.length-1][0]+','+h+' L'+xy[0][0]+','+h+' Z';
-      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sp${Math.abs(color.length+vals.length)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".24"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#sp${Math.abs(color.length+vals.length)})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      // 迷你图用**直折线**: 本图 viewBox 仅 160x28 且以 preserveAspectRatio="none"
+      // 非等比放大(横向约 5.6 倍), 平滑曲线的控制点算在这个坐标系里会被横向夸张成波浪;
+      // 点密 + 画布矮, 平滑在这里只带来"糊"。曲线留给主趋势图。
+      const pts=vals.map((v,i)=>`${p+(w-2*p)*i/(vals.length-1)},${h-p-(v-mn)/span*(h-2*p)}`);
+      const d='M'+pts.join(' L');
+      const area=`${p},${h} ${pts.join(' ')} ${w-p},${h}`;
+      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sp${Math.abs(color.length+vals.length)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".24"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" fill="url(#sp${Math.abs(color.length+vals.length)})"/><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
     },
     metaChipsHtml(m) {
       const meta=this.metaFor(m);

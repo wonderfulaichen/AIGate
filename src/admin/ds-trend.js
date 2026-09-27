@@ -61,7 +61,7 @@
           // 面积沿同一条平滑曲线闭合到基线, 与折线严格同形
           const areaD=lineD+' L'+x(n-1)+','+(top+ph)+' L'+x(0)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
-          out+='<path d="'+lineD+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+          out+='<path d="'+lineD+'" stroke="'+color+'" class="chart-line"/>';
           // 不画静态圆点 (对齐 cc-switch: 其图表全程无 dot, 靠悬停 activeDot)。
           // 点位由悬停十字线 + 浮层指示, 曲线本身保持干净。
         });
