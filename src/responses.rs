@@ -772,6 +772,13 @@ pub struct ResponsesStreamConv {
     tools: HashMap<usize, (String, String, String)>,
     /// 上游返回的错误消息 (非 None 时表示请求/生成失败).
     pub last_error: Option<String>,
+    /// 上游按 `max_output_tokens` 正常截断时记下的原因 (来自 `response.incomplete`).
+    ///
+    /// 与 `last_error` **必须分开**: 两者是协议里不同类别的终止事件
+    /// (`response.failed` vs `response.incomplete`), 且后者不是故障 ——
+    /// 混用会让记录页把"答不完"显示成"上游报错", 既说假话又给不出解法
+    /// (实测: 长篇回答被截断, 错误详情写 `responses upstream error: max_output_tokens`).
+    pub truncated_reason: Option<String>,
 }
 
 impl ResponsesStreamConv {
@@ -780,6 +787,7 @@ impl ResponsesStreamConv {
             has_started: false,
             tools: HashMap::new(),
             last_error: None,
+            truncated_reason: None,
         }
     }
 
@@ -1017,7 +1025,8 @@ impl ResponsesStreamConv {
             "response.incomplete" => {
                 let reason = extract_upstream_error_detail(val)
                     .unwrap_or_else(|| "max_output_tokens".to_string());
-                self.last_error = Some(reason);
+                // 记入独立字段而非 last_error —— 这是截断, 不是错误 (详见字段注释).
+                self.truncated_reason = Some(reason);
                 let mut out = vec![];
                 if let Some(usage) = val.get("response").and_then(|r| r.get("usage")) {
                     out.push(openai_usage_from_responses(usage));
@@ -1924,7 +1933,8 @@ mod tests {
 
     /// response.incomplete 是正常截断 (如 max_output_tokens 用尽): 不发错误帧,
     /// 但必须作为终止事件补发 finish_reason=length + [DONE] (否则客户端收不到收尾帧),
-    /// 并把 reason 记入 last_error 供日志定位.
+    /// 并把原因记入 **truncated_reason** (而非 last_error —— 截断不是错误, 混用会让
+    /// 记录页把"答不完"显示成"上游报错") 供日志定位.
     #[test]
     fn response_incomplete_emits_length_finish_and_done() {
         let mut conv = ResponsesStreamConv::new();
@@ -1936,7 +1946,30 @@ mod tests {
         assert!(out.iter().any(|s| s.contains("\"finish_reason\":\"length\"")), "缺 length 收尾帧: {out:?}");
         assert_eq!(out.last().map(|s| s.as_str()), Some("[DONE]"), "缺 [DONE] 终止帧");
         assert!(out.iter().any(|s| s.contains("\"prompt_tokens\":100")), "缺 usage 帧: {out:?}");
-        assert_eq!(conv.last_error.as_deref(), Some("max_output_tokens"));
+        assert_eq!(conv.truncated_reason.as_deref(), Some("max_output_tokens"));
+        // 关键: 截断**不得**写入 last_error, 否则日志会把它包装成 "responses upstream error:"
+        assert_eq!(conv.last_error, None, "截断不是错误, 不应污染 last_error");
+    }
+
+    /// 截断与真错误必须是**两条独立通道**, 且截断优先不掩盖后续真错误:
+    /// 真错误仍只进 last_error, 不进 truncated_reason.
+    #[test]
+    fn truncation_and_error_use_separate_channels() {
+        // ① 纯真错误 (response.failed)
+        let mut err_conv = ResponsesStreamConv::new();
+        err_conv.feed_line(
+            r#"data: {"type":"response.failed","response":{"status":"failed","error":{"message":"boom"}}}"#,
+        );
+        assert!(err_conv.last_error.is_some(), "真错误必须记入 last_error");
+        assert_eq!(err_conv.truncated_reason, None, "真错误不得记为截断");
+
+        // ② 纯截断 (response.incomplete) —— 反向
+        let mut tr_conv = ResponsesStreamConv::new();
+        tr_conv.feed_line(
+            r#"data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+        );
+        assert_eq!(tr_conv.last_error, None, "截断不得记为错误");
+        assert!(tr_conv.truncated_reason.is_some(), "截断必须记入 truncated_reason");
     }
 
     /// response.cancelled 也作为终止事件补发 stop 收尾帧 + [DONE].

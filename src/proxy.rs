@@ -1465,6 +1465,13 @@ struct NativeTapStream {
     cache_creation: u32,
     response_bytes: usize,
     logged: bool,
+    /// 上游按 `max_output_tokens` 截断 (`response.incomplete`).
+    ///
+    /// 直通路径字节原样转发 (不改写客户端的响应 —— `response.incomplete` 本身就是协议
+    /// 规定的截断终止事件, 客户端据此判断), 但**日志必须记下这是截断**: 否则记录页把
+    /// "答不完"显示成完全正常, 用户看着 200 + 完整 usage 却不知回答被砍了
+    /// (实测长会话把输出额度挤到 8192 打满, 截图里就是这么发生的).
+    truncated: bool,
 }
 
 impl NativeTapStream {
@@ -1497,12 +1504,15 @@ impl NativeTapStream {
             cache_creation: 0,
             response_bytes: 0,
             logged: false,
+            truncated: false,
         }
     }
 
     /// 从一行 SSE data 抽取 usage 原始值 (两种协议形态兼容):
     /// - Anthropic: message_start 带全量 input, message_delta 带 output 累计;
     /// - Responses: response.completed 事件带 response.usage (input/output + details).
+    ///
+    /// 另识别 `response.incomplete` (截断终止事件) —— 直通不改写响应体, 只记标记供落库.
     fn scan_line(&mut self, line: &str) {
         let payload = match line.strip_prefix("data:") {
             Some(p) => p.trim(),
@@ -1512,6 +1522,12 @@ impl NativeTapStream {
             return;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else { return };
+        // 截断识别: response.incomplete 是协议规定的"被 max_output_tokens 截断"终止事件
+        // (与 response.completed / response.failed 并列). 直通不改写响应体, 只在这里记下,
+        // 供落库时给出可读原因 —— 否则记录页会把它显示成一次完全正常的请求.
+        if v.get("type").and_then(|t| t.as_str()) == Some("response.incomplete") {
+            self.truncated = true;
+        }
         let usage = v
             .get("usage")
             .or_else(|| v.get("message").and_then(|m| m.get("usage")))
@@ -1601,10 +1617,24 @@ impl Stream for NativeTapStream {
                         ),
                     };
                     self.logged = true;
+                    // 截断时写可读原因 (status 保持 200 —— 客户端收到的是协议规定的
+                    // response.incomplete 终止事件, 不是失败). 非截断则 error 为 None.
+                    let trunc_note = if self.truncated {
+                        Some(format!(
+                            "上游按 max_output_tokens 截断（response.incomplete），回答不完整。\
+                             该额度包含思维链 token，且与输入共用上下文窗口；\
+                             此次输入 {} tok、输出 {} tok。\
+                             可调大 max_output_tokens，或缩短会话（新开会话 / 减少历史）后再试。",
+                            prompt, output
+                        ))
+                    } else {
+                        None
+                    };
                     tokio::spawn(async move {
-                        crate::admin::record_request_with_tokens(
-                            &lb, &m, &p, &ep, up.as_deref(), start,
-                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None, None,
+                        crate::admin::record_request_with_tokens_status(
+                            &lb, &m, &p, &ep, up.as_deref(), 200, start,
+                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None,
+                            trunc_note,
                             usage_missing(prompt, output),
                         ).await;
                     });
@@ -2889,6 +2919,12 @@ impl Stream for TokenStream {
                         //    响应被截断 (典型 10014 mid-object split 丢尾帧) → 记为 error, 否则记录页会显示 200 成功.
                         //  - 流干净结束但 finish_reason=="error": 记为 error (10004 类).
                         // 必须在 async 块外计算 (this 是 &mut, 不能跨线程), 仅捕获拥有的 String 进 spawn.
+                        // 截断 (max_output_tokens 用尽) 与真错误分开记:
+                        //   · err_for_log  —— 文案, 两者都要写 (记录页要能看见原因并据此标红)
+                        //   · len_truncated —— 仅截断为 true, 用于**不把它记成 502**
+                        // 客户端实际收到的是 200 + finish_reason=length (流式响应头早已发出),
+                        // 记 502 会让「成功率」把"答不完"算作失败, 与事实不符.
+                        let mut len_truncated = false;
                         let err_for_log: Option<String> = if this.loop_aborted {
                             Some("model loop detected, stream truncated by AIGate".to_string())
                         } else if let Some(note) = this.cont_fail_note.clone() {
@@ -2897,6 +2933,23 @@ impl Stream for TokenStream {
                             // Responses API 上游返回了明确错误 (如 "Expected 'function' type."),
                             // 直接使用上游错误消息, 避免被笼统的 10014 截断掩盖.
                             Some(format!("responses upstream error: {err}"))
+                        } else if let Some(reason) = this.responses_conv.as_ref().and_then(|c| c.truncated_reason.clone()) {
+                            // 上游按 max_output_tokens 正常截断 (response.incomplete) —— **不是错误**.
+                            // 旧实现把它塞进 last_error, 记录页于是显示成
+                            // "responses upstream error: max_output_tokens": 既把"答不完"说成"上游报错"
+                            // (协议里 completed/incomplete/failed 是三类不同终止), 又给不出任何解法.
+                            // 现改为如实描述 + 可操作提示. 依据 (DeepSeek 官方文档):
+                            //   · max_output_tokens 包含思维链 token (思考模式下思维链先吃掉额度)
+                            //   · 输入 + 输出总长受模型上下文窗口限制 —— 长会话把输出额度挤到很小
+                            // 故可行解法是"调大额度"(若窗口有余量)或"开新会话"(缩减输入).
+                            len_truncated = true;
+                            Some(format!(
+                                "上游按 max_output_tokens 截断（原因: {reason}），回答不完整。\
+                                 该额度包含思维链 token，且与输入共用上下文窗口；\
+                                 此次输入 {} tok、输出 {} tok。\
+                                 可调大 max_output_tokens，或缩短会话（新开会话 / 减少历史）后再试。",
+                                pt, ct
+                            ))
                         } else if !this.clean_finish {
                             // 流被上游/中间链路以 TCP 干净关闭结束但无任何终止帧.
                             // 统一文案 (不再按输出量分级): 大样本证实截断与输出量正相关,
@@ -2944,9 +2997,11 @@ impl Stream for TokenStream {
                             ld.response_body_len = this.response_bytes;
                             // 首 token 延迟必须在 async 块外计算 (this 是 &mut 不能跨线程), 仅持有一个 Copy 的 Option<u64> 进 spawn.
                             let first_token_ms = this.first_token_at.map(|t| t.duration_since(ld.start).as_millis() as u64);
-                            // 带 error 的收尾 (截断/死循环/上游错误) 记 502, 否则日志表格会按 status<400
-                            // 显示成功配色, 与 error 判定 (is_log_error) 自相矛盾.
-                            let status = if err_for_log.is_some() { 502 } else { 200 };
+                            // 带 error 的收尾记 502 (截断/死循环/上游错误都算) 以让日志配色与
+                            // is_log_error 一致 —— 但**截断例外**: 客户端收到的是 200 +
+                            // finish_reason=length, 记 502 会让成功率把"答不完"算作失败 (口径失真).
+                            // 截断仍写 error 文案 (记录页据此标红并可读原因), 只是 status 保持 200.
+                            let status = if err_for_log.is_some() && !len_truncated { 502 } else { 200 };
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
