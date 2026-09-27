@@ -194,6 +194,16 @@ pub struct ProviderConfig {
     pub api_key_env: String,
     /// 未配置环境变量时的默认值 (如 Zen 的 "public").
     pub api_key_default: Option<String>,
+    /// **实测支持哪些协议** (协议探测的结果, 由「拉取模型」时自动写入)。
+    ///
+    /// 这是**服务方级**信息 —— 探测探的是端点路径 (`/chat/completions` 等), 故同一供应商下
+    /// 所有模型共享同一份结果; 这正是界面上展示"该上游支持哪些协议"的数据来源。
+    ///
+    /// 为空 = 未探测过, 或探测未能判定 (WAF 拦截 / 该站对所有路径状态一致)。
+    /// 与模型级 `api_formats` 的区别: 后者是**该模型实际使用**的协议候选 (可手改),
+    /// 本字段只是"实测能力"的记录, 供展示与用户决策, 不直接参与转发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probed_protocols: Option<Vec<String>>,
     /// 余额查询 API 端点 (可选).
     #[serde(default)]
     pub balance_endpoint: Option<String>,
@@ -1074,6 +1084,7 @@ mod tests {
             endpoint: "https://x/v1/chat/completions".into(),
             api_key_env: "K".into(),
             api_key_default: None,
+            probed_protocols: None,
             balance_endpoint: None,
             headers: None,
             api_format: Some("openai".into()),
@@ -1207,6 +1218,7 @@ mod tests {
             endpoint: ep.into(),
             api_key_env: "K".into(),
             api_key_default: None,
+            probed_protocols: None,
             balance_endpoint: None,
             headers: None,
             api_format: None,

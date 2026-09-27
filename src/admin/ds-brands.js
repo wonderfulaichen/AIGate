@@ -167,6 +167,28 @@
       m._fmtTouched = true;
       this.markDirty();
     },
+    // 把「实测支持的协议」一键应用到该供应商的全部模型.
+    //
+    // 为什么需要: 探测结果是**服务方级**的 (探的是端点路径), 同一供应商下所有模型共享,
+    // 而 api_formats 是**模型级**字段 —— 逐个勾选纯属重复劳动。此按钮把实测值批量写入。
+    // 仅当实测 ≥2 个协议时才写入 (单个协议等价单协议, 无需 api_formats 字段)。
+    applyProbedToAll() {
+      const prov = this.drawerProv;
+      if (!prov) return;
+      const list = Array.isArray(prov.probed_protocols) ? prov.probed_protocols : [];
+      if (list.length < 2) {
+        toast(t('prov_proto_need_multi'), 'warn');
+        return;
+      }
+      let n = 0;
+      (prov.models || []).forEach(m => {
+        m.api_formats = list.slice();
+        m._fmtTouched = true;
+        n++;
+      });
+      this.markDirty();
+      toast(t('prov_proto_applied', n), 'success');
+    },
     async resetCircuit(provider) {
       try {
         const r=await fetch('/admin/api/circuit/reset',{method:'POST',headers:authHeaders(),body:JSON.stringify({provider})});

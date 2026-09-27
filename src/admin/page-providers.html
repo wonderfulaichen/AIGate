@@ -59,8 +59,10 @@
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
       <span class="mono txsm" x-text="(prov.models||[]).length"></span>
       <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" :title="t('prov_proto_inuse_hint')" x-text="fmt"></span></template>
       <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
+      <template x-if="(prov.probed_protocols||[]).length"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span></template>
+      <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppt'+fmt"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
     </div>
   </td>
   <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
@@ -81,8 +83,10 @@
       <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
       <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
       <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" :title="t('prov_proto_inuse_hint')" x-text="fmt"></span></template>
       <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
+      <template x-if="(prov.probed_protocols||[]).length"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span></template>
+      <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppc'+fmt"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>

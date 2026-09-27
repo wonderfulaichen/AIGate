@@ -104,6 +104,17 @@
                   <button class="btn btn-p" style="font-size:var(--fs-11)" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
                 </div>
               </div>
+              <!-- 实测支持的协议 (由「拉取模型」时探测得到, 供应商级): 给用户一个可信的参照,
+                   免得逐个模型猜协议。未探测过则不显示 (不臆造)。 -->
+              <div class="m-card-bar" x-show="(drawerProv.probed_protocols||[]).length" style="border-top:1px solid var(--border)">
+                <span class="txs tm" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span>
+                <template x-for="fmt in (drawerProv.probed_protocols||[])" :key="'drp'+fmt">
+                  <span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="fmt"></span>
+                </template>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" x-text="t('prov_proto_apply_hint')"></span>
+                <button class="btn btn-g" style="font-size:var(--fs-11)" @click="applyProbedToAll()" x-text="t('prov_proto_apply')"></button>
+              </div>
               <!-- Brand filter chips -->
               <div class="m-card-bar">
                 <span class="txs tm" style="margin-right:4px" x-text="t('brand')"></span>

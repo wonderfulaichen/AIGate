@@ -20,7 +20,12 @@
           // (实测 DeepSeek 的 /v1/responses 同样可用, 但元数据只标主协议),
           // 故只能问上游本身。探测为空时不建议 (不猜)。
           const probed = Array.isArray(d.probed_protocols) ? d.probed_protocols : [];
-          // 仅当探测到 ≥2 个协议时才写建议值: 单个协议没有信息增量
+          // 探测结果记到**供应商级**: 探测探的是端点路径 (`/chat/completions` 等),
+          // 故是服务方级能力, 同一供应商下所有模型共享 —— 这也是界面「实测支持」徽章的来源。
+          // 存到 prov 上后, 保存配置时随表单一起落盘, 之后每次打开面板都能看到。
+          // 探测为空 (WAF/不可判别) 时**清空**该字段而非保留旧值: 免得展示过期结论。
+          prov.probed_protocols = probed.length ? probed.slice() : null;
+          // 仅当探测到 ≥2 个协议时才给新增模型写 api_formats 建议值: 单个协议没有信息增量
           // (而 defaultApiFormat/api_format 已能表达), 免得给每个模型都塞一个同值字段.
           const suggestFmts = probed.length > 1 ? probed.slice() : null;
           let added=0;
@@ -143,6 +148,9 @@
               openai_cache_control: p.openai_cache_control,
               max_request_body_bytes: p.max_request_body_bytes,
               headers: p.headers||undefined,
+              // 实测支持的协议 (供应商级, 由「拉取模型」时的探测写入). 仅在有值时落盘,
+              // 免得给未探测过的供应商塞空字段. 用途: 面板展示「实测支持」+ 供用户判断.
+              probed_protocols: (Array.isArray(p.probed_protocols) && p.probed_protocols.length) ? p.probed_protocols.slice() : undefined,
               models: models,
             };
          });
