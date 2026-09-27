@@ -104,16 +104,16 @@
                   <button class="btn btn-p" style="font-size:var(--fs-11)" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
                 </div>
               </div>
-              <!-- 实测支持的协议 (由「拉取模型」时探测得到, 供应商级): 给用户一个可信的参照,
-                   免得逐个模型猜协议。未探测过则不显示 (不臆造)。 -->
+              <!-- 实测支持的协议 (由「拉取模型」时探测得到, 供应商级): 后端据此**自动**按客户端
+                   入口协议路由 —— 客户端打哪个入口就用哪个, 这里无需任何勾选, 此栏只是把
+                   上游能力亮出来便于核对。未探测过则不显示 (不臆造)。 -->
               <div class="m-card-bar" x-show="(drawerProv.probed_protocols||[]).length" style="border-top:1px solid var(--border)">
                 <span class="txs tm" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span>
                 <template x-for="fmt in (drawerProv.probed_protocols||[])" :key="'drp'+fmt">
                   <span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="fmt"></span>
                 </template>
                 <span style="margin-left:auto"></span>
-                <span class="txs tm" x-text="t('prov_proto_apply_hint')"></span>
-                <button class="btn btn-g" style="font-size:var(--fs-11)" @click="applyProbedToAll()" x-text="t('prov_proto_apply')"></button>
+                <span class="txs tm" x-text="t('prov_proto_auto_hint')"></span>
               </div>
               <!-- Brand filter chips -->
               <div class="m-card-bar">
@@ -181,14 +181,7 @@
                     <td style="padding:6px 10px;font-size:var(--fs-11);color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
                     <td style="padding:6px 10px"><select class="sel" style="font-size:var(--fs-11);padding:3px 6px" x-model="m.reasoning_effort" :title="t('tbl.reasoning_hint')" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
-                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><select class="sel" :style="apiFormatInferred(m,drawerProv)?'font-size:var(--fs-11);padding:3px 6px;border-style:dashed':'font-size:var(--fs-11);padding:3px 6px'" :title="apiFormatInferred(m,drawerProv)?t('fmt_inferred_hint',t('fmt.'+effectiveApiFormat(m,drawerProv))):t('fmt_explicit_hint')" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select><!-- 未标注时下拉仍显示「OpenAI」(配置值), 故补一枚实际生效徽标, 避免与实际协议不符 --><template x-if="apiFormatInferred(m,drawerProv) && effectiveApiFormat(m,drawerProv)!=='openai'"><span class="bdg-mini" style="background:var(--info-bg);color:var(--info-fg);border:1px solid var(--info-bd)" :title="t('fmt_inferred_hint',t('fmt.'+effectiveApiFormat(m,drawerProv)))" x-text="'自动 '+t('fmt.'+effectiveApiFormat(m,drawerProv))"></span></template><!-- 多协议: 声明该上游还可用的其他协议, 客户端打哪个入口就用哪个 (见 providers.rs::pick_api_format) --><button type="button" class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;flex:none" :title="t('fmt_multi_hint')" :aria-expanded="m._fmtOpen===true" @click="m._fmtOpen=!m._fmtOpen" x-text="(m.api_formats&&m.api_formats.length>1)?('多协议 '+m.api_formats.length):'＋多协议'"></button>
-                      <div class="cols-pop" x-show="m._fmtOpen" x-cloak @click.outside="m._fmtOpen=false" style="min-width:190px">
-                        <div class="txs tm" style="padding:2px 8px 6px;line-height:1.4" x-text="t('fmt_multi_hint')"></div>
-                        <template x-for="f in ['openai','anthropic','responses']" :key="'mf'+f">
-                          <label class="cols-row"><input type="checkbox" :checked="(m.api_formats||[]).includes(f)" @change="toggleModelFormat(m,f)"><span x-text="t('fmt.'+f)"></span></label>
-                        </template>
-                        <div class="txs tm" style="padding:4px 8px 2px;border-top:1px solid var(--border);margin-top:4px" x-text="(m.api_formats&&m.api_formats.length>1)?t('fmt_multi_order_hint'):t('fmt_multi_single_hint')"></div>
-                      </div>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><select class="sel" :style="apiFormatInferred(m,drawerProv)?'font-size:var(--fs-11);padding:3px 6px;border-style:dashed':'font-size:var(--fs-11);padding:3px 6px'" :title="apiFormatInferred(m,drawerProv)?t('fmt_inferred_hint',t('fmt.'+effectiveApiFormat(m,drawerProv))):t('fmt_explicit_hint')" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select><!-- 未标注时下拉仍显示「OpenAI」(配置值), 故补一枚实际生效徽标, 避免与实际协议不符 --><template x-if="apiFormatInferred(m,drawerProv) && effectiveApiFormat(m,drawerProv)!=='openai'"><span class="bdg-mini" style="background:var(--info-bg);color:var(--info-fg);border:1px solid var(--info-bd)" :title="t('fmt_inferred_hint',t('fmt.'+effectiveApiFormat(m,drawerProv)))" x-text="'自动 '+t('fmt.'+effectiveApiFormat(m,drawerProv))"></span></template><!-- 该模型**可用**的协议集 (后端 available_api_formats 的镜像): 由上游实测能力与配置推断得出, 客户端打哪个入口就用哪个 —— 故无需勾选, 只展示. 单个协议时不显示 (无信息增量). --><template x-if="availableApiFormats(m,drawerProv).length>1"><span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><span class="txs tm" :title="t('fmt_available_hint')" x-text="t('fmt_available')"></span><template x-for="f in availableApiFormats(m,drawerProv)" :key="'av'+f"><span class="bdg-mini" style="background:var(--ok-bg-strong);color:var(--ok);border:1px solid var(--ok-bd-strong)" :title="t('fmt_available_hint')" x-text="t('fmt.'+f)"></span></template></span></template>
                     </div></td>
                     <td style="padding:6px 10px;text-align:center"><input type="checkbox" :title="t('strip_toolcall_reasoning_hint')" x-model="m.strip_toolcall_reasoning" @change="markDirty()"></td>
                     <td style="padding:6px 10px;white-space:nowrap">

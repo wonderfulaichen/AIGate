@@ -105,28 +105,6 @@ impl ModelConfig {
         s.contains("free") || s.contains("免费")
     }
 
-    /// 判定该模型是否走 Anthropic /messages 协议.
-    ///
-    /// 优先级: 模型级 `api_format` 覆盖 > 供应商级 `api_format` (回落).
-    /// 例: go 供应商整体 openai, 但某 minimax 模型标 `api_format: "anthropic"`,
-    ///     则该模型走 /messages, 其余模型仍走 /chat/completions.
-    pub fn is_anthropic(&self, provider: &ProviderConfig) -> bool {
-        match &self.api_format {
-            Some(f) => f == "anthropic",
-            None => provider.is_anthropic(),
-        }
-    }
-
-    /// 判定该模型是否走 OpenAI Responses API (/v1/responses) 协议.
-    ///
-    /// 优先级同 `is_anthropic`: 模型级 `api_format` 覆盖 > 供应商级.
-    pub fn is_responses(&self, provider: &ProviderConfig) -> bool {
-        match &self.api_format {
-            Some(f) => f == "responses",
-            None => provider.is_responses(),
-        }
-    }
-
     /// 三层回落解析模型的实际 API 格式:
     ///   1) 模型级 `api_format` 显式配置
     ///   2) 供应商级 `api_format` 显式配置
@@ -150,36 +128,93 @@ impl ModelConfig {
             .map(|s| s.to_string())
     }
 
-    /// 按**客户端入口协议**在候选集里挑实际使用的上游协议 (多协议模型专用).
+    /// 该上游对**本模型**「可用」的协议集合 —— 网关对上游能力的认知 (证据并集).
     ///
-    /// `client_format`: 客户端打进来的入口协议 —— `"anthropic"` (/v1/messages) /
-    /// `"responses"` (/v1/responses) / `"openai"` (/v1/chat/completions)。
+    /// 这是「协议由客户端入口决定, 网关只负责支持」中的**能力侧**: 本函数只回答
+    /// "这个上游能接哪些协议", 不替客户端选。三个证据来源, 依次为:
+    ///
+    ///   1. **模型级 `api_formats`** —— 用户显式声明。**显式即约束**: 一旦声明就以此为准,
+    ///      不再并集 (否则用户想收窄也收不窄)。
+    ///   2. **供应商级 `probed_protocols`** —— 拉取模型时零 token 探测出的实测能力,
+    ///      是**服务方级**信息 (探的是端点路径), 同供应商下所有模型共享。
+    ///   3. [`Self::resolve_api_format`] 的配置/推断值 —— 手工标注或按模型名推断。
+    ///
+    /// 2 与 3 取并集而非互相取代: 探测能发现"还支持哪些" (静态推断做不到 —— 实测 DeepSeek
+    /// 元数据只标 openai, 但 `/v1/responses` 同样可用), 而推断能覆盖单个模型的已知用法
+    /// (如 zen 的 minimax 走 `/messages`), 两者互补。
+    ///
+    /// 返回空 = 完全无信息 (未探测且推断无结论), 调用方按 openai 处理。
+    pub fn available_api_formats(&self, provider: &ProviderConfig, model_id: &str) -> Vec<String> {
+        // 1) 显式候选集: 用户声明即最终答案
+        if let Some(list) = self.api_formats.as_ref() {
+            let v = known_formats(list.iter().map(|s| s.as_str()));
+            if !v.is_empty() {
+                return v;
+            }
+        }
+        // 2) 探测到的实测能力 (服务方级) —— 网关自己"看到"的上游能力
+        let mut out: Vec<String> = match provider.probed_protocols.as_ref() {
+            Some(probed) => known_formats(probed.iter().map(|s| s.as_str())),
+            None => Vec::new(),
+        };
+        // 3) 配置/推断值 (模型级) —— 追加进并集
+        if let Some(f) = self.resolve_api_format(provider, model_id) {
+            let n = normalize_format(&f);
+            if is_known_format(&n) && !out.contains(&n) {
+                out.push(n);
+            }
+        }
+        out
+    }
+
+    /// 按**客户端入口协议**挑实际使用的上游协议 —— 「协议由编程工具决定」的落点.
+    ///
+    /// `client_format`: 客户端打进来的入口协议 —— `/v1/chat/completions` 为 `"openai"`、
+    /// `/v1/messages` 为 `"anthropic"`、`/v1/responses` 为 `"responses"`。
     ///
     /// 规则 (按优先级):
-    ///   1. `api_formats` 为空 → 返回 `None`, 调用方走既有的 [`Self::resolve_api_format`]
-    ///      (**单协议语义完全不变**, 向后兼容)。
-    ///   2. 候选集含客户端入口协议 → 用它 (可走原生直通, 无跨协议转换损耗)。
-    ///   3. 否则用候选集第一项 (声明顺序即优先级, 由用户/推断决定谁是主协议)。
+    ///   1. 客户端协议在[可用集](Self::available_api_formats)内 → **原样用它**。
+    ///      这是最常见的一路: 上游本来就会说这门话, 网关只做转发, thinking 块与
+    ///      signature 全程不被往返翻译, 也就没有字段损耗。
+    ///   2. 声明显式候选集且未命中 → 候选集首项 (声明顺序即优先级)。
+    ///   3. 其余 → 配置/推断值 (该模型已知可用的协议), 由转换管线搬运。
+    ///   4. 仍无结论 → 可用集首项 (探测顺序 openai 优先), 最后兜底 openai。
     ///
-    /// 注意: 这里不看 `api_format` —— 声明了候选集即表示"以候选集为准";
-    /// 未声明候选集时 `api_format` 仍走原路径。两者互斥, 避免"候选集与主协议谁优先"的歧义。
-    pub fn pick_api_format(&self, client_format: &str) -> Option<&str> {
-        let cands = self.api_formats.as_ref()?;
-        let list: Vec<&str> = cands
-            .iter()
-            .map(|s| s.trim())
-            .filter(|s| matches!(*s, "openai" | "anthropic" | "responses"))
-            .collect();
-        if list.is_empty() {
-            return None;
-        }
-        // 客户端入口协议优先: 命中即可直通, 不必跨协议往返 (这才是"由请求决定协议")
+    /// 注意 1 与 3 的分工: 命中客户端协议 = "不必翻译"; 未命中才需要网关做协议转换。
+    /// 故客户端协议优先不是在覆盖用户配置, 而是在**省掉一次翻译**。
+    pub fn pick_api_format(
+        &self,
+        provider: &ProviderConfig,
+        model_id: &str,
+        client_format: &str,
+    ) -> String {
+        let available = self.available_api_formats(provider, model_id);
         let client = normalize_format(client_format);
-        if let Some(hit) = list.iter().find(|f| **f == client.as_str()) {
-            return Some(hit);
+        // 1) 客户端协议可用 → 原样直通 (无需跨协议翻译)
+        if available.iter().any(|f| *f == client) {
+            return client;
         }
-        // 回落: 候选集首项 (声明顺序即优先级)
-        list.first().copied()
+        // 2) 显式候选集: 声明顺序即优先级
+        if self.has_explicit_formats() {
+            return available[0].clone();
+        }
+        // 3) 配置/推断值 —— 该模型已知可用的协议
+        if let Some(f) = self.resolve_api_format(provider, model_id) {
+            return normalize_format(&f);
+        }
+        // 4) 可用集首项 (探测顺序 openai 优先) → 兜底 openai
+        available
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "openai".to_string())
+    }
+
+    /// 是否显式声明了有效的协议候选集 (空数组 / 全非法值视为未声明).
+    fn has_explicit_formats(&self) -> bool {
+        self.api_formats
+            .as_ref()
+            .map(|l| !known_formats(l.iter().map(|s| s.as_str())).is_empty())
+            .unwrap_or(false)
     }
 }
 
@@ -254,17 +289,6 @@ pub struct ProviderConfig {
     /// 避免盲目打到上游被裸拒 (如 opencode.ai/zen/go 限制约 1MB). 默认不限制.
     #[serde(default)]
     pub max_request_body_bytes: Option<usize>,
-}
-
-impl ProviderConfig {
-    /// 是否使用 Anthropic /messages 协议.
-    pub fn is_anthropic(&self) -> bool {
-        self.api_format.as_deref() == Some("anthropic")
-    }
-    /// 是否使用 OpenAI Responses API (/v1/responses) 协议.
-    pub fn is_responses(&self) -> bool {
-        self.api_format.as_deref() == Some("responses")
-    }
 }
 
 /// providers.json 的顶层结构.
@@ -541,6 +565,27 @@ pub fn normalize_format(name: &str) -> String {
         "responses" | "openai_responses" | "response" => "responses".to_string(),
         other => other.to_string(),
     }
+}
+
+/// 是否为网关认识的协议值 —— 只有这三个有对应的转发/转换管线.
+pub fn is_known_format(f: &str) -> bool {
+    matches!(f, "openai" | "anthropic" | "responses")
+}
+
+/// 把一组协议名归一 (见 [`normalize_format`])、丢掉未知值并去重, 保留首次出现顺序.
+///
+/// 集中此处的目的: `api_formats` / `probed_protocols` 都可能来自用户手写或上游返回,
+/// 直接 `matches!` 判断会散落多份过滤逻辑而漂移 (此前 `pick_api_format` 就自带一份,
+/// 且未做归一, 导致 `"chat"` 这类入口写法匹配不上配置)。
+pub fn known_formats<'a>(it: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in it {
+        let n = normalize_format(s);
+        if is_known_format(&n) && !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 /// **零成本协议推测** (探测前的前两层): 端点 URL 路径 → 内置 host 目录.
@@ -1077,58 +1122,31 @@ mod tests {
         assert_eq!(default_api_format("GO", "MiniMax-M2.5"), Some("anthropic"));
     }
 
+    /// 模型级 `api_format` 覆盖供应商级 —— 由旧的 `is_anthropic` 断言迁移而来,
+    /// 改走新的统一入口 [`ModelConfig::pick_api_format`], 语义覆盖面不减。
     #[test]
-    fn model_is_anthropic_prefers_model_over_provider() {
-        let openai_provider = ProviderConfig {
-            name: "go".into(),
-            endpoint: "https://x/v1/chat/completions".into(),
-            api_key_env: "K".into(),
-            api_key_default: None,
-            probed_protocols: None,
-            balance_endpoint: None,
-            headers: None,
-            api_format: Some("openai".into()),
-            prompt_cache: None,
-            endpoint_anthropic: None,
-            endpoint_responses: None,
-            openai_cache_control: None,
-            max_request_body_bytes: None,
-            models: HashMap::new(),
-        };
+    fn model_api_format_overrides_provider_api_format() {
+        let mut openai_provider = prov_ep("go", "https://x/v1/chat/completions");
+        openai_provider.api_format = Some("openai".into());
         // 供应商 openai + 模型未标注 → openai
-        let m_default = ModelConfig {
-            upstream_model: Some("glm-5.2".into()),
-            reasoning_effort: None,
-            free: None,
-            extra_body: None,
-            api_format: None,
-            api_formats: None,
-            price: None,
-            strip_toolcall_reasoning: None,
-            origin: None,
-            loop_guard: None,
-        };
-        assert!(!m_default.is_anthropic(&openai_provider));
-        // 供应商 openai + 模型标注 anthropic → anthropic
-        let m_override = ModelConfig {
-            upstream_model: Some("minimax-m2.5".into()),
-            reasoning_effort: None,
-            free: None,
-            extra_body: None,
-            api_format: Some("anthropic".into()),
-            api_formats: None,
-            price: None,
-            strip_toolcall_reasoning: None,
-            origin: None,
-            loop_guard: None,
-        };
-        assert!(m_override.is_anthropic(&openai_provider));
-        // 供应商 anthropic + 模型回落 → anthropic
+        assert_eq!(
+            mc(None, None).pick_api_format(&openai_provider, "glm-5.2", "openai"),
+            "openai"
+        );
+        // 供应商 openai + 模型标注 anthropic → anthropic (模型级覆盖供应商级)
+        assert_eq!(
+            mc(Some("anthropic"), None).pick_api_format(&openai_provider, "minimax-m2.5", "openai"),
+            "anthropic"
+        );
+        // 供应商 anthropic + 模型未标注 → 回落 anthropic
         let anthropic_provider = ProviderConfig {
             api_format: Some("anthropic".into()),
             ..openai_provider.clone()
         };
-        assert!(m_default.is_anthropic(&anthropic_provider));
+        assert_eq!(
+            mc(None, None).pick_api_format(&anthropic_provider, "glm-5.2", "openai"),
+            "anthropic"
+        );
     }
 
     fn mc(api_format: Option<&str>, api_formats: Option<Vec<&str>>) -> ModelConfig {
@@ -1146,59 +1164,140 @@ mod tests {
         }
     }
 
-    /// 未声明候选集 → pick 返回 None, 调用方走既有 resolve (单协议语义完全不变).
+    /// 无任何信息 (未声明候选集、未探测、推断无结论) → 兜底 openai, 与旧版行为一致.
     #[test]
-    fn pick_api_format_none_when_no_candidates() {
-        assert_eq!(mc(None, None).pick_api_format("responses"), None);
-        // 只有单值 api_format 时也不接管 —— 向后兼容的关键断言
-        assert_eq!(mc(Some("responses"), None).pick_api_format("openai"), None);
-        // 空候选集 = 未声明
-        assert_eq!(mc(None, Some(vec![])).pick_api_format("openai"), None);
-        // 候选集全是非法值 = 未声明 (不猜)
-        assert_eq!(mc(None, Some(vec!["weird", ""])).pick_api_format("openai"), None);
+    fn pick_api_format_defaults_to_openai_without_any_signal() {
+        let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", "responses"), "openai");
+        // 空候选集 / 全非法值 = 未声明 (不猜), 同样落到推断→兜底
+        assert_eq!(mc(None, Some(vec![])).pick_api_format(&p, "m", "openai"), "openai");
+        assert_eq!(
+            mc(None, Some(vec!["weird", ""])).pick_api_format(&p, "m", "openai"),
+            "openai"
+        );
+    }
+
+    /// 单值 `api_format` 的语义完全不变 (向后兼容的关键断言): 它表达"该模型只能用这个",
+    /// 故客户端协议不参与挑选 —— 这正是"显式即约束".
+    #[test]
+    fn single_api_format_still_wins() {
+        let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
+        assert_eq!(mc(Some("responses"), None).pick_api_format(&p, "m", "openai"), "responses");
+        assert_eq!(mc(Some("anthropic"), None).pick_api_format(&p, "m", "openai"), "anthropic");
     }
 
     /// 客户端入口协议命中候选集 → 用客户端那个 (可走原生直通, 避免跨协议转换).
     #[test]
     fn pick_api_format_prefers_client_entry_protocol() {
+        let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
         let m = mc(None, Some(vec!["openai", "responses"]));
         // 候选集顺序是 [openai, responses]: 但客户端打 responses 时应挑 responses,
         // 而不是"第一项"——这正是"由请求决定协议"
-        assert_eq!(m.pick_api_format("responses"), Some("responses"));
-        assert_eq!(m.pick_api_format("openai"), Some("openai"));
+        assert_eq!(m.pick_api_format(&p, "m", "responses"), "responses");
+        assert_eq!(m.pick_api_format(&p, "m", "openai"), "openai");
         // 反向声明的候选集也一样
         let m2 = mc(None, Some(vec!["responses", "openai"]));
-        assert_eq!(m2.pick_api_format("openai"), Some("openai"));
-        assert_eq!(m2.pick_api_format("responses"), Some("responses"));
+        assert_eq!(m2.pick_api_format(&p, "m", "openai"), "openai");
+        assert_eq!(m2.pick_api_format(&p, "m", "responses"), "responses");
         // 三个协议共存
         let m3 = mc(None, Some(vec!["openai", "anthropic", "responses"]));
-        assert_eq!(m3.pick_api_format("anthropic"), Some("anthropic"));
-        assert_eq!(m3.pick_api_format("responses"), Some("responses"));
-        assert_eq!(m3.pick_api_format("openai"), Some("openai"));
+        assert_eq!(m3.pick_api_format(&p, "m", "anthropic"), "anthropic");
+        assert_eq!(m3.pick_api_format(&p, "m", "responses"), "responses");
+        assert_eq!(m3.pick_api_format(&p, "m", "openai"), "openai");
     }
 
-    /// 客户端协议不在候选集 → 回落候选集首项 (声明顺序即优先级).
+    /// 客户端协议不在显式候选集 → 回落候选集首项 (声明顺序即优先级).
     #[test]
     fn pick_api_format_falls_back_to_first_candidate() {
+        let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
         let m = mc(None, Some(vec!["responses", "openai"]));
         // 客户端打 anthropic, 候选集没有 → 用第一项 responses (由本管线转换)
-        assert_eq!(m.pick_api_format("anthropic"), Some("responses"));
+        assert_eq!(m.pick_api_format(&p, "m", "anthropic"), "responses");
         let m2 = mc(None, Some(vec!["openai"]));
-        assert_eq!(m2.pick_api_format("responses"), Some("openai"));
+        assert_eq!(m2.pick_api_format(&p, "m", "responses"), "openai");
+    }
+
+    // ── 探测结果自动参与路由: 「协议由客户端决定, 网关只负责支持」的核心 ──
+    // 背景: 早期实现要求用户在面板上手工勾选 `api_formats` 候选集, 而真实配置里
+    // 233 个模型**无一**勾过 —— 探测到的能力被白白浪费。以下断言固化"自动生效".
+
+    fn prov_probed(name: &str, probed: &[&str]) -> ProviderConfig {
+        let mut p = prov_ep(name, "https://gw.example.com/v1/chat/completions");
+        p.probed_protocols = Some(probed.iter().map(|s| s.to_string()).collect());
+        p
+    }
+
+    /// **零手工声明**: 探测到上游支持什么, 客户端打什么协议就走什么协议.
+    /// 这正是用户期望的"像直接调官方 API 那样" —— 不是网关决定协议, 是请求决定.
+    #[test]
+    fn probed_capabilities_drive_routing_without_manual_declaration() {
+        let p = prov_probed("relay", &["openai", "anthropic", "responses"]);
+        let m = mc(None, None); // 完全没手工配置
+        assert_eq!(m.pick_api_format(&p, "deepseek-v4", "openai"), "openai");
+        assert_eq!(m.pick_api_format(&p, "deepseek-v4", "anthropic"), "anthropic");
+        assert_eq!(m.pick_api_format(&p, "deepseek-v4", "responses"), "responses");
+    }
+
+    /// 探测只给出一个协议 → 客户端要别的协议时转换到它 (探测是能力上限, 不外加猜测).
+    #[test]
+    fn probed_single_protocol_forces_conversion() {
+        let p = prov_probed("relay", &["openai"]);
+        let m = mc(None, None);
+        assert_eq!(m.pick_api_format(&p, "m", "openai"), "openai");
+        // 客户端要 anthropic 但上游只有 openai → 转 openai 由管线搬运
+        assert_eq!(m.pick_api_format(&p, "m", "anthropic"), "openai");
+    }
+
+    /// 探测为空 = 没探到结论, **不得**当成"支持 0 个协议" → 回落推断/兜底.
+    #[test]
+    fn empty_probe_falls_back_to_inference() {
+        let p = prov_probed("relay", &[]);
+        // claude-* 推断 anthropic, 探测无结论 → 仍按推断走 (旧行为不变)
+        assert_eq!(
+            mc(None, None).pick_api_format(&p, "claude-sonnet-4", "openai"),
+            "anthropic"
+        );
+    }
+
+    /// 显式候选集 > 探测: 用户声明是**约束**, 可用来收窄自动探测的结论
+    /// (例如某模型的 /responses 实测不可用, 想强制只走 openai).
+    #[test]
+    fn explicit_formats_override_probe() {
+        let p = prov_probed("relay", &["openai", "anthropic", "responses"]);
+        let m = mc(None, Some(vec!["openai"]));
+        assert_eq!(m.pick_api_format(&p, "m", "responses"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "anthropic"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "openai"), "openai");
+    }
+
+    /// 探测与推断取**并集**: 探测发现"还支持什么", 推断保住"该模型已知走什么".
+    #[test]
+    fn probe_and_inference_union() {
+        // 探测给出 openai+responses, 模型名含 claude 再补上推断的 anthropic
+        let p = prov_probed("relay", &["openai", "responses"]);
+        let m = mc(None, None);
+        assert_eq!(
+            m.available_api_formats(&p, "claude-x"),
+            vec!["openai", "responses", "anthropic"]
+        );
+        assert_eq!(m.pick_api_format(&p, "claude-x", "anthropic"), "anthropic");
+        assert_eq!(m.pick_api_format(&p, "claude-x", "responses"), "responses");
+        assert_eq!(m.pick_api_format(&p, "claude-x", "openai"), "openai");
     }
 
     /// 入口协议名归一: `/v1/chat/completions` 习惯叫法要能匹配配置里的 "openai".
     #[test]
     fn pick_api_format_normalizes_entry_names() {
+        let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
         let m = mc(None, Some(vec!["openai", "anthropic", "responses"]));
-        assert_eq!(m.pick_api_format("chat"), Some("openai"));
-        assert_eq!(m.pick_api_format("chat_completions"), Some("openai"));
-        assert_eq!(m.pick_api_format("openai_chat"), Some("openai"));
-        assert_eq!(m.pick_api_format("messages"), Some("anthropic"));
-        assert_eq!(m.pick_api_format("claude"), Some("anthropic"));
-        assert_eq!(m.pick_api_format("openai_responses"), Some("responses"));
+        assert_eq!(m.pick_api_format(&p, "m", "chat"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "chat_completions"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "openai_chat"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "messages"), "anthropic");
+        assert_eq!(m.pick_api_format(&p, "m", "claude"), "anthropic");
+        assert_eq!(m.pick_api_format(&p, "m", "openai_responses"), "responses");
         // 大小写/空白容错
-        assert_eq!(m.pick_api_format("  RESPONSES  "), Some("responses"));
+        assert_eq!(m.pick_api_format(&p, "m", "  RESPONSES  "), "responses");
     }
 
     /// normalize_format 本身的映射表.

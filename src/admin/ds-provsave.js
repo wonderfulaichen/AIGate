@@ -25,9 +25,13 @@
           // 存到 prov 上后, 保存配置时随表单一起落盘, 之后每次打开面板都能看到。
           // 探测为空 (WAF/不可判别) 时**清空**该字段而非保留旧值: 免得展示过期结论。
           prov.probed_protocols = probed.length ? probed.slice() : null;
-          // 仅当探测到 ≥2 个协议时才给新增模型写 api_formats 建议值: 单个协议没有信息增量
-          // (而 defaultApiFormat/api_format 已能表达), 免得给每个模型都塞一个同值字段.
-          const suggestFmts = probed.length > 1 ? probed.slice() : null;
+          // 这里**不再**给新模型写 api_formats 建议值, 也不再写推断出的 api_format.
+          //
+          // 理由: 后端 pick_api_format / available_api_formats 已把这两个来源当成**自动能力**
+          // 参与路由 —— 客户端打 /v1/messages 进来就在可用集里挑 anthropic 走原生直通,
+          // 无需任何手工声明。而 api_formats 的语义是"显式即约束"(优先于探测), 一旦写入就把
+          // 该模型钉死, 反而关掉了自动匹配; api_format 同理会把"推断"变成"显式",
+          // 既让面板误显示为已标注, 也遮蔽了探测到的其他协议 —— 与"协议由编程工具决定"相悖。
           let added=0;
           const addedItems=[];
           for (const id of (d.models||[])) {
@@ -35,20 +39,20 @@
               // 中转 ID 一律生成为「供应商/上游模型ID」(上游自带斜杠也照加, 见 transitId),
               // 避免跨供应商同名 ID 冲突导致路由被静默覆盖; 不满意可直接改.
               const prefixed = this.transitId(prov.name, id);
-              // 传入供应商名: 网关专属推断规则 (go / zen) 需要它, 否则会漏判 (见 defaultApiFormat).
-              const guessed = this.defaultApiFormat(id, prov.name);
-              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:guessed,
-                // 探测建议: 覆盖推断(推断只知道单协议). _fmtTouched 保持 false, 让用户在面板仍可改.
-                api_formats: suggestFmts ? suggestFmts.slice() : null,
+              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:'',
+                // 两个协议字段都留空 = 不限制: 实际协议由「探测能力 ∪ 推断」自动决定 (见上方说明).
+                // 面板协议列会以虚线 + 徽章如实展示"自动判定"与"可用协议集".
+                api_formats: null,
                 origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
               addedItems.push({ model_id:prefixed, upstream_model:id });
             }
           }
-          // 多协议探测结果提示用户 (有信息量才提示)
-          if (suggestFmts) {
-            toast(t('probed_protocols', suggestFmts.map(f=>t('fmt.'+f)).join(' / ')), 'info', 'probe_ok');
+          // 探测到多协议时告知用户: 该上游同时支持这几种协议, 且已**自动生效**
+          // (客户端打哪个入口就用哪个) —— 用户无需再做任何配置。
+          if (probed.length > 1) {
+            toast(t('probed_protocols', probed.map(f=>t('fmt.'+f)).join(' / ')), 'info', 'probe_ok');
           }
           // 标记已下架: 仅按【上游模型ID】(upstream_model, 缺省回落中转ID) 比对,
           // 中转ID 是用户可改的别名, 不能作为与上游清单比对的依据.

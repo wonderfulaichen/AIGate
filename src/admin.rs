@@ -838,6 +838,9 @@ pub struct RouteInfo {
     /// 该模型实际转发的端点路径: 与 proxy.rs 运行时一致,
     /// 模型级 api_format=anthropic 且供应商端点为 /chat/completions 时改写为 /messages.
     api_format: String,
+    /// 该上游对**本模型**可用的协议集合 (探测能力 ∪ 配置/推断) —— 客户端可任选其一。
+    /// 与 `api_format` 的分工: 后者是"默认会走哪条", 本字段是"总共能走哪几条"。
+    api_formats: Vec<String>,
     upstream_model: Option<String>,
     reasoning_effort: Option<String>,
     /// 是否免费模型 (显式 free 标记或 upstream_model 含 free/免费).
@@ -859,11 +862,15 @@ pub async fn api_routes(
         .into_iter()
         .filter_map(|id| {
             let entry = registry.lookup(id)?;
-            // 复刻 proxy.rs 运行时的端点改写逻辑: 模型级 api_format=anthropic
-            // 且供应商端点仍是 /chat/completions 时, 改写为 /messages 或 /responses.
+            // 复刻 proxy.rs 运行时的端点改写逻辑。
+            // 注意: 多协议模型下"实际端点"取决于客户端打哪个入口 (/v1/messages、/v1/responses),
+            // 此处展示的是**默认** (chat 入口) 会走的那条 —— 故同时给出 api_formats
+            // (该模型可用的全部协议) 供面板并列展示, 免得读者以为只有这一条路。
             let mut endpoint = entry.provider.endpoint.clone();
-            let anthropic_mode = entry.model.is_anthropic(&entry.provider);
-            let responses_mode = entry.model.is_responses(&entry.provider);
+            let api_formats = entry.model.available_api_formats(&entry.provider, id);
+            let default_format = entry.model.pick_api_format(&entry.provider, id, "openai");
+            let anthropic_mode = default_format == "anthropic";
+            let responses_mode = default_format == "responses";
             if anthropic_mode {
                 if let Some(ep) = &entry.provider.endpoint_anthropic {
                     if !ep.trim().is_empty() {
@@ -881,12 +888,13 @@ pub async fn api_routes(
                     endpoint = endpoint.replace("/chat/completions", "/responses");
                 }
             }
-            let api_format = if anthropic_mode { "anthropic" } else if responses_mode { "responses" } else { "openai" }.to_string();
+            let api_format = default_format;
             Some(RouteInfo {
                 model_id: id.to_string(),
                 provider: entry.provider.name.clone(),
                 endpoint,
                 api_format,
+                api_formats,
                 upstream_model: entry.model.upstream_model.clone(),
                 reasoning_effort: entry.model.reasoning_effort.clone(),
                 free: entry.model.is_free(id),

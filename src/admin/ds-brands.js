@@ -125,17 +125,35 @@
       }
       return '';
     },
-    // 面板「协议」列应显示的**实际生效协议** (而非配置值): 配置 → 供应商 → 推断 → openai.
-    // 原实现直接绑定配置字段, 未标注的模型一律显示「OpenAI」, 与后端推断不符时界面即在说假话。
+    // 协议名归一: **与后端 providers.rs::normalize_format 逐条一致**
+    // (入口习惯叫法 "chat"/"messages" 与配置值 "openai"/"anthropic" 统一).
+    normalizeFormat(f) {
+      const v = String(f == null ? '' : f).trim().toLowerCase();
+      if (['openai', 'openai_chat', 'chat', 'chat_completions'].includes(v)) return 'openai';
+      if (['anthropic', 'messages', 'claude'].includes(v)) return 'anthropic';
+      if (['responses', 'openai_responses', 'response'].includes(v)) return 'responses';
+      return v;
+    },
+    // 网关认识的三个协议值 (只有这三个有对应的转发/转换管线).
+    _KNOWN_FORMATS: ['openai', 'anthropic', 'responses'],
+    // 归一 + 丢掉未知值 + 去重 (保留首次出现顺序) —— 镜像后端 known_formats.
+    _knownFormats(list) {
+      const out = [];
+      (list || []).forEach(x => {
+        const n = this.normalizeFormat(x);
+        if (this._KNOWN_FORMATS.includes(n) && !out.includes(n)) out.push(n);
+      });
+      return out;
+    },
+    // 镜像后端 providers.rs::resolve_api_format: 模型级 api_format → 供应商级 → 模型名推断.
+    // 返回 null 表示三者皆无结论 (后端语义 = openai).
     //
-    // 推断用**上游真名**而非中转 ID: 中转 ID 形如 `go/minimax-m2.7`, 带前缀后
+    // 推断用**上游真名**优先: 中转 ID 形如 `go/minimax-m2.7`, 带前缀后
     // `startsWith('gpt-5')` 之类的规则会失效 (实测 `go/gpt-5.4`.startsWith('gpt-5') === false)。
     // 上游真名缺失时才回退中转 ID (去掉 `供应商/` 前缀, 还原成能被规则匹配的形态)。
-    // 这与后端一致: 后端也是先按中转 ID 查、再按 upstream_model 查 (见 resolve_api_format)。
-    effectiveApiFormat(m, prov) {
-      if (m && m.api_format) return m.api_format;
-      const pf = prov && prov.api_format;
-      if (pf) return pf;
+    resolveApiFormat(m, prov) {
+      if (m && m.api_format) return this.normalizeFormat(m.api_format);
+      if (prov && prov.api_format) return this.normalizeFormat(prov.api_format);
       const pname = (prov && prov.name) || '';
       const up = (m && m.upstream_model) || '';
       if (up) {
@@ -145,49 +163,44 @@
       const mid = (m && m.model_id) || '';
       // 去掉「供应商/」前缀再匹配: 否则 startsWith 类规则对中转 ID 永远不命中.
       const bare = mid.startsWith(pname + '/') ? mid.slice(pname.length + 1) : mid;
-      return this.defaultApiFormat(bare, pname) || 'openai';
+      return this.defaultApiFormat(bare, pname) || null;
     },
-    // 该模型的协议是否来自推断 (未显式标注) —— 面板据此加弱化标记, 让用户知道"这是自动判断的".
+    // 该模型是否显式声明了候选集 (空数组/全非法值视为未声明) —— 镜像后端 has_explicit_formats.
+    hasExplicitFormats(m) {
+      return this._knownFormats(m && m.api_formats).length > 0;
+    },
+    // **该上游对该模型可用的协议集** —— 镜像后端 providers.rs::available_api_formats.
+    //
+    // 这是「协议由编程工具(客户端入口)决定, 网关只负责支持」的能力侧: 面板据此回答
+    // "这个模型能用哪几种协议", 用户无需再逐个模型勾选候选集。
+    // 三路证据: ① 模型级 api_formats (显式即约束, 声明了就以此为准)
+    //          ② 供应商级 probed_protocols (「拉取模型」时零 token 实测到的服务方能力)
+    //          ③ resolveApiFormat 的配置/推断值
+    // ②③ 取并集: 探测能发现"还支持哪些" (推断做不到 —— 实测 DeepSeek 元数据只标 openai,
+    // 但 /v1/responses 同样可用), 推断则保住单个模型的已知用法 (如 zen 的 minimax 走 /messages)。
+    availableApiFormats(m, prov) {
+      if (this.hasExplicitFormats(m)) return this._knownFormats(m.api_formats);
+      const out = this._knownFormats(prov && prov.probed_protocols);
+      const inferred = this.resolveApiFormat(m, prov);
+      if (inferred && this._KNOWN_FORMATS.includes(inferred) && !out.includes(inferred)) out.push(inferred);
+      return out;
+    },
+    // 面板「协议」列默认展示的那条 —— 镜像后端 pick_api_format(m, prov, 'openai'),
+    // 即"普通 chat 客户端打进来会走哪条"。多协议模型的实际协议取决于客户端入口
+    // (打 /v1/messages 就用 anthropic、打 /v1/responses 就用 responses),
+    // 故界面另用 availableApiFormats 并列展示"能用哪几条", 两者一起才完整。
+    effectiveApiFormat(m, prov) {
+      const avail = this.availableApiFormats(m, prov);
+      if (avail.includes('openai')) return 'openai';
+      if (this.hasExplicitFormats(m)) return avail[0];
+      const r = this.resolveApiFormat(m, prov);
+      if (r) return r;
+      return avail[0] || 'openai';
+    },
+    // 该模型的协议是否**未被显式固定** (模型级/供应商级 api_format 与候选集都未声明)
+    // —— 面板据此把下拉画成虚线, 让用户知道"这条是自动判断的, 可改"。
     apiFormatInferred(m, prov) {
-      return !(m && m.api_format) && !(prov && prov.api_format);
-    },
-    // 多协议候选集开关 (勾选即把该协议加入/移出候选集).
-    //
-    // 规则与后端 providers.rs::pick_api_format 对应:
-    //  · 候选集只有 1 项 = 等价于单一协议 (向后兼容), 故允许;
-    //  · 候选集为空 → 清掉字段 (回到"未声明", 由 api_format / 推断决定), 而不是存个空数组;
-    //  · 顺序 = 优先级: 客户端入口协议不在候选集时用**第一项** —— 保持勾选先后可见.
-    toggleModelFormat(m, f) {
-      if (!m) return;
-      const cur = Array.isArray(m.api_formats) ? m.api_formats.slice() : [];
-      const i = cur.indexOf(f);
-      if (i >= 0) cur.splice(i, 1);
-      else cur.push(f);
-      m.api_formats = cur.length ? cur : null;
-      m._fmtTouched = true;
-      this.markDirty();
-    },
-    // 把「实测支持的协议」一键应用到该供应商的全部模型.
-    //
-    // 为什么需要: 探测结果是**服务方级**的 (探的是端点路径), 同一供应商下所有模型共享,
-    // 而 api_formats 是**模型级**字段 —— 逐个勾选纯属重复劳动。此按钮把实测值批量写入。
-    // 仅当实测 ≥2 个协议时才写入 (单个协议等价单协议, 无需 api_formats 字段)。
-    applyProbedToAll() {
-      const prov = this.drawerProv;
-      if (!prov) return;
-      const list = Array.isArray(prov.probed_protocols) ? prov.probed_protocols : [];
-      if (list.length < 2) {
-        toast(t('prov_proto_need_multi'), 'warn');
-        return;
-      }
-      let n = 0;
-      (prov.models || []).forEach(m => {
-        m.api_formats = list.slice();
-        m._fmtTouched = true;
-        n++;
-      });
-      this.markDirty();
-      toast(t('prov_proto_applied', n), 'success');
+      return !(m && m.api_format) && !(prov && prov.api_format) && !this.hasExplicitFormats(m);
     },
     async resetCircuit(provider) {
       try {

@@ -104,8 +104,15 @@
       if((prov.endpoint||'').toLowerCase().includes(q)) return true;
       return (prov.models||[]).some(m=>((m.model_id||'').toLowerCase().includes(q))||((m.upstream_model||'').toLowerCase().includes(q)));
     },
+    // 该供应商下模型**实际可用**的协议集合 (列表页绿色徽章的数据源).
+    // 用 availableApiFormats (探测能力 ∪ 配置/推断) 而非直读 m.api_format:
+    // 后者在「拉取模型」后多为空 (协议改由探测能力自动决定), 直读会一律显示 OpenAI 而与实际不符。
     provProtocols(prov){
-      const s=new Set((prov.models||[]).map(m=>(m.api_format||'')===''?'OpenAI':m.api_format));
+      const s=new Set();
+      (prov.models||[]).forEach(m=>{
+        const list=this.availableApiFormats(m,prov);
+        (list.length?list:['openai']).forEach(f=>s.add(t('fmt.'+f)));
+      });
       return [...s];
     },
     get visibleProviders(){
