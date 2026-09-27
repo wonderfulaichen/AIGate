@@ -1619,6 +1619,58 @@ mod changelog_tests {
             Some(env!("CARGO_PKG_VERSION"))
         );
     }
+
+    /// 门禁: 更新日志**只允许解析器认得的标记**。
+    ///
+    /// `parse_changelog` 只识别 `## [` / `### ` / `- ` 三种行, **其余整行丢弃**。因此
+    /// `####` 子标题、Markdown 表格、以及纯段落都会在关于页与「更新亮点」弹窗里凭空消失。
+    /// 实测本轮曾写出 5 个 `####` 子标题、3 个表格、5 个只有段落的小节 ——
+    /// 弹窗里对应标题与数据全没了, 而**没有任何报错**。此测试把这三类问题钉住。
+    #[test]
+    fn changelog_only_uses_parseable_markup() {
+        let mut problems: Vec<String> = Vec::new();
+        let mut version = String::new();
+        let mut section = String::new();
+        let mut items = 0usize;
+        for line in CHANGELOG.lines() {
+            let l = line.trim_end();
+            if l.starts_with("## ") {
+                if !section.is_empty() && items == 0 {
+                    problems.push(format!("[{version}] 小节「{section}」无 '- ' 条目 → 界面空白"));
+                }
+                version = l.trim_start_matches("## ").to_string();
+                section.clear();
+                items = 0;
+            } else if let Some(t) = l.strip_prefix("### ") {
+                if !section.is_empty() && items == 0 {
+                    problems.push(format!("[{version}] 小节「{section}」无 '- ' 条目 → 界面空白"));
+                }
+                section = t.trim().to_string();
+                items = 0;
+            } else if l.starts_with("#### ") {
+                problems.push(format!("[{version}] 出现 '#### ' 子标题, 解析器会整行丢弃: {l}"));
+            } else if re_is_table_sep(l) {
+                problems.push(format!("[{version}] 出现 Markdown 表格, 解析器会整行丢弃: {l}"));
+            } else if l.starts_with("- ") {
+                items += 1;
+            }
+        }
+        if !section.is_empty() && items == 0 {
+            problems.push(format!("[{version}] 小节「{section}」无 '- ' 条目 → 界面空白"));
+        }
+        assert!(
+            problems.is_empty(),
+            "更新日志含解析器看不见的标记:\n{}",
+            problems.join("\n")
+        );
+    }
+
+    /// 判据: `|---|---|` 这类表格分隔行 (允许空格与冒号).
+    fn re_is_table_sep(l: &str) -> bool {
+        let s = l.trim();
+        s.starts_with('|') && s.ends_with('|') && s.len() > 2
+            && s.chars().skip(1).take(s.len() - 2).all(|c| matches!(c, '-' | ':' | '|' | ' '))
+    }
 }
 
 /// GET /admin/api/tooltip-config — 返回当前 tooltip 配置.
