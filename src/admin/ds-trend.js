@@ -14,7 +14,7 @@
       const dates=[...new Map(trends.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
       if(!dates.length){this.modelTrendSvgHtml='';return;}
       // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
-      const W=900,H=280,left=52,right=18,top=18,bottom=36,pw=W-left-right,ph=H-top-bottom;
+      const W=900,H=320,left=56,right=20,top=22,bottom=40,pw=W-left-right,ph=H-top-bottom;
       const palette=CHART_PALETTE;
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
@@ -53,16 +53,15 @@
           const ptsStr=pts.map(p=>p[0]+','+p[1]).join(' ');
           const gid='tg'+si;
           // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性
-          const areaOp=keys.length<=2?.30:(keys.length<=3?.20:.13);
+          const areaOp=keys.length<=2?.22:(keys.length<=3?.13:.07);
           out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
             +'<stop offset="0" stop-color="'+color+'" stop-opacity="'+areaOp+'"/>'
             +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
           const areaD='M'+x(0)+','+(top+ph)+' L'+pts.map(p=>p[0]+','+p[1]).join(' L')+' L'+x(n-1)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
           out+='<polyline points="'+ptsStr+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-          // 只在桶数稀疏时画点: 密集时 120 个圆点会把曲线淹没成散点图,
-          // 密集情形交给悬停十字线 + 浮层 (本图已有)。
-          if(n<=12) vals.forEach((v,i)=>{if(!v)return;out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.2" fill="'+color+'" class="chart-dot"/>';});
+          // 不画静态圆点 (对齐 cc-switch: 其图表全程无 dot, 靠悬停 activeDot)。
+          // 点位由悬停十字线 + 浮层指示, 曲线本身保持干净。
         });
       }
       out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+(top+ph)+'" y2="'+(top+ph)+'" class="chart-base"/>';
@@ -73,7 +72,7 @@
     onTrendHover(ev) {
       const d=this.modelTrendData; if(!d||!d.dates||!d.dates.length) return;
       const el=ev.currentTarget; const r=el.getBoundingClientRect(); if(!r.width) return;
-      const W=900, left=52, right=18, pw=W-left-right, n=d.dates.length;
+      const W=900, left=56, right=20, pw=W-left-right, n=d.dates.length;
       const vbX=((ev.clientX-r.left)/r.width)*W;
       let i=n===1?0:Math.round((vbX-left)*(n-1)/pw);
       i=Math.max(0,Math.min(n-1,i));
