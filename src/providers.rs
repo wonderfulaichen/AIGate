@@ -533,33 +533,76 @@ pub fn normalize_format(name: &str) -> String {
     }
 }
 
-/// 探测某上游**实际支持哪些协议** (按端点路径逐个试打).
+/// **零成本协议推测** (探测前的前两层): 端点 URL 路径 → 内置 host 目录.
 ///
-/// 为什么需要探测: 协议既不在模型元信息里 (models.dev 的模型级字段只有 context/cost/
-/// modalities/reasoning 等, **没有协议**), 也不总是能从官方元数据推出来 ——
-/// 实测用户的 7 个供应商里 3 个 (commandcodeAI / ginka / arromega) **未被 models.dev 收录**;
-/// 即便收录 (如 deepseek 的 npm=@ai-sdk/openai-compatible) 也只反映"主协议",
-/// 而 DeepSeek 的 `/v1/responses` 实测同样可用。故"还支持哪些协议"只能问上游本身。
+/// 命中即返回**候选协议集**, `None` 表示两层都拿不到 (调用方走探测兜底)。
 ///
-/// `model_hint`: 探测用的模型名 —— 优先传该上游**真实存在的模型**(如刚拉取到的第一个),
-/// 而不是占位符: 部分上游的 WAF 会拦"不存在的模型"这类可疑请求 (实测 ginka 用占位名
-/// 三个端点全 403 Cloudflare 1010), 用真名可显著提高探测成功率。
+/// 层次与依据:
+/// 1. **URL 路径**: 不少供应商把协议写在路径里 —— 参考项目 cc-switch 的预置条目正是如此
+///    (`https://api.minimaxi.io/anthropic/v1`、`https://api.tbox.cn/api/llm/v1/chat/completions`)。
+///    实测覆盖率不高 (models.dev 197 个端点里仅 5.6% 带信号, 多数只是裸 `/v1`), 但零成本且准确。
+/// 2. **内置 host 目录** ([`crate::provider_catalog`]): 按**服务方 host** 查表, 实测覆盖 92%。
+///    必须是按服务方而非模型 —— 同名模型跨服务方协议会不同 (见 [`probe_protocols`] 文档)。
 ///
-/// 判据 (实测标定):
-/// - **2xx / 400 / 402 / 429 → 支持**: 请求已通过路由, 返回的是业务层错误 (参数不合法 /
-///   余额不足 / 限流)。实测 DeepSeek 余额不足时两个端点都返 402 而非 404, 证明路径存在。
-/// - **404 / 405 / 501 → 不支持**: 路径不存在。
-/// - **401 / 403 → 无法判断**(不据此断言不支持): 可能是 key 问题或反爬拦截。
+/// 注意: 这里返回的是"**已知支持**"的协议集, 不像探测能发现"还支持哪些"。
+/// 例如 deepseek 在目录里记为 openai, 但它实际也支持 responses —— 这类多协议信息
+/// 只有探测能拿到。故调用方应把本函数结果当作**快速路径**, 需要"完整清单"时仍用探测。
+pub fn free_protocol_guess(provider: &ProviderConfig) -> Option<Vec<String>> {
+    let ep = provider.endpoint.trim_end_matches('/');
+    let lower = ep.to_ascii_lowercase();
+
+    // ① URL 路径信号 (顺序即优先级: 具体段优先)
+    //
+    // ⚠️ 只认**有区分度**的路径段: `anthropic` / `responses` 段意味着服务方明确以该协议对外。
+    // **不能把 `chat` / `completions` 当信号** —— `/v1/chat/completions` 是所有 OpenAI 兼容
+    // 端点的默认路径, 几乎每个网关都这么写 (含各类中转), 认它会让第一层"总是命中",
+    // 目录与探测永远走不到 (此前的实现即踩了这个坑, 由单测 `free_guess_returns_none_when_unknown` 抓出)。
+    // 反过来: **裸 `/v1` 不带任何协议段时, 恰恰说明"没拿到信号", 应交给目录/探测判断**。
+    for seg in lower.split('/') {
+        match seg {
+            "anthropic" | "messages" => return Some(vec!["anthropic".to_string()]),
+            "responses" => return Some(vec!["responses".to_string()]),
+            _ => {}
+        }
+    }
+
+    // ② 内置 host 目录 (按服务方)
+    //    用 reqwest 的 Url 解析而非字符串切分: 免去 userinfo/端口/查询串的手工处理。
+    let host = reqwest::Url::parse(ep)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_default();
+    if let Some(proto) = crate::provider_catalog::protocol_for_host(&host) {
+        return Some(vec![proto.to_string()]);
+    }
+    None
+}
+
+/// 探测某上游**实际支持哪些协议** —— 用 HEAD 请求判定端点路径是否存在.
 ///
-/// 请求体用最小成本形态 (`max_tokens=1` / `max_output_tokens=16`, 单词 prompt),
-/// 三个端点各一次; 失败不影响调用方 (探测是附加信息, 拿不到就留空由用户手配)。
+/// **零 token 成本**: 早期实现用 `POST + max_tokens=1` 探测, 虽小但仍会生成 token;
+/// 对贵模型或按 output 计费的推理模型并不划算。改用 **HEAD**(无请求体 → 不触发生成),
+/// 判据同样成立 —— 实测 DeepSeek: `/chat/completions` 与 `/responses` 返 **405**
+/// (Method Not Allowed, 说明路径存在) 而 `/messages` 返 **404** (不存在)。
+///
+/// 判据:
+/// - **404 / 501 → 不存在**
+/// - **405 / 400 / 401 / 403 / 415 / 422 / 429 / 2xx → 存在**(只是不接受 HEAD 或参数不合)
+/// - **对照探针**: 若一个必定不存在的路径也返"存在类"状态 (部分网关对所有路径都返
+///   401/403), 则该站不可判别 → 返回空 (不猜), 由用户手配。
+///
+/// 为什么需要探测: 协议**不在模型元信息里** (models.dev 模型级字段只有 context/cost/
+/// modalities/reasoning; 且实测同名模型跨服务方协议会不同 —— claude-opus-4-8 在 anthropic
+/// 官方走 anthropic 协议、在 302ai 等转售商走 openai 协议, 即协议取决于**谁在提供服务**)。
+/// 故只能按服务方判断: 先查内置目录 (见 [`crate::provider_catalog`]), 查不到才探测。
+///
+/// 部分网关的 WAF 会拦可疑请求 —— 带上真实 key 与 provider.headers 可显著提高成功率。
 pub async fn probe_protocols(
     client: &Client,
     provider: &ProviderConfig,
     key: &str,
-    model_hint: Option<&str>,
+    _model_hint: Option<&str>,
 ) -> Vec<String> {
-    let model = model_hint.unwrap_or("probe");
     let ep = provider.endpoint.trim_end_matches('/');
     let base = {
         let mut b = ep.to_string();
@@ -571,54 +614,70 @@ pub async fn probe_protocols(
         }
         b
     };
-    // 每个协议用各自形态的最小请求 (字段名不同: chat 用 messages/max_tokens,
-    // responses 用 input/max_output_tokens, anthropic 用 messages/max_tokens + 版本头)。
-    let candidates: [(&str, String, serde_json::Value, bool); 3] = [
-        (
-            "openai",
-            format!("{base}/chat/completions"),
-            serde_json::json!({"model": model, "max_tokens": 1,
-                "messages":[{"role":"user","content":"hi"}]}),
-            false,
-        ),
-        (
-            "anthropic",
-            format!("{base}/messages"),
-            serde_json::json!({"model": model, "max_tokens": 1,
-                "messages":[{"role":"user","content":"hi"}]}),
-            true,   // 需要 anthropic-version 头
-        ),
-        (
-            "responses",
-            format!("{base}/responses"),
-            serde_json::json!({"model": model, "max_output_tokens": 16, "input": "hi"}),
-            false,
-        ),
-    ];
 
-    let mut found: Vec<String> = Vec::new();
-    for (proto, url, body, needs_ver) in candidates {
-        let mut req = client.post(&url).json(&body);
-        if !key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {key}"));
-        }
-        if needs_ver {
-            req = req.header("anthropic-version", "2023-06-01");
-        }
-        if let Some(headers) = &provider.headers {
-            for (k, v) in headers {
-                req = req.header(k, v);
+    // 单次 HEAD (个别网关不支持 HEAD → 回退 GET, 同样无请求体、不生成 token)
+    async fn hit(
+        client: &Client,
+        provider: &ProviderConfig,
+        key: &str,
+        url: &str,
+    ) -> Option<u16> {
+        for method in [reqwest::Method::HEAD, reqwest::Method::GET] {
+            let mut req = client.request(method.clone(), url);
+            if !key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {key}"));
             }
-        }
-        match req.timeout(Duration::from_secs(20)).send().await {
-            Ok(resp) => {
-                let code = resp.status().as_u16();
-                // 见函数头判据: 业务层错误也算"路径存在"
-                if (200..300).contains(&code) || matches!(code, 400 | 402 | 429) {
-                    found.push(proto.to_string());
+            // Anthropic 端点要求版本头
+            req = req.header("anthropic-version", "2023-06-01");
+            if let Some(headers) = &provider.headers {
+                for (k, v) in headers {
+                    req = req.header(k, v);
                 }
             }
-            Err(_) => { /* 网络错误/超时: 本次探测不到, 不记 */ }
+            if let Ok(resp) = req.timeout(Duration::from_secs(20)).send().await {
+                let code = resp.status().as_u16();
+                // HEAD 被 405 拒绝时用 GET 复验一次 (405 本身已说明路径存在, 但 GET 能拿到更准的状态)
+                if method == reqwest::Method::HEAD && code == 405 {
+                    continue;
+                }
+                return Some(code);
+            }
+            // 网络错误: 换方法再试一次
+        }
+        None
+    }
+
+    let exists = |code: u16| -> bool {
+        // 404/501 = 路径不存在; 其余 (含 405 方法不允许) 都说明路由已匹配到该路径
+        !matches!(code, 404 | 501)
+    };
+
+    // ── 对照探针: 探一个必定不存在的路径 ──
+    // 部分网关对所有路径都返 401/403 (统一鉴权/反爬), 此时逐路径探测毫无判别力。
+    // 先探这个"哨兵": 若连它都算"存在", 说明该站不可判 → 直接返回空, 不给假结果。
+    let sentinel = hit(
+        client,
+        provider,
+        key,
+        &format!("{base}/aigate-probe-nonexistent-9f3c"),
+    )
+    .await;
+    if let Some(c) = sentinel {
+        if exists(c) {
+            return Vec::new(); // 不可判别: 该站对所有路径状态一致
+        }
+    }
+
+    let mut found: Vec<String> = Vec::new();
+    for (proto, path) in [
+        ("openai", "/chat/completions"),
+        ("anthropic", "/messages"),
+        ("responses", "/responses"),
+    ] {
+        if let Some(code) = hit(client, provider, key, &format!("{base}{path}")).await {
+            if exists(code) {
+                found.push(proto.to_string());
+            }
         }
     }
     found
@@ -1140,5 +1199,106 @@ mod tests {
         assert_eq!(normalize_format("openai"), "openai");
         // 未知值原样返回 (不猜)
         assert_eq!(normalize_format("gemini"), "gemini");
+    }
+
+    fn prov_ep(name: &str, ep: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            endpoint: ep.into(),
+            api_key_env: "K".into(),
+            api_key_default: None,
+            balance_endpoint: None,
+            headers: None,
+            api_format: None,
+            prompt_cache: None,
+            endpoint_anthropic: None,
+            endpoint_responses: None,
+            openai_cache_control: None,
+            max_request_body_bytes: None,
+            models: HashMap::new(),
+        }
+    }
+
+    /// 第一层: URL 路径含**有区分度**的协议段 → 零成本直接读出
+    /// (对应参考项目 preset 里 `https://api.minimaxi.io/anthropic/v1` 这类写法)。
+    ///
+    /// 关键: `/v1/chat/completions` 是所有 OpenAI 兼容端点的默认路径, **不是协议信号**
+    /// —— 若当信号会"总是命中", 目录与探测永远走不到。此断言固化这一点。
+    #[test]
+    fn free_guess_from_url_path() {
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://api.minimax.io/anthropic/v1/chat/completions")),
+            Some(vec!["anthropic".to_string()]),
+            "/anthropic/ 段应优先"
+        );
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://gw.example.com/v1/responses")),
+            Some(vec!["responses".to_string()])
+        );
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://gw.example.com/v1/messages")),
+            Some(vec!["anthropic".to_string()])
+        );
+        // 裸 chat/completions **不是**信号 → 落到后续层 (此处 host 未知故为 None)
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://gw.example.com/v1/chat/completions")),
+            None,
+            "/v1/chat/completions 是通用路径, 不得当协议信号"
+        );
+        // 不应因路径里出现子串而误判 (按整段匹配)
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://gw.example.com/not-anthropic-x/v1")),
+            None,
+            "'not-anthropic-x' 不是 anthropic 段"
+        );
+    }
+
+    /// 第二层: 裸 /v1 端点走内置 host 目录 (覆盖多数常见服务方, 零请求)。
+    #[test]
+    fn free_guess_from_builtin_catalog() {
+        // 目录命中: 裸 /v1 无路径信号, 靠 host 查表
+        assert_eq!(
+            free_protocol_guess(&prov_ep("deepseek", "https://api.deepseek.com/v1/chat/completions")),
+            Some(vec!["openai".to_string()])
+        );
+        // 子域剥离: 目录里是 openrouter.ai, 用户填 www.openrouter.ai 也应命中
+        assert_eq!(
+            free_protocol_guess(&prov_ep("or", "https://www.openrouter.ai/api/v1")),
+            Some(vec!["openai".to_string()]),
+            "应逐级剥子域命中"
+        );
+    }
+
+    /// 第三层: 两层都拿不到 → 返回 None, 调用方走探测 (HEAD, 零 token)。
+    /// 这正是未收录的小众中转的情形 (实测用户的 ginka / commandcodeAI)。
+    #[test]
+    fn free_guess_returns_none_when_unknown() {
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://api.ginka.cloud/v1/chat/completions")),
+            None
+        );
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "https://cpa.arromega.org/v1/chat/completions")),
+            None
+        );
+        // 自建内网网关同样落到探测
+        assert_eq!(
+            free_protocol_guess(&prov_ep("x", "http://192.168.1.10:8000/v1/chat/completions")),
+            None
+        );
+    }
+
+    /// 目录查询本身: 后缀匹配 + 逐级剥子域。
+    #[test]
+    fn catalog_lookup_by_host_suffix() {
+        use crate::provider_catalog::protocol_for_host;
+        assert_eq!(protocol_for_host("api.deepseek.com"), Some("openai"));
+        assert_eq!(protocol_for_host("deepseek.com"), Some("openai"));
+        assert_eq!(protocol_for_host("API.DeepSeek.com"), Some("openai"), "大小写不敏感");
+        assert_eq!(protocol_for_host("api.deepseek.com."), Some("openai"), "容忍尾点");
+        assert_eq!(protocol_for_host("unknown-vendor.example"), None);
+        assert_eq!(protocol_for_host(""), None);
+        // 不应把无关域名的后缀当命中: 目录里若有 "com" 之外的通用段会误判, 这里确认无此问题
+        assert_eq!(protocol_for_host("com"), None);
     }
 }

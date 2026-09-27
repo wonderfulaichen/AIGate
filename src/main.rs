@@ -56,6 +56,7 @@ mod proxy_cfg;
 mod seen_version;
 mod model_meta;
 mod recall;
+mod provider_catalog;
 
 use admin::compute_realtime_stats_sync;
 

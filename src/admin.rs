@@ -1211,30 +1211,28 @@ pub async fn api_providers_fetch_models(
         (provider, key)
     };
 
-    // 2) 向上游拉取模型 (用真实 key 鉴权) + **并行探测该上游支持哪些协议**.
+    // 2) 向上游拉取模型 (用真实 key 鉴权) + 并行的协议解析.
     //
-    // 为什么要探测: 协议既不在模型元信息里 (models.dev 模型级字段无协议), 也不能只靠官方元数据
-    // 推断 (实测用户 7 个供应商中 3 个未被收录; 且即便收录也只反映主协议, 而 DeepSeek 官方
-    // 的 /v1/responses 实测同样可用)。拉取模型本来就在打上游, 顺带探测零额外操作。
-    // 探测失败不影响拉取 (是附加信息)。
+    // 协议解析**分三层, 逐层降级** (前两层零成本, 第三层 HEAD 探测也零 token):
+    //   ① 端点 URL 路径    —— 如 `/anthropic/v1`、`/responses` 直接读出 (实测覆盖 5.6%)
+    //   ② 内置 host 目录   —— src/provider_catalog.rs, 按服务方 host 查 (实测覆盖 92%)
+    //   ③ HEAD 探测兜底    —— 任意未收录网关, 用 HEAD 判路径存在性, **不生成 token**
+    // 为什么要按"服务方"而不是"模型"判断协议: 实测同名模型跨服务方协议会不同
+    // (claude-opus-4-8 在 anthropic 官方走 anthropic、在 302ai 等转售商走 openai),
+    // 即协议取决于**谁在提供服务**。故三层都围绕"服务方"展开。
     let (ids, probed) = tokio::join!(
         crate::providers::fetch_models_from_upstream(&state.client, &provider, &key),
-        crate::providers::probe_protocols(&state.client, &provider, &key, None),
+        async {
+            // 前两层免费: 命中即返回, 不发任何探测请求
+            if let Some(free) = crate::providers::free_protocol_guess(&provider) {
+                return free;
+            }
+            crate::providers::probe_protocols(&state.client, &provider, &key, None).await
+        },
     );
     let ids = match ids {
         Ok(ids) => ids,
         Err(e) => return Json(serde_json::json!({ "error": e })),
-    };
-
-    // 拿到模型清单后**再补一次探测**: 用该上游真实存在的模型名 (而非占位符) 重试。
-    // 原因: 部分上游的 WAF 会拦"不存在的模型"这类请求 (实测 ginka 用占位名三个端点全
-    // 403 Cloudflare 1010), 用真名可显著提高探测成功率。仅在首轮探测为空时才重试,
-    // 避免正常情况多打一轮请求。
-    let probed = if probed.is_empty() {
-        let hint = ids.first().map(|s| s.as_str());
-        crate::providers::probe_protocols(&state.client, &provider, &key, hint).await
-    } else {
-        probed
     };
 
     // 3) 合并进内存注册表 (新增未存在的, 跳过已有) + 计算已下架.
