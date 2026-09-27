@@ -1,0 +1,70 @@
+<div class="price-panel-bk" x-show="pricePanelModel" x-cloak @click="closePricePanel()"></div>
+<div class="price-panel" x-show="pricePanelModel" x-cloak>
+  <div class="dr-h">
+    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>
+      <span class="txsm fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pricePanelModel?(pricePanelModel.upstream_model||pricePanelModel.model_id):''"></span>
+    </div>
+    <button class="btn btn-g" @click="closePricePanel()" style="padding:4px 8px;flex-shrink:0" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
+  </div>
+  <div class="dr-body" style="display:flex;flex-direction:column;gap:12px;padding:16px 20px">
+    <table style="width:100%;border-collapse:collapse;font-size:var(--fs-12)">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px"></th>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px" x-text="t('price_col_offpeak')"></th>
+          <th style="text-align:left;font-weight:400;color:var(--muted);padding:0 0 6px" x-text="t('price_col_peak')"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_cache_hit')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.cache_read_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.cache_read_per_m"></td>
+        </tr>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_cache_miss')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.input_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.input_per_m"></td>
+        </tr>
+        <tr>
+          <td style="padding:4px 8px 4px 0;color:var(--fg);white-space:nowrap" x-text="t('price_row_output')"></td>
+          <td style="padding:4px 6px 4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.output_per_m_offpeak"></td>
+          <td style="padding:4px 0"><input type="number" step="0.01" min="0" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model.number="pricePanel.output_per_m"></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="border-top:1px solid var(--border);padding-top:10px">
+      <div class="f-row"><label x-text="t('price_row_cache_write')"></label><input type="number" step="0.01" min="0" class="inp mono" style="width:110px" x-model.number="pricePanel.cache_creation_per_m"></div>
+    </div>
+    <div x-show="refPriceRows().length" style="border-top:1px solid var(--border);padding-top:10px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <span class="txs fw6" style="color:var(--muted)" x-text="t('ref_price_title')"></span>
+        <span class="bdg bdg-g" style="font-size:var(--fs-9)" x-text="t('ref_price_source')+' / '+((refCostFor(pricePanelModel)||{}).provider||'')"></span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:var(--fs-11)">
+        <tbody>
+          <template x-for="r in refPriceRows()" :key="r.label">
+            <tr>
+              <td style="padding:2px 8px 2px 0;color:var(--muted);white-space:nowrap" x-text="r.label"></td>
+              <td class="mono" style="padding:2px 0;color:var(--fg)" x-text="r.value"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div class="txs tm" style="margin-top:6px;line-height:1.5" x-text="t('ref_price_note').replace('{0}', Number((currencyConfig.rates||{}).USD)||0)"></div>
+    </div>
+    <p class="txs tm" style="color:var(--muted)" x-text="t('price_hint')"></p>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:10px">
+      <button class="btn btn-g" style="font-size:var(--fs-11)" @click="copyPriceFromPanel()" x-text="t('price_copy')"></button>
+      <button class="btn btn-g" style="font-size:var(--fs-11)" :disabled="!priceClipboardSet" @click="pastePriceToPanel()" x-text="t('price_paste')"></button>
+      <span class="txs" x-show="priceClipMsg" style="color:var(--ok)" x-text="priceClipMsg"></span>
+    </div>
+  </div>
+  <div class="dr-foot" style="border-top:1px solid var(--border)">
+    <button class="btn btn-g" style="color:var(--err)" @click="clearPricePanel()" x-text="t('price_clear')"></button>
+    <button class="btn btn-g" @click="closePricePanel()" x-text="t('cancel')"></button>
+    <button class="btn btn-p" @click="savePricePanel()" x-text="t('save')"></button>
+  </div>
+</div>
+<script>

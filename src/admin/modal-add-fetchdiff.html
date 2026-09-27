@@ -1,0 +1,50 @@
+<div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
+<!-- 拉取模型差异结果: 新增(可勾选)/已存在/下架 三 Tab + 前缀分组全选 + 选择汇总 -->
+<div x-show="showFetchDiff && fetchDiff" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true"><div class="modal-card modal-card-add" style="max-width:660px">
+  <div class="modal-head"><div><div class="modal-title" x-text="t('fd_title')"></div><div class="txs tm" style="margin-top:2px" x-text="fetchDiff?fetchDiff.message:''"></div></div></div>
+  <div class="modal-body">
+    <div class="seg" style="margin-bottom:10px">
+      <span class="seg-i" :class="{'a':fetchDiffTab==='new'}" @click="fetchDiffTab='new'" x-text="t('fd_tab_new')+' ('+(fetchDiff?fetchDiff.added.length:0)+')'"></span>
+      <span class="seg-i" :class="{'a':fetchDiffTab==='existing'}" @click="fetchDiffTab='existing'" x-text="t('fd_tab_existing')+' ('+(fetchDiff?fetchDiff.existing.length:0)+')'"></span>
+      <span class="seg-i" :class="{'a':fetchDiffTab==='removed'}" @click="fetchDiffTab='removed'" x-text="t('fd_tab_removed')+' ('+(fetchDiff?fetchDiff.removed.length:0)+')'"></span>
+    </div>
+    <div class="txs tm" style="margin-bottom:8px" x-text="t('fd_hint')"></div>
+    <template x-if="fetchDiffTab==='new'">
+      <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto">
+        <template x-for="g in fetchDiffGroups()" :key="g.prefix">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 2px">
+              <input type="checkbox" class="chkbox" :checked="g.items.every(it=>fetchDiffSel[it.model_id])" @change="fetchDiffGroupAll(g.prefix,$event.target.checked)">
+              <span class="txsm fw6" x-text="g.prefix"></span><span class="txs tm" x-text="'· '+g.items.length"></span>
+            </div>
+            <template x-for="it in g.items" :key="it.model_id">
+              <label style="display:flex;align-items:center;gap:8px;padding:4px 8px 4px 26px;cursor:pointer">
+                <input type="checkbox" class="chkbox" x-model="fetchDiffSel[it.model_id]">
+                <span class="mono txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="it.model_id" x-text="it.model_id"></span>
+                <span class="txs tm" style="flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="it.upstream_model"></span>
+              </label>
+            </template>
+          </div>
+        </template>
+        <template x-if="!fetchDiffGroups().length"><div class="txs tm" style="padding:12px 4px" x-text="t('no_data')"></div></template>
+      </div>
+    </template>
+    <template x-if="fetchDiffTab==='existing'">
+      <div style="max-height:320px;overflow:auto">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('fd_existing_note',(fetchDiff?fetchDiff.existing.length:0))"></div>
+        <template x-for="id in (fetchDiff?fetchDiff.existing:[])" :key="'e'+id"><div class="mono txs tm" style="padding:3px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="id" x-text="id"></div></template>
+      </div>
+    </template>
+    <template x-if="fetchDiffTab==='removed'">
+      <div style="max-height:320px;overflow:auto">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('fd_removed_note',(fetchDiff?fetchDiff.removed.length:0))"></div>
+        <template x-for="id in (fetchDiff?fetchDiff.removed:[])" :key="'r'+id"><div class="mono txs" style="padding:3px 8px;color:var(--err);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="id" x-text="id"></div></template>
+      </div>
+    </template>
+  </div>
+  <div class="modal-foot">
+    <span class="txs tm" style="margin-right:auto" x-text="t('fd_summary',fetchDiffSelCount(),fetchDiff?fetchDiff.added.length:0)"></span>
+    <button class="btn btn-g" @click="cancelFetchDiff()" x-text="t('cancel')"></button>
+    <button class="btn btn-p" @click="applyFetchDiff()" x-text="t('fd_apply')"></button>
+  </div>
+</div></div>

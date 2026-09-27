@@ -658,7 +658,52 @@ pub async fn admin_static(Path(file): Path<String>) -> impl IntoResponse {
 }
 
 /// 管理面板前端页面 (编译时嵌入).
-const ADMIN_HTML: &str = include_str!("admin.html");
+///
+/// 由 `src/admin/` 下 37 个切片按固定顺序 `concat!` 拼回单串 —— 拼接结果与拆分前的
+/// 单文件 admin.html **字节级一致** (顺序与切片定义见 `.openbitfun/tmp/split_manifest.json`,
+/// 拆分器 `.openbitfun/tmp/do_split.py` 亦做拼接==原文件断言).
+/// 结构: head/CSS(3 层) → body(壳+6 页签+页脚+模态+抽屉+价格面板) → JS(i18n/stores/core
+/// → dashboard() 以逗号切分为 17 个 ds-*.js 方法组) → tail.
+/// 改前端按文件编辑; 严禁调整 include 顺序 (顺序即字节序, 即行为).
+const ADMIN_HTML: &str = concat!(
+    include_str!("admin/head.html"),
+    include_str!("admin/base.css"),
+    include_str!("admin/components.css"),
+    include_str!("admin/pages.css"),
+    include_str!("admin/body-shell.html"),
+    include_str!("admin/page-overview.html"),
+    include_str!("admin/page-analytics.html"),
+    include_str!("admin/page-records.html"),
+    include_str!("admin/page-settings.html"),
+    include_str!("admin/page-providers.html"),
+    include_str!("admin/page-about.html"),
+    include_str!("admin/footer.html"),
+    include_str!("admin/modal-whatsnew-recall.html"),
+    include_str!("admin/modal-add-fetchdiff.html"),
+    include_str!("admin/drawer-provider.html"),
+    include_str!("admin/panel-price.html"),
+    include_str!("admin/i18n.js"),
+    include_str!("admin/stores.js"),
+    include_str!("admin/core.js"),
+    include_str!("admin/ds-state.js"),
+    include_str!("admin/ds-onboard.js"),
+    include_str!("admin/ds-core.js"),
+    include_str!("admin/ds-brands.js"),
+    include_str!("admin/ds-settings-api.js"),
+    include_str!("admin/ds-meta.js"),
+    include_str!("admin/ds-stats.js"),
+    include_str!("admin/ds-trend.js"),
+    include_str!("admin/ds-config.js"),
+    include_str!("admin/ds-providers.js"),
+    include_str!("admin/ds-price.js"),
+    include_str!("admin/ds-provform.js"),
+    include_str!("admin/ds-provtest.js"),
+    include_str!("admin/ds-provsave.js"),
+    include_str!("admin/ds-computed.js"),
+    include_str!("admin/ds-records.js"),
+    include_str!("admin/ds-fmt.js"),
+    include_str!("admin/tail.html"),
+);
 /// 更新日志 (Keep a Changelog 风格), 烤入二进制供关于页展示.
 const CHANGELOG: &str = include_str!("../CHANGELOG.md");
 /// Alpine.js (随包内联, 替代 cdn.jsdelivr.net) — 面板渲染引擎, 缺失会导致整页不渲染(黑屏).

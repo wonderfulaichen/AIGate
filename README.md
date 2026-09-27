@@ -429,7 +429,7 @@ OpenAI Responses API 格式入口（Codex 等客户端可直接接入）。上�
 
 ```
 AIGate/
-├── build.rs                  # 构建脚本：生成 ICO 图标并嵌入 exe
+├── build.rs                  # 构建脚本：生成 ICO 图标并嵌入 exe + i18n 中英双表编译期门禁
 ├── Cargo.toml                # 项目元数据与依赖
 ├── .env.example              # 环境变量模板
 ├── .gitignore                # Git 忽略规则
@@ -456,7 +456,10 @@ AIGate/
 │   ├── keys.rs               # Key 管理：环境变量 + 运行时面板编辑
 │   ├── store.rs              # 日志持久化：JSON Lines 文件写入（5000 条滚动窗口）
 │   ├── admin.rs              # 管理后端：请求日志缓冲区 + 统计 API + 管理面板路由
-│   ├── admin.html            # 管理前端：单页应用（Tailwind + Alpine.js）
+│   ├── admin/                # 管理前端切片（单页应用，Tailwind + Alpine.js），由 admin.rs
+│   │                          #   以 concat!(include_str!(...)) 按序拼回单串编译进二进制：
+│   │                          #   head + 3 层 CSS + 6 页签模板 + 模态/抽屉 + i18n/stores/core
+│   │                          #   + dashboard() 方法组（ds-*.js）+ tail；顺序即字节序，严禁调整
 │   ├── admin_static/         # 前端依赖（Tailwind / Alpine，编译后内联进二进制）
 │   ├── i18n.rs               # 双语 i18n 框架：文案族 / 消息格式化（中英）
 │   ├── lang.rs               # 语言偏好持久化（config/lang.json）
@@ -488,7 +491,7 @@ main.rs
   │   ├── thinking.rs         ← thinking 整流
   │   └── admin.rs
   ├── admin.rs         ← 管理面板 API
-  │   ├── admin.html   ← 前端页面（编译后嵌入）
+  │   ├── admin/       ← 前端切片（concat! 按序拼回单串，编译后嵌入）
   │   └── store.rs
   ├── keys.rs
   └── store.rs

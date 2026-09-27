@@ -1,0 +1,98 @@
+<div x-show="activeTab==='providers'" class="page-enter page-wide">
+<div class="phd">
+  <div><h1 class="pt" x-text="t('provider_config')"></h1><p class="ps" x-text="t('plaza_summary',(providersFormData?providersFormData.length:0),totalModelCount())"></p></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <template x-if="isDirty"><span class="dirty">● <span x-text="t('unsaved_changes')"></span></span></template>
+    <button class="btn btn-g" @click="loadProvidersForm()" x-text="t('refresh')"></button>
+    <button class="btn btn-p" :disabled="!isDirty||_saving" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
+    <button class="btn btn-p" @click="showAddProvider=true" x-text="t('add')"></button>
+  </div>
+</div>
+<div class="pnl mb3"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 16px">
+  <input type="text" class="inp" style="width:230px" x-model="provSearch" :placeholder="t('plaza_search_ph')">
+  <span class="txs tm" x-text="(providersFormData||[]).length+' '+t('unit_providers')+' · '+(providersFormData||[]).reduce((s,p)=>s+(p.models||[]).length,0)+' '+t('unit_models')"></span>
+  <span style="margin-left:auto" class="txs tm" x-text="t('plaza_showing')+' '+visibleProviders.length+' / '+(providersFormData?providersFormData.length:0)"></span>
+  <div class="seg"><span class="seg-i" :class="{'a':provViewMode==='table'}" @click="provViewMode='table'" x-text="t('plaza_view_table')"></span><span class="seg-i" :class="{'a':provViewMode==='card'}" @click="provViewMode='card'" x-text="t('plaza_view_card')"></span></div>
+</div></div>
+<template x-if="visibleProviders.length===0 && providersFormData!==null && (providersFormData||[]).length===0"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_prov_title')"></h2><p class="empty-d" x-text="t('empty_prov_desc')"></p><button class="btn btn-p" @click="showAddProvider=true" x-text="t('empty_prov_cta')"></button></div></div></template>
+<template x-if="visibleProviders.length===0 && (providersFormData||[]).length>0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:var(--fs-11)" @click="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
+<template x-if="provViewMode==='table' && visibleProviders.length>0"><div class="pnl"><div style="overflow-x:auto">
+<table><thead><tr>
+<th style="width:5%"></th>
+<th x-text="t('provider_name')"></th>
+<th x-text="t('provider_status')"></th>
+<th x-text="t('latency')"></th>
+<th x-text="t('circuit')"></th>
+<th x-text="t('key_label')"></th>
+<th x-text="t('unit_models')"></th>
+<th style="text-align:right" x-text="t('actions')"></th>
+</tr></thead>
+<tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
+  <td><div style="width:28px;height:28px;border-radius:6px;overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
+  <td><div class="txsm fw6" x-text="prov.name"></div><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
+  <td>
+    <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span class="bdg" :class="prov._testResult.success?'bdg-s':'bdg-e'" x-text="prov._testResult.success?t('health_ok'):t('health_err')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span class="txs tm" x-text="t('health_na')"></span></template>
+    <template x-if="prov._testResult && !prov._testResult.success">
+      <div style="margin-top:4px;max-width:210px">
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <template x-if="prov._errOpen">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+            <div x-text="prov._testResult.status"></div>
+            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
+  </td>
+  <td class="txs tm mono"><template x-if="health.find(h => h.provider === prov.name)"><span x-text="fmtMs(health.find(h => h.provider === prov.name).latency_ms)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span x-text="fmtMs(prov._testResult.latency_ms||0)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span x-text="t('health_na')"></span></template></td>
+  <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).circuit==='closed'?'bdg-s':health.find(h=>h.provider===prov.name).circuit==='half-open'?'bdg-w':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
+  <td><span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span></td>
+  <td>
+    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+      <span class="mono txsm" x-text="(prov.models||[]).length"></span>
+      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
+      <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+    </div>
+  </td>
+  <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
+    <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))" :title="t('delete')" :aria-label="t('delete')">✕</button>
+  </div></td>
+</tr></template></tbody></table>
+</div></div></template>
+<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
+  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card">
+    <div class="plaza-ch"><div class="plaza-ic" x-html="providerLogo(prov.name)"></div><div style="min-width:0"><div class="plaza-nm" x-text="prov.name"></div><div class="plaza-ep" x-text="prov.endpoint"></div></div></div>
+    <div class="plaza-ft">
+      <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
+      <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):t('health_na')"></span>
+      <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
+      <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
+      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
+      <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span x-text="t('fetch_models')"></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
+      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err);margin-left:auto" @click="deleteProvider(providersFormData.indexOf(prov))" x-text="t('delete')"></button>
+    </div>
+    <template x-if="prov._testResult && !prov._testResult.success">
+      <div style="margin-top:6px">
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <template x-if="prov._errOpen">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+            <div x-text="prov._testResult.status"></div>
+            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div></template>
+  </div></template>
+</div>

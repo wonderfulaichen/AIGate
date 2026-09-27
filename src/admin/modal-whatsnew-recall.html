@@ -1,0 +1,38 @@
+<div x-show="showWhatsNew" x-cloak class="modal-overlay" role="dialog" aria-modal="true" @click.self="dismissWhatsNew()" @keydown.escape.window="dismissWhatsNew()"><div class="modal-card modal-card-sm"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('whats_new')"></span><span class="txs mono tm" x-text="whatsNewEntry?(whatsNewEntry.version+(whatsNewEntry.date?' · '+whatsNewEntry.date:'')):''"></span></div><div class="modal-title" x-text="t('whats_new_title')"></div></div><div class="modal-body"><template x-if="whatsNewEntry"><div style="display:flex;flex-direction:column;gap:12px;padding:8px 0"><template x-for="sec in whatsNewEntry.sections" :key="sec.title"><div><div class="txs fw7" style="color:var(--indigo);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px" x-text="sec.title"></div><template x-for="item in sec.items" :key="item"><div class="txs" style="color:var(--fg);padding:2px 0">▸ <span x-html="renderMdInline(item)"></span></div></template></div></template></div></template></div><div class="modal-foot"><button class="btn btn-p" @click="dismissWhatsNew()" x-text="t('got_it')"></button></div></div></div>
+<div x-show="showRecall" x-cloak class="modal-overlay modal-overlay-lg" role="dialog" aria-modal="true" @click.self="closeRecallPanel()" @keydown.escape.window="closeRecallPanel()"><div class="modal-card" style="max-width:780px"><div class="modal-head"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="bdg bdg-p" x-text="t('recall_view')"></span><span class="txs tm" x-text="t('recall_stat_entries')+' '+recall.entries"></span></div><div class="modal-title" x-text="t('recall_panel_title')"></div></div><div class="modal-body">
+  <template x-if="recallDetail">
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <span class="bdg bdg-g" x-text="t('recall_kind_'+(recallDetail.entry.kind||''))"></span>
+        <span class="txs mono tm" x-text="recallDetail.entry.id"></span>
+        <span class="txs tm" x-text="fmtBytes(recallDetail.entry.bytes)"></span>
+        <span class="txs tm" x-text="fmtTime(recallDetail.entry.ts)"></span>
+        <span class="txs tm" x-show="recallDetail.entry.model" x-text="'· '+(recallDetail.entry.model||'')"></span>
+        <button class="btn btn-g" style="font-size:var(--fs-11);margin-left:auto" @click="copyRecallContent()" x-text="recallCopied?'✓':'⧉'"></button>
+      </div>
+      <div class="txs tm" style="margin-bottom:6px" x-text="t('recall_detail_note')"></div>
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:var(--fs-11);line-height:1.5;max-height:52vh;overflow:auto;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px;margin:0" x-text="recallDetail.content"></pre>
+    </div>
+  </template>
+  <template x-if="!recallDetail">
+    <div>
+      <template x-if="recallEntries.length">
+        <div>
+          <template x-for="e in recallEntries" :key="e.id+e.ts">
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="viewRecall(e.id)">
+              <span class="bdg bdg-g" style="font-size:var(--fs-9);flex-shrink:0" x-text="t('recall_kind_'+(e.kind||''))"></span>
+              <div style="min-width:0;flex:1">
+                <div class="txs mono" style="color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="e.preview||'—'"></div>
+                <div class="txs tm" style="margin-top:2px"><span x-text="fmtBytes(e.bytes)"></span> · <span x-text="fmtTime(e.ts)"></span><template x-if="e.model"><span x-text="' · '+e.model"></span></template></div>
+              </div>
+              <span class="txs tm" style="flex-shrink:0" x-text="t('recall_open')"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+      <template x-if="!recallEntries.length">
+        <div class="empty-state" style="padding:24px 16px"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_recall_title')"></h2><p class="empty-d" x-text="t('empty_recall_desc')"></p><button class="btn btn-p" @click="closeRecallPanel()" x-text="recall.enabled?t('close_label'):t('empty_recall_cta')"></button></div>
+      </template>
+    </div>
+  </template>
+</div><div class="modal-foot"><button class="btn btn-g" style="color:var(--err)" x-show="recallEntries.length&&!recallDetail" @click="clearRecall()" x-text="t('recall_clear_all')"></button><button class="btn btn-g" x-show="recallDetail" @click="recallDetail=null" x-text="t('recall_back')"></button><button class="btn btn-p" @click="closeRecallPanel()" x-text="t('close_label')"></button></div></div></div>

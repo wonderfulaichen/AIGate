@@ -8,8 +8,9 @@
 //! - 当前语言由 [`current_lang`] 读取, 进程内可通过 [`set_current_lang`] 运行时切换
 //!   (供管理面板设置即时生效; 同时 [`init_lang`] 在启动时从环境变量/持久化文件加载).
 //! - [`pick`] 按当前语言返回中文或英文静态串, 调用方无需感知语言.
-//! - 静态 HTML 面板的可见中文标签在 `admin.html` 内通过 `data-i18n` 属性 + 前端 `t()`
-//!   实现双语; 本模块的职能是收敛 Rust 侧生成的所有动态文案.
+//! - 静态 HTML 面板的可见标签在 `src/admin/i18n.js`（`I18N` 中英双表）内通过前端 `t()`
+//!   实现双语; 本模块的职能是收敛 Rust 侧生成的所有动态文案. 双表缺键/重复键由
+//!   `build.rs::check_i18n_tables` 在编译期强制校验.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

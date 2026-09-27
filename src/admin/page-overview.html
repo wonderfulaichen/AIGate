@@ -1,0 +1,72 @@
+<div x-show="activeTab==='dashboard'" class="page-enter ov-page">
+  <div class="phd">
+    <div><h1 class="pt" x-text="t('dashboard_title')"></h1><p class="ps" x-text="t('dashboard_subtitle')"></p></div>
+    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><span class="bdg bdg-s" x-show="!loading && onboardAllDone" style="background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)">✓ <span x-text="t('onboard_done_badge')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
+  </div>
+  <div class="pnl mb3" x-show="!loading && !statsError && providersFormData!==null && !onboardAllDone" x-cloak>
+    <div class="pnl-h"><div><span class="pnl-ht" x-text="t('onboard_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('onboard_desc')"></div></div><span class="bdg bdg-g" x-text="t('onboard_progress',onboardDone)"></span></div>
+    <div class="pnl-b"><div class="onb-list">
+      <template x-for="(s,i) in onboardSteps" :key="s.k">
+        <div class="onb-step" :class="{'done':s.done,'cur':!s.done && i===onboardFirstPending}">
+          <div class="onb-num"><span x-show="s.done">✓</span><span x-show="!s.done" x-text="i+1"></span></div>
+          <div class="onb-body"><div class="onb-t"><span x-text="t('onboard_step_'+s.k+'_title')"></span><span class="onb-tag" x-show="s.done" x-text="t('onboard_step_done')"></span></div><div class="onb-d" x-text="t('onboard_step_'+s.k+'_desc')"></div></div>
+          <button class="btn btn-o" style="font-size:var(--fs-11);flex:none" x-show="!s.done" @click="onboardAction(s.k)" x-text="t('onboard_step_'+s.k+'_action')"></button>
+        </div>
+      </template>
+    </div></div>
+  </div>
+  <template x-if="!statsError && (!stats || stats.total_requests===0)">
+    <div>
+    <div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px">
+      <span class="bdg bdg-s mb2" x-text="t('service_running')"></span>
+      <h2 style="font-size:1.1rem;font-weight:600;color:var(--fg);margin:8px 0" x-text="t('waiting_first_request')"></h2>
+      <p class="txsm tm mb3" x-text="t('setup_hint')"></p>
+      <div class="fb" style="max-width:460px;margin:0 auto;padding:10px 14px;background:var(--input);border-radius:8px;border:1px solid var(--border)"><span class="mono txsm" style="color:var(--fg);overflow:hidden;text-overflow:ellipsis" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:var(--fs-11)" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
+    </div></div>
+    <div class="pnl" style="margin-top:12px">
+      <div class="pnl-h"><div><span class="pnl-ht" x-text="t('first_req_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('first_req_desc')"></div></div><div class="seg"><span class="seg-i" :class="{'a':firstReqTab==='curl'}" @click="firstReqTab='curl'">curl</span><span class="seg-i" :class="{'a':firstReqTab==='python'}" @click="firstReqTab='python'">Python</span><span class="seg-i" :class="{'a':firstReqTab==='node'}" @click="firstReqTab='node'">Node.js</span></div></div>
+      <div class="pnl-b">
+        <div class="fr-code"><pre x-text="firstRequestCode()"></pre></div>
+        <div class="fb" style="margin-top:10px">
+          <div class="fr-hints"><span class="txs tm" x-text="t('first_req_nokey')"></span><span class="txs tm" x-text="t('first_req_local')"></span></div>
+          <button class="btn btn-p" style="font-size:var(--fs-11);flex:none" @click="copyFirstRequest()" x-text="copiedField==='firstreq'?t('copied'):t('copy')"></button>
+        </div>
+      </div>
+    </div>
+    </div>
+  </template>
+  <template x-if="stats && stats.total_requests>0">
+    <div class="ov-grid">
+      <div class="ov-main">
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" :title="heroScopeHint" x-text="heroScopeLabel"></span></div><div class="pnl-b"><div class="ov-summary-grid">
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_requests')"></span><span class="ov-icon" style="background:rgba(99,102,241,.12);color:var(--indigo)">↗</span></div><div class="ov-kpi-value" x-text="heroRequests"></div><div class="ov-kpi-hint" x-text="heroRequestsHint"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.requests),'#818cf8')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_cost')"></span><span class="ov-icon" style="background:rgba(245,158,11,.12);color:var(--warn)">¥</span></div><div class="ov-kpi-value" style="color:var(--warn)" x-text="heroCostText"></div><div class="ov-kpi-hint" x-text="stats.has_price_config?t('cost_estimated'):t('price_unconfigured')"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>x.total_cost||0),'#f59e0b')"></div></div>
+          <div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('hero_tokens')"></span><span class="ov-icon" style="background:rgba(167,139,250,.12);color:var(--purple)">◇</span></div><div class="ov-kpi-value" style="color:var(--purple)" x-text="fmtT(heroTokens)"></div><div class="mini-spark" x-html="sparklineSvg((stats.trends||[]).map(x=>(x.total_prompt_tokens||0)+(x.total_completion_tokens||0)),'#a78bfa')"></div></div>
+        </div><div class="ov-secondary-grid"><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('input_tokens_short')"></div><div class="ov-secondary-value" style="color:var(--ok)" x-text="fmtT(heroPrompt)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('output_tokens_short')"></div><div class="ov-secondary-value" style="color:var(--purple)" x-text="fmtT(heroCompletion)"></div></div><div class="ov-secondary-item"><div class="ov-secondary-label" x-text="t('kv_cache_hit')"></div><div class="ov-secondary-value" style="color:var(--cyan)" x-text="heroCacheText"></div></div></div></div></div>
+        <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:var(--ok)">⚡</span></div><div class="ov-kpi-value" style="color:var(--ok)" x-text="fmtT((stats.today_strip_saved_tokens||0)+(stats.today_trim_saved_tokens||0)+(stats.today_resp_cache_saved_tokens||0))"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:rgba(34,211,238,.12);color:var(--cyan)">📊</span></div><div class="ov-kpi-value" style="color:var(--cyan)" x-text="fmtT(stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+t('opt_saved_30d')"></div></div></div></div></div>
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="fmtMs(stats.avg_latency_ms)"></div></div>
+          <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="stats.gen_speed?stats.gen_speed.toFixed(1)+' tok/s':'—'"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
+        </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'var(--ok)':m.errors<m.requests/5?'var(--warn)':'var(--err)')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div><div class="panel-takeaway" x-show="healthTakeaway" x-text="healthTakeaway"></div></div></div>
+      </div>
+      <div class="ov-side">
+        <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('balance_cost')"></span><button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider"><div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)"><div style="display:flex;align-items:center;gap:8px"><div style="width:24px;height:24px;border-radius:6px;overflow:hidden" x-html="providerLogo(row.provider)"></div><span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span><span class="txsm mono fw6" x-text="row.hasBalance?fmtMoney(row.balance):'—'"></span></div><div style="display:flex;justify-content:space-between;padding-left:32px;margin-top:4px"><span class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span><span class="txs tm" x-text="row.source||''"></span></div><template x-if="row.error"><div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div></template></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template></div></div>
+        <div class="pnl"><div class="pnl-h"><span class="pnl-ht" x-text="t('quick_start')"></span></div><div class="pnl-b"><div class="txs tm" style="line-height:1.6;margin-bottom:10px" x-text="t('quick_start_desc')"></div><div class="fb" style="padding:8px 10px;background:var(--input);border:1px solid var(--border);border-radius:8px"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 6px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div><div class="ov-actions" style="margin-top:10px"><button class="btn btn-o" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('manage_providers')"></button><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('records')" x-text="t('view_records')"></button></div></div></div>
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('api_information')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('api_information_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('view_providers')+' →'"></button></div><div class="pnl-b"><template x-for="item in [{method:'BASE',path:baseUrl,descKey:'api_base_url_desc'},{method:'GET',path:'/v1/models',descKey:'available_models'},{method:'POST',path:'/v1/chat/completions',descKey:'chat_completions'},{method:'POST',path:'/v1/messages',descKey:'anthropic_messages'},{method:'POST',path:'/v1/responses',descKey:'responses_api'}]" :key="item.path"><div class="ov-api-row"><span class="ov-api-method" x-text="item.method"></span><span class="ov-api-path" style="flex:1" x-text="item.path"></span><span class="txs tm" x-text="t(item.descKey)"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="copyText(item.path,'api')" x-text="copiedField==='api'?t('copied'):t('copy')"></button></div></template></div></div>
+      </div>
+    </div>
+  </template>
+  <!-- 常见问题 (数组驱动, 手风琴一次展开一项) -->
+  <div class="pnl" style="margin-top:16px">
+    <div class="pnl-h"><div><span class="pnl-ht" x-text="t('faq_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('faq_desc')"></div></div></div>
+    <div class="pnl-b"><div class="faq-list">
+      <template x-for="(q,i) in [{k:'cost'},{k:'protocol'},{k:'breaker'},{k:'slow'}]" :key="q.k">
+        <div class="faq-item" :class="{'open':faqOpen===i}">
+          <button type="button" class="faq-q" @click="faqOpen=(faqOpen===i?-1:i)"><span x-text="t('faq_'+q.k+'_q')"></span><span class="faq-caret" x-text="faqOpen===i?'⌃':'⌄'"></span></button>
+          <div class="faq-a" x-show="faqOpen===i" x-cloak><div class="faq-a-in" x-text="t('faq_'+q.k+'_a')"></div></div>
+        </div>
+      </template>
+    </div></div>
+  </div>
+</div>

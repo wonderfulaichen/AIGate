@@ -1,0 +1,57 @@
+/* ── 接入引导 (Get started checklist) ── */
+.onb-list{display:flex;flex-direction:column;gap:6px}
+.onb-step{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent}
+.onb-step.cur{background:var(--primary-soft);border-color:rgba(99,102,241,.28)}
+.onb-num{flex:none;width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-11);font-weight:700;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid var(--border-s)}
+.onb-step.done .onb-num{background:var(--ok-bg-strong);color:var(--ok);border-color:var(--ok-bd-strong)}
+.onb-body{flex:1;min-width:0}
+.onb-t{font-size:var(--fs-13);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
+.onb-d{font-size:var(--fs-11);color:var(--muted);margin-top:2px}
+.onb-tag{font-size:var(--fs-9);font-weight:700;padding:1px 6px;border-radius:999px;background:var(--ok-bg-strong);color:var(--ok);border:1px solid var(--ok-bd-strong)}
+/* ── 第一次请求示例 (first request snippet) ── */
+.fr-code{background:var(--input);border:1px solid var(--border);border-radius:10px;padding:12px 14px;overflow-x:auto}
+.fr-code pre{margin:0;font-family:'JetBrains Mono',monospace;font-size:var(--fs-11);line-height:1.65;color:var(--fg);white-space:pre}
+.fr-hints{display:flex;gap:14px;flex-wrap:wrap;align-items:center;min-width:0}
+/* ── 统一空状态 (unified empty state: icon + title + desc + CTA) ── */
+.empty-state{display:flex;flex-direction:column;align-items:center;text-align:center;padding:44px 16px}
+.empty-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);margin-bottom:12px}
+.empty-t{font-size:var(--fs-14);font-weight:600;color:var(--fg);margin:0 0 6px}
+.empty-d{font-size:var(--fs-12);color:var(--muted);max-width:420px;margin:0 0 14px;line-height:1.6}
+/* ── 供应商抽屉分节导航 (sticky, 每节状态 + 点击跳转) ── */
+.dr-secnav{position:sticky;top:0;z-index:3;display:flex;gap:6px;align-items:center;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+.dr-secchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:var(--fs-11);font-weight:600;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--border);cursor:pointer;transition:border-color .15s,color .15s}
+.dr-secchip:hover{color:var(--fg);border-color:var(--border-s)}
+.dr-secchip.done{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.dr-secdot{width:6px;height:6px;border-radius:50%;background:var(--warn);flex:none}
+.dr-secchip.done .dr-secdot{background:var(--ok)}
+.sec{scroll-margin-top:54px}
+/* ── 统一 Toast (渲染层; store 负责合并计数) ── */
+.toast-wrap{position:fixed;top:14px;right:14px;z-index:95;display:flex;flex-direction:column;gap:8px;max-width:min(420px,calc(100vw - 28px));pointer-events:none}
+.toast-it{pointer-events:auto;display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:10px;font-size:var(--fs-12);line-height:1.5;background:var(--elevated);border:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--fg);animation:toastIn .18s ease-out}
+.toast-it.toast-error{background:#2a1416;border-color:var(--err-bd);color:var(--err-fg)}
+.toast-it.toast-success{background:#0f2a20;border-color:var(--ok-bd);color:var(--ok-fg)}
+.toast-it.toast-warn{background:#2a2110;border-color:var(--warn-bd);color:var(--warn-fg)}
+.toast-cnt{flex:none;font-weight:700;opacity:.85}
+.toast-x{margin-left:auto;flex:none;background:none;border:none;color:inherit;opacity:.55;cursor:pointer;font-size:var(--fs-11);padding:0 2px}
+.toast-x:hover{opacity:1}
+@keyframes toastIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+/* 统一确认弹窗的危险主按钮 */
+.btn-d{background:var(--err);color:#fff;border:1px solid transparent}
+.btn-d:hover{background:#dc2626}
+/* ── 概览页 FAQ 手风琴 ── */
+.faq-list{display:flex;flex-direction:column;gap:2px}
+.faq-item{border-radius:8px;transition:background .15s}
+.faq-item.open{background:rgba(255,255,255,.03)}
+.faq-q{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:10px 12px;background:none;border:none;cursor:pointer;text-align:left;font-size:var(--fs-13);font-weight:600;color:var(--fg)}
+.faq-q:hover{color:var(--indigo)}
+.faq-caret{flex:none;color:var(--muted);font-size:var(--fs-12)}
+.faq-a{padding:0 12px 12px}
+.faq-a-in{font-size:var(--fs-12);line-height:1.7;color:var(--muted)}
+/* ── 页脚 ── */
+.app-foot{display:flex;justify-content:center;align-items:center;gap:12px;padding:16px 0 26px;font-size:var(--fs-11);color:var(--muted)}
+.app-foot a{color:var(--muted);text-decoration:none;transition:color .15s}
+.app-foot a:hover{color:var(--fg);text-decoration:underline}
+.foot-sep{opacity:.5}
+[x-cloak]{display:none!important}
+
+</style>

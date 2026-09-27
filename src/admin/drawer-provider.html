@@ -1,0 +1,196 @@
+<template x-if="drawerProv">
+<div>
+  <div class="dr-bk" @click="closeProviderDrawer()"></div>
+  <div class="dr">
+    <div class="dr-card">
+      <!-- Header -->
+      <div class="dr-h">
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="text" class="inp" style="font-size:var(--fs-15);font-weight:600;color:var(--fg);width:auto;min-width:80px;border:none;background:transparent;box-shadow:none;padding:0" x-model="drawerProv.name" @input="markDirty()">
+          <span class="bdg bdg-p" style="font-size:var(--fs-10)" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
+          <span class="bdg" :class="drawerSecCount(drawerProv)>=3?'bdg-s':'bdg-w'" style="font-size:var(--fs-10)" :title="t('dr_sec_hint')" x-text="t('dr_sec_progress',drawerSecCount(drawerProv))"></span>
+          <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg" style="background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-bd);font-size:var(--fs-10)">● <span x-text="t('health_ok')"></span></span></template>
+          <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:var(--err-bg);color:var(--err);border:1px solid var(--err-bd);font-size:var(--fs-10)">● <span x-text="t('health_err')"></span></span></template>
+          <template x-if="healthOf(drawerProv.name)===''"><span class="bdg" style="background:var(--neutral-bg);color:var(--neutral-fg);border:1px solid var(--neutral-bd);font-size:var(--fs-10)">○ <span x-text="t('health_na')"></span></span></template>
+        </div>
+        <button class="btn btn-g" @click="closeProviderDrawer()" style="padding:4px 8px" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
+      </div>
+
+      <div class="dr-body">
+        <!-- 分节导航: 每节状态 (绿=就绪/黄=待完善), 点击滚动到对应分区 -->
+        <div class="dr-secnav">
+          <template x-for="s in [{k:'basic',label:t('dr_sec_basic')},{k:'key',label:t('dr_sec_key')},{k:'models',label:t('unit_models')}]" :key="s.k">
+            <button type="button" class="dr-secchip" :class="{'done':drawerSecDone(s.k,drawerProv)}" :title="drawerSecDone(s.k,drawerProv)?t('onboard_step_done'):t('dr_sec_todo')" @click="scrollDrawerSec(s.k)"><span class="dr-secdot"></span><span x-text="s.label"></span></button>
+          </template>
+        </div>
+        <!-- Section: Endpoints -->
+        <div class="sec" id="drsec-basic">
+          <div class="sec-hdr">
+            <div class="sec-ic blue">🔗</div>
+            <div style="flex:1"><div class="sec-title" x-text="t('addprov.endpoint')"></div><div class="sec-sub" x-text="t('endpoint_protocol_desc')"></div></div>
+            <button class="btn btn-g" style="font-size:var(--fs-11);white-space:nowrap" :disabled="drawerProv._testing" @click="testProvider(providersFormData.indexOf(drawerProv))">
+              <template x-if="!drawerProv._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template>
+              <template x-if="drawerProv._testing"><span class="spin" style="margin-right:6px"></span><span x-text="t('testing')"></span></template>
+            </button>
+          </div>
+          <div class="sec-body">
+            <!-- Test result -->
+            <template x-if="drawerProv._testResult">
+            <div style="margin-bottom:12px">
+              <div :style="'padding:8px 12px;border-radius:6px;font-size:var(--fs-12);display:flex;align-items:center;gap:8px;'+(drawerProv._testResult.success?'background:var(--ok-bg-soft);color:var(--ok);border:1px solid var(--ok-bd-soft)':'background:var(--err-bg-soft);color:var(--err);border:1px solid var(--err-bd-soft)')">
+                <span x-text="drawerProv._testResult.success?'✓':'✗'"></span>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" :title="drawerProv._testResult.success?'':t('err_view_full')" @click="!drawerProv._testResult.success&&(drawerProv._errOpen=!drawerProv._errOpen)" x-text="drawerProv._testResult.success?drawerProv._testResult.status:testErrFirst(drawerProv._testResult.status)"></span>
+                <span style="flex:none;opacity:.7" x-text="drawerProv._testResult.latency_ms+'ms'"></span>
+              </div>
+              <template x-if="!drawerProv._testResult.success && drawerProv._errOpen">
+                <div style="margin-top:6px;padding:8px 12px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);font-size:var(--fs-11);color:var(--err-fg);white-space:pre-wrap;word-break:break-all">
+                  <div x-text="drawerProv._testResult.status"></div>
+                  <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:6px" @click="copyTestErr(drawerProv)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+                </div>
+              </template>
+            </div>
+            </template>
+            <div class="f-grid">
+              <div class="f-row"><label x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint" @input="markDirty()" placeholder="https://api.example.com"></div>
+            </div>
+            <!-- 高级端点: 多协议覆盖 + 余额查询 (折叠, 偏好存 localStorage) -->
+            <button type="button" class="btn btn-g" style="font-size:var(--fs-11);margin-top:10px" @click="toggleDrawerAdv()"><span x-text="t('dr_adv')"></span> <span x-text="drawerAdvOpen?'⌃':'⌄'"></span></button>
+            <div x-show="drawerAdvOpen" style="margin-top:10px">
+              <div class="f-grid">
+                <div class="f-row"><label x-text="t('anthropic_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_anthropic" :placeholder="t('anthropic_endpoint_ph')" @input="markDirty()"></div>
+                <div class="f-row"><label x-text="t('responses_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint_responses" :placeholder="t('responses_endpoint_ph')" @input="markDirty()"></div>
+                <div class="f-row"><label x-text="t('balance_endpoint_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.balance_endpoint" :placeholder="t('balance_endpoint_ph')" @input="markDirty()"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: API Key -->
+        <div class="sec" id="drsec-key">
+          <div class="sec-hdr">
+            <div class="sec-ic green">🔑</div>
+            <div><div class="sec-title" x-text="t('apikey_mgmt')"></div><div class="sec-sub" x-text="t('key_save_hint')"></div></div>
+          </div>
+          <div class="sec-body">
+              <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:rgba(255,255,255,.02)">
+            <div class="key-status-row" x-text="keyStatusText(drawerProv.name)"></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="saveDrawerKey()">
+              <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" x-text="drawerProv._keySaving?t('saving'):t('save')"></button>
+              <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
+            </div>
+            <template x-if="drawerProv._keyMsg"><div :style="'margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:6px;'+(drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)')" x-text="drawerProv._keyMsg"></div></template>
+          </div>
+          </div>
+        </div>
+
+        <!-- Section: Models -->
+        <div class="sec" id="drsec-models">
+          <div class="sec-hdr">
+            <div class="sec-ic amber">📦</div>
+            <div style="flex:1"><div class="sec-title" x-text="t('unit_models')"></div><div class="sec-sub" x-text="t('model_routing_config')"></div></div>
+            <span class="bdg bdg-p" style="font-size:var(--fs-11)" x-text="filteredModelCount()+' / '+(drawerProv.models||[]).length"></span>
+          </div>
+          <div class="sec-body">
+            <div class="m-card">
+              <!-- Search + actions header -->
+              <div class="m-card-hdr">
+                <input type="text" class="inp" style="flex:1;max-width:320px;font-size:var(--fs-12)" x-model="drawerProv._filter" :placeholder="t('search_models')">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button class="btn btn-g" style="font-size:var(--fs-11)" @click="toggleAll(drawerProv,true)" x-text="t('select_all')"></button>
+                  <button class="btn btn-g" style="font-size:var(--fs-11)" @click="toggleAll(drawerProv,false)" x-text="t('deselect_all')"></button>
+                  <button class="btn btn-g" style="font-size:var(--fs-11);color:var(--err)" @click="deleteSelectedModels()" x-text="t('delete_selected')"></button>
+                  <button class="btn btn-g" style="font-size:var(--fs-11)" :disabled="!priceClipboardSet||selectedIndexes(drawerProv).length===0" :title="t('price_apply_selected_hint')" @click="applyPriceToSelected(providersFormData.indexOf(drawerProv))" x-text="t('price_apply_selected',selectedIndexes(drawerProv).length)"></button>
+                  <button class="btn btn-p" style="font-size:var(--fs-11)" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
+                </div>
+              </div>
+              <!-- Brand filter chips -->
+              <div class="m-card-bar">
+                <span class="txs tm" style="margin-right:4px" x-text="t('brand')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._brandFilter}" @click="drawerProv._brandFilter=''" x-text="t('plaza_all')"></span>
+                <template x-for="b in drawerBrands()" :key="b.label">
+                  <span class="m-chip" :class="{'on':drawerProv._brandFilter===b.label}" @click="drawerProv._brandFilter=b.label">
+                    <span :style="'width:6px;height:6px;border-radius:50%;background:'+b.color"></span>
+                    <span x-text="b.label"></span>
+                  </span>
+                </template>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('thinking_short')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._effFilter}" @click="drawerProv._effFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='low'}" @click="drawerProv._effFilter='low'" x-text="t('eff.low')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='medium'}" @click="drawerProv._effFilter='medium'" x-text="t('eff.medium')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='high'}" @click="drawerProv._effFilter='high'" x-text="t('eff.high')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')"></span>
+              </div>
+              <!-- Price/Status/Origin filter chips -->
+              <div class="m-card-bar" style="border-top:1px solid rgba(255,255,255,.04)">
+                <span class="txs tm" style="margin-right:4px" x-text="t('price')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._freeFilter}" @click="drawerProv._freeFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='paid'}" @click="drawerProv._freeFilter='paid'" x-text="t('paid')"></span>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('status_lc')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._removedFilter}" @click="drawerProv._removedFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='active'}" @click="drawerProv._removedFilter='active'" x-text="t('status_active')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='removed'}" @click="drawerProv._removedFilter='removed'" x-text="t('status_removed')"></span>
+                <span style="margin-left:auto"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('origin')"></span>
+                <span class="m-chip" :class="{'on':!drawerProv._originFilter}" @click="drawerProv._originFilter=''" x-text="t('plaza_all')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._originFilter==='manual'}" @click="drawerProv._originFilter='manual'" x-text="t('origin_manual')"></span>
+                <span class="m-chip" :class="{'on':drawerProv._originFilter==='fetched'}" @click="drawerProv._originFilter='fetched'" x-text="t('origin_fetched')"></span>
+              </div>
+              <!-- Model table -->
+              <div class="m-card-table-scroll"><table style="width:100%;min-width:760px;border-collapse:collapse;font-size:var(--fs-12)">
+                <thead>
+                  <tr style="background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">
+                    <th style="padding:8px 12px;text-align:left;width:4%"><input type="checkbox" :checked="isAllSelected(drawerProv)" @change="toggleAll(drawerProv,$event.target.checked)"></th>
+                    <th style="padding:8px 12px;text-align:left;width:8%" x-text="t('tbl.vendor')"></th>
+                    <th style="padding:8px 12px;text-align:left" x-text="t('tbl.model_id')"></th>
+                    <th style="padding:8px 12px;text-align:left" x-text="t('tbl.upstream_model')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.reasoning')" :title="t('tbl.reasoning_hint')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:6%" x-text="t('badge.free')"></th>
+                    <th style="padding:8px 12px;text-align:left;width:9%" x-text="t('tbl.protocol')"></th>
+                    <th style="padding:8px 12px;text-align:center;width:7%" :title="t('strip_toolcall_reasoning_hint')" x-text="t('tbl.strip_reasoning')"></th>
+                    <th style="padding:8px 12px;width:10%" x-text="t('tbl.unit_price')"></th>
+                    <th style="padding:8px 12px;width:4%"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(m,ei) in drawerProv.models" :key="ei">
+                  <tr x-show="modelVisible(m,drawerProv)" :style="'border-bottom:1px solid rgba(255,255,255,.04);'+(m._removed?'opacity:.4;':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
+                    <td style="padding:6px 10px"><input type="checkbox" :checked="!!(drawerProv._selected&&drawerProv._selected[ei])" @change="drawerProv._selected=drawerProv._selected||{};drawerProv._selected[ei]=$event.target.checked;markDirty()"></td>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                      <span class="bdg bdg-p" :style="'font-size:var(--fs-10);background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'" x-text="brandFor(m.upstream_model,drawerProv.name).label"></span>
+                      <template x-if="m._isNew"><span class="bdg-mini" style="background:var(--ok-bg-strong);color:var(--ok);border:1px solid var(--ok-bd-strong)">NEW</span></template>
+                      <template x-if="m._removed"><span class="bdg-mini" style="background:var(--err-bg-strong);color:var(--err-fg);border:1px solid var(--err-bd-strong)">下架</span></template>
+                      <template x-if="m.origin==='manual'"><span class="bdg-mini" style="background:var(--warn-bg);color:var(--amber);border:1px solid var(--warn-bd)">手动</span></template>
+                      <template x-if="!m.origin || m.origin==='fetched'"><span class="bdg-mini" style="background:var(--info-bg);color:var(--info-fg);border:1px solid var(--info-bd)">获取</span></template>
+                    </div></td>
+                    <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px"><input type="text" class="inp mono" style="width:100%;font-size:var(--fs-11)" x-model="m.model_id" :placeholder="m.model_id===drawerProv.name+'/'?drawerProv.name+'/模型ID':''" @input="if(!m._fmtTouched)m.api_format=defaultApiFormat(m.model_id);markDirty()"><button style="flex-shrink:0;background:none;border:none;cursor:pointer;font-size:var(--fs-13);padding:2px 4px" :title="t('copy_model_id')" @click="copyText(m.model_id||'', 'mid'+ei)"><span x-text="copiedField==='mid'+ei?'✓':'⧉'" :style="copiedField==='mid'+ei?'color:var(--ok)':'color:var(--muted)'"></span></button></div><template x-if="modelIdDupHint(m.model_id, drawerProv.name)"><div style="margin-top:4px;font-size:var(--fs-10);line-height:1.35;color:var(--warn)" x-text="modelIdDupHint(m.model_id, drawerProv.name)"></div></template></td>
+                    <td style="padding:6px 10px;font-size:var(--fs-11);color:var(--muted);font-family:'JetBrains Mono',monospace"><div x-text="m.upstream_model||'—'"></div><div x-html="modelMetaStatusHtml(m)" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px"></div></td>
+                    <td style="padding:6px 10px"><select class="sel" style="font-size:var(--fs-11);padding:3px 6px" x-model="m.reasoning_effort" :title="t('tbl.reasoning_hint')" @change="markDirty()"><option value="" x-text="t('eff.none')"></option><option value="low" x-text="t('eff.low')"></option><option value="medium" x-text="t('eff.medium')"></option><option value="high" x-text="t('eff.high')"></option><option value="max" x-text="t('eff.max')"></option></select></td>
+                    <td style="padding:6px 10px;text-align:center"><input type="checkbox" x-model="m.free" @change="m._freeTouched=true;markDirty()"></td>
+                    <td style="padding:6px 10px"><select class="sel" style="font-size:var(--fs-11);padding:3px 6px" x-model="m.api_format" @change="m._fmtTouched=true;markDirty()"><option value="" x-text="t('fmt.openai')"></option><option value="anthropic" x-text="t('fmt.anthropic')"></option><option value="responses" x-text="t('fmt.responses')"></option></select></td>
+                    <td style="padding:6px 10px;text-align:center"><input type="checkbox" :title="t('strip_toolcall_reasoning_hint')" x-model="m.strip_toolcall_reasoning" @change="markDirty()"></td>
+                    <td style="padding:6px 10px;white-space:nowrap">
+                      <button class="btn btn-g" style="font-size:var(--fs-11);padding:2px 6px" :title="m.price?fmtPriceDetail(m.price):t('price_not_set')" @click="openPricePanel(m)" x-text="m.price?fmtPrice(m.price):t('price_not_set')"></button>
+                    </td>
+                    <td style="padding:6px 10px"><button style="background:none;border:none;color:var(--err);cursor:pointer;font-size:var(--fs-13);padding:2px 4px" @click="deleteModel(providersFormData.indexOf(drawerProv),ei)" :title="t('delete')" :aria-label="t('delete')">✕</button></td>
+                  </tr>
+                  </template>
+                </tbody>
+              </table></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="dr-foot">
+        <button class="btn btn-g" @click="closeProviderDrawer()" x-text="t('cancel')"></button>
+        <button class="btn btn-p" :disabled="_saving" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
+      </div>
+    </div>
+  </div>
+</div>
+</template>

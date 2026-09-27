@@ -1,0 +1,188 @@
+<div x-show="activeTab==='settings'" class="page-enter page-wide">
+<div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
+<div class="st mb3" x-text="t('section.perf_opt')"></div>
+<div class="pnl mb4">
+  <div class="set-row">
+    <div style="min-width:0"><div class="row-t" x-text="t('strip_reasoning_label')"></div><div class="row-d" x-text="t('strip_reasoning_desc')"></div></div>
+    <button class="tgl" :class="stripReasoning?'on':'off'" @click="setStripReasoning(!stripReasoning)"></button>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
+    <div style="min-width:0"><div class="row-t" style="display:flex;align-items:center;gap:8px"><span x-text="t('strip_tc_proto_label')"></span><span class="bdg bdg-w" x-text="t('experimental_badge')"></span></div><div class="row-d" x-text="t('strip_tc_proto_desc')"></div></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px">
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_chat_hint')" x-text="t('strip_tc_proto_chat')"></span><button class="tgl" :class="stripTcChat?'on':'off'" @click="setStripTcProtocols({chat:!stripTcChat})"></button></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_resp_hint')" x-text="t('strip_tc_proto_resp')"></span><button class="tgl" :class="stripTcResp?'on':'off'" @click="setStripTcProtocols({responses:!stripTcResp})"></button></div>
+    </div>
+  </div>
+  <div style="padding:0 16px 14px">
+    <div class="txs tm" x-text="t('strip_tc_proto_anthropic_note')"></div>
+    <div class="txs tm" style="margin-top:2px" x-text="t('strip_tc_proto_model_override')"></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('history_trim_label')"></div><div class="row-d" x-text="t('history_trim_desc')"></div></div>
+    <button class="tgl" :class="maxHistoryTurns>0?'on':'off'" @click="setMaxHistoryTurns(maxHistoryTurns>0?0:20)"></button>
+  </div>
+  <div x-show="maxHistoryTurns>0" style="padding:0 16px 14px">
+    <div class="cg"><span class="txs tm" x-text="t('history_trim_keep')"></span><input type="number" min="1" max="200" :value="maxHistoryTurns" @change="setMaxHistoryTurns(parseInt($event.target.value)||0)" class="inp" style="width:80px"><span class="txs tm" x-text="t('history_trim_unit')"></span></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('auto_continue_label')"></div><div class="row-d" x-text="t('auto_continue_desc')"></div></div>
+    <button class="tgl" :class="autoContinue>0?'on':'off'" @click="setAutoContinue(autoContinue>0?0:2)"></button>
+  </div>
+  <div x-show="autoContinue>0" style="padding:0 16px 14px">
+    <div class="cg"><span class="txs tm" x-text="t('auto_continue_max')"></span><input type="number" min="1" max="5" :value="autoContinue" @change="setAutoContinue(parseInt($event.target.value)||0)" class="inp" style="width:80px"><span class="txs tm" x-text="t('auto_continue_unit')"></span></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('recall_label')"></div><div class="row-d" x-text="t('recall_desc')"></div></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-g" style="font-size:var(--fs-11)" @click="openRecallPanel()" x-text="t('recall_view')"></button>
+      <button class="tgl" :class="recall.enabled?'on':'off'" @click="setRecall(!recall.enabled)"></button>
+    </div>
+  </div>
+  <div x-show="recall.enabled" style="padding:0 16px 14px">
+    <div class="cg" style="flex-wrap:wrap;gap:14px">
+      <span class="txs tm" x-text="t('recall_stat_entries')+' '+recall.entries"></span>
+      <span class="txs tm" x-text="t('recall_stat_bytes')+' '+fmtBytes(recall.bytes)"></span>
+      <span class="txs tm" :style="recall.recalls>0?'color:var(--ok)':''" x-text="t('recall_stat_recalls')+' '+recall.recalls"></span>
+      <span class="txs tm" x-show="recall.evicted>0" x-text="t('recall_stat_evicted')+' '+recall.evicted"></span>
+    </div>
+    <div class="txs tm" style="margin-top:6px" x-text="t('recall_privacy_note')"></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('tool_trunc_label')"></div><div class="row-d" x-text="t('tool_trunc_desc')"></div></div>
+    <button class="tgl" :class="toolOutputLimit>0?'on':'off'" @click="setToolOutputLimit(toolOutputLimit>0?0:32768)"></button>
+  </div>
+  <div x-show="toolOutputLimit>0" style="padding:0 16px 14px">
+    <div class="cg"><span class="txs tm" x-text="t('tool_trunc_keep')"></span><input type="number" min="1024" max="4194304" step="1024" :value="toolOutputLimit" @change="setToolOutputLimit(parseInt($event.target.value)||0)" class="inp" style="width:110px"><span class="txs tm" x-text="t('tool_trunc_unit')"></span></div>
+    <div class="txs tm" style="margin-top:6px" x-text="t('tool_trunc_note')"></div>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
+    <div style="min-width:180px;padding-top:2px"><div class="row-t" x-text="t('conn_params_label')"></div><div class="row-d" x-text="t('conn_params_hint')"></div></div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:flex-end">
+      <div><div class="txs tm mb2" style="text-align:right" x-text="t('idle_timeout_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="30" max="600" :value="streamTimeoutSecs" @change="setStreamTimeout(parseInt($event.target.value)||120)" class="inp" style="width:90px"><span class="txs tm" x-text="t('unit_secs')"></span></div></div>
+      <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_max_label')"></div><input type="number" min="0" max="5" :value="retryMax" @change="setRetry(parseInt($event.target.value)||0,retryBackoffMs)" class="inp" style="width:90px"></div>
+      <div><div class="txs tm mb2" style="text-align:right" x-text="t('retry_backoff_label')"></div><div style="display:flex;align-items:center;gap:6px"><input type="number" min="0" max="10000" :value="retryBackoffMs" @change="setRetry(retryMax,parseInt($event.target.value)||200)" class="inp" style="width:90px"><span class="txs tm" x-text="t('unit_ms')"></span></div></div>
+    </div>
+  </div>
+  <div class="sub-h"><span x-text="t('cache_title')"></span><span class="bdg bdg-w" x-text="t('experimental_badge')"></span></div>
+  <template x-if="cache===null"><div class="pnl-b"><span class="txs tm" x-text="t('loading')"></span></div></template>
+  <template x-if="cache!==null"><div>
+    <div class="set-row">
+      <div style="min-width:0"><div class="row-t" x-text="t('cache_enable_label')"></div><div class="row-d" x-text="t('cache_enable_desc')"></div></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchCache()" x-text="t('refresh')"></button>
+        <button class="btn btn-g" style="font-size:var(--fs-11);color:var(--err)" @click="clearCache()" x-text="t('clear')"></button>
+        <button class="tgl" :class="cache.enabled?'on':'off'" @click="setCacheEnabled(!cache.enabled)"></button>
+      </div>
+    </div>
+    <div x-show="cache.enabled" style="padding:0 16px 14px;display:flex;gap:24px;flex-wrap:wrap">
+      <div class="cg"><span class="txs tm" x-text="t('cache_ttl_label')"></span><input type="number" min="1" max="864000" :value="cache.ttl_secs" @change="setCacheConfig({ttl_secs:parseInt($event.target.value)||60})" class="inp" style="width:100px"><span class="txs tm" x-text="t('cache_ttl_unit')"></span></div>
+      <div class="cg"><span class="txs tm" x-text="t('cache_max_entries_label')"></span><input type="number" min="1" max="100000" :value="cache.max_entries" @change="setCacheConfig({max_entries:parseInt($event.target.value)||100})" class="inp" style="width:100px"><span class="txs tm" x-text="t('cache_max_entries_unit')"></span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 16px 14px">
+      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.entries')"></span><span class="txsm mono fw6" x-text="cache.entries"></span></div>
+      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.hit_rate_session')"></span><span class="txsm mono fw6" style="color:var(--indigo)" x-text="(cache.hits+cache.misses>0?fmtPct(cache.hits/(cache.hits+cache.misses)*100):'—')"></span></div>
+      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.saved_label')"></span><span class="txsm mono fw6" x-text="'≈ '+fmtT(cache.saved_tokens||0)+' tok'"></span></div>
+      <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.saved_enabled_label')"></span><span class="txsm mono fw6" x-text="'≈ '+fmtT(cache.enabled_saved_tokens||0)+' tok'"></span></div>
+    </div>
+  </div></template>
+</div>
+<div class="st mb3" x-text="t('section.personal')"></div>
+<div class="pnl mb4">
+  <div class="set-row">
+    <div class="row-t" x-text="t('ui_language')"></div>
+    <select class="sel" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'"><option value="zh-CN" x-text="t('lang_zh')"></option><option value="en-US" x-text="t('lang_en')"></option></select>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('display_currency')"></div><div class="row-d" x-text="t('currency_hint')"></div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select class="sel" x-model="currencyConfig.currency" @change="onCurrencyChange()"><template x-for="c in ['CNY','USD','EUR','JPY','GBP','HKD']" :key="c"><option :value="c" x-text="c"></option></template></select>
+      <input type="number" class="inp" style="width:90px" :value="currencyRateEdit" @change="currencyRateEdit=$event.target.value;onRateEdit()">
+      <span class="txs tm" x-text="t('rate_suffix')"></span>
+    </div>
+  </div>
+</div>
+<div class="st mb3" x-text="t('section.peak')"></div>
+<div class="pnl mb4">
+  <div class="set-row">
+    <div style="min-width:0"><div class="row-t" x-text="t('peak_enable')"></div><div class="row-d" x-text="t('peak_enable_desc')"></div></div>
+    <button class="tgl" :class="peakSchedule.enabled?'on':'off'" @click="peakSchedule.enabled=!peakSchedule.enabled"></button>
+  </div>
+  <div x-show="peakSchedule.enabled" style="padding:0 16px 14px;display:flex;flex-direction:column;gap:14px">
+    <div class="cg" style="align-self:flex-start">
+      <span class="txs tm" x-text="t('peak_tz')"></span>
+      <input type="number" class="inp" style="width:80px" x-model.number="peakSchedule.tz_offset_hours">
+      <span class="txs tm" x-text="t('peak_tz_unit')"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span class="txs tm" x-text="t('peak_weekdays')"></span>
+      <template x-for="d in [1,2,3,4,5,6,7]" :key="d">
+        <span class="m-chip" :class="{'on':peakSchedule.weekdays.includes(d)}" @click="togglePeakWeekday(d)" x-text="t('wd.'+d)"></span>
+      </template>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <span class="txs tm" x-text="t('peak_windows')"></span>
+      <template x-for="(w,i) in peakSchedule.windows" :key="i">
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="time" class="inp mono" style="width:120px" x-model="w.start">
+          <span class="tm">—</span>
+          <input type="time" class="inp mono" style="width:120px" x-model="w.end">
+          <button class="btn btn-g" style="color:var(--err);padding:2px 8px" @click="removePeakWindow(i)" :title="t('remove_peak_window')" :aria-label="t('remove_peak_window')">✕</button>
+        </div>
+      </template>
+      <div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="addPeakWindow()" x-text="t('peak_add_window')"></button></div>
+    </div>
+    <div class="txs tm" style="color:var(--muted)" x-text="t('peak_hint')"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn btn-p" style="font-size:var(--fs-11)" @click="savePeakSchedule()" x-text="t('save')"></button>
+      <span class="txs" x-show="peakMsg" :style="peakMsgOk?'color:var(--ok)':'color:var(--err)'" x-text="peakMsg"></span>
+    </div>
+  </div>
+</div>
+<div class="st mb3" x-text="t('section.conn')"></div>
+<div class="pnl mb4">
+  <div class="set-row">
+    <div><div class="row-t" x-text="t('listen_addr')"></div><div class="row-d"><span class="bdg bdg-s" x-text="t('running')"></span></div></div>
+    <span class="mono txsm" x-text="listenAddr()"></span>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('proxy_policy')"></div><div class="row-d" x-text="t('proxy_hint')"></div></div>
+    <span class="bdg bdg-g" x-text="proxyStatus?(t('proxy_mode_'+proxyStatus.mode)+(proxyStatus.url?(' · '+proxyStatus.url):'')):'—'"></span>
+  </div>
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div class="row-t" x-text="t('base_url')"></div>
+    <div style="display:flex;gap:8px;align-items:center"><span class="mono txsm" x-text="baseUrl"></span><button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
+  </div>
+</div>
+<div class="st mb3" x-text="t('section.monitor')"></div>
+<div class="pnl mb4">
+  <template x-if="tooltipConfig===null"><div class="pnl-b"><span class="txs tm" x-text="t('loading')"></span></div></template>
+  <template x-if="tooltipConfig!==null"><div>
+    <div class="set-row">
+      <div><div class="row-t" x-text="t('tooltip_enabled')"></div><div class="row-d" x-text="t('tooltip_config')"></div></div>
+      <button class="tgl" :class="tooltipConfig.enabled?'on':'off'" @click="tooltipConfig.enabled=!tooltipConfig.enabled"></button>
+    </div>
+    <div x-show="tooltipConfig.enabled" style="padding:0 16px 14px">
+      <div class="row-d mb2" x-text="t('tooltip_metrics')"></div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-12);color:var(--fg)"><input type="checkbox" class="chkbox" x-model="tooltipConfig.metrics.requests_per_second"><span x-text="t('tooltip_requests_per_second')"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-12);color:var(--fg)"><input type="checkbox" class="chkbox" x-model="tooltipConfig.metrics.avg_latency_ms"><span x-text="t('tooltip_avg_latency_ms')"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-12);color:var(--fg)"><input type="checkbox" class="chkbox" x-model="tooltipConfig.metrics.cache_hit_rate"><span x-text="t('tooltip_cache_hit_rate')"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-12);color:var(--fg)"><input type="checkbox" class="chkbox" x-model="tooltipConfig.metrics.gen_speed"><span x-text="t('tooltip_gen_speed')"></span></label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-12);color:var(--fg)"><input type="checkbox" class="chkbox" x-model="tooltipConfig.metrics.today_requests"><span x-text="t('tooltip_today_requests')"></span></label>
+      </div>
+      <div class="cg mt2" style="max-width:460px">
+        <span class="txs tm" x-text="t('tooltip_update_interval')"></span>
+        <input type="number" min="1" max="10" x-model.number="tooltipConfig.update_interval_secs" class="inp" style="width:70px">
+        <button class="btn btn-p" style="font-size:var(--fs-11);padding:5px 12px" @click="saveTooltipConfig()" x-text="t('tooltip_save')"></button>
+        <span class="txs" style="color:var(--ok)" x-text="tooltipMsg"></span>
+      </div>
+    </div>
+  </div></template>
+</div>
+<div class="pnl mb4" style="border-color:rgba(239,68,68,.3)">
+  <div class="set-row">
+    <div><div class="row-t" x-text="t('data_mgmt')"></div></div>
+    <button class="btn btn-g" style="font-size:var(--fs-12);color:var(--err)" :disabled="clearingLogs" @click="clearAllLogs()" x-text="clearingLogs?t('saving'):t('clear_all_records')"></button>
+  </div>
+</div>
+</div>

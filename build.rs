@@ -8,6 +8,10 @@ use chrono::Utc;
 use std::process::Command;
 
 fn main() {
+    // i18n 构建门禁: src/admin/i18n.js 中英双表 重复键 / 缺键 检查 (失败即编译报错).
+    // 由 check_i18n.cjs 的字符串字面量感知扫描移植而来 — 手工脚本升级为不可绕过的门禁.
+    check_i18n_tables();
+
     // 生成 icon.ico
     generate_ico("icon.ico");
 
@@ -41,6 +45,243 @@ fn git_commit() -> String {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// i18n 构建门禁: 解析 `src/admin/i18n.js` 的 `I18N` 双表, 校验
+/// ① 语言表必须恰好存在 zh-CN / en-US 且都在
+/// ② 表内无重复键 (后定义覆盖前定义会静默产生死文案)
+/// ③ 中英键集必须一致 (缺键会让该语言回退显示另一种语言)
+///
+/// 扫描器为字符串/注释感知 —— 中英表大量同行内联多键 (`'a': 'x', 'b': 'y',`),
+/// 按行正则抓键会漏掉近 2/3 (HANDOFF 7.5 的实测教训), 故此处用状态机逐字符解析.
+/// 失败即 panic, 使编译失败 —— 手工脚本升级为不可绕过的门禁.
+fn check_i18n_tables() {
+    use std::collections::{HashMap, HashSet};
+
+    const PATH: &str = "src/admin/i18n.js";
+    let src = std::fs::read_to_string(PATH)
+        .unwrap_or_else(|e| panic!("i18n 门禁: 读取 {PATH} 失败: {e}"));
+    let anchor = "const I18N = {";
+    let start = src
+        .find(anchor)
+        .unwrap_or_else(|| panic!("i18n 门禁: {PATH} 中找不到 `{anchor}`"));
+
+    // 从 anchor 起按字符扫描 (行号定位用)
+    let base_line = 1 + src[..start].chars().filter(|&c| c == '\n').count();
+    let chars: Vec<char> = src[start..].chars().collect();
+    let line_of = |i: usize| -> usize {
+        base_line + chars[..i].iter().filter(|&&c| c == '\n').count()
+    };
+
+    // 字符串/模板字面量在 Normal 态一次性原子跳过 (含键位探测), 故无需 Sq/Dq/Tpl 持续态;
+    // 只有注释需要跨字符续扫.
+    enum St {
+        Normal,
+        Line,
+        Block,
+    }
+    let mut st = St::Normal;
+    let mut depth: usize = 0;
+    let mut lang: Option<String> = None;
+    let mut tables: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    // 定位 I18N 对象的起始 `{`
+    let mut i = chars.iter().position(|&c| c == '{').expect("no '{'");
+    let mut done = false;
+    while i < chars.len() && !done {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied().unwrap_or('\0');
+        match st {
+            St::Line => {
+                if c == '\n' {
+                    st = St::Normal;
+                }
+                i += 1;
+                continue;
+            }
+            St::Block => {
+                if c == '*' && next == '/' {
+                    st = St::Normal;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            St::Normal => {}
+        }
+        // ---- Normal ----
+        if c == '/' && next == '/' {
+            st = St::Line;
+            i += 2;
+            continue;
+        }
+        if c == '/' && next == '*' {
+            st = St::Block;
+            i += 2;
+            continue;
+        }
+        // 模板字面量: 非键, 原子跳过 (不解析 ${} 插值 —— I18N 值域为纯文本)
+        if c == '`' {
+            let mut k = i + 1;
+            while k < chars.len() {
+                if chars[k] == '\\' {
+                    k += 2;
+                    continue;
+                }
+                if chars[k] == '`' {
+                    break;
+                }
+                k += 1;
+            }
+            i = (k + 1).min(chars.len());
+            continue;
+        }
+        // try key: 字符串字面量 或 标识符, 后跟 `:` 即键
+        let mut lit: Option<String> = None;
+        let mut j0 = i;
+        if c == '\'' || c == '"' {
+            let q = c;
+            let mut k = i + 1;
+            let mut s = String::new();
+            while k < chars.len() {
+                let ch = chars[k];
+                if ch == '\\' {
+                    if k + 1 < chars.len() {
+                        s.push(chars[k + 1]);
+                    }
+                    k += 2;
+                    continue;
+                }
+                if ch == q {
+                    break;
+                }
+                s.push(ch);
+                k += 1;
+            }
+            if k < chars.len() {
+                lit = Some(s);
+                j0 = k + 1; // 闭引号之后
+            }
+        } else if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+            let mut k = i;
+            while k < chars.len()
+                && (chars[k].is_ascii_alphanumeric() || chars[k] == '_' || chars[k] == '$')
+            {
+                k += 1;
+            }
+            lit = Some(chars[i..k].iter().collect());
+            j0 = k;
+        }
+        match lit {
+            None => {
+                if c == '{' {
+                    depth += 1;
+                } else if c == '}' {
+                    depth = depth.saturating_sub(1);
+                    if depth == 1 {
+                        lang = None; // 语言表闭合
+                    }
+                    if depth == 0 {
+                        done = true; // I18N 闭合
+                    }
+                }
+                i += 1;
+            }
+            Some(key) => {
+                // 跳过空白找 `:`
+                let mut j = j0;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == ':' {
+                    // 找值起点
+                    let mut v = j + 1;
+                    while v < chars.len() && chars[v].is_whitespace() {
+                        v += 1;
+                    }
+                    if v < chars.len() && chars[v] == '{' {
+                        // 对象值: 深度 1 处即语言表
+                        if depth == 1 {
+                            lang = Some(key);
+                            tables.entry(lang.clone().unwrap()).or_default();
+                        }
+                        depth += 1;
+                        i = v + 1;
+                        continue;
+                    }
+                    // 标量值: 在语言表内 (深度 2) 则记录该键
+                    if depth == 2 {
+                        if let Some(l) = &lang {
+                            let t = tables.entry(l.clone()).or_default();
+                            if !t.insert(key.clone()) {
+                                errors.push(format!(
+                                    "{PATH} 第 {} 行: 表 `{l}` 重复键 '{key}' (后定义覆盖前定义, 前者成死文案)",
+                                    line_of(i)
+                                ));
+                            }
+                        }
+                    }
+                    i = j0; // 继续扫值本身
+                    continue;
+                }
+                // 不是键 (是值), 整体跳过该字面量
+                i = j0;
+            }
+        }
+    }
+
+    // ① 双表存在
+    for required in ["zh-CN", "en-US"] {
+        if !tables.contains_key(required) {
+            errors.push(format!("{PATH}: 缺少语言表 `{required}`"));
+        }
+    }
+    // ③ 键集一致 (以 zh-CN 为基准双向对比)
+    if let (Some(zh), Some(en)) = (tables.get("zh-CN"), tables.get("en-US")) {
+        let mut miss_en: Vec<&String> = zh.difference(en).collect();
+        let mut miss_zh: Vec<&String> = en.difference(zh).collect();
+        miss_en.sort();
+        miss_zh.sort();
+        let fmt = |v: &[&String]| -> String {
+            v.iter()
+                .take(20)
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        if !miss_en.is_empty() {
+            errors.push(format!(
+                "{PATH}: zh-CN 有而 en-US 缺 {} 键: {}{}",
+                miss_en.len(),
+                fmt(&miss_en),
+                if miss_en.len() > 20 { ", …" } else { "" }
+            ));
+        }
+        if !miss_zh.is_empty() {
+            errors.push(format!(
+                "{PATH}: en-US 有而 zh-CN 缺 {} 键: {}{}",
+                miss_zh.len(),
+                fmt(&miss_zh),
+                if miss_zh.len() > 20 { ", …" } else { "" }
+            ));
+        }
+    }
+
+    if !errors.is_empty() {
+        panic!(
+            "i18n 构建门禁失败 ({} 处):\n  {}\n修复后才能编译 —— 中英双表必须同步 (重复键/缺键都会让面板显示错文案/原文).",
+            errors.len(),
+            errors.join("\n  ")
+        );
+    }
+    let (nz, ne) = (
+        tables.get("zh-CN").map_or(0, |s| s.len()),
+        tables.get("en-US").map_or(0, |s| s.len()),
+    );
+    println!("cargo:rerun-if-changed={PATH}");
+    eprintln!("i18n 门禁通过: zh-CN {nz} 键 / en-US {ne} 键, 无重复无缺键");
 }
 
 /// 写出 `resources.rc`: 引用已生成的 icon.ico, 并声明文件属性版本信息.
