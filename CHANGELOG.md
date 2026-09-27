@@ -458,6 +458,61 @@
 headless Edge 截图核对（暗/亮 × 概览/分析/记录/供应商/设置/关于 + 780px 窄屏），
 重点确认 Hero 带、设置行卡片、全屏抽屉在两主题下均正常。
 
+### 修复：所有浮层（抽屉/弹窗/Toast/确认框）落在 Alpine 作用域之外
+
+**这是一个严重缺陷，且此前完全不可见。** `footer.html` 位于拼接顺序第 11 位，却在其中写了
+`</main>` 与关闭 `.layout`（即 `x-data="dashboard()"` 根）的 `</div>`。其后还有 4 个 HTML 部件：
+
+| 部件 | 后果 |
+|---|---|
+| `drawer-provider.html` | 供应商抽屉 `x-if="drawerProv"` 永不求值 → **抽屉打不开** |
+| `panel-price.html` | 价格面板不显示 |
+| `modal-whatsnew-recall.html` / `modal-add-fetchdiff.html` | 更新亮点、拉取差异弹窗不显示 |
+| `tail.html` 的 Toast 层与确认弹窗 | 通知与二次确认不出现 |
+
+Alpine 从 `x-data` 根往下遍历，**框外的元素根本不被处理**。实测（预览 DOM）：
+`<template x-if="drawerProv">` 的父节点直接是 `BODY`，无任何 `[x-data]` 祖先，`.dr` 从不进入 DOM。
+
+**修法**：把 `</main></div>` 从 `footer.html` 移到 HTML 内容末尾（`panel-price.html` 的 `<script>` 之前），
+并把 `tail.html` 里的 Toast 层与确认弹窗也移到该闭合标签之前。修复后实测：
+祖先链变为 `MAIN.main < DIV.layout`、抽屉渲染出全部 16 行模型、Toast 层进入作用域、**控制台异常 0**。
+
+浮层均为 `position:fixed`，移入 `<main>`（`overflow:auto`，无 transform）不影响定位。
+
+### 修复：记录页表头排序箭头从未显示（并每次加载抛 7 个异常）
+
+记录页表头写成 `<th x-text="t('detail.time')"> <span x-text="logSortIcon('time')"></span></th>`
+—— 父 `th` 的 `x-text` 会执行 `textContent = ...`，**把子 `<span>` 整个抹掉**；子元素随即脱离
+文档、失去 Alpine 作用域，求值时抛 `ReferenceError: logSortIcon is not defined`。
+
+用户可见后果：**点表头能排序，但永远看不到升降序箭头**（箭头刚生成就被父节点抹掉）。
+修法：标题也放进自己的 `<span>`，父 `th` 不再用 `x-text`；箭头加 `.th-sort-ico`（固定最小宽度，
+避免启用排序时列宽跳动）。修复后控制台异常从 7 归零。
+
+### 供应商抽屉：整屏化 + 模型表密度重做
+
+- 抽屉由"居中大弹窗 + 20px 边距"改为**整屏面板**（138 模型 × 十余列下横向仍不够用）；
+  头/底栏玻璃化，`.dr-inner` 把表单类内容收在 1400px 内；头部补图标方块与可访问名。
+- **模型表行高 98px → 66px**。原因：列宽按默契百分比分配，「协议」列只拿到 ~9%（135px），
+  而格内是"下拉 + 自动徽章 + 「可用」标签 + 最多 2 个协议徽章"且 `flex-wrap` → 叠成 3 行；
+  「品牌」列同理叠 2~3 行（品牌徽章 + NEW + 获取）。16 行就占满一屏。
+  修法：① 去掉每行的「获取 / 手动」来源徽章（顶部已有来源筛选器，行内重复）；
+  ② 协议格去掉冗余的「自动 XX」徽章（下拉的虚线边框 + tooltip 已表达同一信息）与「可用」文字标签；
+  ③ 显式重排全部列宽（模型 ID / 上游模型原无宽度，会吞掉剩余空间）；
+  ④ 容器改 `nowrap`、单元格统一 `8px 12px`。现每行单行显示。
+
+### 预览工装三处修正（都是自身缺陷，曾误导判断）
+
+- **错误收集器挂得太晚**：外层 wrapper 的 `window.onerror` 在 iframe `load` 之后才挂，而 Alpine 在
+  `DOMContentLoaded` 就初始化 —— 初始化期的异常完全看不到（这正是抽屉静默失败的原因）。
+  现把收集器注入到页面最前（早于 Alpine），结果留在 `window.__ERRS` 供诊断读取。
+- **fetch 桩缺分支**：`/tooltip-config` 等接口未覆盖 → 返回空对象，而设置页对
+  `tooltipConfig.metrics.*` 做 `x-model` 绑定 → 首屏抛一串 `Cannot read properties of undefined`。
+  这类异常会中断 Alpine 后续渲染。现补齐 `/tooltip-config`、`/proxy-config`、`/peak-schedule`、
+  `/currency`、`/seen-version`、`/degradations` 等分支。
+- **抽屉变体改为"初始状态注入"**：headless 下**运行时响应式不刷新**（实测事后改 `activeTab`/`drawerProv`，
+  Alpine 数据已变但 DOM 不动），故抽屉必须把 `drawerProv` 直接写进 `ds-state.js` 的初值才能截到。
+
 ## [0.5.7] - 2026-09-23
 
 ### 修复

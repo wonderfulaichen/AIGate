@@ -220,6 +220,36 @@ python .openbitfun\tmp\shoot.py s_dashboard --w=780 --as=narrow_ # 窄屏 (前�
 **新增 `:has()` 用法前先确认它在本项目可用**（设置页 P3 起已在用，Chrome/Edge 105+ 支持）。
 用 `:has()` 做"条件性降级"（如"含开关行的面板不画框"）比改几十处 HTML 更稳。
 
+### 4.8 浮层必须在 `x-data` 之内（硬性约束）
+
+**`</main></div>` 由 `panel-price.html` 收尾，不要在 `footer.html` 里提前关闭。**
+
+Alpine 从 `x-data` 根往下遍历，**框外的元素根本不被处理** —— 不是"降级"，是完全不工作：
+`x-if` 不求值、`x-show` 不生效、`x-text` 不填。后果是整个浮层消失且**没有任何报错**。
+
+拼接顺序（`admin.rs`）决定的现实是：`footer.html` 之后还有
+`modal-whatsnew-recall` / `modal-add-fetchdiff` / `drawer-provider` / `panel-price` 四个 HTML 部件，
+以及（现已移入的）Toast 层与确认弹窗。因此关闭标签必须放在**它们之后**：
+
+```
+… 各页模板 → footer → 四个浮层部件 → Toast + 确认弹窗 → </main></div> → <script> → 全部 JS → </script>
+```
+
+- 新增浮层 HTML 时**放在 `panel-price.html` 里**（它是 HTML 段的最后一件），别放进 `tail.html`
+  —— `tail.html` 在 `</script>` 之后，放那里等于又跑出作用域。
+- 自查：`document.querySelector('<你的浮层>').closest('[x-data]')` 必须非空。
+- 浮层用 `position:fixed`，移入 `<main>`（`overflow:auto`、无 `transform`）不影响定位；
+  但**若将来给 `.main` 或其祖先加 `transform`/`filter`/`will-change`，fixed 会改为相对该祖先定位** —— 届时需重新评估。
+
+### 4.9 不要给同一元素同时用 `x-text` 与子元素
+
+`x-text` 执行 `el.textContent = value`，**会销毁全部子节点**。写法如
+`<th x-text="标签"><span x-text="图标()"></span></th>` 有双重后果：
+① 图标被抹掉（用户可见：排序箭头永远不显示）；② 被抹掉的子元素脱离文档后**失去 Alpine 作用域**，
+求值抛 `ReferenceError`（实测每次加载 7 个未捕获异常）。
+
+规则：需要"文本 + 子元素"时，把文本也放进自己的 `<span>`，父元素不写 `x-text`。
+
 ## 5. 状态色与分级（单一事实源）
 
 - `bcls(tone)` / `bcolor(tone)` / `statusTone(tone)`（`core.js`）：tone ∈

@@ -15,6 +15,10 @@
 .st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:2px;background:linear-gradient(180deg,var(--indigo),var(--primary))}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:12px 14px;font-weight:650;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
+/* 可排序列: 悬停变主色提示可点; 箭头占固定宽度 (无排序时留白, 避免点排序时列宽跳动) */
+.th-sort{cursor:pointer;transition:color var(--dur-fast);user-select:none}
+.th-sort:hover{color:var(--fg)}
+.th-sort-ico{display:inline-block;min-width:9px;color:var(--primary);font-size:var(--fs-12)}
 td{padding:14px 14px;font-size:var(--fs-13);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
 /* 行悬停: 加 2px 主色左侧指示条 —— 宽表横向滚动时, 纯底色变化容易看不出在哪一行 */
 tbody tr{transition:background var(--dur-fast)}

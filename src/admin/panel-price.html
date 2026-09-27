@@ -67,4 +67,32 @@
     <button class="btn btn-p" @click="savePricePanel()" x-text="t('save')"></button>
   </div>
 </div>
+<!-- 全局 Toast 渲染层 (Alpine.store('toast')) — role/aria-live: 通知追加时向屏幕阅读器播报 -->
+<div class="toast-wrap" x-cloak role="status" aria-live="polite">
+  <template x-for="it in $store.toast.items" :key="it.id">
+    <div class="toast-it" :class="'toast-'+it.type">
+      <span x-text="it.msg"></span>
+      <span class="toast-cnt" x-show="it.count>1" x-text="'×'+it.count"></span>
+      <button class="toast-x" @click="$store.toast.dismiss(it.id)" :aria-label="t('close_label')" :title="t('close_label')">✕</button>
+    </div>
+  </template>
+</div>
+
+<!-- 统一确认弹窗 (Alpine.store('cf'), confirmAsk 驱动) -->
+<div x-show="$store.cf.show" x-cloak class="modal-overlay" role="dialog" aria-modal="true" style="z-index:90" @keydown.escape.window="$store.cf.settle(false)">
+  <div class="modal-card" style="max-width:440px" @click.stop>
+    <div class="modal-head"><div class="modal-title" x-text="$store.cf.title"></div></div>
+    <div class="modal-body"><span style="font-size:var(--fs-13);line-height:1.65;white-space:pre-wrap;word-break:break-word" x-text="$store.cf.body"></span></div>
+    <div class="modal-foot">
+      <button class="btn btn-g" :disabled="$store.cf.loading" @click="$store.cf.settle(false)" x-text="t('cancel')"></button>
+      <button class="btn" :class="$store.cf.danger?'btn-d':'btn-p'" :disabled="$store.cf.loading" @click="$store.cf.confirmNow()">
+        <template x-if="!$store.cf.loading"><span x-text="t('cf_ok')"></span></template>
+        <template x-if="$store.cf.loading"><span class="spin"></span></template>
+      </button>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
 <script>
