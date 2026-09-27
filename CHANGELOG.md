@@ -84,6 +84,26 @@
   不参与计算决策，版本升级时随旧缓存清理。
 
 ### 修复
+- **上游按 `max_output_tokens` 截断被误报为 502 与「上游错误」**（用户贴记录详情截图发现）：
+  客户端实际收到的是 `200` + `finish_reason=length`，记录页却显示 `502` +
+  `responses upstream error: max_output_tokens`——一次「答不完」被说成「上游故障」，
+  还被算进失败率。实测签名（线上 `logs.jsonl` 连续 4 条）：`prompt=194591`、
+  `completion=8192`（正好是 `max_output_tokens` 打满）、`latency=48115ms`、
+  `body_len=1866271`，同刻日志有 `upstream finish_reason="length"` WARN。
+  根因：`response.incomplete` 是协议里**正常截断**的终止事件（与 `response.completed` /
+  `response.failed` 并列，见 DeepSeek Responses API 文档），但转换器把它写进了
+  `last_error`，而该字段有两条下游消费——拼成 `responses upstream error: …` 文案，
+  以及 `status = if err_for_log.is_some() { 502 } else { 200 }`。现改为**两条独立通道**：
+  新增 `truncated_reason` 承载截断，`last_error` 只留真错误；截断记 `200`（客户端收到的
+  本就是 200，其余带 error 的收尾仍记 502 以保持日志配色自洽）；文案改为如实描述 +
+  可操作解法（依据官方文档说明 `max_output_tokens` **包含思维链 token**、且与输入
+  **共用上下文窗口**，故给出「调大额度」或「缩短会话」两条出路，并附本次输入/输出 token 数）。
+  另补上直通路径的同类缺口：`NativeTapStream` 原先不识别 `response.incomplete`，
+  直通时截断在记录页显示为**完全正常**（200 + 完整 usage），用户无从得知回答被砍；
+  现识别该事件并在落库时带同一文案（仍**不改写转发字节**——`response.incomplete`
+  本身就是协议规定的终止事件，客户端据此判断）。新增测试
+  `truncation_and_error_use_separate_channels` 双向断言两条通道互不污染；
+  端到端（隔离实例 + mock 上游）转换路径与直通路径均验证通过。
 - **供应商页骨架永久常驻、工具栏（搜索/筛选）永久消失**（用户实测截图发现）：
   `loadProvidersForm` 有三处调用点（init 的 `switchTab('dashboard')` / 切页签 /
    日志页「跳转供应商」的回退），两次请求可能同时在飞且都读到 `providersFormData === null`，
