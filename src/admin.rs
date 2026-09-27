@@ -2505,6 +2505,15 @@ pub struct UsageStats {
     /// 是否有任意模型配置了价格 (providers.json 的 model.price).
     /// 前端据此决定是否显示费用相关卡片/列, 避免无价格时显示 ¥0.00 误导.
     pub has_price_config: bool,
+    /// **本窗口内实际被请求的模型**里, 是否有配过价的.
+    ///
+    /// 与 `has_price_config` 是两个不同的问题: 后者问"配置里有没有配价模型"(全局),
+    /// 前者问"这些请求有没有落在配价模型上". 二者不一致时费用必然是 0 —— 原实现只看
+    /// 前者, 于是出现「显示 ¥0.00 却提示'按模型价格估算'」的自相矛盾 (实测: 配价 2 个
+    /// 模型, 但 5000 次请求全落在另外 12 个未配价模型上).
+    /// `None` 表示无法判定 (如仅由 rollup 合并且未逐条检查), 前端此时回退旧行为.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_priced_request: Option<bool>,
     /// 本轮 (进程启动以来) 累计统计 (原子计数, 不受日志滚动窗口封顶影响).
     pub session: SessionStats,
     /// 当前统计窗口内有效流式请求的加权生成速度 (tok/s).
@@ -2633,6 +2642,17 @@ pub async fn api_stats(
 
     let mut stats = compute_stats(&log_side, &price_table, &free_ids);
     stats.has_price_config = has_price_config;
+    // 本窗口被请求的模型里是否有配过价的 (与 has_price_config 是两个问题, 见字段注释).
+    // 判定同时看**日志自带的价格快照**与当前配置 —— 后者覆盖"旧日志 + 后来才配价"的情形.
+    // 无请求时给 None —— 无从判定, 前端回退旧行为 (不把"没请求"说成"没配价").
+    stats.has_priced_request = if log_side.is_empty() {
+        None
+    } else {
+        Some(log_side.iter().any(|log| {
+            log.price.is_some()
+                || pricing::resolve_price(price_table.lookup(&log.provider, &log.model)).is_some()
+        }))
+    };
     let effective_start = range_start.unwrap_or_else(|| log_side.iter().map(|log| log.timestamp).min().unwrap_or(now));
     stats.trends = compute_trends_window(&log_side, granularity, &price_table, Some(effective_start), Some(range_end));
     stats.model_trends = compute_model_trends_window(&log_side, granularity, Some(effective_start), Some(range_end));
@@ -3385,6 +3405,8 @@ fn compute_stats(
         opt_saved_since,
         // has_price_config 在 api_stats 中按 price_overrides 是否非空注入.
         has_price_config: false,
+        // 同上: 由 api_stats 按本窗口实际被请求的模型判定后注入.
+        has_priced_request: None,
         // 本轮 (进程级) 统计由 LogBuffer 原子计数提供, compute_stats 内无来源 → 默认空,
         // api_stats 返回前会覆盖为 log_buffer.session_stats().
         session: SessionStats::default(),

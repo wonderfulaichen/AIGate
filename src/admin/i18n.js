@@ -135,7 +135,7 @@ const I18N = {
     
     
     
-    'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
+    'session_saved_tokens_hint': '响应缓存精确 token + 转发优化估算（4 字节 ≈ 1 token）', 'opt_saved_window_days': '窗口仅 {0} 天', 'opt_saved_title': '优化省量', 'opt_saved_today_tokens': '今日省 Tokens', 'opt_saved_month_tokens': '本月省 Tokens', 'opt_saved_30d': '近30天', 'opt_saved_cumulative': '累计(自 {1}) ≈ {0}',
     'apikey_mgmt': 'API Key 管理', 'edit': '编辑', 'cancel': '取消',
     'tooltip_config': '任务栏 Tooltip', 'tooltip_enabled': '启用 Tooltip', 'tooltip_metrics': '显示指标',
     'tooltip_requests_per_second': '请求速度 (req/s)', 'tooltip_avg_latency_ms': '平均延迟 (ms)',
@@ -166,7 +166,8 @@ const I18N = {
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日',
     'errors_only': '错误 {0}', 
-    'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格', 
+    'cost_estimated': '按模型价格估算', 'price_unconfigured': '未配置价格',
+    'price_not_applied': '本窗口调用的模型均未配置价格', 
     'input_tokens_short': '输入 Tokens', 'output_tokens_short': '输出 Tokens',
     'kv_cache_hit': 'KV Cache 命中', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
     'view_analytics': '查看分析', 'success_rate': '成功率', 'avg_latency': '平均延迟', 'generation_speed': '生成速度',
@@ -365,7 +366,7 @@ const I18N = {
     
     
     
-    'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
+    'session_saved_tokens_hint': 'exact cache tokens + estimated forwarding (4 bytes ≈ 1 token)', 'opt_saved_window_days': 'window is only {0} days', 'opt_saved_title': 'Optimization Savings', 'opt_saved_today_tokens': "Today's Tokens Saved", 'opt_saved_month_tokens': "Month's Tokens Saved", 'opt_saved_30d': 'Last 30d', 'opt_saved_cumulative': 'Cumulative (since {1}) ≈ {0}',
     'apikey_mgmt': 'API Keys', 'edit': 'Edit', 'cancel': 'Cancel',
     'tooltip_config': 'Taskbar Tooltip', 'tooltip_enabled': 'Enable Tooltip', 'tooltip_metrics': 'Display Metrics',
     'tooltip_requests_per_second': 'Request Speed (req/s)', 'tooltip_avg_latency_ms': 'Avg Latency (ms)',
@@ -396,7 +397,8 @@ const I18N = {
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today',
     'errors_only': '{0} errors', 
-    'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured', 
+    'cost_estimated': 'Estimated from model pricing', 'price_unconfigured': 'Pricing not configured',
+    'price_not_applied': 'No pricing configured for the models called in this window', 
     'input_tokens_short': 'Input tokens', 'output_tokens_short': 'Output tokens',
     'kv_cache_hit': 'KV Cache hit', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
     'view_analytics': 'View analytics', 'success_rate': 'Success rate', 'avg_latency': 'Average latency', 'generation_speed': 'Generation speed',

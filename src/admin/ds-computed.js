@@ -103,7 +103,65 @@
         : base;
     },
     get heroCost() { const s=this.stats||{}; return Number(s.total_cost||0); },
-    get heroCostText() { return (this.stats&&this.stats.has_price_config) ? this.fmtMoney(this.heroCost) : '—'; },
+    // ── 优化省量卡的口径披露 (修 3 个易误读点) ──
+    // ① 今日与本月并排却差 6 个数量级: 数字本身没错 (今日只有少量请求带推理链),
+    //    但两卡无任何口径说明, 看着像统计坏了. → 各自标明窗口.
+    // ② 本月与累计完全相等 (跨度不足 30 天时必然如此): 并排两个相同大数字无信息量,
+    //    且暗示"巧合". → 跨度不足 30 天时不重复显示, 改标"窗口仅 N 天".
+    // ③ 今日为 0 时给 '—' 而非 0 (无数据 ≠ 0, 与全站口径一致).
+    get todaySavedTokens() {
+      const s = this.stats || {};
+      return Number(s.today_strip_saved_tokens || 0)
+        + Number(s.today_trim_saved_tokens || 0)
+        + Number(s.today_resp_cache_saved_tokens || 0);
+    },
+    get todaySavedText() {
+      // 今日无请求 → 无从谈"省了多少", 给占位而非 0
+      const s = this.stats || {};
+      if (!Number(s.today_requests || 0)) return '—';
+      return this.fmtT(this.todaySavedTokens);
+    },
+    get monthSavedTokens() { return Number((this.stats || {}).month_opt_saved_tokens || 0); },
+    get totalSavedTokens() { return Number((this.stats || {}).total_opt_saved_tokens || 0); },
+    // 数据窗口实际跨度 (天): 用于判断"本月"是否等同于"窗口全部"
+    get savedWindowDays() {
+      const s = this.stats || {};
+      const mins = Number(s.window_minutes || 0);
+      return mins > 0 ? mins / 1440 : 0;
+    },
+    // 本月卡是否与累计重复: 窗口跨度不足 30 天时, "近 30 天"与"窗口全部"是同一批数据.
+    // 此时本月卡会显示与页头累计完全相同的大数字 —— 无信息量, 应改为披露真实跨度.
+    get monthSavedDuplicatesTotal() {
+      const d = this.savedWindowDays;
+      return d > 0 && d < 30 && this.monthSavedTokens === this.totalSavedTokens;
+    },
+    get monthSavedHint() {
+      if (this.monthSavedDuplicatesTotal) {
+        return t('opt_saved_window_days', Math.max(1, Math.round(this.savedWindowDays * 10) / 10));
+      }
+      return t('opt_saved_30d');
+    },
+    // 费用展示 (三态, 修 bug):
+    //   · 未配价 (has_price_config=false)        → '—'
+    //   · 配了价且窗口内确实结算到费用            → 金额
+    //   · **配了价但本窗口被调用的模型都没配价** → '—' + 明确提示
+    // 原实现只看 has_price_config 这一个全局布尔, 于是出现「显示 ¥0.00 却提示
+    // '按模型价格估算'」——界面声称按价格算了, 实际一分未算 (实测: 配价 2 个模型,
+    // 但 5000 次请求命中的是另外 12 个未配价模型, 故 total_cost=0).
+    // 判据用 has_priced_request (后端按"实际被请求的模型是否有价"给出), 缺失时回退旧行为.
+    get heroCostText() {
+      const s = this.stats || {};
+      if (!s.has_price_config) return '—';
+      if (s.has_priced_request === false) return '—';
+      return this.fmtMoney(this.heroCost);
+    },
+    // 费用提示: 与上面三态对应, 避免提示与数字互相矛盾.
+    get heroCostHint() {
+      const s = this.stats || {};
+      if (!s.has_price_config) return t('price_unconfigured');
+      if (s.has_priced_request === false) return t('price_not_applied');
+      return t('cost_estimated');
+    },
     get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
     get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
