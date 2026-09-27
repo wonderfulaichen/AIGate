@@ -98,6 +98,21 @@
 - **README 的项目结构**同步到 `src/admin/` 切片布局与 `concat!` 拼接说明。
 
 ### 修复
+- **Responses 协议下几乎没有省量**（用户观察，已用真实日志量化）：`chat` 端点 3435 条请求
+  里 **96.5%** 有剥离（中位 11.7 万 token），而 `responses` 端点 1545 条里只有 **8.8%**
+  （中位 0）；同一模型对比更直接——`deepseek-v4.1-flash` 走 chat 是 98% 有剥离，走 responses
+  是 9%。**根因不在协议本身，而在绕过了 chat 管线**：`responses_completions` 检测到上游同协议
+  时直接 `return relay_native_passthrough(...)`，该函数只做「换模型名 + 合 extra_body +
+  注入思考档」，**完全不做剥离**（剥离逻辑在 chat 管线的 `inject_model_params` 内）。交叉
+  分组证实：`responses 直通 n=1296 strip=0` 与 `chat 直通 n=67 strip=0` 是同一现象。实测
+  （mock 上游记录请求体）确认客户端发的 6139 字符 `reasoning` item 被原样转发。现新增
+  `strip_responses_reasoning_items` 剥离 Responses `input` 里的历史 `reasoning` item
+  （该协议里推理链是**独立 item**，与 chat 的 `reasoning_content` 字段结构不同，故单独实现），
+  省量按既有口径落库、原文同时进「降级可回取」。**复用现有 `STRIP_TOOLCALL_ON_RESPONSES`
+  开关**（两条路径是同一意图，直通只是此前遗漏；沿用同一优先级链，避免「要开两次才生效」），
+  **默认关**——Responses 上游是否校验 item 序列未经实测，由用户在真实上游试开观察；
+  面板说明同步补「(含直通路径)」。新增 3 项单测（含「其余 item 顺序不变」——顺序是上游可能
+  校验的部分）+ 端到端 A/B（默认关：原样转发、strip=0；开启：剥离、strip=4531 tok 落库）。
 - **概览页费用显示 ¥0.00 却提示「按模型价格估算」**（用户贴截图发现）：`has_price_config`
   只回答「配置里有没有配价模型」（全局布尔），而 `total_cost` 是「本窗口**实际被请求**模型的
   费用之和」——两者口径不同源。实测部署：`providers.json` 650 个模型里配价 2 个，而
