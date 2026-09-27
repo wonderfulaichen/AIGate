@@ -106,7 +106,7 @@ const I18N = {
     
     
     'settings_title': '设置', 'settings_subtitle': '代理服务与供应商配置',
-    'ui_language': '界面语言', 'lang_zh': '简体中文', 'lang_en': 'English',
+    'ui_language': '界面语言', 'ui_theme': '主题', 'ui_theme_hint': '只影响面板外观；「跟随系统」会随操作系统的深浅色切换实时生效', 'theme_dark': '暗色', 'theme_light': '亮色', 'theme_system': '跟随系统', 'lang_zh': '简体中文', 'lang_en': 'English',
     'listen_addr': '监听地址', 'status': '状态', 'running': '运行中',
     'proxy_policy': '上游代理策略', 'proxy_mode_system': '继承系统代理', 'proxy_mode_no_proxy': '已禁用代理', 'proxy_mode_custom': '自定义代理', 'proxy_hint': '由环境变量 AIGATE_NO_PROXY / AIGATE_PROXY 控制，修改后需重启生效',
     'base_url': '中转 Base URL', 'copy': '复制', 'copied': '已复制', 'copy_model_id': '复制模型中转 ID',
@@ -339,7 +339,7 @@ const I18N = {
     
     
     'settings_title': 'Settings', 'settings_subtitle': 'Proxy service & provider config',
-    'ui_language': 'Interface Language', 'lang_zh': '简体中文', 'lang_en': 'English',
+    'ui_language': 'Interface Language', 'ui_theme': 'Theme', 'ui_theme_hint': 'Affects the panel appearance only; "Follow system" tracks the OS light/dark setting live', 'theme_dark': 'Dark', 'theme_light': 'Light', 'theme_system': 'Follow system', 'lang_zh': '简体中文', 'lang_en': 'English',
     'listen_addr': 'Listen Address', 'status': 'Status', 'running': 'Running',
     'proxy_policy': 'Upstream Proxy Policy', 'proxy_mode_system': 'System Proxy', 'proxy_mode_no_proxy': 'Disabled', 'proxy_mode_custom': 'Custom', 'proxy_hint': 'Controlled by env AIGATE_NO_PROXY / AIGATE_PROXY; restart required to apply',
     'base_url': 'Proxy Base URL', 'copy': 'Copy', 'copied': 'Copied', 'copy_model_id': 'Copy model transit ID',

@@ -41,7 +41,36 @@
   /* 暗部遮罩 (收敛 rgba(0,0,0,*)) */
   --shade-1:rgba(0,0,0,.3);--shade-2:rgba(0,0,0,.45);--shade-3:rgba(0,0,0,.55);
   /* 动效时长 (fast/normal/slow) 与缓动 */
-  --dur-fast:.15s;--dur:.2s;--dur-slow:.35s;--ease-out:cubic-bezier(.33,1,.68,1)
+  --dur-fast:.15s;--dur:.2s;--dur-slow:.35s;--ease-out:cubic-bezier(.33,1,.68,1);
+  /* ── 主题相关补充 ──
+     原则: 凡「白叠加 / 黑叠加」**必须**走 token —— 浅色下叠加方向要反转, 写死会在白底上消失
+     (如 rgba(255,255,255,.26) 的十字线在白底上是隐形的) 或过重 (黑遮罩压白底会显脏)。
+     下列暗色取值与原字面量逐一相同, 故暗色视觉零变化。 */
+  --sb-bg:rgba(12,12,16,.8);                 /* 侧栏底色 (原 .sb 硬编码) */
+  --overlay:rgba(0,0,0,.6);                  /* 模态遮罩 (原 .log-modal) */
+  --overlay-soft:rgba(0,0,0,.4);             /* 轻遮罩 (原 .price-panel-bk) */
+  --rule-strong:rgba(255,255,255,.26);       /* 图表十字线 (原 .trend-crosshair) */
+  --track:rgba(255,255,255,.25);             /* 转圈轨道 (原 .spin) */
+  --skeleton:rgba(255,255,255,.07);          /* 骨架降级底色 (原 .skel) */
+  --sh-sm:0 1px 3px rgba(0,0,0,.2);          /* 分段控件选中阴影 (原 .seg-i.a) */
+  /* 主色软底梯度: 收敛散落的 rgba(99,102,241,α)。α 各有含义故逐档建 token,
+     浅色块里换成同α的深主色, 组件无需分主题写两套。 */
+  --primary-soft-deep:rgba(99,102,241,.08);
+  --primary-badge:rgba(99,102,241,.15);
+  --primary-soft-h:rgba(99,102,241,.18);
+  --primary-bd-soft:rgba(99,102,241,.25);
+  --primary-bd:rgba(99,102,241,.3);
+  --row-hover:rgba(99,102,241,.04);
+  --err-bd-mid:rgba(239,68,68,.28);
+  --warn-bg-strong:rgba(245,158,11,.15);
+  /* 其余主题敏感表面 (暗色取值 == 原字面量) */
+  --tip-bg:rgba(18,19,24,.96);               /* 图表悬停气泡底 (原 .trend-tip) */
+  --tgl-off:#3a3a44;                         /* 开关关闭态轨道 (原 .tgl.off) */
+  --violet:#8b5cf6;                          /* 排名条渐变终点 (原 .an-rank-bar) */
+  --purple-soft:rgba(167,139,250,.12);       /* 紫色分区图标底 (原 .sec-ic.purple) */
+  --err-h:#dc2626;                           /* 危险按钮悬停 (原 .btn-d:hover) */
+  --toast-shadow:0 8px 24px rgba(0,0,0,.35); /* Toast 投影 (原 .toast-it) */
+  --toast-err-bg:#2a1416;--toast-ok-bg:#0f2a20;--toast-warn-bg:#2a2110
 }
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -78,14 +107,14 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 
 
 .body{display:flex;flex:1;min-height:0}
-.sb{width:200px;flex-shrink:0;background:rgba(12,12,16,.8);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;overflow:hidden;transition:width var(--dur)}
+.sb{width:200px;flex-shrink:0;background:var(--sb-bg);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;overflow:hidden;transition:width var(--dur)}
 .sb.colapsed{width:52px}
 .sb-nav{flex:1;overflow-y:auto;padding:8px}
 .sb-glabel{padding:14px 12px 4px;font-size:var(--fs-10);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:.6;white-space:nowrap;overflow:hidden}
 .sb.colapsed .sb-glabel{opacity:0;height:0;padding:0;overflow:hidden}
 .sb-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;color:var(--muted);cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast);white-space:nowrap;text-decoration:none;font-size:var(--fs-13);font-weight:500;position:relative}
 .sb-item:hover{background:var(--fill-5);color:var(--fg)}
-.sb-item.active{color:var(--primary);background:rgba(99,102,241,.08)}
+.sb-item.active{color:var(--primary);background:var(--primary-soft-deep)}
 .sb-item.active::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:2px;height:16px;border-radius:0 2px 2px 0;background:var(--primary)}
 .sb-item svg{flex-shrink:0;width:18px;height:18px}
 .sb-item span{overflow:hidden;transition:opacity var(--dur-fast)}
@@ -98,7 +127,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .about-capability{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--fill-1);min-width:0}
-.about-capability-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--indigo);font-size:var(--fs-15);font-weight:700}
+.about-capability-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:var(--primary-soft);color:var(--indigo);font-size:var(--fs-15);font-weight:700}
 @media(max-width:640px){.about-capabilities{grid-template-columns:1fr}}
 .about-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:4px 2px 0}
 .about-eyebrow{font-size:var(--fs-11);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--indigo);margin-bottom:6px}
@@ -152,6 +181,65 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .sc-val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
 .sc-sub{font-size:var(--fs-11);color:var(--muted)}
 
-/* 亮色覆盖层结构 (预留): 默认暗色; 启用时由 <html class="light"> 覆盖语义层取值.
-   仅结构占位 —— 本轮不做亮色换肤 (与历史结论一致), 故不提供实际取值. */
-html.light{color-scheme:light}
+/* 亮色主题: 由 <html class="light"> 覆盖语义层取值。首帧类名由 head.html 的内联脚本按
+   偏好 (aigate.theme) 或系统设置写上, 故不会闪一下暗色。
+
+   与暗色**同构**的设计原则:
+   · surface 层次: 暗色靠「提亮」分层 (bg < card < elevated), 亮色改用「纯白 + 描边」分层 ——
+     亮色下再降亮度会显脏, 分层交给 --border-*。
+   · **叠加方向反转**: --fill-* / --border-* 暗色是白叠加, 亮色改黑叠加 (α 不变);
+     --shade-* 与遮罩变轻 (亮色下不需要那么重的压暗)。
+   · 状态色 (ok/warn/err/info) 本色取更深档 (浅色底上需要更高对比), 徽标字色取同色系深档。
+   · **品牌 logo 与图表数据系列色不覆盖** —— 它们在两种主题下都可读, 属数据而非主题;
+     只有"图表底板/汇总扇区"这类表面色 (--chart-rest) 才随主题走。 */
+html.light{
+  color-scheme:light;
+  /* surface 与文本 */
+  --bg:#f5f6f8;--card:#fff;--elevated:#fff;--input:#fff;
+  --fg:#16181d;--muted:#5c6270;
+  /* 描边: 黑叠加 (方向反转) */
+  --border-subtle:rgba(16,18,26,.07);--border:rgba(16,18,26,.11);--border-s:rgba(16,18,26,.18);
+  --border-t:rgba(16,18,26,.14);
+  /* 主色: 加深以在白底上达标 */
+  --primary:#4f46e5;--primary-h:#4338ca;--primary-fg:#fff;
+  --primary-soft:rgba(79,70,229,.09);--indigo:#4f46e5;
+  /* 状态色四元组 */
+  --ok:#059669;--ok-bg:rgba(5,150,105,.10);--ok-fg:#047857;--ok-bd:rgba(5,150,105,.28);
+  --warn:#b45309;--warn-bg:rgba(180,83,9,.10);--warn-fg:#92400e;--warn-bd:rgba(180,83,9,.28);
+  --err:#dc2626;--err-bg:rgba(220,38,38,.09);--err-fg:#b91c1c;--err-bd:rgba(220,38,38,.28);
+  --neutral-bg:rgba(107,114,128,.10);--neutral-fg:#4b5563;--neutral-bd:rgba(107,114,128,.26);
+  --info-bg:rgba(2,132,199,.10);--info-fg:#0369a1;--info-bd:rgba(2,132,199,.26);
+  /* 图表强调补充色与底板 */
+  --purple:#7c3aed;--cyan:#0891b2;--amber:#b45309;
+  --chart-rest:#d4d7de;
+  /* 浅底/强底版状态色 */
+  --ok-bg-soft:rgba(5,150,105,.08);--ok-bd-soft:rgba(5,150,105,.22);
+  --err-bg-soft:rgba(220,38,38,.08);--err-bd-soft:rgba(220,38,38,.22);
+  --ok-bg-strong:rgba(5,150,105,.14);--ok-bd-strong:rgba(5,150,105,.3);
+  --err-bg-strong:rgba(220,38,38,.13);--err-bd-strong:rgba(220,38,38,.3);
+  /* 填充层级: 黑叠加 (方向反转, α 不变) */
+  --fill-1:rgba(16,18,26,.02);--fill-15:rgba(16,18,26,.025);--fill-2:rgba(16,18,26,.03);
+  --fill-3:rgba(16,18,26,.04);--fill-4:rgba(16,18,26,.05);--fill-5:rgba(16,18,26,.06);
+  /* 遮罩: 变轻 */
+  --shade-1:rgba(16,18,26,.10);--shade-2:rgba(16,18,26,.16);--shade-3:rgba(16,18,26,.22);
+  --overlay:rgba(16,18,26,.38);--overlay-soft:rgba(16,18,26,.22);
+  /* 阴影: 变轻 (亮色下重阴影显脏) */
+  --sh:0 1px 3px rgba(16,18,26,.10);--shm:0 16px 44px rgba(16,18,26,.18);
+  --sh-sm:0 1px 3px rgba(16,18,26,.10);
+  /* 表面/规则线/转圈轨道/骨架 */
+  --sb-bg:rgba(255,255,255,.92);
+  --rule-strong:rgba(16,18,26,.22);--track:rgba(16,18,26,.18);--skeleton:rgba(16,18,26,.06);
+  /* 主色软底梯度: 换成深主色, α 与原档一致 */
+  --primary-soft-deep:rgba(79,70,229,.07);--primary-badge:rgba(79,70,229,.12);
+  --primary-soft-h:rgba(79,70,229,.14);--primary-bd-soft:rgba(79,70,229,.26);
+  --primary-bd:rgba(79,70,229,.32);--row-hover:rgba(79,70,229,.05);
+  --err-bd-mid:rgba(220,38,38,.28);--warn-bg-strong:rgba(180,83,9,.13);
+  /* 其余主题敏感表面: 亮色下改成浅底深字 (否则会是"深底 + 深字"读不出来) */
+  --tip-bg:rgba(255,255,255,.98);
+  --tgl-off:#cbd0d8;
+  --violet:#7c3aed;
+  --purple-soft:rgba(124,58,237,.10);
+  --err-h:#b91c1c;
+  --toast-shadow:0 8px 24px rgba(16,18,26,.12);
+  --toast-err-bg:#fef2f2;--toast-ok-bg:#f0fdf4;--toast-warn-bg:#fffbeb;
+}

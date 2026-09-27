@@ -72,7 +72,7 @@
             <div><div class="sec-title" x-text="t('apikey_mgmt')"></div><div class="sec-sub" x-text="t('key_save_hint')"></div></div>
           </div>
           <div class="sec-body">
-              <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:rgba(255,255,255,.02)">
+              <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--fill-1)">
             <div class="key-status-row" x-text="keyStatusText(drawerProv.name)"></div>
             <div style="display:flex;gap:8px;align-items:center">
               <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="saveDrawerKey()">
@@ -134,7 +134,7 @@
                 <span class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')"></span>
               </div>
               <!-- Price/Status/Origin filter chips -->
-              <div class="m-card-bar" style="border-top:1px solid rgba(255,255,255,.04)">
+              <div class="m-card-bar" style="border-top:1px solid var(--fill-3)">
                 <span class="txs tm" style="margin-right:4px" x-text="t('price')"></span>
                 <span class="m-chip" :class="{'on':!drawerProv._freeFilter}" @click="drawerProv._freeFilter=''" x-text="t('plaza_all')"></span>
                 <span class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')"></span>
@@ -153,7 +153,7 @@
               <!-- Model table -->
               <div class="m-card-table-scroll"><table style="width:100%;min-width:760px;border-collapse:collapse;font-size:var(--fs-12)">
                 <thead>
-                  <tr style="background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">
+                  <tr style="background:var(--fill-2);border-bottom:1px solid var(--border)">
                     <th style="padding:8px 12px;text-align:left;width:4%"><input type="checkbox" :checked="isAllSelected(drawerProv)" @change="toggleAll(drawerProv,$event.target.checked)"></th>
                     <th style="padding:8px 12px;text-align:left;width:8%" x-text="t('tbl.vendor')"></th>
                     <th style="padding:8px 12px;text-align:left" x-text="t('tbl.model_id')"></th>
@@ -168,7 +168,7 @@
                 </thead>
                 <tbody>
                   <template x-for="(m,ei) in drawerProv.models" :key="ei">
-                  <tr x-show="modelVisible(m,drawerProv)" :style="'border-bottom:1px solid rgba(255,255,255,.04);'+(m._removed?'opacity:.4;':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
+                  <tr x-show="modelVisible(m,drawerProv)" :style="'border-bottom:1px solid var(--fill-3);'+(m._removed?'opacity:.4;':'')+(m._isNew?'background:rgba(52,211,153,.06)':'')">
                     <td style="padding:6px 10px"><input type="checkbox" :checked="!!(drawerProv._selected&&drawerProv._selected[ei])" @change="drawerProv._selected=drawerProv._selected||{};drawerProv._selected[ei]=$event.target.checked;markDirty()"></td>
                     <td style="padding:6px 10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
                       <span class="bdg bdg-p" :style="'font-size:var(--fs-10);background:'+brandFor(m.upstream_model,drawerProv.name).color+'1a;color:'+brandFor(m.upstream_model,drawerProv.name).color+';border:1px solid '+brandFor(m.upstream_model,drawerProv.name).color+'44'" x-text="brandFor(m.upstream_model,drawerProv.name).label"></span>

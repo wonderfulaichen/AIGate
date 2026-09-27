@@ -97,6 +97,11 @@
     <div class="row-t" x-text="t('ui_language')"></div>
     <select class="sel" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'"><option value="zh-CN" x-text="t('lang_zh')"></option><option value="en-US" x-text="t('lang_en')"></option></select>
   </div>
+  <!-- 主题: 即时生效 (点选即切), 与同页其它控件一致 —— 不引入"保存按钮". -->
+  <div class="set-row" style="border-top:1px solid var(--border)">
+    <div style="min-width:0"><div class="row-t" x-text="t('ui_theme')"></div><div class="row-d" x-text="t('ui_theme_hint')"></div></div>
+    <select class="sel" :value="themeMode" @change="setTheme($event.target.value)"><option value="dark" x-text="t('theme_dark')"></option><option value="light" x-text="t('theme_light')"></option><option value="system" x-text="t('theme_system')"></option></select>
+  </div>
   <div class="set-row" style="border-top:1px solid var(--border)">
     <div style="min-width:0"><div class="row-t" x-text="t('display_currency')"></div><div class="row-d" x-text="t('currency_hint')"></div></div>
     <div style="display:flex;gap:8px;align-items:center">

@@ -4,6 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AIGate</title>
+
+<script>
+// 主题: 必须在首帧渲染前定好 <html class="light">, 否则会先闪一下暗色再切换。
+// 放在 head 里**同步执行**(不加 defer) 且早于其余脚本, 此时 documentElement 已存在。
+// 取值 aigate.theme: 'dark'(默认) | 'light' | 'system'; 'system' 跟随系统深浅色。
+// 与 ds-core.restoreTheme 同口径 —— 这里只管首帧, 后续切换由 Alpine 那边负责。
+(function () {
+  var m = 'dark';
+  try { m = localStorage.getItem('aigate.theme') || 'dark'; } catch (e) {}
+  var light = m === 'light' ||
+    (m === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+  if (light) document.documentElement.classList.add('light');
+})();
+</script>
+
 <script defer src="/admin/static/tailwind.js"></script>
 
 <script>

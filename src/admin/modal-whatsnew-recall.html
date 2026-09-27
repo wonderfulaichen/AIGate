@@ -11,7 +11,7 @@
         <button class="btn btn-g" style="font-size:var(--fs-11);margin-left:auto" @click="copyRecallContent()" x-text="recallCopied?'✓':'⧉'"></button>
       </div>
       <div class="txs tm" style="margin-bottom:6px" x-text="t('recall_detail_note')"></div>
-      <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:var(--fs-11);line-height:1.5;max-height:52vh;overflow:auto;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px;margin:0" x-text="recallDetail.content"></pre>
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:var(--fs-11);line-height:1.5;max-height:52vh;overflow:auto;background:var(--fill-2);border:1px solid var(--border);border-radius:8px;padding:10px;margin:0" x-text="recallDetail.content"></pre>
     </div>
   </template>
   <template x-if="!recallDetail">

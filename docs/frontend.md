@@ -33,15 +33,29 @@ src/admin/
 - 新增方法组请追加到 `ds-fmt.js` 之前，并在 `admin.rs` 与 manifest 同步登记。
 - `cargo build` 无 Node 依赖；前端改动**必须重构建**才生效（`include_str!`）。
 
-## 2. 验证（改完必做，四道）
+## 2. 验证（改完必做）
 
 ```powershell
-node .openbitfun/tmp/verify_parts.js   # ① 切片拼接自洽 + 20 个 JS 部件语法 + include 顺序
-node .openbitfun/tmp/check_i18n.cjs    # ② i18n 中英双表缺键/重复键 (build.rs 也拦)
-node .openbitfun/tmp/test_pages.cjs    # ③ 纯函数单测 (页码/排序/粒度/分级)
-node .openbitfun/tmp/test_ime.cjs      # ④ 搜索 IME 行为
-cargo test --release && cargo build --release    # ⑤ 228 绿 + 0 警告
+node .openbitfun/tmp/verify_parts.js     # ① 切片拼接自洽 + 20 个 JS 部件语法 + include 顺序
+node .openbitfun/tmp/check_i18n.cjs      # ② i18n 中英双表缺键/重复键 (build.rs 也拦)
+node .openbitfun/tmp/test_pages.cjs      # ③ 纯函数单测 (页码/排序/粒度/分级)
+node .openbitfun/tmp/test_ime.cjs        # ④ 搜索 IME 行为
+node .openbitfun/tmp/test_provload.cjs   # ⑤ 供应商加载并发收口
+node .openbitfun/tmp/test_fmt_rules.cjs  # ⑥ 前后端协议规则一致 (含探测能力自动参与路由)
+cargo test --release && cargo build --release    # ⑦ 247 绿 + 0 警告
 ```
+
+改颜色 / 主题 / 硬编码色时追加三条（**不需要浏览器**，纯解析即可判定，比肉眼可靠）：
+
+```powershell
+python .openbitfun\tmp\theme_complete.py  # ⑧ 浅色完整性: 主题相关 token 是否有浅色取值
+python .openbitfun\tmp\theme_dark_diff.py # ⑨ 暗色零变化: 逐文件比对 HEAD 与新版的"实际生效颜色集合"
+python .openbitfun\tmp\theme_contrast.py  # ⑩ 浅色可读性: 关键前景/背景组合的 WCAG 对比度
+```
+
+`theme_dark_diff.py` 的口径值得记住：它把 `var(--token)` 用**各自版本**的 `:root` 解析成字面量，
+再比对颜色集合 —— 集合相同即证明"这次只换了写法，没动暗色视觉"。若出现差异，逐条确认是否
+刻意（例如统一某个 .28→.30 的 alpha）。
 
 **i18n 双表在编译期强制校验**（`build.rs::check_i18n_tables`）：重复键、缺键、
 语言表缺失都会让 `cargo build` 直接失败。所以**不必手工数键**，编译通过即为对齐。
@@ -80,11 +94,31 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
 | 字阶 | `--fs-9` … `--fs-18` |
 | 间距 | `--sp-1..4` |
 | 动效 | `--dur-fast`(.15s) `--dur`(.2s) `--dur-slow`(.35s) `--ease-out` |
+| 遮罩/规则线 | `--overlay`(模态) `--overlay-soft`(轻) `--rule-strong`(图表十字线) |
+| 表面与骨架 | `--sb-bg`(侧栏) `--tip-bg`(悬停气泡) `--track`(转圈轨道) `--skeleton` `--sh-sm` |
+| 主色软底梯度 | `--primary-soft`(.12) `--primary-soft-deep`(.08) `--primary-badge`(.15) `--primary-soft-h`(.18) `--primary-bd-soft`(.25) `--primary-bd`(.30) `--row-hover`(.04) |
+| 其他表面 | `--violet` `--purple-soft` `--tgl-off` `--err-h` `--err-bd-mid` `--warn-bg-strong` `--toast-shadow` `--toast-err-bg` `--toast-ok-bg` `--toast-warn-bg` |
 
-- 改 `--rs` 会按比例带动 `--rm/--r/--rl`；改色只改 `:root`，不要在组件里打补丁。
+- 改 `--rs` 会按比例带动 `--rm/--r/--rl`；改色只改 `:root` 与 `html.light`，不要在组件里打补丁。
 - `--fill-*` / `--shade-*` 是**逐值等价**收敛来的（原为 36 处重复 rgba 字面量）；
   新增档位请新增 token，不要把不同 alpha 合并成一档（那会改视觉）。
-- 亮色换肤**不做**（历史结论）：`html.light{}` 只是预留结构，没有任何取值。
+- **硬性红线：组件里不得出现 `rgba(255,255,255,*)` / `rgba(0,0,0,*)` 字面量**。
+  这类"白叠加 / 黑叠加"在浅色下方向要反转：写死会在白底上**彻底消失**（如十字线、转圈轨道、
+  白叠加填充）或**过重**（如模态遮罩）。要用就建 token 并在 `html.light` 给反转值。
+
+### 4.1 主题（暗色 / 亮色 / 跟随系统）
+
+- 机制：只切 `<html>` 上的一个类名 `light`，**视觉全部由 token 层响应**，组件不分主题写两套样式。
+- 首帧类名由 `head.html` 的**同步内联脚本**按偏好（`aigate.theme`）写下 —— 必须早于渲染，
+  否则会先闪一下暗色；后续切换走 `ds-core.js::setTheme / applyTheme / restoreTheme`。
+- 新增颜色 token 时**必须同时在 `html.light` 给出覆盖值**，否则浅色下静默继承暗色值
+  （最典型：`--fill-*` 忘了覆盖 → 浅色下仍是白叠加 → 相关控件全部看不见）。
+  唯一允许不覆盖的是与主题无关者：字号 `--fs-*`、间距 `--sp-*`、圆角 `--r*`/`--pill`、
+  时长 `--dur*`/`--ease-out`、奖牌色 `--rank-*`。
+- **刻意不覆盖**的两类：品牌 logo 与 `CHART_PALETTE` / `CHART_SEMANTIC` 数据系列色 ——
+  它们在两种主题下都可读，属"数据"而非"主题"；只有图表底板 `--chart-rest` 随主题走。
+- 对照度要求：前景/背景组合需满足 WCAG AA（正文 ≥4.5，次要文字与徽标 ≥3.0）。
+  半透明 token 会被按其上层底色合成后再算 —— 改浅色配色时照此复核。
 
 ## 5. 状态色与分级（单一事实源）
 
@@ -136,6 +170,7 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
 | `aigate.cache-version` | 版本键（版本变化时清旧 UI 缓存） | 是（自身） |
 | `aigate.analyticsSpan` | 分析页时间范围（含 `custom:N`） | 是 |
 | `aigate.chartMode` | 图型 line/bar | 是 |
+| `aigate.theme` | 主题 `dark`/`light`/`system` | 是 |
 | `aigate.pageSize` | 记录页每页条数 | 是 |
 | `aigate.logCols` | 记录页列显隐 | 否（可重建，清掉无害） |
 | `aigate_drawer_adv` | 供应商抽屉高级端点折叠 | 是 |

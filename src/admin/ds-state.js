@@ -54,6 +54,10 @@ function dashboard() {  return {
     balanceData: null, balanceLoading: false,
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
+    // 主题: 'dark' (默认) | 'light' | 'system'. 只改 <html class="light">, 视觉全部由
+    // base.css 的 token 层响应 (见 html.light 块); 首帧类名由 head.html 内联脚本先写好,
+    // 故不会先闪一下暗色。品牌 logo 与图表数据系列色不随主题变。
+    themeMode: 'dark',
     analyticsRange: '29d',
     analyticsSpan: 'day', // 'hour' | 'day' | 'month' — 统一时间范围与粒度 (24h/30d/12m)
     modelDetailFilter: '',

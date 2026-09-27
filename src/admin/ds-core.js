@@ -53,7 +53,7 @@
         const CK = 'aigate.cache-version';
         const VER = (window.AIGATE_VERSION && window.AIGATE_VERSION.version) || '';
         if (VER && localStorage.getItem(CK) !== VER) {
-          const KEEP = { [CK]: 1, 'aigate.analyticsSpan': 1, 'aigate_drawer_adv': 1, 'aigate.chartMode': 1 };
+          const KEEP = { [CK]: 1, 'aigate.analyticsSpan': 1, 'aigate_drawer_adv': 1, 'aigate.chartMode': 1, 'aigate.theme': 1 };
           const drop = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -72,6 +72,7 @@
       document.title = t('app_title');
       this.restoreAnalyticsSpan();
       this.restoreChartPrefs();
+      this.restoreTheme();
       // 快照预热: 先铺上次的数据 (消除骨架等待), 随后的 fetchStats 会覆盖为最新值.
       this.applyStatsSnapshot();
       await this.fetchCurrencyConfig();
@@ -113,6 +114,37 @@
       document.documentElement.lang = (l === 'en-US') ? 'en' : 'zh';
       document.title = t('app_title');
       fetch('/admin/api/lang', { method:'POST', headers: authHeaders(), body: JSON.stringify({ lang: l }) }).catch(function(){});
+    },
+
+    // ── 主题 (暗色 / 亮色 / 跟随系统) ──
+    // 只切 <html class="light"> 一个类名: 全部颜色都走 base.css 的语义 token, 组件无需分主题
+    // 写第二套样式。首帧类名由 head.html 的内联脚本按偏好写好 (避免先渲染暗色再切)。
+    setTheme(mode) {
+      if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return;
+      this.themeMode = mode;
+      try { localStorage.setItem('aigate.theme', mode); } catch (e) {}
+      this.applyTheme();
+    },
+    // 把 themeMode 落到 DOM。'system' 时读系统偏好。
+    applyTheme() {
+      const sysLight = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+      const light = this.themeMode === 'light' || (this.themeMode === 'system' && sysLight);
+      document.documentElement.classList.toggle('light', light);
+    },
+    restoreTheme() {
+      let m = 'dark';
+      try { m = localStorage.getItem('aigate.theme') || 'dark'; } catch (e) {}
+      if (m !== 'dark' && m !== 'light' && m !== 'system') m = 'dark'; // 白名单: 手改 localStorage 不会塞进非法值
+      this.themeMode = m;
+      this.applyTheme();
+      // 跟随系统时实时响应 OS 深浅色切换。仅在 system 模式生效 —— 否则用户显式选的
+      // 暗/亮会被系统变化悄悄覆盖 (那是"我的设置没生效"的典型来源)。
+      if (window.matchMedia) {
+        const mq = window.matchMedia('(prefers-color-scheme: light)');
+        const onSys = () => { if (this.themeMode === 'system') this.applyTheme(); };
+        if (mq.addEventListener) mq.addEventListener('change', onSys);
+        else if (mq.addListener) mq.addListener(onSys);
+      }
     },
 
     // 监听地址 (由 baseUrl 去掉协议与 /v1 后缀派生)
