@@ -1265,7 +1265,7 @@ tr:hover td{background:rgba(99,102,241,.04)}
                 <span class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')"></span>
                 <span class="m-chip" :class="{'on':drawerProv._freeFilter==='paid'}" @click="drawerProv._freeFilter='paid'" x-text="t('paid')"></span>
                 <span style="margin-left:auto"></span>
-                <span class="txs tm" style="margin-right:4px" x-text="t('status')"></span>
+                <span class="txs tm" style="margin-right:4px" x-text="t('status_lc')"></span>
                 <span class="m-chip" :class="{'on':!drawerProv._removedFilter}" @click="drawerProv._removedFilter=''" x-text="t('plaza_all')"></span>
                 <span class="m-chip" :class="{'on':drawerProv._removedFilter==='active'}" @click="drawerProv._removedFilter='active'" x-text="t('status_active')"></span>
                 <span class="m-chip" :class="{'on':drawerProv._removedFilter==='removed'}" @click="drawerProv._removedFilter='removed'" x-text="t('status_removed')"></span>
@@ -1430,7 +1430,7 @@ const I18N = {
     'tbl.strip_reasoning': '剥离推理链',
     'strip_toolcall_reasoning_hint': '逐模型设置：剥离「带工具调用的历史推理链」，省量可观（见分析页省量审计，实测占输入 38.5%）。但约束因上游而异 —— Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。中转供应商同一名下混有多种协议，因此请逐个模型确认后再勾选，并观察错误率。',
     
-    'unit_times': '次', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_models': '模型', 'unit_providers': '供应商', 'price_not_set': '未配置', 'price_hint': '未配置价格，暂不统计费用', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
+    'unit_times': '次', 'unit_tokens': 'Token', 'unit_requests': '请求', 'unit_models': '模型', 'unit_providers': '供应商', 'price_not_set': '未配置', 'cache_label': '缓存', 'offpeak_label': '空闲', 'price_edit_model': '模型', 'price_col_offpeak': '空闲时段', 'price_col_peak': '高峰时段',
     'price_row_cache_hit': '输入（缓存命中）', 'price_row_cache_miss': '输入（缓存未命中）', 'price_row_output': '输出', 'price_row_cache_write': '缓存写入（Anthropic，可选）',
     'price_hint': '单位: 元/百万 tokens。高峰/空闲时段由「设置 → 分时段计费」定义；空闲价留空则与高峰价相同。', 'price_clear': '清除自定义价', 
     'ref_price_title': '参考价', 'ref_price_source': 'models.dev', 'ref_price_note': '取自 models.dev 中「同名供应商」的报价，按汇率 1 USD = {0} CNY 换算展示。该数据为单一价、不含高峰/空闲时段，与官方峰谷定价可能不一致（实测 DeepSeek 偏差近 2 倍）；仅供对照，不会自动填入。','display_currency': '显示币种',
@@ -1619,7 +1619,7 @@ const I18N = {
     'saved_strip': '剥离推理链（普通轮次）', 'saved_strip_tc': '剥离推理链（工具轮次）', 'saved_trim': '历史裁剪', 'saved_resp': '响应缓存',
     'provider_status': '状态', 'latency': '延迟', 'circuit': '熔断', 'key_label': 'Key', 'actions': '操作',
     'endpoint_protocol_desc': 'API 基地址与协议专用端点',
-    'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：', 'price': '价格：', 'paid': '付费', 'status': '状态：', 'status_active': '在用', 'status_removed': '已下架', 'origin': '来源：', 'origin_manual': '手动', 'origin_fetched': '获取',
+    'model_routing_config': '模型路由配置', 'brand': '品牌：', 'thinking_short': '思考：', 'price': '价格：', 'paid': '付费', 'status_lc': '状态：', 'status_active': '在用', 'status_removed': '已下架', 'origin': '来源：', 'origin_manual': '手动', 'origin_fetched': '获取',
     'key_cleared': '已清空 {0} 的密钥', 'confirm_delete_provider': '确认删除供应商「{0}」？\n保存配置后其密钥将一并删除，且路由表中该供应商的所有模型将失效。',
     'provider_removed': '已移除「{0}」，点“保存配置”后生效', 'confirm_delete_models': '确认删除选中的 {0} 个模型？',
     'confirm_clear_removed_models': '确认清理 {0} 个已下架模型？', 'removed_models_cleaned': '已清理 {0} 个下架模型',
@@ -1655,7 +1655,7 @@ const I18N = {
     'tbl.strip_reasoning': 'Strip reasoning',
     'strip_toolcall_reasoning_hint': 'Per-model: strips the historical reasoning chain attached to tool calls, saving a lot of input (see the savings audit on the Analytics page; measured at 38.5% of input). The constraints differ per upstream — Anthropic requires thinking blocks and tool_use to coexist, and DeepSeek reasoner likewise requires both, so stripping them returns 400. A single relay provider may mix several protocols under one name, so confirm model by model before ticking this box and watch the error rate.',
     
-    'unit_times': 'reqs', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_models': 'models', 'unit_providers': 'providers', 'price_not_set': 'Not set', 'price_hint': 'Price not configured — cost hidden', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
+    'unit_times': 'reqs', 'unit_tokens': 'Tokens', 'unit_requests': 'requests', 'unit_models': 'models', 'unit_providers': 'providers', 'price_not_set': 'Not set', 'cache_label': 'cache', 'offpeak_label': 'off-peak', 'price_edit_model': 'Model', 'price_col_offpeak': 'Off-peak', 'price_col_peak': 'Peak',
     'price_row_cache_hit': 'Input (cache hit)', 'price_row_cache_miss': 'Input (cache miss)', 'price_row_output': 'Output', 'price_row_cache_write': 'Cache write (Anthropic, optional)',
     'price_hint': 'Unit: CNY per million tokens. Peak/off-peak windows are defined in Settings → Time-based pricing; leave off-peak blank to reuse the peak price.',
     'ref_price_title': 'Reference price', 'ref_price_source': 'models.dev', 'ref_price_note': 'Taken from the same-named provider on models.dev, converted at 1 USD = {0} CNY. It is a single price with no peak/off-peak dimension and can disagree with official time-based pricing (measured ~2x off for DeepSeek). Shown for comparison only; never auto-filled.', 'price_clear': 'Clear custom price', 'display_currency': 'Display Currency',
@@ -1844,7 +1844,7 @@ const I18N = {
     'saved_strip': 'strip reasoning (plain turns)', 'saved_strip_tc': 'strip reasoning (tool turns)', 'saved_trim': 'history trim', 'saved_resp': 'response cache',
     'provider_status': 'Status', 'latency': 'Latency', 'circuit': 'Circuit', 'key_label': 'Key', 'actions': 'Actions',
     'endpoint_protocol_desc': 'API base URL and protocol-specific endpoints',
-    'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ', 'price': 'Price: ', 'paid': 'Paid', 'status': 'Status: ', 'status_active': 'Active', 'status_removed': 'Removed', 'origin': 'Origin: ', 'origin_manual': 'Manual', 'origin_fetched': 'Fetched',
+    'model_routing_config': 'Model routing configuration', 'brand': 'Brand: ', 'thinking_short': 'Reasoning: ', 'price': 'Price: ', 'paid': 'Paid', 'status_lc': 'Status: ', 'status_active': 'Active', 'status_removed': 'Removed', 'origin': 'Origin: ', 'origin_manual': 'Manual', 'origin_fetched': 'Fetched',
     'key_cleared': 'Cleared the key for {0}', 'confirm_delete_provider': 'Delete provider “{0}”?\nIts key will also be removed after saving, and all models routed to it will stop working.',
     'provider_removed': 'Removed “{0}”; click “Save Config” to apply', 'confirm_delete_models': 'Delete the selected {0} models?',
     'confirm_clear_removed_models': 'Remove {0} discontinued models?', 'removed_models_cleaned': 'Removed {0} discontinued models',

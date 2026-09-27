@@ -18,7 +18,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use reqwest::Client;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::admin::LogBuffer;
 use crate::balance::BalanceManager;
@@ -345,36 +345,41 @@ pub async fn chat_completions(
                 let converted = crate::responses::openai_to_responses(&v);
                 // 诊断: 打印转换后请求体结构 (仅字段列表+input长度, 不打 content 避免日志膨胀).
                 // 增强: 打印首个 tool 及 tool_choice 形态, 定位 Expected 'function' type 的剩余分支
-                let input_count = converted.get("input").and_then(|i| i.as_array()).map(|a| a.len()).unwrap_or(0);
-                let has_instructions = converted.get("instructions").is_some();
-                let has_tools = converted.get("tools").is_some();
-                let tools_len = converted.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0);
-                let tool0_preview = converted.get("tools").and_then(|t| t.as_array()).and_then(|a| a.first())
-                    .map(|t| {
-                        let t_type = t.get("type").and_then(|v| v.as_str()).unwrap_or("MISSING");
-                        let t_name = t.get("name").and_then(|v| v.as_str()).unwrap_or("MISSING");
-                        let s = serde_json::to_string(t).unwrap_or_default();
-                        let short: String = s.chars().take(800).collect();
-                        format!("type={} name={} json={}", t_type, t_name, short)
+                //
+                // 诊断日志用 debug 级: 默认 RUST_LOG=info 下不打印 —— 每个 responses 请求 2 条
+                // 且含完整 tool0 JSON, 曾占日志 1/3 行数 (7480/23292). 需排查时 RUST_LOG=debug 恢复.
+                // 预览串构造本身也有成本 (序列化 tool / tool_choice), 故整段用 enabled! 守卫,
+                // 而非依赖 debug! 宏自身的惰性 —— 这些 let 绑定在宏外面, 不守卫则每次照常构造.
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    let input_count = converted.get("input").and_then(|i| i.as_array()).map(|a| a.len()).unwrap_or(0);
+                    let has_instructions = converted.get("instructions").is_some();
+                    let has_tools = converted.get("tools").is_some();
+                    let tools_len = converted.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0);
+                    let tool0_preview = converted.get("tools").and_then(|t| t.as_array()).and_then(|a| a.first())
+                        .map(|t| {
+                            let t_type = t.get("type").and_then(|v| v.as_str()).unwrap_or("MISSING");
+                            let t_name = t.get("name").and_then(|v| v.as_str()).unwrap_or("MISSING");
+                            let s = serde_json::to_string(t).unwrap_or_default();
+                            let short: String = s.chars().take(800).collect();
+                            format!("type={} name={} json={}", t_type, t_name, short)
+                        }).unwrap_or_else(|| "none".to_string());
+                    let tc_before = v.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
+                    let tc_before_trim: String = tc_before.chars().take(300).collect();
+                    let tc_after = converted.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
+                    let tc_after_trim: String = tc_after.chars().take(300).collect();
+                    let input_preview = converted.get("input").and_then(|a| a.as_array()).map(|arr| {
+                        arr.iter().take(3).map(|it| {
+                            let it_type = it.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+                            let role = it.get("role").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("{}/{}", it_type, role)
+                        }).collect::<Vec<_>>().join(",")
                     }).unwrap_or_else(|| "none".to_string());
-                let tc_before = v.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
-                let tc_before_trim: String = tc_before.chars().take(300).collect();
-                let tc_after = converted.get("tool_choice").map(|x| serde_json::to_string(x).unwrap_or_default()).unwrap_or_else(|| "none".to_string());
-                let tc_after_trim: String = tc_after.chars().take(300).collect();
-                let input_preview = converted.get("input").and_then(|a| a.as_array()).map(|arr| {
-                    arr.iter().take(3).map(|it| {
-                        let it_type = it.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-                        let role = it.get("role").and_then(|v| v.as_str()).unwrap_or("?");
-                        format!("{}/{}", it_type, role)
-                    }).collect::<Vec<_>>().join(",")
-                }).unwrap_or_else(|| "none".to_string());
-                info!("proxy: responses mode: input_count={}, has_instructions={}, has_tools={} (len={}), fields=[{}], tool0={}, tc_before={}, tc_after={}, input_head=[{}]",
-                    input_count, has_instructions, has_tools, tools_len,
-                    converted.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
-                    tool0_preview, tc_before_trim, tc_after_trim, input_preview);
-                // 诊断 (转换丢内容排查): 分项字节数对比 — 原始 OpenAI 格式 messages/tools
-                // vs 转换后 Responses 格式 input/instructions/tools. 落差大即转换丢失.
-                {
+                    debug!("proxy: responses mode: input_count={}, has_instructions={}, has_tools={} (len={}), fields=[{}], tool0={}, tc_before={}, tc_after={}, input_head=[{}]",
+                        input_count, has_instructions, has_tools, tools_len,
+                        converted.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default(),
+                        tool0_preview, tc_before_trim, tc_after_trim, input_preview);
+                    // 诊断 (转换丢内容排查): 分项字节数对比 — 原始 OpenAI 格式 messages/tools
+                    // vs 转换后 Responses 格式 input/instructions/tools. 落差大即转换丢失.
                     let raw_msgs = v.get("messages").map(|m| serde_json::to_string(m).unwrap_or_default().len()).unwrap_or(0);
                     let raw_tools = v.get("tools").map(|t| serde_json::to_string(t).unwrap_or_default().len()).unwrap_or(0);
                     let raw_sys = v.get("messages").and_then(|m| m.as_array()).map(|a| a.iter()
@@ -383,19 +388,8 @@ pub async fn chat_completions(
                     let conv_input = converted.get("input").map(|i| serde_json::to_string(i).unwrap_or_default().len()).unwrap_or(0);
                     let conv_instr = converted.get("instructions").map(|i| serde_json::to_string(i).unwrap_or_default().len()).unwrap_or(0);
                     let conv_tools = converted.get("tools").map(|t| serde_json::to_string(t).unwrap_or_default().len()).unwrap_or(0);
-                    info!("proxy: responses size diag: raw(msgs={}B sys={}B tools={}B) -> conv(input={}B instr={}B tools={}B)",
+                    debug!("proxy: responses size diag: raw(msgs={}B sys={}B tools={}B) -> conv(input={}B instr={}B tools={}B)",
                         raw_msgs, raw_sys, raw_tools, conv_input, conv_instr, conv_tools);
-                }
-                // 调试: 落盘最近一次 responses 转换的完整请求体 + 转换前原始体, 供手动 diff 定位丢内容环节
-                if has_tools {
-                    let _ = std::fs::write(
-                        "C:\\Users\\qq274\\AppData\\Local\\Temp\\opencode\\last_responses_converted.json",
-                        serde_json::to_string_pretty(&converted).unwrap_or_default()
-                    );
-                    let _ = std::fs::write(
-                        "C:\\Users\\qq274\\AppData\\Local\\Temp\\opencode\\last_responses_raw.json",
-                        serde_json::to_string_pretty(&v).unwrap_or_default()
-                    );
                 }
                 match serde_json::to_vec(&converted) {
                     Ok(b) => bytes::Bytes::from(b),
@@ -432,9 +426,10 @@ pub async fn chat_completions(
     };
     let mut body_len_val = bytes.len(); // 在 bytes 被 move 前保存
     // 诊断: 请求体大小变化链路 (原始→注入后→最终), 用于排查 "工具显示150KB但中转显示1.5MB" 类问题.
-    // 大请求体 (>500KB) 或有裁剪时始终打印; 小请求仅在有裁剪时打印 (减少噪声).
+    // 降为 debug: responses 转换本身就会改变字节数, 原条件 `orig != final` 使小请求几乎每次命中
+    // (实测每次 responses 请求都打印, strip/trim 均为 0 的纯噪声). 需排查时 RUST_LOG=debug 恢复.
     if orig_body_len > 500_000 || orig_body_len != body_len_val || strip_saved > 0 || trim_saved > 0 {
-        info!("proxy: body_size diag: orig={}B → inject={}B → final={}B (strip_saved={}B, trim_saved={}B, mode={})",
+        debug!("proxy: body_size diag: orig={}B → inject={}B → final={}B (strip_saved={}B, trim_saved={}B, mode={})",
             orig_body_len, after_inject_len, body_len_val, strip_saved, trim_saved,
             if anthropic_mode { "anthropic" } else if responses_mode { "responses" } else { "openai" });
     }

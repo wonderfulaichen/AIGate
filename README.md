@@ -247,6 +247,10 @@ STRIP_TOOLCALL_ON_CHAT=1           # 按协议剥离工具轮次推理链：Chat
 STRIP_TOOLCALL_ON_RESPONSES=0      # 同上：Responses 协议，默认 0（关，未实测安全）
 MAX_HISTORY_TURNS=0                # 长会话历史裁剪：仅保留最近 N 条 user 轮，0 = 不裁剪
 AIGATE_AUTO_CONTINUE=2             # 断流自动续写次数上限，默认 2，0 = 关闭
+AIGATE_TOOL_OUTPUT_MAX_BYTES=0     # 常态截断超长 tool 输出阈值（字节），默认 0（关）；截断有损，被截段可经回取找回
+AIGATE_RECALL_ENABLED=0            # 降级可回取：留存被优化移除/截断的原文，默认 0（关）；⚠️ 落盘含推理链与工具输出明文
+AIGATE_RECALL_MAX_ENTRY_BYTES=262144  # 单条回取条目字节上限，超出截断并标记，默认 262144（256KB）
+AIGATE_RECALL_MAX_ENTRIES=200      # 回取条目总数上限（超出按 FIFO 淘汰），默认 200
 
 # 响应缓存（实验功能）
 CACHE_ENABLED=0              # 是否启用，默认 0（关）
