@@ -98,6 +98,20 @@
 - **README 的项目结构**同步到 `src/admin/` 切片布局与 `concat!` 拼接说明。
 
 ### 新增
+- **三层协议解析 + 探测改为 HEAD（零 token）**（用户关切「模型很贵，消化 token 不值，还是 0 token 比较好」）：
+  把探测从 `POST + max_tokens=1` 改为 **HEAD** —— 无请求体即不触发生成，成本归零。判据不变
+  （实测 DeepSeek：`/chat/completions` 与 `/responses` 返 **405**＝路由已匹配、`/messages` 返 **404**＝
+  不存在），并加**对照哨兵**（先探一个必定不存在的路径，若它也算「存在」说明该网关对所有路径状态一致，
+  返回空而不给假结果）。端到端实测**全程 POST 次数 = 0**。协议解析改为三层逐层降级：
+  ① **端点 URL 路径**（部分供应商把协议写进路径，如 `/anthropic/v1`；实测覆盖 5.6%，零成本）；
+  ② **内置 host 目录**（新增 `src/provider_catalog.rs`，178 host / 9KB，由
+  `.openbitfun/tmp/gen_catalog.py` 从 models.dev 生成，覆盖 92%；双向查询＝剥子域 + 补常见前缀）；
+  ③ **HEAD 探测兜底**（未收录的小众中转与自建网关，保证开源用户填任意网关都正确）。
+  目录按**服务方 host** 而非模型名——实测同名模型跨服务方协议会不同（`claude-opus-4-8` 在 anthropic
+  官方走 anthropic、在 302ai 等转售商走 openai，44 个模型有此分歧），即协议取决于**谁在提供服务**。
+  过程中由单测抓出一个真实设计错误：第一层原先把 `chat`/`completions` 当协议信号，而
+  `/v1/chat/completions` 是所有 OpenAI 兼容端点的默认路径，会导致第一层「总是命中」、目录与探测
+  永远走不到——现只认 `anthropic`/`messages`/`responses` 这类有区分度的段。
 - **拉取模型时自动探测上游支持的协议**（用户第三次追问「为什么要自己勾选？明明直接看官方支持什么
   不就好了」——方向正确，我该先查清「能不能直接读到」）。**先实测「能否直接读」**：① models.dev
   的**模型级字段没有协议**（全量 223 provider / 4.9MB 键名统计确认，只有 context/cost/modalities/
