@@ -131,19 +131,24 @@ impl ModelConfig {
     /// 该上游对**本模型**「可用」的协议集合 —— 网关对上游能力的认知 (证据并集).
     ///
     /// 这是「协议由客户端入口决定, 网关只负责支持」中的**能力侧**: 本函数只回答
-    /// "这个上游能接哪些协议", 不替客户端选。三个证据来源, 依次为:
+    /// "这个上游能接哪些协议", 不替客户端选。四个证据来源, 依次为:
     ///
     ///   1. **模型级 `api_formats`** —— 用户显式声明。**显式即约束**: 一旦声明就以此为准,
     ///      不再并集 (否则用户想收窄也收不窄)。
     ///   2. **供应商级 `probed_protocols`** —— 拉取模型时零 token 探测出的实测能力,
     ///      是**服务方级**信息 (探的是端点路径), 同供应商下所有模型共享。
-    ///   3. [`Self::resolve_api_format`] 的配置/推断值 —— 手工标注或按模型名推断。
+    ///   3. **静态层 [`free_protocol_guess`]** —— URL 路径信号 + 内置 host 目录。
+    ///      零成本、无需用户去点「拉取模型」: 端点路径里带 `/anthropic/` 或 `/responses`
+    ///      就直接读出来。**以往这一层没有进集合**, 是"未探测的供应商全都只能走 chat"的主因。
+    ///   4. [`Self::resolve_api_format`] 的配置/推断值 —— 手工标注或按模型名推断。
     ///
-    /// 2 与 3 取并集而非互相取代: 探测能发现"还支持哪些" (静态推断做不到 —— 实测 DeepSeek
-    /// 元数据只标 openai, 但 `/v1/responses` 同样可用), 而推断能覆盖单个模型的已知用法
-    /// (如 zen 的 minimax 走 `/messages`), 两者互补。
+    /// 2~4 取并集而非互相取代: 探测能发现"还支持哪些" (静态层做不到 —— 实测 DeepSeek
+    /// 元数据只标 openai, 但 `/v1/responses` 同样可用), 而推断与静态层能在**没探测过**时
+    /// 就直接给出结论, 不必等用户手工操作。
     ///
-    /// 返回空 = 完全无信息 (未探测且推断无结论), 调用方按 openai 处理。
+    /// 返回空 = **完全没有任何证据** (含静态层也无结论)。注意此时语义是"不知道",
+    /// 而非"不支持" —— 调用方 ([`Self::pick_api_format`]) 据此尊重客户端选择,
+    /// 不再静默改协议。
     pub fn available_api_formats(&self, provider: &ProviderConfig, model_id: &str) -> Vec<String> {
         // 1) 显式候选集: 用户声明即最终答案
         if let Some(list) = self.api_formats.as_ref() {
@@ -157,7 +162,15 @@ impl ModelConfig {
             Some(probed) => known_formats(probed.iter().map(|s| s.as_str())),
             None => Vec::new(),
         };
-        // 3) 配置/推断值 (模型级) —— 追加进并集
+        // 3) 静态层: URL 路径 + 内置目录 (零成本, 不需要先探测)
+        if let Some(guess) = free_protocol_guess(provider) {
+            for f in known_formats(guess.iter().map(|s| s.as_str())) {
+                if !out.contains(&f) {
+                    out.push(f);
+                }
+            }
+        }
+        // 4) 配置/推断值 (模型级) —— 追加进并集
         if let Some(f) = self.resolve_api_format(provider, model_id) {
             let n = normalize_format(&f);
             if is_known_format(&n) && !out.contains(&n) {
@@ -177,19 +190,28 @@ impl ModelConfig {
     ///      这是最常见的一路: 上游本来就会说这门话, 网关只做转发, thinking 块与
     ///      signature 全程不被往返翻译, 也就没有字段损耗。
     ///   2. 声明显式候选集且未命中 → 候选集首项 (声明顺序即优先级)。
-    ///   3. 其余 → 配置/推断值 (该模型已知可用的协议), 由转换管线搬运。
-    ///   4. 仍无结论 → 可用集首项 (探测顺序 openai 优先), 最后兜底 openai。
+    ///   3. 兜底。
     ///
-    /// 注意 1 与 3 的分工: 命中客户端协议 = "不必翻译"; 未命中才需要网关做协议转换。
-    /// 故客户端协议优先不是在覆盖用户配置, 而是在**省掉一次翻译**。
+    /// **第 3 步是最要紧的一处**：以往这里无脑兜底 `openai`，且**把"无任何能力信息"与
+    /// "确定上游不支持该协议"当成同一件事**。后果是：此前的实现只从 `probed_protocols`
+    /// 与显式配置取"可用集"，而**静态目录与 URL 路径推断的结果根本没进这个集合** ——
+    /// 于是绝大多数供应商的可用集是空的，客户端打 `/v1/responses` 也被静默改写成 chat。
+    /// 用户看到的现象正是"我明明用 Responses 协议，网关却走了 chat"。
+    ///
+    /// 现在的兜底顺序:
+    ///   a. **客户端协议就是兜底** —— 当可用集为空 (= 我们没有任何证据说它不支持) 时，
+    ///      按用户的选择走。宁可让上游回一个诚实的错误，也不要静默换协议：
+    ///      静默换协议既掩盖了真实失败点，也丢掉了原生直通时才有的字段保真
+    ///      (thinking 块 / signature / reasoning item)。
+    ///   b. 有显式配置/推断值时，仍以配置为准 (用户显式标注应当生效)。
     pub fn pick_api_format(
         &self,
         provider: &ProviderConfig,
         model_id: &str,
         client_format: &str,
     ) -> String {
-        let available = self.available_api_formats(provider, model_id);
         let client = normalize_format(client_format);
+        let available = self.available_api_formats(provider, model_id);
         // 1) 客户端协议可用 → 原样直通 (无需跨协议翻译)
         if available.iter().any(|f| *f == client) {
             return client;
@@ -198,15 +220,24 @@ impl ModelConfig {
         if self.has_explicit_formats() {
             return available[0].clone();
         }
-        // 3) 配置/推断值 —— 该模型已知可用的协议
+        // 3a) 可用集为空 = 无任何"不支持"的证据 → 尊重客户端选择 (不静默换协议)
+        if available.is_empty() && is_known_format(&client) {
+            return client;
+        }
+        // 3b) 有配置/推断值 → 以它为准 (用户显式标注生效)
         if let Some(f) = self.resolve_api_format(provider, model_id) {
             return normalize_format(&f);
         }
-        // 4) 可用集首项 (探测顺序 openai 优先) → 兜底 openai
-        available
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "openai".to_string())
+        // 4) 有可用集但都不匹配 → 首项
+        if let Some(first) = available.into_iter().next() {
+            return first;
+        }
+        // 5) 连客户端协议本身都无法识别 (空串 / 未知值) → openai
+        if is_known_format(&client) {
+            client
+        } else {
+            "openai".to_string()
+        }
     }
 
     /// 是否显式声明了有效的协议候选集 (空数组 / 全非法值视为未声明).
@@ -1164,17 +1195,29 @@ mod tests {
         }
     }
 
-    /// 无任何信息 (未声明候选集、未探测、推断无结论) → 兜底 openai, 与旧版行为一致.
+    /// 无任何证据时**尊重客户端协议**, 不静默改成 openai。
+    ///
+    /// 这条断言是本轮修正的核心: 旧实现无脑兜底 openai, 于是**未探测过的供应商**
+    /// (例如用户手配、没点过「拉取模型」) 即使上游支持 Responses, 客户端打
+    /// `/v1/responses` 也会被静默改成 chat —— 用户看到的就是"我明明用 Responses,
+    /// 网关却走 chat"。现在可用集为空 = "不知道", 而非"不支持", 故按客户端选择走。
     #[test]
-    fn pick_api_format_defaults_to_openai_without_any_signal() {
+    fn pick_api_format_honours_client_protocol_without_evidence() {
+        // 端点无协议信号 + 无相机/推断结论 → 可用集为空
         let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
-        assert_eq!(mc(None, None).pick_api_format(&p, "m", "responses"), "openai");
-        // 空候选集 / 全非法值 = 未声明 (不猜), 同样落到推断→兜底
-        assert_eq!(mc(None, Some(vec![])).pick_api_format(&p, "m", "openai"), "openai");
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", "responses"), "responses",
+            "无证据时应尊重客户端选择的 responses, 而不是静默落回 openai");
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", "anthropic"), "anthropic");
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", "openai"), "openai");
+        // 空候选集 / 全非法值 = 未声明 (不猜), 同样按客户端协议走
+        assert_eq!(mc(None, Some(vec![])).pick_api_format(&p, "m", "responses"), "responses");
         assert_eq!(
-            mc(None, Some(vec!["weird", ""])).pick_api_format(&p, "m", "openai"),
-            "openai"
+            mc(None, Some(vec!["weird", ""])).pick_api_format(&p, "m", "anthropic"),
+            "anthropic"
         );
+        // 未知名 / 空入口 → 无法识别, 退回 openai (不把垃圾值当协议传出去)
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", ""), "openai");
+        assert_eq!(mc(None, None).pick_api_format(&p, "m", "gemini"), "openai");
     }
 
     /// 单值 `api_format` 的语义完全不变 (向后兼容的关键断言): 它表达"该模型只能用这个",

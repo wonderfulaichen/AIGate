@@ -307,6 +307,43 @@ Alpine 从 `x-data` 根往下遍历，**框外的元素根本不被处理**。�
   阈值取 1MiB —— 低于它的失败与该问题无关，加提示只会变噪声（端到端已对照验证：
   小体积 400 无提示、大体积 400 有提示）。
 
+### 修复：客户端用 Responses 协议，网关却走了 chat（协议自动匹配失效）
+
+**用户报障**：「我编程工具用的是 Responses 协议发给 AIGate，结果怎么走的是 chat？不会自动匹配吗？
+Responses 协议明明之前手动就能用。」——这是个真缺陷，根因在两处：
+
+1. **`pick_api_format` 在无能力证据时无脑兜底 `openai`**，且**把"无任何证据"与"确定不支持"
+   当成同一件事**。而"可用集"当时只来自 `probed_protocols` 与显式配置 —— **静态层
+   （URL 路径信号 + 内置 host 目录）根本没有进入这个集合**。于是绝大多数供应商（凡是没点过
+   「拉取模型」的）可用集都是空的，客户端打 `/v1/responses` 一律被**静默改写成 chat**。
+   *（这个兜底逻辑是上一轮我自己写的，测试也是我自己写的并把它当成"正确行为"固化下来 ——
+   测试通过恰恰说明测试写错了。）*
+2. **转换产出本身也是畸形的**（即使协议选对了，跨协议路径仍会失败）：
+   - `user` 消息的 content 被写成**数组** `[{"type":"text","text":...}]` —— OpenAI 的 `content`
+     严格只接受字符串，只有多模态才允许部件数组。此前只把 assistant 字符串化，user 侧漏了。
+   - `reasoning` 历史项被写成**独立**的 `{role:"assistant", content:null, reasoning_content:...}`；
+     而下游把 `reasoning_content` 剥离后，就剩下 `{role:"assistant", content:null}` 且无 `tool_calls`
+     —— 违反 OpenAI 协议（assistant 必须带 content 或 tool_calls），上游直接 400。
+
+**修法**：
+- `available_api_formats` 纳入**静态层**（`free_protocol_guess`：URL 路径 + 内置目录），零成本、
+  不需要用户先点探测。
+- `pick_api_format` 的兜底改为：可用集为空（= 没有任何"不支持"的证据）时**尊重客户端选择**，
+  不再静默换协议。宁可让上游回一个诚实的错误，也不要静默换协议 —— 后者既掩盖真实失败点，
+  也丢掉了原生直通才有的字段保真（thinking 块 / signature / reasoning item）。
+- 转换侧：**纯文本一律输出字符串 content**（仅确有多模态部件才用数组）；`reasoning` 改为
+  **缓冲后附着到紧随其后的 assistant 消息**，末尾无归属时自成一条 `content: ""`（空串而非 null）
+  的合法 assistant。
+
+**端到端对照验证**（隔离实例 + mock 上游，四条路径）：
+- **端点带 `/responses` 信号 + 客户端打 responses** → 上游实收 `/responses`；结果 原样直通，`input` 形状保真
+- **无信号 + 无探测 + 客户端打 responses** → 上游实收 `/responses`；结果 尊重客户端选择（不再静默改协议）
+- **端点带 `/anthropic` 信号 + 客户端打 messages** → 上游实收 `/messages`；结果 直通
+- ****显式只支持 openai** + 客户端打 responses** → 上游实收 `/chat/completions`；结果 转换产出合法：无空 assistant、纯文本 content 为字符串
+
+另：`pick_api_format` 对**无法识别的入口值**（空串 / `gemini` 之类）仍退回 `openai`，
+不把垃圾值当协议传出去。
+
 ### 验证与工装
 
 - **暗色零变化已证明**：逐文件取 git 基线，把 `var(--token)` 用**各自版本**的 `:root` 解析成

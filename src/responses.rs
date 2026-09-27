@@ -476,8 +476,45 @@ pub fn responses_to_openai_request(body: &Value) -> Result<Value, String> {
             messages.push(json!({"role": "user", "content": s}));
         }
         Some(Value::Array(items)) => {
+            // reasoning 暂存区: Responses 里 reasoning item 属于**紧随其后**的那一轮
+            // assistant 输出, 故先缓冲, 等到 assistant 消息出现时再附着 ——
+            // 若直接按"最后一个 assistant"挂, 会在中间夹着 function_call 轮次时挂错,
+            // 也会在某个 assistant 消息缺席时把旧的 reasoning 重复附加。
+            let mut pending_reasoning: Vec<String> = Vec::new();
             for item in items {
+                let is_reasoning = item.get("type").and_then(|t| t.as_str()) == Some("reasoning");
+                if is_reasoning {
+                    if let Some(txt) = reasoning_text_of(item) {
+                        pending_reasoning.push(txt);
+                    }
+                    continue; // 不单独产出消息
+                }
+                let before = messages.len();
                 convert_input_item(item, &mut messages)?;
+                // 本次新增了 assistant 消息 → 把缓冲的 reasoning 附着上去
+                let added_assistant = messages[before..]
+                    .iter()
+                    .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"));
+                if added_assistant && !pending_reasoning.is_empty() {
+                    let text = pending_reasoning.join("\n");
+                    pending_reasoning.clear();
+                    if let Some(m) = messages[before..]
+                        .iter_mut()
+                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                    {
+                        m["reasoning_content"] = json!(text);
+                    }
+                }
+            }
+            // 末尾还留着的 reasoning (其后没有 assistant 消息) → 自成一条**合法**的 assistant:
+            // content 用空字符串而非 null, 这样即使 reasoning_content 被 strip 剥掉,
+            // 这条消息依然满足 OpenAI 协议 (assistant 必须带 content 或 tool_calls)。
+            if !pending_reasoning.is_empty() {
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": pending_reasoning.join("\n"),
+                }));
             }
         }
         _ => {}
@@ -562,6 +599,28 @@ pub fn responses_to_openai_request(body: &Value) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
+/// 从 reasoning item 提取思考链文本 (summary / content 两种形态), 空则 None.
+fn reasoning_text_of(item: &Value) -> Option<String> {
+    let mut text = String::new();
+    for key in ["summary", "content"] {
+        if let Some(Value::Array(parts)) = item.get(key) {
+            for p in parts {
+                if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(t);
+                }
+            }
+        }
+    }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// 转换单个 Responses input item → chat messages (可产生 0..1 条).
 fn convert_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), String> {
     let itype = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -644,25 +703,18 @@ fn convert_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), Str
             messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
         }
         "reasoning" => {
-            // 历史 reasoning item → assistant reasoning_content (思考链),
-            // 是否转发给上游由 strip_history_reasoning 配置统一控制, 不在此静默丢弃.
-            let mut text = String::new();
-            for key in ["summary", "content"] {
-                if let Some(Value::Array(parts)) = item.get(key) {
-                    for p in parts {
-                        if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
-                            if !text.is_empty() {
-                                text.push('\n');
-                            }
-                            text.push_str(t);
-                        }
-                    }
-                }
+            // 走到这里说明调用方没有预筛 (见 convert 里的 pending 缓冲)。
+            // 为保持单独调用也正确, 仍产出**合法**的 assistant: content 为空字符串而非 null ——
+            // 以往写 `content: null` 且无 tool_calls, 一旦 reasoning_content 被 strip 剥掉,
+            // 就留下违反 OpenAI 协议的空 assistant, 上游直接 400 (实测正是如此)。
+            match reasoning_text_of(item) {
+                Some(text) => messages.push(json!({
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": text,
+                })),
+                None => {}
             }
-            if text.is_empty() {
-                return Ok(());
-            }
-            messages.push(json!({"role": "assistant", "content": Value::Null, "reasoning_content": text}));
         }
         "item_reference" => {
             let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -684,10 +736,15 @@ fn convert_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), Str
 /// string 原样; 数组逐部件映射: input_text/output_text → text,
 /// input_image → image_url {url}, refusal → 文本;
 /// 未知部件保留为 JSON 文本 (不静默丢弃).
-/// assistant 角色输出纯字符串 (chat 规范下兼容性最佳, 部分上游拒绝 assistant 数组);
-/// 其余角色输出部件数组 (user 消息需保留图片等多部件).
+///
+/// **纯文本一律输出字符串**（不只 assistant）: OpenAI 的 `content` 严格只接受字符串，
+/// 只有"多模态"才允许部件数组。此前只把 assistant 字符串化，user 侧会产出
+/// `[{"type":"text","text":"..."}]`，很多中转上游直接判 400 —— 实测同一段对话
+/// 走 chat 入口正常、走 responses 入口即 400，差异正是这里。
+/// 仅当确有多模态部件（图片等）时才退回数组形态。
 fn convert_content_parts(content: Option<&Value>, role: &str) -> Value {
-    let as_string = role == "assistant";
+    // assistant 无图片部件; 其余角色若出现图片则会退回数组形态。
+    let allow_image = role != "assistant";
     match content {
         Some(Value::String(s)) => json!(s),
         Some(Value::Array(parts)) => {
@@ -699,15 +756,11 @@ fn convert_content_parts(content: Option<&Value>, role: &str) -> Value {
                     "input_text" | "output_text" | "text" => {
                         let t = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
                         if !t.is_empty() {
-                            if as_string {
-                                texts.push(t.to_string());
-                            } else {
-                                out.push(json!({"type": "text", "text": t}));
-                            }
+                            texts.push(t.to_string());
                         }
                     }
                     "input_image" => {
-                        if as_string {
+                        if !allow_image {
                             continue; // assistant 无图片部件
                         }
                         let url = match p.get("image_url") {
@@ -722,37 +775,35 @@ fn convert_content_parts(content: Option<&Value>, role: &str) -> Value {
                     "refusal" => {
                         let t = p.get("refusal").and_then(|v| v.as_str()).unwrap_or("");
                         if !t.is_empty() {
-                            if as_string {
-                                texts.push(t.to_string());
-                            } else {
-                                out.push(json!({"type": "text", "text": t}));
-                            }
+                            texts.push(t.to_string());
                         }
                     }
                     _ => {
                         if !p.is_null() {
                             let s = serde_json::to_string(p).unwrap_or_default();
                             if !s.is_empty() {
-                                if as_string {
-                                    texts.push(s);
-                                } else {
-                                    out.push(json!({"type": "text", "text": s}));
-                                }
+                                texts.push(s);
                             }
                         }
                     }
                 }
             }
-            if as_string {
+            if out.is_empty() {
+                // 纯文本 (或空) → **字符串形态**: OpenAI 的 content 严格只接受字符串,
+                // 仅多模态才允许部件数组。此前这里对非 assistant 角色输出数组, 会 400。
                 if texts.is_empty() {
                     Value::Null
                 } else {
                     json!(texts.join("\n"))
                 }
-            } else if out.is_empty() {
-                Value::Null
             } else {
-                Value::Array(out)
+                // 确有多模态部件 → 数组形态: 文本部件排在最前, 再拼图片
+                let mut arr: Vec<Value> = texts
+                    .iter()
+                    .map(|t| json!({"type": "text", "text": t}))
+                    .collect();
+                arr.extend(out);
+                Value::Array(arr)
             }
         }
         _ => Value::Null,
@@ -2132,15 +2183,62 @@ mod tests {
         assert_eq!(conv["messages"][3]["role"], "tool");
         assert_eq!(conv["messages"][3]["tool_call_id"], "c1");
         assert_eq!(conv["messages"][3]["content"].as_str(), Some(big_out.as_str()), "tool 输出丢失");
-        // reasoning → assistant reasoning_content (交由 strip 配置统一处理)
+        // reasoning → **附着到相邻 assistant** 的 reasoning_content (不再独立成条:
+        // 独立成条时若 reasoning 被剥离, 会留下无 content 无 tool_calls 的非法 assistant → 400)
+        assert_eq!(conv["messages"][4]["role"], "assistant");
         assert_eq!(conv["messages"][4]["reasoning_content"], "thinking...");
-        // assistant 正文
-        assert_eq!(conv["messages"][5]["content"], "done");
+        // 关键: 该条**同时**带着 assistant 正文, 故剥掉 reasoning 后仍合法
+        assert_eq!(conv["messages"][4]["content"], "done");
+        // 消息总数: system + user + tool_call + tool + (reasoning 已并入的) assistant = 5 条
+        assert_eq!(conv["messages"].as_array().unwrap().len(), 5,
+            "reasoning 不应额外产生一条空 assistant 消息");
         // 参数映射
         assert_eq!(conv["max_tokens"], 2048);
         assert_eq!(conv["reasoning_effort"], "high");
         assert_eq!(conv["stream"], true);
         assert_eq!(conv["tools"][0]["function"]["name"], "edit_file");
+    }
+
+    /// 回归: 纯文本的 user/assistant 消息必须输出**字符串** content。
+    ///
+    /// OpenAI 的 `content` 严格只接受字符串, 只有多模态才允许部件数组。
+    /// 此前只把 assistant 字符串化, user 侧产出 `[{"type":"text",...}]` ——
+    /// 实测同一段对话走 chat 入口正常、走 responses 入口即 400, 差异正是这里。
+    #[test]
+    fn text_only_messages_use_string_content() {
+        let body = json!({
+            "model": "m",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]},
+                {"type": "message", "role": "user", "content": "plain string stays"},
+            ],
+        });
+        let conv = responses_to_openai_request(&body).unwrap();
+        let msgs = conv["messages"].as_array().unwrap();
+        for m in msgs {
+            let c = m.get("content").unwrap();
+            assert!(c.is_string(),
+                "纯文本消息的 content 必须是字符串, 实为 {c} (role={})", m["role"]);
+        }
+        assert_eq!(msgs[0]["content"], "hello");
+        assert_eq!(msgs[1]["content"], "hi");
+        assert_eq!(msgs[2]["content"], "plain string stays");
+        // 多部件 (含图片) 才允许数组
+        let img = json!({
+            "model": "m",
+            "input": [
+                {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": "看图"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+                ]},
+            ],
+        });
+        let conv2 = responses_to_openai_request(&img).unwrap();
+        let parts = conv2["messages"][0]["content"].as_array().expect("含图片应输出数组");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "看图", "文本部件应排在最前");
+        assert_eq!(parts[1]["type"], "image_url");
     }
 
     /// 有状态引用必须显式拒绝 (中转网关无会话存储, 静默忽略会让客户端误以为历史生效).
