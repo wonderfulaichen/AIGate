@@ -14,7 +14,7 @@
       const dates=[...new Map(trends.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
       if(!dates.length){this.modelTrendSvgHtml='';return;}
       // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
-      const W=900,H=320,left=56,right=20,top=22,bottom=40,pw=W-left-right,ph=H-top-bottom;
+      const W=900,H=260,left=56,right=20,top=22,bottom=40,pw=W-left-right,ph=H-top-bottom;
       const palette=CHART_PALETTE;
       const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));

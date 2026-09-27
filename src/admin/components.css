@@ -146,9 +146,12 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
    min-height 移到 .trend-hover: 只有真的画出图时才占位, 无数据时不再留一块空白巨箱. */
 .token-trend-body{overflow-x:auto;padding:20px 22px}
 .model-trend-legend{display:flex;gap:6px;flex-wrap:wrap;padding:14px 16px 4px;justify-content:center}
-.model-trend-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border:1px solid var(--border);border-radius:999px;font-size:var(--fs-10);color:var(--muted);cursor:pointer;transition:opacity var(--dur-fast)}
+/* 图例项: 对齐 cc 的 <Legend/> —— 无边框无底色, 仅"线段色块 + 文字";
+   原为描边胶囊, 一排看着像按钮组而非图例。 */
+.model-trend-chip{display:inline-flex;align-items:center;gap:6px;padding:0;border:none;background:none;font-size:var(--fs-12);color:var(--muted);cursor:pointer;transition:opacity var(--dur-fast)}
 .model-trend-chip:hover{border-color:var(--border-s);color:var(--fg)}
-.model-trend-chip.dim{opacity:.3}
+.model-trend-chip.dim{opacity:.35}
+.model-trend-chip:hover{color:var(--fg)}
 .model-trend-chip i{width:14px;height:3px;border-radius:2px;flex:none}
 /* 长模型名/供应商名: 单行截断, 完整值走 title (否则换行会把行高撑乱) */
 .cell-clip{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -171,7 +174,7 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 /* Token 趋势悬停层: 十字线 + 该时段各模型用量浮层 (替代原生 title 的延迟提示) */
 .trend-hover{position:relative;min-height:320px}
 @media(max-width:700px){.trend-hover{min-height:200px}}
-.trend-crosshair{position:absolute;top:6.4%;bottom:12.9%;width:1px;background:var(--rule-strong);pointer-events:none}
+.trend-crosshair{position:absolute;top:8.5%;bottom:15.4%;width:1px;background:var(--rule-strong);pointer-events:none}
 .trend-tip{position:absolute;top:2px;z-index:5;pointer-events:none;min-width:160px;max-width:280px;padding:7px 9px;border:1px solid var(--border-s);border-radius:8px;background:var(--tip-bg);box-shadow:0 6px 20px var(--shade-2)}
 .trend-tip.tip-left{transform:translateX(4px)}
 .trend-tip.tip-center{transform:translateX(-50%)}
@@ -243,6 +246,10 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
    层级只能靠边框区分, 扁且无纵深; 现用阴影给出"浮在画布上"的层次。 */
 .pnl{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--elev-1)}
 .pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:16px 22px;border-bottom:1px solid var(--border)}
+/* 图表面板专用: cc 的图表卡标题与图**直接相接**(仅靠留白分隔), 不画横线。
+   选题用 pnl-h-plot 而非改 .pnl-h —— 表格类面板仍需分隔线。 */
+.pnl-h-plot{border-bottom:none;padding-bottom:4px}
+.pnl-h-plot .pnl-ht{font-size:var(--fs-18);letter-spacing:-.015em}
 .pnl-ht{font-size:var(--fs-15);font-weight:650;color:var(--fg);letter-spacing:-.01em}
 .pnl-b{padding:22px}
 /* 组内子卡头: 与 .st 同款的弱化标题, 但作为面板内部的次级分区 —— 用上边框与
