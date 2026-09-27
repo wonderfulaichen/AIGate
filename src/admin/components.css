@@ -263,6 +263,15 @@ tr:hover td{background:rgba(99,102,241,.04)}
 /* 徽章列表溢出 (P2): 一格里最多显示 N 个, 多出的折成 "+N" 并由 title 给出全量清单 */
 .bdg-list{display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;min-width:0}
 .bdg-more{display:inline-flex;align-items:center;border-radius:999px;padding:2px 6px;font-size:var(--fs-9);font-weight:700;background:var(--fill-5);color:var(--muted);border:1px solid var(--border-subtle);cursor:default}
+/* ── 设置页分区导航 (P3): 纵向长页面的章节直达 ── */
+.st-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;position:sticky;top:0;z-index:5;padding:8px 0;background:var(--bg)}
+.st-chip{padding:5px 11px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:var(--fs-11);font-weight:600;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
+.st-chip:hover{background:var(--fill-5);color:var(--fg);border-color:var(--border-s)}
+/* 设置表单: :has() 让 textarea / 开关行自动占满整行 —— 无需在两个文件里同步"哪些控件要全宽".
+   浏览器不支持 :has() 时自然退化为两列 (无副作用). */
+.f-grid:has(> .f-row-full){grid-template-columns:1fr}
+.f-row-full{grid-column:1/-1}
+.f-grid > .f-row:has(textarea),.f-grid > .f-row:has(.tgl){grid-column:1/-1}
 /* ── 记录表增强 (P3) ── */
 /* 可排序表头: 悬停提示 + 当前列箭头 */
 .th-sort{cursor:pointer;user-select:none;white-space:nowrap}

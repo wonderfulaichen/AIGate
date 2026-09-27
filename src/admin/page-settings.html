@@ -1,6 +1,11 @@
 <div x-show="activeTab==='settings'" class="page-enter page-wide">
 <div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
-<div class="st mb3" x-text="t('section.perf_opt')"></div>
+<!-- P3: 分区导航 —— 设置页纵向很长 (5 个分区), 原先只能滚动找; 点章节直达.
+     各分区为即时保存 (点开关即生效), 故没有"保存按钮/dirty 态" —— 不引入倒退的批量提交. -->
+<div class="st-nav" x-show="settingsSections.length">
+  <template x-for="s in settingsSections" :key="s.k"><button type="button" class="st-chip" @click="scrollSettingsSec(s.k)" x-text="s.label"></button></template>
+</div>
+<div class="st mb3" id="setsec-perf" x-text="t('section.perf_opt')"></div>
 <div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('strip_reasoning_label')"></div><div class="row-d" x-text="t('strip_reasoning_desc')"></div></div>
@@ -86,7 +91,7 @@
     </div>
   </div></template>
 </div>
-<div class="st mb3" x-text="t('section.personal')"></div>
+<div class="st mb3" id="setsec-personal" x-text="t('section.personal')"></div>
 <div class="pnl mb4">
   <div class="set-row">
     <div class="row-t" x-text="t('ui_language')"></div>
@@ -101,7 +106,7 @@
     </div>
   </div>
 </div>
-<div class="st mb3" x-text="t('section.peak')"></div>
+<div class="st mb3" id="setsec-peak" x-text="t('section.peak')"></div>
 <div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('peak_enable')"></div><div class="row-d" x-text="t('peak_enable_desc')"></div></div>
@@ -138,7 +143,7 @@
     </div>
   </div>
 </div>
-<div class="st mb3" x-text="t('section.conn')"></div>
+<div class="st mb3" id="setsec-conn" x-text="t('section.conn')"></div>
 <div class="pnl mb4">
   <div class="set-row">
     <div><div class="row-t" x-text="t('listen_addr')"></div><div class="row-d"><span class="bdg bdg-s" x-text="t('running')"></span></div></div>
@@ -153,7 +158,7 @@
     <div style="display:flex;gap:8px;align-items:center"><span class="mono txsm" x-text="baseUrl"></span><button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
   </div>
 </div>
-<div class="st mb3" x-text="t('section.monitor')"></div>
+<div class="st mb3" id="setsec-monitor" x-text="t('section.monitor')"></div>
 <div class="pnl mb4">
   <template x-if="tooltipConfig===null"><div class="pnl-b"><span class="txs tm" x-text="t('loading')"></span></div></template>
   <template x-if="tooltipConfig!==null"><div>

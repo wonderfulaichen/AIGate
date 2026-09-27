@@ -41,6 +41,35 @@
       return rows;
     },
 
+    // ── 设置页分区导航 (P3) ──
+    // 分区表即目录: 一处声明, 导航与锚点共用 (新增分区只加一行). 与抽屉的 dr-secnav 同手法.
+    get settingsSections() {
+      return [
+        { k: 'perf', label: t('section.perf_opt') },
+        { k: 'personal', label: t('section.personal') },
+        { k: 'peak', label: t('section.peak') },
+        { k: 'conn', label: t('section.conn') },
+        { k: 'monitor', label: t('section.monitor') },
+      ];
+    },
+    scrollSettingsSec(k) {
+      const el = document.getElementById('setsec-' + k);
+      if (!el) return;
+      // 用 main 容器的相对定位滚动, 而非 el.scrollIntoView —— 后者会把目标顶到
+      // 容器最上沿, 正好被 sticky 的分区导航盖住 (实测目标停在视口下方 1341px 处).
+      const main = el.closest('.main');
+      const nav = document.querySelector('.st-nav');
+      const off = (nav ? nav.offsetHeight : 0) + 12;
+      if (main) {
+        const top = main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - off;
+        main.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      // 焦点交给目标分区标题: 键盘用户 Tab 一次即可进入该分区控件.
+      el.setAttribute('tabindex', '-1');
+      el.focus({ preventScroll: true });
+    },
     // ── 接入引导 (Get started): 完成态由真实数据推导, 3/3 自动收起为页头徽章 ──
     // 信号: ① 已配供应商 (providersFormData) ② 有已填上游 ID 的模型 ③ 发出过请求 (stats).
     get onboardSteps() {
