@@ -47,19 +47,26 @@
       this.modelTrendData.trendByTs=new Map(trends.map(r=>[r.ts,r]));
       // viewBox + width:100% + height:auto: 等比缩放, 圆点与文字不被拉扁.
       let out='<svg viewBox="0 0 '+W+' '+H+'" style="display:block;width:100%;height:auto" class="model-trend-svg" role="img" aria-label="'+this.escapeHtml(t('token_trend_title'))+'">';
-      for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" stroke="#2a2d37" stroke-width=".7"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" font-size="9" fill="#6b7280">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
-      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" fill="'+color+'"/>';});});}else{
+      for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" class="chart-grid"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" class="chart-axis">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
+      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" rx="3" fill="'+color+'"/>';});});}else{
         values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
           const ptsStr=pts.map(p=>p[0]+','+p[1]).join(' ');
           const gid='tg'+si;
-          out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+color+'" stop-opacity=".25"/><stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
+          // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性
+          const areaOp=keys.length<=2?.30:(keys.length<=3?.20:.13);
+          out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
+            +'<stop offset="0" stop-color="'+color+'" stop-opacity="'+areaOp+'"/>'
+            +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
           const areaD='M'+x(0)+','+(top+ph)+' L'+pts.map(p=>p[0]+','+p[1]).join(' L')+' L'+x(n-1)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
           out+='<polyline points="'+ptsStr+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
-          vals.forEach((v,i)=>{if(!v)return;out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.5" fill="'+color+'" stroke="#16161c" stroke-width="1.5"/>';});
+          // 只在桶数稀疏时画点: 密集时 120 个圆点会把曲线淹没成散点图,
+          // 密集情形交给悬停十字线 + 浮层 (本图已有)。
+          if(n<=12) vals.forEach((v,i)=>{if(!v)return;out+='<circle cx="'+x(i)+'" cy="'+y(v)+'" r="3.2" fill="'+color+'" class="chart-dot"/>';});
         });
       }
-      const step=Math.max(1,Math.ceil(n/8));dates.forEach((d,i)=>{if(i%step===0||i===n-1)out+='<text x="'+x(i)+'" y="'+(H-12)+'" text-anchor="middle" font-size="9" fill="#6b7280">'+this.escapeHtml(d[1]||'')+'</text>';});out+='</svg>';
+      out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+(top+ph)+'" y2="'+(top+ph)+'" class="chart-base"/>';
+      const step=Math.max(1,Math.ceil(n/8));dates.forEach((d,i)=>{if(i%step===0||i===n-1)out+='<text x="'+x(i)+'" y="'+(H-12)+'" text-anchor="middle" class="chart-axis">'+this.escapeHtml(d[1]||'')+'</text>';});out+='</svg>';
       this.modelTrendSvgHtml=out;
     },
     // ── Token 趋势悬停: 十字线 + 该时段各模型用量浮层 ──

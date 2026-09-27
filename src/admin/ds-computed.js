@@ -196,12 +196,16 @@
       const shown=top.reduce((sum,m)=>sum+(m.requests||0),0);
       const parts=top.map((m,i)=>({value:m.requests||0,color:this.donutColors[i%this.donutColors.length]}));
       // 注: 这里必须用真实色值 —— 结果会作为 SVG 呈现属性 stroke="..." 输出, CSS 变量在该位置不解析。
-      if(this.stats.per_model.length>8 && total>shown) parts.push({value:total-shown,color:'#3b3d48'});
+      if(this.stats.per_model.length>8 && total>shown) parts.push({value:total-shown,color:'#3b3d48',rest:true});
       let offset=0, segs='';
       parts.forEach(p=>{
         const len=p.value/total*C;
-        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${p.color}" stroke-width="${w}" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
+        const gap=parts.length>1?2.5:0;
+        const vis=Math.max(0.5,len-gap);
+        // 汇总扇区带 class, 让底色随主题走 (--chart-rest); 数据系列色仍为内联
+        const cls=p.rest?' class="chart-rest-fill"':'';
+        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${p.color}" stroke-width="${w}" stroke-dasharray="${vis} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"${cls}/>`;
         offset+=len;
       });
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#2a2d37" stroke-width="${w}"/>${segs}<text x="${cx}" y="${cy-8}" text-anchor="middle" fill="#cdd0d4" font-size="16" font-weight="700">${total}</text><text x="${cx}" y="${cy+10}" text-anchor="middle" fill="#6b7280" font-size="10">${t('unit_requests')}</text>`;
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke-width="${w}" class="chart-track"/>${segs}<text x="${cx}" y="${cy-7}" text-anchor="middle" font-size="17" class="donut-total">${total}</text><text x="${cx}" y="${cy+11}" text-anchor="middle" class="donut-sub">${t('unit_requests')}</text>`;
     },

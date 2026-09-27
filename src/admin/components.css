@@ -554,3 +554,19 @@ tr:hover td.th-sticky{background:var(--card)}
 .empty-t{font-size:var(--fs-16);font-weight:700;color:var(--fg);margin:0 0 8px;letter-spacing:-.01em}
 .empty-d{font-size:var(--fs-13);color:var(--muted);max-width:460px;margin:0 0 18px;line-height:1.65}
 
+/* ══════════════════════════════════════════════════════════════════════════
+   图表外观 (SVG chrome) —— 颜色一律走 token, 只有"数据系列色"保留内联属性。
+   这样浅色主题自动正确, 切主题也即时生效(无需重算 SVG)。
+   ══════════════════════════════════════════════════════════════════════════ */
+.chart-grid{stroke:var(--border);stroke-width:1;stroke-dasharray:3 5}
+.chart-base{stroke:var(--border-s);stroke-width:1}
+.chart-axis{fill:var(--muted);font-size:10px;font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+/* 趋势圆点: 用卡片色描边"打孔", 让它从线与面上浮出来 (原为旧卡片色硬编码) */
+.chart-dot{stroke:var(--card);stroke-width:1.6}
+/* 环图: 轨道 / 中心两行文字 */
+.chart-track{stroke:var(--fill-4)}
+.donut-total{fill:var(--fg);font-family:'JetBrains Mono',monospace;font-weight:700;font-variant-numeric:tabular-nums}
+.donut-sub{fill:var(--muted);font-size:10px}
+/* 汇总扇区 ("其他"): 底色随主题走 */
+.chart-rest-fill{stroke:var(--chart-rest)}
+
