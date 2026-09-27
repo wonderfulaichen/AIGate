@@ -98,6 +98,22 @@
 - **README 的项目结构**同步到 `src/admin/` 切片布局与 `concat!` 拼接说明。
 
 ### 新增
+- **拉取模型时自动探测上游支持的协议**（用户第三次追问「为什么要自己勾选？明明直接看官方支持什么
+  不就好了」——方向正确，我该先查清「能不能直接读到」）。**先实测「能否直接读」**：① models.dev
+  的**模型级字段没有协议**（全量 223 provider / 4.9MB 键名统计确认，只有 context/cost/modalities/
+  reasoning 等）；② provider 级有线索（`api` 端点 URL 与 `npm` SDK 包名，如 `@ai-sdk/anthropic`）
+  但按域名匹配只覆盖用户 **4/7** 个供应商（commandcodeAI / ginka / arromega 完全未收录）；
+  ③ 即便读得到也**只反映主协议**——deepseek 的 npm 是 `@ai-sdk/openai-compatible`，实测其
+  `/v1/responses` 同样可用；④ 上游 `/v1/models` 不含协议（zen 实测 403，且响应只有模型名）。
+  → **「直接读」覆盖不足且拿不到「还支持哪些」，故实现探测**。判据由实测标定：DeepSeek 官方
+  `/v1/chat/completions` 与 `/v1/responses` 均返 **402**（余额不足，说明路由已通过）而
+  `/v1/messages` 返 **404**，故 **2xx/400/402/429 = 支持**、**404/405/501 = 不支持**、
+  **401/403 = 无法判断**。实现挂在**用户本来就会点的「拉取模型」**上（该动作已在打上游，探测零额外
+  操作），并行探测并把结果作为新增模型的 `api_formats` 建议值（≥2 个协议才写，用户仍可改）。
+  关键改进：首轮探测为空时**用真实模型名重试**——ginka 用占位名时三端点全 403（Cloudflare 1010，
+  WAF 拦「不存在的模型」），**换真名后完整识别出三个协议**。**真实上游验证**：deepseek →
+  `['openai','responses']`、ginka → `['openai','anthropic','responses']`、commandcodeAI →
+  `['openai','anthropic','responses']`——**三个供应商全都支持多协议**，用户的判断得到实测证实。
 - **同名模型多协议共存：由客户端入口决定实际协议**（用户两轮追问「为什么还要强制配置模型支持什么协议、
   能不能由模型自己决定」，并给出参考项目 cc-switch）。评估后**落地了参考项目都没做的方向**：
   先确认 cc-switch **也不支持**同模型多协议——它是 `app_type` 维度隔离（每个客户端一套供应商列表 +
