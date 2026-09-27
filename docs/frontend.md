@@ -168,6 +168,46 @@ main: 全宽内容（.main，自身滚动）
 **结论：不要给数据密集的列表/卡片新加 `stagger`**；确需入场动效时优先用不带 `both` 的写法。
 （概览页 `.ov-side` 的既有用法保留，但别扩散。）
 
+### 4.5 尺寸体系：字号 / 间距 / 圆角（全面重做的关键一环）
+
+**字号地板是"看起来像老旧密集后台"的头号原因**，改质感与骨架都压不住。原字阶
+`--fs-9:9px` / `--fs-10:10px` / `--fs-11:11px`（11px 被用了 **89 处**），而现代界面正文不低于 12~13px。
+故整体上移一档，最小档 11px、**正文基准 15px**：
+
+| token | 原 | 现 |
+|---|---|---|
+| `--fs-9` / `--fs-10` / `--fs-11` | 9 / 10 / 11 | 11 / 11.5 / **12.5** |
+| `--fs-12` / `--fs-125` / `--fs-13` | 12 / 12.5 / 13 | 13 / 13.5 / 14 |
+| `--fs-14`（body） / `--fs-15` / `--fs-18` | 14 / 15 / 18 | **15** / 16 / 19.5 |
+
+配套：
+- `--rs` 6px → 7px（卡片圆角 12 → 14px，与 cc-switch 的 `rounded-xl` 重量对齐）；
+  `--sp` 增加 `--sp-5:20px` `--sp-6:24px` `--sp-7:32px`。
+- 面板内边距 16 → 22px；面板标题 13 → 15px；页头标题 `clamp(1.5rem,2.8vw,1.875rem)`；
+  表格单元格 11 → 14px 内边距、字阶升到 `--fs-13`（行高明显放宽）。
+- `.main` 留白 24px → `28px 32px 40px`。
+- **CSS 里写死的 `font:Xpx` 简写必须一并抬**（`.about-endpoint-method` / `.ov-api-method` /
+  `.dist-pct` 等 6 处）—— 否则它们会成为新的"小字地板"，改了 token 也白改。
+- 数字输入框隐藏原生上下箭头（`.inp[type=number]`）：它随系统主题变样式、在深色面板里显脏。
+
+**注意**：字阶已不再是"逐值等价"的收敛（那条注释是拆分期的约束，现已作废）。
+
+### 4.6 截图验证工作流（headless Edge）
+
+```powershell
+python .openbitfun\tmp\build_preview.py              # 拼接 + fetch 桩 + 生成 ?tab 变体
+python .openbitfun\tmp\mkwrap.py                     # 生成 wrapper (设主题 + 100% 宽 iframe)
+python .openbitfun\tmp\shoot.py s_dashboard s_records --h=1700   # 截图到 .openbitfun/tmp/shots/
+python .openbitfun\tmp\shoot.py s_dashboard --w=780 --as=narrow_ # 窄屏 (前缀避免覆盖)
+```
+
+三条必须记住的约束（都踩过）：
+1. **服务与浏览器必须在同一进程内跑完** —— 沙箱会在命令结束后回收子进程，跨调用复用实例必然失败。
+2. **页签切换不能靠载入后点侧栏** —— headless 下 iframe 不可见时响应式刷新被节流，
+   Alpine 处理了状态变更但 DOM 不更新。正解是 `?tab` 变体让页面**以目标页签启动**。
+3. **`?tab` 变体必须保留一次 `fetchStats()`** —— 原 init 里 `switchTab('dashboard')` 还负责首次取数，
+   直接换目标会跳过它，首载完成逻辑不跑、`loading` 恒为真，页面永远停在骨架。
+
 ## 5. 状态色与分级（单一事实源）
 
 - `bcls(tone)` / `bcolor(tone)` / `statusTone(tone)`（`core.js`）：tone ∈

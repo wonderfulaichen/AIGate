@@ -26,13 +26,14 @@
   --ok-bg-strong:rgba(52,211,153,.15);--ok-bd-strong:rgba(52,211,153,.3);
   --err-bg-strong:rgba(239,68,68,.15);--err-bd-strong:rgba(239,68,68,.3);
   /* 圆角 */
-  --rs:6px;--rm:calc(var(--rs) + 2px);--r:calc(var(--rs) * 2);--rl:calc(var(--rs) * 2 + 2px);--pill:999px;
+  --rs:7px;--rm:calc(var(--rs) + 2px);--r:calc(var(--rs) * 2);--rl:calc(var(--rs) * 2 + 2px);--pill:999px;
   /* 阴影: 卡片 / 浮层 */
   --sh:0 1px 3px rgba(0,0,0,.3);--shm:0 20px 60px rgba(0,0,0,.45);
-  /* 字阶(与既有取值一一对应,不改变任何视觉大小) */
-  --fs-9:9px;--fs-10:10px;--fs-11:11px;--fs-12:12px;--fs-125:12.5px;--fs-13:13px;--fs-14:14px;--fs-15:15px;--fs-18:18px;
+  /* 字阶 —— 全面重做时整体上移一档: 原 9/10/11px 的"小字海"是密集老面板的主因.
+   正文基准 15px, 最小档 11px (不再有 9px 正文). */
+  --fs-9:11px;--fs-10:11.5px;--fs-11:12.5px;--fs-12:13px;--fs-125:13.5px;--fs-13:14px;--fs-14:15px;--fs-15:16px;--fs-18:19.5px;
   /* 间距 */
-  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;
+  --sp-1:4px;--sp-5:20px;--sp-6:24px;--sp-7:32px;--sp-2:8px;--sp-3:12px;--sp-4:16px;
   /* 填充层级 (收敛重复的 rgba(255,255,255,*) 字面量; 逐值与原字面量相同) */
   --fill-1:rgba(255,255,255,.02);--fill-15:rgba(255,255,255,.025);--fill-2:rgba(255,255,255,.03);
   --fill-3:rgba(255,255,255,.04);--fill-4:rgba(255,255,255,.05);--fill-5:rgba(255,255,255,.06);
@@ -146,7 +147,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 
 
 
-.main{flex:1;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:24px;scroll-behavior:smooth}
+.main{flex:1;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:28px 32px 40px;scroll-behavior:smooth}
 .page-wide{width:100%;max-width:1600px;margin:0 auto}
 .about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
@@ -166,7 +167,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .about-section-title{font-size:var(--fs-12);font-weight:700;color:var(--fg);margin-bottom:10px}
 .about-endpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--fill-1);min-width:0}
-.about-endpoint-method{font:700 10px 'JetBrains Mono',monospace;color:var(--indigo);min-width:34px}
+.about-endpoint-method{font:700 11.5px 'JetBrains Mono',monospace;color:var(--indigo);min-width:34px}
 .about-endpoint-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .about-side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .about-side-panel{padding:20px}

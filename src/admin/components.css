@@ -11,11 +11,11 @@
 .meta-chip,.meta-tag{display:inline-flex;align-items:center;gap:3px;border-radius:5px;padding:2px 5px;font-size:var(--fs-9);line-height:1.2;white-space:nowrap}
 .meta-chip b{font-weight:600}
 .meta-pending{display:inline-flex;align-items:center;color:var(--muted);font-size:var(--fs-9);line-height:1.2;white-space:nowrap}
-.st{display:flex;align-items:center;gap:8px;color:var(--muted);padding-left:12px;font-size:var(--fs-11);font-weight:700;letter-spacing:.06em;text-transform:uppercase;position:relative}
-.st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,var(--indigo),var(--primary))}
+.st{display:flex;align-items:center;gap:9px;color:var(--fg);padding-left:14px;font-size:var(--fs-12);font-weight:700;letter-spacing:.05em;text-transform:uppercase;position:relative;opacity:.94}
+.st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:2px;background:linear-gradient(180deg,var(--indigo),var(--primary))}
 table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:10px 12px;font-weight:600;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:11px 12px;font-size:var(--fs-125);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
+th{text-align:left;padding:12px 14px;font-weight:650;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:14px 14px;font-size:var(--fs-13);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
 /* 行悬停: 加 2px 主色左侧指示条 —— 宽表横向滚动时, 纯底色变化容易看不出在哪一行 */
 tbody tr{transition:background var(--dur-fast)}
 tbody tr:hover td{background:var(--row-hover)}
@@ -89,8 +89,8 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 .ov-kpi-hint{font-size:var(--fs-11);color:var(--muted);margin-top:5px}
 /* ≈ 副档位: 小号、弱化、置于大数字右侧基线对齐 —— 主值精确 + 副档读量级并存 */
 .ov-kpi-approx{font-size:var(--fs-11);font-weight:500;color:var(--muted);background:var(--fill-4);padding:1px 6px;border-radius:6px;margin-left:7px;letter-spacing:0;vertical-align:2px;font-family:'Inter',sans-serif}
-.ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-.ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+.ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
 /* 嵌套统计块: 比卡片**更深**一档, 形成内凹感 (cc-switch 的 bg-background/40 + border/40 同法) */
 .ov-summary-card{background:var(--card-nest);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0;display:flex;flex-direction:column;box-shadow:var(--elev-1);transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
 .ov-summary-card:hover{transform:translateY(-1px);box-shadow:var(--elev-2);border-color:var(--border-s)}
@@ -110,13 +110,13 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 @media(max-width:600px){.ov-health-grid{grid-template-columns:1fr}}
 .ov-health-item{background:var(--card-nest);border:1px solid var(--border);border-radius:10px;padding:10px 12px;box-shadow:var(--elev-1)}
 .ov-health-label{font-size:var(--fs-11);color:var(--muted)}
-.ov-health-value{font:600 14px 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
+.ov-health-value{font:600 15px 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
 .ov-model-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--fill-4)}
 .ov-model-row:last-child{border-bottom:none}
 .ov-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .ov-api-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--fill-4)}
 .ov-api-row:last-child{border-bottom:none}
-.ov-api-method{font:600 10px 'JetBrains Mono',monospace;color:var(--indigo);background:var(--primary-soft);padding:3px 6px;border-radius:5px}
+.ov-api-method{font:600 11.5px 'JetBrains Mono',monospace;color:var(--indigo);background:var(--primary-soft);padding:3px 6px;border-radius:5px}
 .ov-api-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-actions{display:flex;gap:8px;flex-wrap:wrap}
 .an-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
@@ -179,15 +179,15 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 .an-performance-title{font-size:var(--fs-12);font-weight:600;color:var(--fg);padding-right:4px}
 .an-inline-metric{display:inline-flex;align-items:baseline;gap:6px;padding-left:14px;border-left:1px solid var(--border)}
 .an-inline-label{font-size:var(--fs-11);color:var(--muted)}
-.an-inline-value{font:600 12px 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums}
+.an-inline-value{font:600 13px 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums}
 .an-model-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:var(--fill-4);font-size:var(--fs-11);max-width:220px}
-.an-model-chip-name{font:500 11px 'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.an-model-chip-name{font:500 12.5px 'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-model-progress{height:5px;margin:5px 0 0 15px;background:var(--fill-5);border-radius:99px;overflow:hidden}
 .ov-model-progress > span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--primary),var(--indigo))}
 .dist-legend{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--fill-4)}
 .dist-legend:last-child{border-bottom:none}
 .dist-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.dist-pct{font:600 11px 'JetBrains Mono',monospace;color:var(--muted)}
+.dist-pct{font:600 12.5px 'JetBrains Mono',monospace;color:var(--muted)}
 .chart-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:var(--fs-11);color:var(--muted)}
 .chart-legend-item{display:inline-flex;align-items:center;gap:5px}
 .chart-legend-dot{width:7px;height:7px;border-radius:50%}
@@ -231,16 +231,16 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 /* 面板 = 玻璃卡片: 半透明底 + 背景模糊 + 静置阴影。原为"不透明纯色 + 无阴影",
    层级只能靠边框区分, 扁且无纵深; 现用阴影给出"浮在画布上"的层次。 */
 .pnl{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--elev-1)}
-.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
-.pnl-ht{font-size:var(--fs-13);font-weight:600;color:var(--fg)}
-.pnl-b{padding:16px}
+.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:16px 22px;border-bottom:1px solid var(--border)}
+.pnl-ht{font-size:var(--fs-15);font-weight:650;color:var(--fg);letter-spacing:-.01em}
+.pnl-b{padding:22px}
 /* 组内子卡头: 与 .st 同款的弱化标题, 但作为面板内部的次级分区 —— 用上边框与
    上方行为界, 不占独立分区的层级 (响应缓存是性能优化的子项, 不是并列分区). */
 .sub-h{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;margin-top:2px;border-top:1px solid var(--border);font-size:var(--fs-11);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 /* ── new-api page header ── */
-.phd{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px}
-.pt{font-size:clamp(1.25rem,2.5vw,1.5rem);font-weight:800;letter-spacing:-.02em;color:var(--fg);line-height:1.2}
-.ps{font-size:var(--fs-13);color:var(--muted);margin-top:2px}
+.phd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.pt{font-size:clamp(1.5rem,2.8vw,1.875rem);font-weight:800;letter-spacing:-.025em;color:var(--fg);line-height:1.15}
+.ps{font-size:var(--fs-14);color:var(--muted);margin-top:5px}
 /* ── new-api form rows ── */
 .set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px}
 /* 左侧文案可收缩、右侧控件组保住宽度: 否则长说明会把多控件行挤到换行
@@ -330,6 +330,10 @@ tr:hover td.th-sticky{background:var(--card)}
 /* 输入框悬停给描边反馈 (原只在聚焦时变化, 悬停时毫无"可输入"的暗示) */
 .inp{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:var(--fs-12);color:var(--fg);transition:border-color var(--dur-fast),box-shadow var(--dur-fast)}
 .inp:hover{border-color:var(--border-s)}
+/* 数字框隐藏原生上下箭头: 它随系统主题变样式, 在深色面板里显得脏且占宽;
+   面板的数值输入都是直接键入, 不需要点按微调. */
+.inp[type=number]::-webkit-inner-spin-button,.inp[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.inp[type=number]{-moz-appearance:textfield;appearance:textfield}
 .inp:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);outline:none}
 .sel{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:var(--fs-12);color:var(--fg);cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa0aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;transition:border-color var(--dur-fast)}
 .sel:hover{border-color:var(--border-s)}
