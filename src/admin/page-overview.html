@@ -1,9 +1,25 @@
 <div x-show="activeTab==='dashboard'" class="page-enter ov-page">
   <div class="phd">
     <div><h1 class="pt" x-text="t('dashboard_title')"></h1><p class="ps" x-text="t('dashboard_subtitle')"></p></div>
-    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><span class="bdg bdg-s" x-show="!loading && onboardAllDone" style="background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)">✓ <span x-text="t('onboard_done_badge')"></span></span><button class="btn btn-g" @click="fetchStats();fetchBalance();fetchHealth()" x-text="t('refresh')"></button></div>
+    <div class="ov-actions"><span class="bdg bdg-s">● <span x-text="t('service_running')"></span></span><span class="bdg bdg-s" x-show="!loading && onboardAllDone" style="background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)">✓ <span x-text="t('onboard_done_badge')"></span></span><button class="btn btn-g" @click="fetchStats(null,true);fetchBalance();fetchHealth()" :disabled="_refreshing"><span x-show="!_refreshing" x-text="t('refresh')"></span><span x-show="_refreshing" class="spin"></span></button></div>
   </div>
-  <div class="pnl mb3" x-show="!loading && !statsError && providersFormData!==null && !onboardAllDone" x-cloak>
+  <!-- P1 骨架 (loading 态): 与页根同级, 面板标题不闪; 宽限期 250ms 内首载完成则不出现.
+       手动刷新 (_refreshing) 时覆盖内容显示同一骨架 —— 后台轮询不置位, 无 3s 频闪. -->
+  <div class="ov-page" x-show="((loading&&skelReady)||_refreshing)&&!statsError" x-cloak aria-hidden="true" style="display:flex;flex-direction:column;gap:16px">
+    <div class="skel-card" style="align-items:flex-start;gap:8px"><div class="skel skel-line" style="width:220px"></div><div class="skel skel-line" style="width:340px;height:10px"></div><div class="skel skel-line" style="width:160px;height:28px;margin-top:4px"></div></div>
+    <div class="ov-grid" style="display:grid">
+      <div class="ov-main">
+        <div class="skel-card"><div class="skel skel-line" style="width:30%"></div><div class="skel skel-value"></div><div class="skel skel-line" style="width:70%;height:10px"></div></div>
+        <div class="skel-card"><div class="skel skel-line" style="width:26%"></div><div class="skel skel-value"></div><div class="skel skel-line" style="width:60%;height:10px"></div></div>
+        <div class="skel-card"><div class="skel skel-line" style="width:34%"></div><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>
+      </div>
+      <div class="ov-side">
+        <div class="skel-card"><div class="skel skel-line" style="width:40%"></div><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>
+        <div class="skel-card"><div class="skel skel-line" style="width:30%"></div><div class="skel skel-line" style="width:80%;height:10px"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="pnl mb3" x-show="!loading && !_refreshing && !statsError && providersFormData!==null && !onboardAllDone" x-cloak>
     <div class="pnl-h"><div><span class="pnl-ht" x-text="t('onboard_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('onboard_desc')"></div></div><span class="bdg bdg-g" x-text="t('onboard_progress',onboardDone)"></span></div>
     <div class="pnl-b"><div class="onb-list">
       <template x-for="(s,i) in onboardSteps" :key="s.k">
@@ -15,7 +31,7 @@
       </template>
     </div></div>
   </div>
-  <template x-if="!statsError && (!stats || stats.total_requests===0)">
+  <template x-if="!loading && !_refreshing && !statsError && (!stats || stats.total_requests===0)">
     <div>
     <div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px 16px">
       <span class="bdg bdg-s mb2" x-text="t('service_running')"></span>
@@ -35,7 +51,7 @@
     </div>
     </div>
   </template>
-  <template x-if="stats && stats.total_requests>0">
+  <template x-if="!loading && !_refreshing && stats && stats.total_requests>0">
     <div class="ov-grid">
       <div class="ov-main">
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('usage_glance')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('usage_glance_desc')"></div></div><span class="txs tm" :title="heroScopeHint" x-text="heroScopeLabel"></span></div><div class="pnl-b"><div class="ov-summary-grid">

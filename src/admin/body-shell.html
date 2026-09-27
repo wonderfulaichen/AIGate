@@ -1,6 +1,9 @@
 </head>
 <body>
 <div class="layout" x-data="dashboard()" x-init="init()">
+<!-- skip 链接: 键盘首个 Tab 落点, 越过侧栏直达主内容 (平时移出视口, 聚焦才滑入).
+     必须在 x-data 作用域内 —— 否则 x-text="t(...)" 无 Alpine 上下文, 文本为空. -->
+<a href="#main-content" class="skip-link" x-text="t('skip_main')"></a>
 <header class="hdr">
   <button @click="sbCollapsed=!sbCollapsed" class="btn-g" style="padding:4px 6px;border-radius:6px" :title="t('toggle_sidebar')" :aria-label="t('toggle_sidebar')">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -28,6 +31,8 @@
     <a href="#" @click.prevent="switchTab('about')" class="sb-item" :class="{'active':activeTab==='about'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.about')"></span></a>
   </div>
 </nav>
-<main class="main">
-<template x-if="loading && !stats"><div style="display:flex;align-items:center;justify-content:center;min-height:120px;padding:48px 16px"><div style="width:200px;height:3px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden"><div style="height:100%;background:linear-gradient(90deg,var(--primary),var(--indigo));border-radius:99px;width:60%;animation:loadBar 1.8s ease-in-out infinite"></div></div></div></template>
+<main class="main" id="main-content" tabindex="-1">
+<!-- 全局播报区 (aria-live=polite): 分页/筛选等状态变化用既有文案播报给屏幕阅读器; 平时视觉隐藏 -->
+<span class="sr-only" role="status" aria-live="polite" x-text="liveMsg"></span>
+<!-- P1: 原全局 loadBar 细条已由各页骨架替代 (面板标题不闪的三态外壳, 见 components.css .skel) -->
 <template x-if="statsError && !stats"><div class="pnl" style="margin-bottom:16px"><div class="pnl-b" style="text-align:center;padding:40px 16px"><div class="tm" style="margin-bottom:14px" x-text="t('fetch_failed')"></div><button class="btn btn-g" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>

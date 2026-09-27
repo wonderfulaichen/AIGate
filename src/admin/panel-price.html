@@ -1,5 +1,5 @@
 <div class="price-panel-bk" x-show="pricePanelModel" x-cloak @click="closePricePanel()"></div>
-<div class="price-panel" x-show="pricePanelModel" x-cloak>
+<div class="price-panel" x-show="pricePanelModel" x-cloak @keydown.escape.window="pricePanelModel&&closePricePanel()">
   <div class="dr-h">
     <div style="display:flex;align-items:center;gap:8px;min-width:0">
       <span class="txs tm" style="color:var(--muted)" x-text="t('price_edit_model')"></span>

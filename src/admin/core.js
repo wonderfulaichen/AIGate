@@ -1,4 +1,12 @@
-function toast(msg, type, key) { if (window.Alpine) Alpine.store('toast').push(msg, type, key); }
+function toast(msg, type, key) {
+  if (window.Alpine) {
+    // 错误去重 (P1): 无 key 的错误 toast 按文案生成合并键, 复用 store 的 3s 窗口同 key 合并 (×n) ——
+    // 轮询/连点造成的同一失败不刷屏, 不同错误仍各自可见.
+    // (调研原案是 WeakSet 存错误对象引用; 本代码库 toast 载荷是字符串而非错误对象, 故以文案为等价锚点.)
+    if (type === 'error' && !key) key = 'err:' + msg;
+    Alpine.store('toast').push(msg, type, key);
+  }
+}
 // 统一确认弹窗: 返回 Promise<是否继续>. onOk 为 async 时弹窗自带 loading 转圈.
 function confirmAsk(body, opts) {
   opts = opts || {};

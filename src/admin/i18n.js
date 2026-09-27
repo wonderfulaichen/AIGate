@@ -36,7 +36,7 @@ const I18N = {
     'price_apply_selected': '应用价格({0})', 'price_apply_selected_hint': '先在某模型里「复制价格」，勾选目标模型后点此批量应用', 'rate_suffix': '元/单位', 'currency_hint': '费用以人民币(CNY)为基准计价，按所选汇率换算显示；汇率可在本页直接调整并保存。',
     'section.peak': '分时段计费', 'peak_enable': '启用高峰/空闲分时段计价', 'peak_enable_desc': '开启后，仅高峰日的高峰时段按标准价计费，其余时段按空闲价（未配置空闲价的模型自动回退标准价）',
     'peak_tz': '时区偏移', 'peak_tz_unit': '小时（相对 UTC，北京时间填 8）', 'peak_weekdays': '高峰日', 'peak_windows': '高峰时段',
-    'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。', 'close_label': '关闭', 'remove_peak_window': '移除该时段', 'toggle_sidebar': '收起 / 展开侧栏',
+    'peak_add_window': '+ 添加时间段', 'peak_hint': '时间段为左闭右开，例如 09:00—12:00 表示 09:00 至 11:59 属高峰；未列入的星期全天按空闲计。', 'close_label': '关闭', 'remove_peak_window': '移除该时段', 'toggle_sidebar': '收起 / 展开侧栏', 'skip_main': '跳到主内容',
     'wd.1': '一', 'wd.2': '二', 'wd.3': '三', 'wd.4': '四', 'wd.5': '五', 'wd.6': '六', 'wd.7': '日',
     
     'other_n': '其他 {0} 个',
@@ -261,7 +261,7 @@ const I18N = {
     'price_apply_selected': 'Apply price ({0})', 'price_apply_selected_hint': 'Copy a price from any model, tick the targets, then click here to apply in bulk', 'rate_suffix': 'CNY/unit', 'currency_hint': 'Costs are denominated in CNY and converted using the selected rate; rates can be adjusted and saved here.',
     'section.peak': 'Time-based pricing', 'peak_enable': 'Enable peak/off-peak pricing', 'peak_enable_desc': 'When on, only the peak windows on peak days are billed at the standard price; all other times use the off-peak price (models without an off-peak price fall back to standard)',
     'peak_tz': 'Timezone offset', 'peak_tz_unit': 'hours from UTC (Beijing = 8)', 'peak_weekdays': 'Peak days', 'peak_windows': 'Peak windows',
-    'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.', 'close_label': 'Close', 'remove_peak_window': 'Remove this window', 'toggle_sidebar': 'Collapse / expand sidebar',
+    'peak_add_window': '+ Add window', 'peak_hint': 'Windows are half-open: 09:00—12:00 means 09:00 through 11:59 counts as peak. Days not listed are off-peak all day.', 'close_label': 'Close', 'remove_peak_window': 'Remove this window', 'toggle_sidebar': 'Collapse / expand sidebar', 'skip_main': 'Skip to main content',
     'wd.1': 'Mon', 'wd.2': 'Tue', 'wd.3': 'Wed', 'wd.4': 'Thu', 'wd.5': 'Fri', 'wd.6': 'Sat', 'wd.7': 'Sun',
     
     'other_n': '{0} others',

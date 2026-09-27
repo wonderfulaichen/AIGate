@@ -112,6 +112,7 @@
       if(prov._brandFilter===undefined) prov._brandFilter='';
       if(prov._effFilter===undefined) prov._effFilter='';
       try { this.drawerAdvOpen = localStorage.getItem('aigate_drawer_adv') === '1'; } catch(e) {}
+      if (!this.drawerProv) this._lastFocus = document.activeElement; // 记录触发按钮, 关闭时归还
       this.drawerProv=prov;
     },
     // ── 抽屉分节完成度 (参照 new-api channel-mutate-drawer 精简版) ──
@@ -133,5 +134,7 @@
       try { localStorage.setItem('aigate_drawer_adv', this.drawerAdvOpen ? '1' : '0'); } catch(e) {}
     },
     closeProviderDrawer(){
+      const f = this._lastFocus; this._lastFocus = null;
       this.drawerProv=null;
+      if (f && f.focus) this.$nextTick(() => { try { f.focus(); } catch (e) {} });
     },

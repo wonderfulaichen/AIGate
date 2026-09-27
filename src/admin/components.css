@@ -336,3 +336,26 @@ tr:hover td{background:rgba(99,102,241,.04)}
 .txs{font-size:var(--fs-11)}.txsm{font-size:var(--fs-125)}
 .fw6{font-weight:600}.fw7{font-weight:700}
 .tm{color:var(--muted)}
+/* ── 骨架屏 (首次加载三态外壳: loading 骨架 / empty / 正常; 面板标题不闪) ──
+   与页根同级定位 (骨架自身用 page-enter 贴合页头), 不包裹既有容器 —— 零布局影响.
+   宽限期 250ms 内首载完成则不显示 (见 ds-core.init); 显示后最少驻留 1s (ds-stats._endFirstLoad).
+   prefers-reduced-motion 下退化为静态底色, 不做流光 (与 .page-enter 同一开关口径). */
+.skel{background:linear-gradient(90deg,rgba(255,255,255,.05) 25%,rgba(255,255,255,.10) 37%,rgba(255,255,255,.05) 63%);background-size:300% 100%;animation:skelShimmer 1.6s ease-in-out infinite;border-radius:var(--rs)}
+@keyframes skelShimmer{from{background-position:100% 50%}to{background-position:0 50%}}
+@media(prefers-reduced-motion:reduce){.skel{animation:none;background:rgba(255,255,255,.07)}}
+/* 骨架内的 KPI/统计卡: 继承真实卡片的边框底色, 形状对齐 (值宽 55% / 次行 100%) */
+.skel-card{display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--border);border-radius:var(--rm);background:var(--card)}
+.skel-stat{display:flex;flex-direction:column;gap:8px;padding:14px 16px;justify-content:center}
+.skel-line{height:13px}
+.skel-value{height:22px;width:55%}
+.skel-row{height:42px}
+/* ── 可访问性 (P1): skip 链接 / 隐藏播报区 / 快捷键提示 ── */
+/* skip link: 平时移出视口, 仅键盘聚焦时从左上滑入 (首个 Tab 落点, 越过侧栏直达主内容) */
+.skip-link{position:fixed;left:12px;top:10px;z-index:200;padding:8px 14px;border-radius:var(--rm);background:var(--primary);color:#fff;font-size:var(--fs-125);font-weight:600;text-decoration:none;transform:translateY(-200%);transition:transform var(--dur-fast) ease}
+.skip-link:focus{transform:translateY(0)}
+/* 屏幕阅读器专用: 视觉隐藏但可播报 (aria-live 区) */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* 搜索框内 / 快捷键提示 (符号, 非文案; 键盘按 / 直达记录页搜索) */
+.search-wrap{position:relative;display:inline-block}
+.search-wrap .inp{padding-right:26px}
+.search-wrap kbd{position:absolute;right:7px;top:50%;transform:translateY(-50%);min-width:15px;height:15px;line-height:15px;text-align:center;border:1px solid var(--border);border-radius:4px;background:var(--elevated);color:var(--muted);font-family:inherit;font-size:10px;pointer-events:none}

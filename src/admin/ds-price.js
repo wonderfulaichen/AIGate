@@ -37,6 +37,8 @@
       };
     },
     openPricePanel(model){
+      // 价格面板叠在抽屉之上, 用独立焦点槽 (_priceLastFocus), 不覆盖抽屉的 _lastFocus.
+      this._priceLastFocus = document.activeElement;
       this.priceToPanel(model.price);
       this.pricePanelModel = model;
     },
@@ -63,7 +65,13 @@
       return rows;
     },
     closePricePanel(){
+      const was = this.pricePanelModel;
       this.pricePanelModel = null;
+      // 焦点归还 (仅本次确实打开过): 回到触发按钮, 键盘用户不迷路.
+      if (was) {
+        const f = this._priceLastFocus; this._priceLastFocus = null;
+        if (f && f.focus) this.$nextTick(() => { try { f.focus(); } catch (e) {} });
+      }
     },
     savePricePanel(){
       if(!this.pricePanelModel) return;

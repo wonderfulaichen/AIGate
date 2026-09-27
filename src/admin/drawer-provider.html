@@ -1,7 +1,7 @@
 <template x-if="drawerProv">
-<div>
+<div @keydown.escape.window="drawerProv&&closeProviderDrawer()">
   <div class="dr-bk" @click="closeProviderDrawer()"></div>
-  <div class="dr">
+  <div class="dr" role="dialog" aria-modal="true">
     <div class="dr-card">
       <!-- Header -->
       <div class="dr-h">

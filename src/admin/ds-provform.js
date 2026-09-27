@@ -1,5 +1,15 @@
 
     async loadProvidersForm() {
+       // 供应商表单首载 (providersFormData 为 null): 独立加载态供骨架使用 (不与 stats 的 loading 耦合).
+       // 宽限期 250ms: 首载更快则骨架从不显示 (与 ds-core.init 对 loading 的口径一致), 不闪跳;
+       // 一旦显示, 收口时保证最少驻留 1s. 非首载 (刷新/切页带缓存) 不置位 —— 内容不被清空, 无闪烁.
+       const firstLoad = this.providersFormData === null;
+       let skelShown = false;
+       if (firstLoad) {
+         this._provSkelT = setTimeout(() => {
+           skelShown = true; this.provLoading = true; this._provSkelAt = Date.now();
+         }, 250);
+       }
        try {
          const r=await fetch('/admin/api/providers', {headers:authHeaders()});
          if(r.ok) {
@@ -44,6 +54,17 @@
             }
           }
         } catch(e){}
+        finally {
+          // 宽限期计时器收口; 骨架已显示则保证最少驻留 1s (与 ds-stats._endFirstLoad 同口径); 失败也收口, 不卡加载态.
+          if (firstLoad) {
+            if (this._provSkelT) { clearTimeout(this._provSkelT); this._provSkelT = null; }
+            if (skelShown && this.provLoading) {
+              const remain = 1000 - (Date.now() - this._provSkelAt);
+              if (remain > 0) setTimeout(() => { this.provLoading = false; }, remain);
+              else this.provLoading = false;
+            }
+          }
+        }
       },
       addModel(pi) {
       const provName = (this.providersFormData[pi]&&this.providersFormData[pi].name)||'';

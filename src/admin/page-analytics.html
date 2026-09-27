@@ -1,7 +1,19 @@
 <div x-show="activeTab==='analytics'" class="page-enter ov-page">
-  <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats()" x-text="t('refresh')"></button></div></div>
-  <template x-if="!stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="statsError?t('fetch_failed'):t('no_data')"></span><button x-show="statsError" class="btn btn-g" style="margin-left:10px" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>
-  <template x-if="stats"><div style="display:flex;flex-direction:column;gap:16px">
+  <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats(null,true)" :disabled="_refreshing"><span x-show="!_refreshing" x-text="t('refresh')"></span><span x-show="_refreshing" class="spin"></span></button></div></div>
+  <!-- P1 骨架 (loading 态): 与页根同级; 页头不闪. 手动刷新 (_refreshing) 覆盖内容显示同一骨架. -->
+  <div x-show="!statsError && ((loading&&skelReady)||(_refreshing))" x-cloak aria-hidden="true" style="display:flex;flex-direction:column;gap:16px">
+    <div class="skel-card" style="align-items:flex-start;gap:8px"><div class="skel skel-line" style="width:200px"></div><div class="skel skel-line" style="width:300px;height:10px"></div></div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+      <template x-for="i in 5" :key="i"><div class="skel-card skel-stat"><div class="skel skel-line" style="width:60%;height:10px"></div><div class="skel skel-value"></div></div></template>
+    </div>
+    <div class="skel-card"><div class="skel skel-line" style="width:24%"></div><div class="skel" style="height:240px"></div></div>
+    <div class="skel-card"><div class="skel skel-line" style="width:30%"></div><div class="skel skel-row"></div><div class="skel skel-row"></div><div class="skel skel-row"></div></div>
+  </div>
+  <!-- 错误态: 明确失败 + 重试 (骨架只表示在途, 不与错误态混用) -->
+  <template x-if="statsError && !stats"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('fetch_failed')"></span><button class="btn btn-g" style="margin-left:10px" @click="retryFetchStats()" x-text="t('refresh')"></button></div></div></template>
+  <!-- 空态: 已加载且确实无数据 (原实现把「加载中」与「无数据」混在同一模板, 加载中会误显 no_data) -->
+  <template x-if="!stats && !statsError && !loading"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('no_data')"></span></div></div></template>
+  <template x-if="!loading && !_refreshing && stats"><div style="display:flex;flex-direction:column;gap:16px">
     <template x-if="!stats.total_requests"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_analytics_title')"></h2><p class="empty-d" x-text="t('empty_analytics_desc')"></p><button class="btn btn-p" @click="switchTab('dashboard')" x-text="t('empty_analytics_cta')"></button></div></div></template>
     <div class="an-stat-strip">
       <div class="an-stat"><div class="an-stat-label" x-text="t('total_requests')"></div><div class="an-stat-value" x-text="stats.total_requests||0"></div><div class="an-stat-hint"></div></div>

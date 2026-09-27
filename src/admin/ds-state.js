@@ -3,6 +3,21 @@ function dashboard() {
     activeTab: 'dashboard',
     sbCollapsed: false,
     loading: true,
+    // ── 首次加载三态外壳 (P1): skeleton(骨架) / empty(空态) / normal(内容) ──
+    // skelReady: 骨架宽限期 (250ms, ds-core.init 定时点亮) —— 首载快于宽限期则骨架从不出现, 不闪跳.
+    // _skelShownAt: 骨架实际显示时刻; 一旦显示, loading 至少再保持 1s (_endFirstLoad), 避免骨架↔内容来回跳.
+    // 后台轮询不碰 loading (仅首次加载管理), 内容永不被刷新清空 —— 无 3s 频闪.
+    skelReady: false,
+    _skelShownAt: 0,
+    // 手动刷新指示: 仅用户点击触发 (后台轮询不置位), 供刷新按钮转圈.
+    _refreshing: false,
+    // 供应商表单独立加载态 (loadProvidersForm): 不与 stats 的 loading 耦合 —
+    // 首次为 null 时才置位, 骨架同样遵守宽限期与最少驻留 1s (_provSkelAt).
+    provLoading: false,
+    _provSkelAt: 0,
+    // 记录页首载: logsFetched 首次置位前不显示统计卡/表格 —— stats 与 logs 是两个独立请求,
+    // stats 先到时不能让「logs 还没回来」显示成 0 条 (无数据 ≠ 0); 失败也置位 (退回既有空态行为).
+    logsFetched: false,
     // 统计拉取失败标记: 失败时必须复位 loading, 否则界面永远停在「加载中」
     // (原实现只在 r.ok 分支置 loading=false, 失败被 catch 吞掉 → 假"加载中"永不结束).
     statsError: false,
@@ -106,8 +121,17 @@ function dashboard() {
 
     // Logs
     logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, pageSize: 20,
+    // 记录页搜索 IME 保护 (P1): logSearchDraft = 输入框实时值 (x-model), logSearch = 实际过滤值.
+    // 拼音未上屏 (composing) 期间只改草稿不过滤; 上屏 (compositionend) 立即提交, 普通输入防抖 200ms.
+    // 原实现 @input 直写 logSearch —— 中文每敲一个拼音字就过滤一次, 结果闪跳且易误筛.
+    logSearchDraft: '', logSearchComposing: false, _logSearchT: null,
     // 记录页错误单元格的展开态 {timestamp: bool} —— 按日志时间戳存, 轮询重取 logs 不丢展开.
     logErrOpen: {},
+    // 全局 aria-live 播报文本 (P1): 分页/筛选等状态变化写入, 由 body-shell 的 sr-only 区播报.
+    // 只在用户操作 (resetLogView/gotoLogPage) 时更新, 后台轮询不写 —— 无播报轰炸.
+    liveMsg: '',
+    // 焦点归还: 打开浮层时记录触发元素, 关闭后把焦点还回去 (键盘用户不迷路).
+    _lastFocus: null,
 
     // Donut chart
     donutColors: CHART_PALETTE,

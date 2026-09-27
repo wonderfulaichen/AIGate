@@ -1,26 +1,45 @@
 
-    async fetchStats(rangeOverride)   {
+    async fetchStats(rangeOverride, manual)   {
+      if (manual) this._refreshing = true;
+      // 竞态防护: 快速切换时间范围/手动刷新叠加时先 abort 上一次 —— 旧响应后到会覆盖新范围的数据.
+      if (this._statsAbort) { try { this._statsAbort.abort(); } catch(e){} }
+      const ac = new AbortController(); this._statsAbort = ac;
       try {
         const range=rangeOverride || (this.activeTab==='dashboard'?'window':(this.analyticsRange||'1d'));
         const params=new URLSearchParams({granularity:this.trendGranularity,range});
-        const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders()});
+        const r=await fetch('/admin/api/stats?'+params.toString(), {headers:authHeaders(), signal: ac.signal});
         if(r.ok) {
+          // 数据先落位 (数字即时可算), loading 的切换交给 _endFirstLoad 统一管理:
+          // 骨架已显示 → 最少驻留 1s 再切内容; 从未显示 (宽限期内完成) → 立即切.
+          const firstLoad = this.loading;
           this.stats=await r.json();
-          this.loading=false;
           this.statsError=false;
+          if (firstLoad) this._endFirstLoad(); else this.loading=false;
           this.fetchModelMeta(); await this.$nextTick();
           this.computeModelTrend();
           if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; }
         } else {
-          // 非 2xx 也是失败: 必须复位 loading, 否则界面停在假的「加载中」.
+          // 非 2xx 也是失败: 必须复位 loading, 否则界面停在假的「加载中」(错误态不驻留, 立即可见).
           this.loading=false; this.statsError=true;
         }
       } catch(e) {
+        // 被后续请求 abort: 既非网络异常也不该标错误态, 静默返回 (数据以最后一次为准).
+        if (e && e.name === 'AbortError') return;
         // 网络异常同理 —— 原实现这里是空 catch, 导致 loading 永远为 true.
         this.loading=false; this.statsError=true;
+      } finally {
+        if (this._statsAbort === ac) this._statsAbort = null;
+        if (manual) this._refreshing = false;
       }
     },
-    retryFetchStats() { this.statsError=false; this.loading=true; this.fetchStats(); },
+    // 首次加载收口: 骨架从未显示 → 立即结束; 已显示 → 保证自显示起满 1s (避免骨架闪现即撤).
+    _endFirstLoad() {
+      if (!this.skelReady) { this.loading = false; return; }
+      const remain = 1000 - (Date.now() - this._skelShownAt);
+      if (remain > 0) { setTimeout(() => { this.loading = false; }, remain); }
+      else this.loading = false;
+    },
+    retryFetchStats() { this.statsError=false; this.loading=true; this.skelReady=true; this._skelShownAt=Date.now(); this.fetchStats(); },
     isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
