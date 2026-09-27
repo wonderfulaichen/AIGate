@@ -21,7 +21,8 @@
               // 中转 ID 一律生成为「供应商/上游模型ID」(上游自带斜杠也照加, 见 transitId),
               // 避免跨供应商同名 ID 冲突导致路由被静默覆盖; 不满意可直接改.
               const prefixed = this.transitId(prov.name, id);
-              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
+              // 传入供应商名: 网关专属推断规则 (go / zen) 需要它, 否则会漏判 (见 defaultApiFormat).
+              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id, prov.name), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
               addedItems.push({ model_id:prefixed, upstream_model:id });

@@ -93,13 +93,63 @@
       if (!others.length) return '';
       return t('dup_model_id_hint').replace('{0}', others.join('、'));
     },
-    // 与后端 default_api_format 规则保持一致: claude→anthropic, grok/gpt-5*/muse-spark→responses
-    defaultApiFormat(modelId) {
-      const s = (modelId || '').toLowerCase();
-      if (s.includes('claude')) return 'anthropic';
-      if (s.includes('grok')) return 'responses';
-      if (s.startsWith('gpt-5') || s.startsWith('muse-spark')) return 'responses';
+    // 协议推断: **必须与后端 providers.rs::default_api_format 逐条一致**。
+    //
+    // 历史问题: 这里曾是手写的简化版 (只有 claude/grok/gpt-5*/muse-spark 四条, 且不看供应商),
+    // 与后端的两套网关规则 (go / zen) 漂移, 后果有二:
+    //  ① 建模型时自动写入错误协议 —— 后端认为 openai, 前端却把 `gpt-5-x` 标成 responses
+    //     (无视供应商), 在非 go/zen 供应商上直接错;
+    //  ② 面板显示与后端实际转发协议不符 (实测 11/650 个模型如此)。
+    // 现与后端同规则, 并由单测 (test_fmt_rules.cjs) 逐例比对防再度漂移。
+    // providerName 可省略: 省略时只应用与供应商无关的通用规则 (claude / grok)。
+    defaultApiFormat(modelId, providerName) {
+      const prov = (providerName || '').toLowerCase();
+      // 容忍传入中转 ID (形如 `go/minimax-m2.7`): 先剥掉 `供应商/` 前缀再匹配,
+      // 否则 startsWith 类规则 (gpt-5* / minimax* / qwen3*) 对带前缀的 ID 永不命中.
+      let raw = String(modelId || '');
+      if (prov && raw.toLowerCase().startsWith(prov + '/')) raw = raw.slice(prov.length + 1);
+      const id = raw.toLowerCase();
+      // 通用规则 (任意供应商)
+      if (id.includes('claude')) return 'anthropic';
+      if (id.includes('grok')) return 'responses';
+      // 网关专属规则 — 与后端 providers.rs 的 match provider 分支一一对应
+      if (prov === 'go') {
+        if (id.startsWith('minimax') || (id.startsWith('qwen3') && (id.includes('-plus') || id.includes('-max')))) return 'anthropic';
+        if (id.startsWith('gpt-5') || id.startsWith('muse-spark')) return 'responses';
+        return '';
+      }
+      if (prov === 'zen') {
+        if (id.startsWith('qwen3') && (id.includes('-plus') || id.includes('-max'))) return 'anthropic';
+        if (id.startsWith('gpt-')) return 'responses';
+        return '';
+      }
       return '';
+    },
+    // 面板「协议」列应显示的**实际生效协议** (而非配置值): 配置 → 供应商 → 推断 → openai.
+    // 原实现直接绑定配置字段, 未标注的模型一律显示「OpenAI」, 与后端推断不符时界面即在说假话。
+    //
+    // 推断用**上游真名**而非中转 ID: 中转 ID 形如 `go/minimax-m2.7`, 带前缀后
+    // `startsWith('gpt-5')` 之类的规则会失效 (实测 `go/gpt-5.4`.startsWith('gpt-5') === false)。
+    // 上游真名缺失时才回退中转 ID (去掉 `供应商/` 前缀, 还原成能被规则匹配的形态)。
+    // 这与后端一致: 后端也是先按中转 ID 查、再按 upstream_model 查 (见 resolve_api_format)。
+    effectiveApiFormat(m, prov) {
+      if (m && m.api_format) return m.api_format;
+      const pf = prov && prov.api_format;
+      if (pf) return pf;
+      const pname = (prov && prov.name) || '';
+      const up = (m && m.upstream_model) || '';
+      if (up) {
+        const byUp = this.defaultApiFormat(up, pname);
+        if (byUp) return byUp;
+      }
+      const mid = (m && m.model_id) || '';
+      // 去掉「供应商/」前缀再匹配: 否则 startsWith 类规则对中转 ID 永远不命中.
+      const bare = mid.startsWith(pname + '/') ? mid.slice(pname.length + 1) : mid;
+      return this.defaultApiFormat(bare, pname) || 'openai';
+    },
+    // 该模型的协议是否来自推断 (未显式标注) —— 面板据此加弱化标记, 让用户知道"这是自动判断的".
+    apiFormatInferred(m, prov) {
+      return !(m && m.api_format) && !(prov && prov.api_format);
     },
     async resetCircuit(provider) {
       try {
