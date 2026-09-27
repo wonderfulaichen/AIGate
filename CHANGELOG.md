@@ -11,6 +11,8 @@
 - **流式工具调用的 arguments 发成累积串，按标准拼接的客户端收到必然坏的 JSON（CodeBuddy「搜索失败」循环的根因）**：`ResponsesStreamConv`（上游 Responses SSE → 客户端 chat SSE 的转换器）在 `response.function_call_arguments.delta` 处把**已累积的全文**当增量发出去；而 OpenAI chat SSE 契约是「客户端把各帧 `arguments` 依次拼接」。于是 CodeBuddy 拼出 `{"glob": {"glob": "{"glob": …` 这种重复垃圾，解析必失败——实测坏在 `char 21 line 1 column 22`，与 CodeBuddy 导出的报错 `position 21 (line 1 column 22)` **一字不差**；工具参数全坏 → 每次调用必失败 → 截图里的「搜索失败」死循环。**关键对照**：同一场景 `/v1/responses` 原生直通（字节不动）完全正常，且非流式转换也正常 —— 只有「流式 + 转换」这一条路径坏，4/4 稳定复现。现改为只发增量 `partial`（累积器仅保留用于 id/name 回填）；端到端实测（隔离实例 + 真实上游 + 流式 + tools ×4）：修复前 4/4 拼出坏 JSON，修复后 **4/4 拼接结果可解析且完整**。新增回归测试 `function_call_args_streamed_as_increments` 按「拼接契约」断言（多增量帧拼接 == 完整 JSON）。反方向（chat→Responses 上游）原本就发增量，未受影响。
 - **Toast 通知一直没有渲染层，所有 `toast()` 调用都是静默的**：`Alpine.store('toast')` 只有 `push/dismiss`，全文件没有任何渲染容器——保存失败、网络错误等提示推入 store 后 3 秒即被清掉，用户什么都看不到。本次补渲染容器（错误/成功/警告配色 + 关闭按钮 + 同 key 3 秒内合并计数 `×n`），并将失败提示改为透传后端响应的 `.error`/`.message` 文案（拿不到再退回「保存失败」兜底），重复触发带 key 去重防刷屏。
 - **Alpine 字符串型 `:style` 会整串替换 cssText，同元素的静态 `style` 被静默清空**（浏览器注入实验确证）：全文件共 6 处「静态 style 与 :style 写在同一元素」，静态部分从未生效——4 处原有（分析排名序号宽度、抽屉 Key 提示条内边距、模型行分隔线、品牌徽章字号）+ 易用性升级中新增 2 处。全部合并为单一 `:style` 表达式，审计脚本复跑归零。
+- **发布版内嵌调试代码：每次带工具的 responses 请求都往写死的本机路径落盘两个完整请求体**：`proxy.rs` 早期排查残留 `C:\Users\qq274\AppData\Local\Temp\opencode\last_responses_{converted,raw}.json`，随二进制分发——路径在他人机器上必然不存在且 `let _ =` 静默吞掉，存在时则每请求同步写两份含对话明文的 JSON 且无开关无清理。整段删除。
+- **responses 请求诊断日志刷屏**：`responses mode` / `responses size diag` 两条 INFO 每请求打印（含完整 tool0 JSON），`body_size diag` 因 `orig != final` 在 responses 转换下恒真也每次打印——实测占日志 **7480/23292 行（32%）**。三条全部降为 DEBUG（`RUST_LOG=debug` 可恢复），预览串构造用 `tracing::enabled!` 整段守卫（这些 `let` 在宏外，不守卫则关日志也照常序列化）；`body_size diag` 条件按其自身注释收敛（大请求体或有裁剪才触发）。每请求仅保留一行路由审计 INFO。
 
 
 ### 新增
@@ -45,6 +47,10 @@
   - **记录页错误下钻**：表格新增「错误详情」列（成功行 `—`，失败行红字截断、点开全文 + 一键复制，展开态按日志时间戳存、3 秒轮询刷新不丢）；供应商单元格可点击直达该供应商编辑抽屉；「错误请求」统计卡可点击 = 只看失败（再点取消，带选中描边）。失败筛选沿用既有状态段。
   - **常见问题 + 页脚**：概览页 FAQ 手风琴 4 条（计费口径 / 协议怎么选 / 熔断会自愈吗 / 为什么慢），答案均来自本项目实测结论；页脚补 使用说明（README）/ GitHub 仓库 / 问题反馈 三个入口。
   - **验证**：`node --check` 通过，i18n 新键中英各定义 2 次、机器校验零缺失；`cargo test --release` **228 绿**、`cargo build --release` 0 警告；iframe（固定 1200 宽）+ 同桩数据实测空态 ×4、清单 0/3→1/3→3/3、复制、测试成功/失败两态、差异弹窗勾选/应用/取消、确认弹窗取消/确认/loading、toast 合并计数、FAQ 开合、记录页错误下钻；**数字逐值不变**——以 git HEAD 版为基线、同桩 done 场景 A/B 对比，概览/分析/记录 10 组显示值（KPI / 提示 / 次级 / 健康 / 结论行 / 分析统计条 / 记录统计条 / 占比 / 模型行 / 火花线）逐字节相同。
+- **i18n 同名键重复定义，后定义静默覆盖前定义**：中英表各有一对 `price_hint` 与 `status` 重复——`price_hint` 的前一定义（「未配置价格，暂不统计费用」）永远取不到，属死文案（该语义已由 `price_not_set` / `price_unconfigured` 覆盖）直接删除；`status` 的后一定义（带冒号「状态：」）覆盖了无冒号版，导致记录页表头显示「状态：」，而筛选栏又确实需要冒号与相邻「品牌：」「价格：」一致——拆为 `status`（表头，无冒号）与新键 `status_lc`（筛选栏，带冒号），中英各一处。重复键检查脚本（字符串字面量感知）复跑归零。
+
+### 文档
+- **README 的 `.env` 清单补录 4 个未记载的环境变量**：`AIGATE_RECALL_ENABLED` / `AIGATE_RECALL_MAX_ENTRY_BYTES` / `AIGATE_RECALL_MAX_ENTRIES` / `AIGATE_TOOL_OUTPUT_MAX_BYTES`（源码 `config.rs` 一直读取但文档缺失）；现源码 34 个环境变量 README 全覆盖（脚本比对归零）。
 
 ## [0.5.6] - 2026-09-22
 
