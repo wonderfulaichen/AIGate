@@ -1237,6 +1237,42 @@ async fn relay_native_passthrough(
     // 请求体最小改写: 换 upstream_model + 合 extra_body (补缺不覆盖) + 配置档思考强度
     // 注入 (客户端已表达则跳过), 其余字段原样保留 (保真). 逻辑见 rewrite_passthrough_body.
     let mut bytes = body;
+    // 转发优化: 剥离历史 reasoning item (Responses 直通专用, 默认关).
+    //
+    // 直通路径此前**不做任何剥离** —— 实测: responses 端点的 1296 条直通请求省量恒为 0
+    // (有剥离占比 0%), 而同一模型走 chat 端点 96.5% 有省量 (中位 11.7 万 token)。
+    // 开关判定**复用 chat 路径的同一个 resolve_strip_toolcall** —— 两条路径表达的是
+    // 同一意图 (「Responses 协议下是否允许剥离历史推理链」), 直通只是此前遗漏了它;
+    // 故沿用同一开关与同一套优先级 (模型级 override > 协议白名单), 不引入第二个开关
+    // (否则用户要开两次才生效, 且两开关语义会漂移)。
+    let strip_on = resolve_strip_toolcall(
+        false, // 直通路径无 anthropic 形态 (Anthropic 直通走自己的分支, 不经此处)
+        proto == NativeProto::Responses,
+        model_cfg.strip_toolcall_reasoning,
+        state.strip_toolcall_on_chat.load(Ordering::Relaxed),
+        state.strip_toolcall_on_responses.load(Ordering::Relaxed),
+    );
+    let mut strip_saved_chars = 0usize;
+    if proto == NativeProto::Responses && strip_on {
+        if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let (chars, count, snapshot) = strip_responses_reasoning_items(&mut v);
+            if count > 0 {
+                strip_saved_chars = chars;
+                // 留存原文供「降级可回取」(剥离有损且不可逆). 归入 ReasoningPlain ——
+                // Responses 的 reasoning item 不带 tool_calls 配对语义, 与普通轮次同类.
+                state
+                    .recall
+                    .store(crate::recall::RecallKind::ReasoningPlain, &snapshot, Some(&model));
+                info!(
+                    "{tag}: stripped {count} history reasoning item(s) ({chars} chars) — \
+                     responses passthrough strip is ENABLED (experimental)"
+                );
+                if let Ok(nb) = serde_json::to_vec(&v) {
+                    bytes = Bytes::from(nb);
+                }
+            }
+        }
+    }
     if let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
         if rewrite_passthrough_body(&mut v, &model_cfg, proto) {
             info!(
@@ -1248,6 +1284,7 @@ async fn relay_native_passthrough(
             bytes = Bytes::from(nb);
         }
     }
+    let strip_saved_tokens = (strip_saved_chars / 4) as u32;
     let body_len_val = bytes.len();
     let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
@@ -1395,6 +1432,7 @@ async fn relay_native_passthrough(
         endpoint,
         model_cfg.upstream_model.clone(),
         start,
+        strip_saved_tokens,
     );
     let mut resp = Response::builder()
         .status(status)
@@ -1465,6 +1503,9 @@ struct NativeTapStream {
     cache_creation: u32,
     response_bytes: usize,
     logged: bool,
+    /// 转发优化省下的输入 token (剥离历史 reasoning item; 默认关, 见
+    /// [`strip_responses_reasoning_items`]). 落库供面板「优化省量」展示.
+    strip_saved_tokens: u32,
     /// 上游按 `max_output_tokens` 截断 (`response.incomplete`).
     ///
     /// 直通路径字节原样转发 (不改写客户端的响应 —— `response.incomplete` 本身就是协议
@@ -1484,6 +1525,7 @@ impl NativeTapStream {
         endpoint: String,
         upstream_model: Option<String>,
         start: std::time::Instant,
+        strip_saved_tokens: u32,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -1505,6 +1547,7 @@ impl NativeTapStream {
             response_bytes: 0,
             logged: false,
             truncated: false,
+            strip_saved_tokens,
         }
     }
 
@@ -1617,6 +1660,8 @@ impl Stream for NativeTapStream {
                         ),
                     };
                     self.logged = true;
+                    // 省量落库: strip = 本次剥离历史 reasoning item 的估算 token (默认关时为 0).
+                    let st = self.strip_saved_tokens;
                     // 截断时写可读原因 (status 保持 200 —— 客户端收到的是协议规定的
                     // response.incomplete 终止事件, 不是失败). 非截断则 error 为 None.
                     let trunc_note = if self.truncated {
@@ -1633,7 +1678,7 @@ impl Stream for NativeTapStream {
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
-                            prompt, output, resp_len, false, hit, miss, creation, 0, 0, 0, None, None,
+                            prompt, output, resp_len, false, hit, miss, creation, st, 0, 0, None, None,
                             trunc_note,
                             usage_missing(prompt, output),
                         ).await;
@@ -3429,8 +3474,7 @@ fn strip_history_reasoning_messages(
 }
 
 /// 取出一条消息里全部推理链字段的原文 (供留存). 返回空串表示该消息无推理链.
-fn reasoning_snapshot(m: &serde_json::Map<String, serde_json::Value>) -> String {
-    let mut parts: Vec<String> = Vec::new();
+fn reasoning_snapshot(m: &serde_json::Map<String, serde_json::Value>) -> String {    let mut parts: Vec<String> = Vec::new();
     for k in REASONING_FIELDS.iter() {
         if let Some(v) = m.get(*k) {
             match v {
@@ -3443,6 +3487,61 @@ fn reasoning_snapshot(m: &serde_json::Map<String, serde_json::Value>) -> String 
         }
     }
     parts.join("\n")
+}
+
+/// 剥离 Responses 协议 `input` 里的历史 `reasoning` item (转发优化, 默认关).
+///
+/// 背景: `/v1/responses` 且上游同协议时走**原生直通**(字节透传, 见 `relay_native_passthrough`),
+/// 那条路径不做任何剥离 —— 实测 1296 条直通请求的省量恒为 0, 而同模型走 chat 端点时
+/// 96.5% 的请求都有省量 (中位 11.7 万 token)。差异来源就是这里。
+///
+/// 与 chat 路径的区别: chat 的推理链是 assistant 消息上的 `reasoning_content` 字段
+/// (见 [`strip_history_reasoning_messages`]); Responses 协议里它是**独立的 `reasoning` item**
+/// (`{"type":"reasoning", ...}`), 故需单独处理。
+///
+/// 为什么默认关: `reasoning` item 与相邻 `function_call` 的配对关系是否被上游校验**未经实测**,
+/// 剥掉可能因 item 序列不合法而 400 —— 与 `STRIP_TOOLCALL_ON_RESPONSES` 同一顾虑, 取同一策略
+/// (默认关, 面板可开, 由用户在真实上游试开观察)。DeepSeek 官方文档称 `reasoning` 的明文
+/// `content` 会「归并到相邻 assistant 消息」, 未要求配对, 故视为可试。
+///
+/// 返回 `(被剥离字符数, 被剥离 item 数, 首条被剥离 item 的原文)` —— 原文供「降级可回取」留存
+/// (剥离有损且不可逆, 留档后用户才能事后核查)。
+fn strip_responses_reasoning_items(body: &mut serde_json::Value) -> (usize, usize, String) {
+    let Some(obj) = body.as_object_mut() else {
+        return (0, 0, String::new());
+    };
+    let Some(input) = obj.get_mut("input").and_then(|v| v.as_array_mut()) else {
+        return (0, 0, String::new());
+    };
+    let mut removed_chars = 0usize;
+    let mut removed_count = 0usize;
+    let mut first_snapshot = String::new();
+    // 反向遍历后按索引删, 避免边遍历边删导致索引错位
+    let mut keep: Vec<usize> = Vec::with_capacity(input.len());
+    for (i, item) in input.iter().enumerate() {
+        let is_reasoning = item
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "reasoning")
+            .unwrap_or(false);
+        if !is_reasoning {
+            keep.push(i);
+            continue;
+        }
+        // 记账: 与 chat 路径同口径 —— 序列化文本长度 (JSON 转义后), 再由调用方 ÷4 估 token
+        let len = serde_json::to_string(item).map(|s| s.len()).unwrap_or(0);
+        removed_chars += len;
+        removed_count += 1;
+        if first_snapshot.is_empty() {
+            first_snapshot = serde_json::to_string(item).unwrap_or_default();
+        }
+    }
+    if removed_count == 0 {
+        return (0, 0, String::new());
+    }
+    let kept: Vec<serde_json::Value> = keep.into_iter().map(|i| input[i].clone()).collect();
+    *input = kept;
+    (removed_chars, removed_count, first_snapshot)
 }
 
 /// 长会话历史裁剪: 仅保留最近 `n` 条 user 轮, 更早的历史整体丢弃, 降低每轮 input token.
@@ -4410,10 +4509,68 @@ mod tests {
         assert!(tc2 > 0, "应归入 tool_calls 桶以在面板单列");
     }
 
+    /// Responses 直通路径的推理链剥离: 移除 `input` 里的 `reasoning` item,
+    /// 保留 message / function_call 等其余 item **且顺序不变** (item 序列是上游可能校验的部分).
+    #[test]
+    fn strip_responses_reasoning_items_removes_only_reasoning() {
+        let mut body = serde_json::json!({
+            "model": "m1",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "q1"}]},
+                {"type": "reasoning", "id": "rs_1",
+                 "summary": [{"type": "summary_text", "text": "一段历史推理链"}],
+                 "content": [{"type": "reasoning_text", "text": "一段历史推理链"}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "a1"}]},
+                {"type": "function_call", "call_id": "c1", "name": "f", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "c1", "output": "r"},
+                {"type": "reasoning", "id": "rs_2", "summary": [{"type": "summary_text", "text": "另一段"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "q2"}]},
+            ]
+        });
+        let (chars, count, snapshot) = strip_responses_reasoning_items(&mut body);
+        assert_eq!(count, 2, "应剥离 2 个 reasoning item");
+        assert!(chars > 0, "应统计到被剥离的字符数");
+        assert!(!snapshot.is_empty(), "应留存首条原文供回取");
+
+        let types: Vec<String> = body["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|it| it.get("type").and_then(|t| t.as_str()).unwrap_or("?").to_string())
+            .collect();
+        assert_eq!(
+            types,
+            vec!["message", "message", "function_call", "function_call_output", "message"],
+            "非 reasoning item 必须原样保留且顺序不变, 否则上游可能因序列不合法而 400"
+        );
+    }
+
+    /// 无 reasoning item 时零改动 (不误报省量, 也不动 body).
+    #[test]
+    fn strip_responses_reasoning_items_noop_when_absent() {
+        let mut body = serde_json::json!({
+            "model": "m1",
+            "input": [{"type": "message", "role": "user", "content": "hi"}]
+        });
+        let before = serde_json::to_string(&body).unwrap();
+        let (chars, count, snap) = strip_responses_reasoning_items(&mut body);
+        assert_eq!((chars, count), (0, 0));
+        assert!(snap.is_empty());
+        assert_eq!(serde_json::to_string(&body).unwrap(), before, "无推理链时 body 必须一字节不改");
+    }
+
+    /// `input` 不是数组 (字符串形态 / 缺失) 时安全返回, 不 panic.
+    #[test]
+    fn strip_responses_reasoning_items_handles_non_array_input() {
+        let mut s = serde_json::json!({"model": "m1", "input": "纯字符串输入"});
+        assert_eq!(strip_responses_reasoning_items(&mut s), (0, 0, String::new()));
+        let mut n = serde_json::json!({"model": "m1"});
+        assert_eq!(strip_responses_reasoning_items(&mut n), (0, 0, String::new()));
+    }
+
     /// 开关打开时, 带 tool_calls 的 assistant 消息推理链也被剥离 (默认保留).
     #[test]
-    fn strip_toolcall_reasoning_when_enabled() {
-        let mut body = serde_json::json!({
+    fn strip_toolcall_reasoning_when_enabled() {        let mut body = serde_json::json!({
             "model": "x",
             "messages": [
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }],
