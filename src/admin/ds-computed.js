@@ -165,6 +165,20 @@
     get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
     get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
+    // ── 指标卡的「≈ 副档位」与「大数字」 (对标 cc-switch UsageHero) ──
+    // 手法: 主数字给精确值, 副档位给一个**更易读的量级** (如 44,500 → ≈44.5K).
+    // 这样既保留精确性, 又让人一眼抓住量级 —— 原实现只有精确值, 六位数要自己数字位.
+    get heroTokensApprox() {
+      const n = this.heroTokens;
+      if (!n || n < 10000) return '';   // 小于 1 万时不副档 (原值已够易读, 加了反而啰嗦)
+      return '≈ ' + this.fmtT(n);
+    },
+    // 费用三态 (未配价 / 未命中配价模型 / 有值) 决定颜色: 无值时用弱化色, 免得"—"被染成警示黄.
+    get costTone() {
+      const s = this.stats || {};
+      if (!s.has_price_config || s.has_priced_request === false) return 'var(--muted)';
+      return 'var(--warn)';
+    },
     // 命中率口径: 命中 / 总输入 token (与统计页一致). 分母为 0 = 没有数据, 给 '—' 而非 0%.
     get heroCacheText() {
       const s=this.stats||{};

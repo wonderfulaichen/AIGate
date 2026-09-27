@@ -98,6 +98,8 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
 | 表面与骨架 | `--sb-bg`(侧栏) `--tip-bg`(悬停气泡) `--track`(转圈轨道) `--skeleton` `--sh-sm` |
 | 主色软底梯度 | `--primary-soft`(.12) `--primary-soft-deep`(.08) `--primary-badge`(.15) `--primary-soft-h`(.18) `--primary-bd-soft`(.25) `--primary-bd`(.30) `--row-hover`(.04) |
 | 其他表面 | `--violet` `--purple-soft` `--tgl-off` `--err-h` `--err-bd-mid` `--warn-bg-strong` `--toast-shadow` `--toast-err-bg` `--toast-ok-bg` `--toast-warn-bg` |
+| 顶栏/侧栏 | `--hdr-bg` `--sb-bg` |
+| 质感层 | `--card-glass`(玻璃卡底) `--card-nest`(嵌套块底) `--glass-blur` `--elev-1/2/3`(静置/悬停/浮层) `--glow-*`(状态柔光) `--tint-*`(渐变叠层) `--inset-hi`(顶边内高光) |
 
 - 改 `--rs` 会按比例带动 `--rm/--r/--rl`；改色只改 `:root` 与 `html.light`，不要在组件里打补丁。
 - `--fill-*` / `--shade-*` 是**逐值等价**收敛来的（原为 36 处重复 rgba 字面量）；
@@ -119,6 +121,27 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
   它们在两种主题下都可读，属"数据"而非"主题"；只有图表底板 `--chart-rest` 随主题走。
 - 对照度要求：前景/背景组合需满足 WCAG AA（正文 ≥4.5，次要文字与徽标 ≥3.0）。
   半透明 token 会被按其上层底色合成后再算 —— 改浅色配色时照此复核。
+
+### 4.2 表面质感与视觉原语（`components.css` 末段）
+
+设计语言：**玻璃卡片 + 阴影分层 + 状态柔光**（对标 cc-switch 的 `Card`/`glass` 体系）。
+原设计是"纯色块 + 1px 边框"，层级只能靠边框区分，扁且无纵深。
+
+| 原语 | 用途 |
+|---|---|
+| `.pnl` `.ov-kpi` `.ov-summary-card` `.plaza-card` | 玻璃表面（`--card-glass` + `--glass-blur` + `--elev-1`） |
+| `.ov-summary-card` `.ov-secondary-item` `.ov-health-item` | **嵌套块**用 `--card-nest`（比卡片更深一档，形成内凹） |
+| `.lift` | 悬停抬升：位移 1px + 阴影升档（位移刻意极小，列表里位移过大会晃眼） |
+| `.hl` / `.hl-ok` / `.hl-warn` / `.hl-err` | 选中/激活态：彩色描边 + 同色柔光（只换边框色看着仍像静态） |
+| `.tint` / `.tint-primary` / `.tint-ok` + `.tint-on` | 高亮卡片的同色淡渐变叠加（需 `position:relative` 容器 + 作首个子元素） |
+| `.ibox` / `.ov-icon` / `.plaza-ic` | 图标方块（语义色底 + 居中字形 + 悬停微缩放） |
+| `.pbar` | 进度条原语（轨道 + `>i` 填充 + 宽度过渡） |
+| `.icon-btn` | 图标按钮（必须配 `title` + `aria-label`，否则只剩符号不可读） |
+
+- 图标方块的内高光走 `--inset-hi`（暗色白叠加、亮色极淡黑）—— 别写死 `rgba(255,255,255,.06)`。
+- 模态/抽屉/价格面板统一 `background:var(--elevated)` + `box-shadow:var(--elev-3)`，入场用 `popIn`
+  （`prefers-reduced-motion` 下已关闭）。
+- 新增表面类时**照抄这组 token**，不要在组件里另写阴影/模糊：那正是改造前"扁平无层次"的成因。
 
 ## 5. 状态色与分级（单一事实源）
 

@@ -111,7 +111,7 @@ function dashboard() {  return {
     // Settings
     keysByProvider: {}, keyMsg: '',
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
-    provSearch: '', provViewMode: 'table', drawerProv: null,
+    provSearch: '', provViewMode: 'card', drawerProv: null,
     // 抽屉「高级端点」折叠状态 (偏好存 localStorage, 跨次打开保留)
     drawerAdvOpen: false,
     // 拉取模型结果弹窗: 新增/已存在/下架 三 Tab 差异视图 + 前缀分组勾选 (参照 new-api fetch-models-dialog)

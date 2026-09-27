@@ -47,6 +47,7 @@
      (如 rgba(255,255,255,.26) 的十字线在白底上是隐形的) 或过重 (黑遮罩压白底会显脏)。
      下列暗色取值与原字面量逐一相同, 故暗色视觉零变化。 */
   --sb-bg:rgba(12,12,16,.8);                 /* 侧栏底色 (原 .sb 硬编码) */
+  --hdr-bg:rgba(12,12,16,.92);               /* 顶栏底色 (原 .hdr 硬编码) */
   --overlay:rgba(0,0,0,.6);                  /* 模态遮罩 (原 .log-modal) */
   --overlay-soft:rgba(0,0,0,.4);             /* 轻遮罩 (原 .price-panel-bk) */
   --rule-strong:rgba(255,255,255,.26);       /* 图表十字线 (原 .trend-crosshair) */
@@ -70,7 +71,27 @@
   --purple-soft:rgba(167,139,250,.12);       /* 紫色分区图标底 (原 .sec-ic.purple) */
   --err-h:#dc2626;                           /* 危险按钮悬停 (原 .btn-d:hover) */
   --toast-shadow:0 8px 24px rgba(0,0,0,.35); /* Toast 投影 (原 .toast-it) */
-  --toast-err-bg:#2a1416;--toast-ok-bg:#0f2a20;--toast-warn-bg:#2a2110
+  --toast-err-bg:#2a1416;--toast-ok-bg:#0f2a20;--toast-warn-bg:#2a2110;
+  /* ── 表面质感层 (对标 cc-switch 的 Card + glass) ──
+     原设计是"纯色卡片 + 1px 边框", 层级只能靠边框区分, 扁平且无纵深。
+     这几组 token 给出纵深: 玻璃半透明表面 / 三级阴影 / 状态色柔光。 */
+  --card-glass:rgba(22,22,28,.72);           /* 玻璃卡片底 (配合 backdrop-filter) */
+  --card-nest:rgba(12,12,16,.45);            /* 嵌套统计块底 (比卡片更深一档) */
+  --glass-blur:blur(14px);                   /* 玻璃模糊半径 */
+  /* 阴影三级: 静置 / 悬停抬升 / 浮层 */
+  --elev-1:0 1px 2px rgba(0,0,0,.24);
+  --elev-2:0 4px 14px rgba(0,0,0,.30);
+  --elev-3:0 12px 34px rgba(0,0,0,.40);
+  /* 状态色柔光: 高亮卡片用同色系低透明投影, 让"选中"有体积而非仅换边框色 */
+  --glow-primary:0 4px 16px rgba(99,102,241,.16);
+  --glow-ok:0 4px 16px rgba(52,211,153,.14);
+  --glow-warn:0 4px 16px rgba(245,158,11,.14);
+  --glow-err:0 4px 16px rgba(239,68,68,.14);
+  /* 渐变叠层 (卡片高亮时从左侧扫入的扇形) */
+  --tint-primary:linear-gradient(90deg,rgba(99,102,241,.10),transparent);
+  --tint-ok:linear-gradient(90deg,rgba(52,211,153,.10),transparent);
+  /* 图标方块顶边内高光: 暗色下用白叠加做"顶面受光"的体积感 */
+  --inset-hi:inset 0 1px 0 rgba(255,255,255,.06)
 }
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -228,6 +249,7 @@ html.light{
   --sh-sm:0 1px 3px rgba(16,18,26,.10);
   /* 表面/规则线/转圈轨道/骨架 */
   --sb-bg:rgba(255,255,255,.92);
+  --hdr-bg:rgba(255,255,255,.92);
   --rule-strong:rgba(16,18,26,.22);--track:rgba(16,18,26,.18);--skeleton:rgba(16,18,26,.06);
   /* 主色软底梯度: 换成深主色, α 与原档一致 */
   --primary-soft-deep:rgba(79,70,229,.07);--primary-badge:rgba(79,70,229,.12);
@@ -242,4 +264,17 @@ html.light{
   --err-h:#b91c1c;
   --toast-shadow:0 8px 24px rgba(16,18,26,.12);
   --toast-err-bg:#fef2f2;--toast-ok-bg:#f0fdf4;--toast-warn-bg:#fffbeb;
+  /* 表面质感层: 亮色下玻璃用白半透明 + 更淡的阴影 (亮色重阴影显脏) */
+  --card-glass:rgba(255,255,255,.82);
+  --card-nest:rgba(246,247,250,.9);
+  --elev-1:0 1px 2px rgba(16,18,26,.06);
+  --elev-2:0 4px 14px rgba(16,18,26,.10);
+  --elev-3:0 12px 34px rgba(16,18,26,.16);
+  --glow-primary:0 4px 16px rgba(79,70,229,.14);
+  --glow-ok:0 4px 16px rgba(5,150,105,.12);
+  --glow-warn:0 4px 16px rgba(180,83,9,.12);
+  --glow-err:0 4px 16px rgba(220,38,38,.12);
+  --tint-primary:linear-gradient(90deg,rgba(79,70,229,.08),transparent);
+  --tint-ok:linear-gradient(90deg,rgba(5,150,105,.08),transparent);
+  --inset-hi:inset 0 1px 0 rgba(16,18,26,.05);
 }

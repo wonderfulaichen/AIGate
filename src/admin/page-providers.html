@@ -74,13 +74,22 @@
   </div></td>
 </tr></template></tbody></table>
 </div></div></template>
-<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
-  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card">
-    <div class="plaza-ch"><div class="plaza-ic" x-html="providerLogo(prov.name)"></div><div style="min-width:0"><div class="plaza-nm bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></div><div class="plaza-ep" x-text="prov.endpoint"></div></div></div>
-    <div class="plaza-ft">
+<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid stagger">
+  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable">
+    <!-- 标题行: 图标方块 + 名称(可点复制) + 徽章组. 对齐 cc-switch ProviderCard 的
+         「drag/图标 + 名称 + 状态徽章 + (URL 行独立成第二行)」结构 -->
+    <div class="plaza-ch">
+      <div class="plaza-ic ibox" x-html="providerLogo(prov.name)"></div>
+      <div style="min-width:0;flex:1">
+        <div class="plaza-nm bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></div>
+        <div class="plaza-ep" :title="prov.endpoint" x-text="prov.endpoint"></div>
+      </div>
+      <!-- 健康/密钥状态放在标题右侧, 与名称同排 —— 一眼看到"这家能不能用" -->
       <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
-      <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):t('health_na')"></span>
       <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
+    </div>
+    <div class="plaza-ft">
+      <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):(prov._testResult?fmtMs(prov._testResult.latency_ms||0):t('health_na'))"></span>
       <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
       <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
       <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" :title="t('prov_proto_inuse_hint')" x-text="fmt"></span></template>
@@ -88,11 +97,13 @@
       <template x-if="(prov.probed_protocols||[]).length"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span></template>
       <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppc'+fmt"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
     </div>
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
-      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span x-text="t('fetch_models')"></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
-      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err);margin-left:auto" @click="deleteProvider(providersFormData.indexOf(prov))" x-text="t('delete')"></button>
+    <!-- 操作条: 次级按钮靠左, 主操作(编辑)与删除靠右 —— 原为 5 个平铺按钮挤一行 -->
+    <div class="plaza-acts">
+      <button class="btn btn-g icon-btn" :title="t('test_connection')" :aria-label="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
+      <button class="btn btn-g icon-btn" :title="t('fetch_models')" :aria-label="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
+      <button class="btn btn-g icon-btn" style="color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" :title="t('reset_circuit')" :aria-label="t('reset_circuit')" @click="resetCircuit(prov.name)">⟲</button>
+      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;margin-left:auto" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
+      <button class="btn btn-g icon-btn" style="color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))" :title="t('delete')" :aria-label="t('delete')">✕</button>
     </div>
     <template x-if="prov._testResult && !prov._testResult.success">
       <div style="margin-top:6px">

@@ -15,8 +15,11 @@
 .st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,var(--indigo),var(--primary))}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:10px 12px;font-weight:600;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:10px 12px;font-size:var(--fs-125);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
-tr:hover td{background:var(--row-hover)}
+td{padding:11px 12px;font-size:var(--fs-125);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
+/* 行悬停: 加 2px 主色左侧指示条 —— 宽表横向滚动时, 纯底色变化容易看不出在哪一行 */
+tbody tr{transition:background var(--dur-fast)}
+tbody tr:hover td{background:var(--row-hover)}
+tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 
 
 
@@ -78,26 +81,33 @@ tr:hover td{background:var(--row-hover)}
 .ov-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:700px){.ov-kpis{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:460px){.ov-kpis{grid-template-columns:1fr}}
-.ov-kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;min-width:0}
+.ov-kpi{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;min-width:0;box-shadow:var(--elev-1);transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
+.ov-kpi:hover{transform:translateY(-1px);box-shadow:var(--elev-2);border-color:var(--border-s)}
 .ov-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ov-kpi-label{font-size:var(--fs-11);color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
 .ov-kpi-value{font:700 1.45rem/1.15 'JetBrains Mono',monospace;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;margin-top:8px}
 .ov-kpi-hint{font-size:var(--fs-11);color:var(--muted);margin-top:5px}
-.ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
-.ov-summary-card{background:var(--fill-15);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0;display:flex;flex-direction:column}
+/* ≈ 副档位: 小号、弱化、置于大数字右侧基线对齐 —— 主值精确 + 副档读量级并存 */
+.ov-kpi-approx{font-size:var(--fs-11);font-weight:500;color:var(--muted);background:var(--fill-4);padding:1px 6px;border-radius:6px;margin-left:7px;letter-spacing:0;vertical-align:2px;font-family:'Inter',sans-serif}
+.ov-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.ov-secondary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+/* 嵌套统计块: 比卡片**更深**一档, 形成内凹感 (cc-switch 的 bg-background/40 + border/40 同法) */
+.ov-summary-card{background:var(--card-nest);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:0;display:flex;flex-direction:column;box-shadow:var(--elev-1);transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
+.ov-summary-card:hover{transform:translateY(-1px);box-shadow:var(--elev-2);border-color:var(--border-s)}
 .ov-summary-card .mini-spark{margin-top:auto}
 .ov-summary-card .ov-kpi-value{font-size:1.5rem}
-.ov-secondary-item{background:var(--fill-15);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
+.ov-secondary-item{background:var(--card-nest);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0;box-shadow:var(--elev-1)}
 .ov-secondary-label{font-size:var(--fs-11);color:var(--muted)}
 .ov-secondary-value{font:600 1rem 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
 .mini-spark{height:28px;margin-top:8px;opacity:.9;overflow:hidden}
 .mini-spark svg{display:block;width:100%;height:28px}
 @media(max-width:700px){.ov-summary-grid,.ov-secondary-grid{grid-template-columns:1fr}}
-.ov-icon{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-14)}
-.ov-health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+/* 图标方块 (对标 cc-switch 的 p-2.5 rounded-xl bg-gradient-to-br):
+   底色由内联 style 给 (语义色), 这里负责尺寸/圆角/内阴影质感与悬停微缩放. */
+.ov-icon{width:30px;height:30px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-14);box-shadow:var(--inset-hi);flex:none}
+.ov-health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 @media(max-width:600px){.ov-health-grid{grid-template-columns:1fr}}
-.ov-health-item{background:var(--fill-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.ov-health-item{background:var(--card-nest);border:1px solid var(--border);border-radius:10px;padding:10px 12px;box-shadow:var(--elev-1)}
 .ov-health-label{font-size:var(--fs-11);color:var(--muted)}
 .ov-health-value{font:600 14px 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
 .ov-model-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--fill-4)}
@@ -192,7 +202,7 @@ tr:hover td{background:var(--row-hover)}
 .rec-error-row:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;border-radius:6px}
 .rec-error-row:last-child{border-bottom:none}
 .log-modal{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--overlay);backdrop-filter:blur(4px)}
-.log-modal-card{width:100%;max-width:680px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.log-modal-card{width:100%;max-width:680px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--elevated);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--elev-3);overflow:hidden}
 .log-modal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
 .log-modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 20px}
 .log-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -208,14 +218,18 @@ tr:hover td{background:var(--row-hover)}
 
 
 /* ── new-api header + sidebar ── */
-.hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:rgba(12,12,16,.92);flex-shrink:0}
+/* 顶栏: 玻璃 + 模糊 (原为写死的 rgba(12,12,16,.92) 深色底 —— 浅色主题下整条仍是黑的).
+   顺带修掉自己定的红线: 组件里不得出现 rgba(255,255,255,*) / rgba(0,0,0,*) 字面量. */
+.hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0;position:relative;z-index:10}
 .hdr-title{font-size:var(--fs-14);font-weight:700;letter-spacing:-.01em;color:var(--fg)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .sidebar-group{padding:14px 12px 4px;font-size:var(--fs-10);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:.6;white-space:nowrap;overflow:hidden}
 .sidebar-group + .sidebar-group{margin-top:8px}
 .sb .sidebar-item span{overflow:hidden;transition:opacity var(--dur-fast);white-space:nowrap}
 /* ── new-api panel ── */
-.pnl{background:var(--card);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden}
+/* 面板 = 玻璃卡片: 半透明底 + 背景模糊 + 静置阴影。原为"不透明纯色 + 无阴影",
+   层级只能靠边框区分, 扁且无纵深; 现用阴影给出"浮在画布上"的层次。 */
+.pnl{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--elev-1)}
 .pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
 .pnl-ht{font-size:var(--fs-13);font-weight:600;color:var(--fg)}
 .pnl-b{padding:16px}
@@ -301,17 +315,23 @@ tr:hover td.th-sticky{background:var(--card)}
   .rec-layout td::before{content:attr(data-l);flex:0 0 72px;color:var(--muted);font-size:var(--fs-10);text-transform:uppercase;letter-spacing:.04em}
 }
 /* ── new-api button ── */
-.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:var(--fs-12);font-weight:600;cursor:pointer;transition:background var(--dur-fast),border-color var(--dur-fast);border:none}
-.btn-p{background:var(--primary);color:var(--primary-fg)}.btn-p:hover{background:var(--primary-h)}
+/* 按钮加过渡与"按下"反馈: 原先只有颜色过渡, 点击没有任何体积反馈.
+   .btn-p 额外带上主色柔光, 让主操作为视觉焦点. */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:var(--fs-12);font-weight:600;cursor:pointer;transition:background var(--dur-fast),border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur-fast);border:none}
+.btn:active:not([disabled]){transform:translateY(1px)}
+.btn-p{background:var(--primary);color:var(--primary-fg);box-shadow:var(--elev-1)}.btn-p:hover{background:var(--primary-h);box-shadow:var(--glow-primary)}
 .btn-g{background:transparent;color:var(--muted)}.btn-g:hover{background:var(--fill-5);color:var(--fg)}
-.btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:var(--fill-5)}
+.btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:var(--fill-5);border-color:var(--primary-bd)}
 .btn[disabled]{opacity:.55;cursor:not-allowed}
 @keyframes aispin{to{transform:rotate(360deg)}}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--track);border-top-color:currentColor;border-radius:50%;animation:aispin .6s linear infinite;flex:0 0 auto}
 /* ── new-api input ── */
+/* 输入框悬停给描边反馈 (原只在聚焦时变化, 悬停时毫无"可输入"的暗示) */
 .inp{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:var(--fs-12);color:var(--fg);transition:border-color var(--dur-fast),box-shadow var(--dur-fast)}
+.inp:hover{border-color:var(--border-s)}
 .inp:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);outline:none}
-.sel{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:var(--fs-12);color:var(--fg);cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa0aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center}
+.sel{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:6px 28px 6px 10px;font-size:var(--fs-12);color:var(--fg);cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa0aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;transition:border-color var(--dur-fast)}
+.sel:hover{border-color:var(--border-s)}
 /* ── plaza ── */
 .plaza-hd{text-align:center;padding:24px 0 16px}
 .plaza-t{font-size:clamp(1.5rem,4vw,2.25rem);font-weight:800;letter-spacing:-.02em;color:var(--fg)}
@@ -323,29 +343,36 @@ tr:hover td.th-sticky{background:var(--card)}
 @media(max-width:1024px){.plaza-body{grid-template-columns:1fr}}
 .plaza-side{position:sticky;top:0}
 .plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
-.plaza-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;transition:border-color var(--dur-fast)}
-.plaza-card:hover{border-color:var(--border-s)}
+.plaza-card{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+.plaza-card:hover{border-color:var(--border-s);box-shadow:var(--elev-2);transform:translateY(-1px)}
 .plaza-ch{display:flex;align-items:center;gap:10px}
-.plaza-ic{width:36px;height:36px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.plaza-ic svg{width:28px;height:28px}
+.plaza-ic{width:38px;height:38px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--fill-3);border:1px solid var(--border);transition:transform var(--dur) var(--ease-out)}
+.plaza-ic svg{width:26px;height:26px}
+.plaza-card:hover .plaza-ic{transform:scale(1.06)}
 .plaza-nm{font-weight:600;font-size:var(--fs-13);color:var(--fg)}
 .plaza-ep{font-size:var(--fs-11);color:var(--muted);font-family:'JetBrains Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plaza-ft{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
+/* 操作条: 与内容区以细分隔线分开, 次级操作(图标)靠左、主操作靠右.
+   原实现 5 个按钮平铺挤一行且都带文字, 视觉噪声大; 图标按钮配 title/aria-label 保可读性. */
+.plaza-acts{display:flex;align-items:center;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;font-size:var(--fs-12);line-height:1}
 /* ── drawer (centered modal) ── */
 .modal-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--shade-3);backdrop-filter:blur(4px)}
+@media(prefers-reduced-motion:reduce){.modal-card,.dr-card{animation:none}}
+@keyframes popIn{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 .modal-overlay-lg{z-index:80}
-.modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 32px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 32px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--elevated);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--elev-3);overflow:hidden;animation:popIn var(--dur-slow) var(--ease-out)}
 .modal-card-sm{max-width:480px}
 .modal-card-add{max-width:420px}
 .modal-head{flex:0 0 auto;padding:16px 24px;border-bottom:1px solid var(--border)}
 .modal-title{font-size:var(--fs-14);font-weight:600;color:var(--fg)}
 .modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px}
 .modal-foot{flex:0 0 auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border)}
-.price-panel{position:fixed;right:0;top:0;bottom:0;width:430px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--card);border-left:1px solid var(--border);box-shadow:var(--shm);overflow:hidden}
+.price-panel{position:fixed;right:0;top:0;bottom:0;width:430px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--elevated);border-left:1px solid var(--border);box-shadow:var(--elev-3);overflow:hidden}
 .price-panel-bk{position:fixed;inset:0;background:var(--overlay-soft);z-index:69}
 .dr-bk{position:fixed;inset:0;background:var(--shade-3);z-index:60;backdrop-filter:blur(4px)}
 .dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
-.dr-card{pointer-events:auto;width:100%;max-width:1500px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden}
+.dr-card{pointer-events:auto;width:100%;max-width:1500px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--elevated);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--elev-3);overflow:hidden;animation:popIn var(--dur-slow) var(--ease-out)}
 @media(min-width:1600px){.dr{padding:20px 40px}}
 .dr-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
 .dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
@@ -403,3 +430,35 @@ tr:hover td.th-sticky{background:var(--card)}
 .search-wrap{position:relative;display:inline-block}
 .search-wrap .inp{padding-right:26px}
 .search-wrap kbd{position:absolute;right:7px;top:50%;transform:translateY(-50%);min-width:15px;height:15px;line-height:15px;text-align:center;border:1px solid var(--border);border-radius:4px;background:var(--elevated);color:var(--muted);font-family:inherit;font-size:10px;pointer-events:none}
+
+/* ── 表面原语 (设计基座) ─────────────────────────────────────────────────────
+   一组可复用的"质感积木", 供列表项/卡片/表格行共用 —— 避免各处各写一份而漂移。
+   来源: cc-switch 的 ProviderCard (彩色描边 + 同色柔光 + 渐变叠层) 与 ToggleRow. */
+
+/* 悬停抬升: 位移 1px + 阴影升一档. 位移刻意只有 1px —— 列表里位移过大反而晃眼. */
+.lift{transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
+.lift:hover{transform:translateY(-1px);box-shadow:var(--elev-2)}
+
+/* 选中/激活态: 彩色描边 + 同色柔光 (不只是换边框色 —— 那看着仍像静态).
+   配色由 .hl-ok / .hl-warn / .hl-err / .hl-primary 选择, 默认走主色. */
+.hl{border-color:var(--primary)!important;box-shadow:var(--glow-primary)}
+.hl-ok{border-color:var(--ok)!important;box-shadow:var(--glow-ok)}
+.hl-warn{border-color:var(--warn)!important;box-shadow:var(--glow-warn)}
+.hl-err{border-color:var(--err)!important;box-shadow:var(--glow-err)}
+
+/* 渐变扇形叠层: 高亮卡片从左侧扫入的同色淡渐变. 需放在 position:relative 容器内,
+   作为**首个子元素**并加 .tint-on 才可见 (避免给全部卡片都叠一层而显脏). */
+.tint{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity var(--dur-slow) var(--ease-out);border-radius:inherit}
+.tint-primary{background:var(--tint-primary)}
+.tint-ok{background:var(--tint-ok)}
+.tint-on{opacity:1}
+
+/* 图标方块: 品牌/语义色底 + 居中字形, 悬停微缩放 (cc-switch 的 h-8 w-8 rounded-lg 同款).
+   底色与字色由内联 style 给 (值随语境), 这里只管骨架与交互. */
+.ibox{width:30px;height:30px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;flex:none;font-size:var(--fs-13);box-shadow:var(--inset-hi);transition:transform var(--dur) var(--ease-out)}
+.ibox-sm{width:24px;height:24px;border-radius:7px;font-size:var(--fs-11)}
+.card-hoverable:hover .ibox{transform:scale(1.06)}
+
+/* 进度条原语 (表格内/列表内): 轨道 + 填充 + 宽度过渡, 供命中率/占比复用. */
+.pbar{height:6px;border-radius:99px;background:var(--fill-5);overflow:hidden}
+.pbar>i{display:block;height:100%;border-radius:inherit;transition:width var(--dur-slow) var(--ease-out)}
