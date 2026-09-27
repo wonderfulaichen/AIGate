@@ -55,7 +55,7 @@ const I18N = {
     'audit_out_long': '长输出请求', 'audit_out_long_share': '占全部输出 {0}',
     'audit_out_long_hint': '单请求输出 >8192 token；若占比高说明输出高度集中',
     'audit_out_loop': '死循环截断', 'audit_out_loop_hint': '模型重复生成至被网关掐断，这部分输出是纯浪费',
-    'audit_footer': '窗口 = 内存日志缓冲区（启动时含磁盘历史），故请求数与输入量是「请求数 × 单次上下文」的累加，绝大部分为重复上下文（见 KV 命中率）。「潜在可省」只统计做过审计的请求，采样不足时会偏低。省量 token 均为估算值（按被剥离内容的字符数 ÷ 4，中文实际约 3 字节/token，故真实省量只会更高）；费用按该请求自身的 KV 命中比例在「未命中价 / 缓存读价」之间加权。',
+    'audit_footer': '窗口 = 内存日志缓冲区（启动时含磁盘历史），故请求数与输入量是「请求数 × 单次上下文」的累加，绝大部分为重复上下文（见 KV 命中率）。「潜在可省」只统计做过审计的请求，采样不足时会偏低。省量 token 均为估算值（按被剥离内容的字符数 ÷ 4，中文实际约 3 字节/token，故真实省量只会更高）；费用按该请求自身的 KV 命中比例在「未命中价 / 缓存读价」之间加权。注意：省量 token 数看着很大，但折算金额通常很小——多轮会话的上下文重复度极高，被省掉的内容绝大多数本就在缓存命中区，而命中价与未命中价常相差数十倍（如 0.04 对 2.0 元/百万）。决定成本的是上下文规模本身，不是剥离。',
     
     'tbl.alias': '中转ID', 'tbl.requests': '请求', 'tbl.success': '成功', 'tbl.errors': '错误', 'tbl.avg_latency': '平均延迟', 'tbl.input_tokens': '输入 Tokens', 'tbl.output_tokens': '输出 Tokens', 'tbl.cache_hit': '缓存命中', 'tbl.cost': '费用', 'tbl.unit_price': '单价(元/1M)',
     
@@ -285,7 +285,7 @@ const I18N = {
     'audit_out_long': 'Long-output requests', 'audit_out_long_share': '{0} of all output',
     'audit_out_long_hint': 'requests emitting >8192 tokens; a high share means output is concentrated',
     'audit_out_loop': 'Loop truncations', 'audit_out_loop_hint': 'model repeated until cut off by the gateway — pure waste',
-    'audit_footer': 'The window is the in-memory log buffer (loaded from disk at startup), so request counts and input tokens accumulate context across turns — most of it repeated context (see KV hit rate). Potential savings only cover audited requests and are understated until enough samples accumulate. Saved-token figures are estimates (stripped characters ÷ 4; Chinese is really about 3 bytes/token, so the true saving is only higher). Fees are weighted between the miss price and the cache-read price using each request\'s own KV hit ratio.',
+    'audit_footer': 'The window is the in-memory log buffer (loaded from disk at startup), so request counts and input tokens accumulate context across turns — most of it repeated context (see KV hit rate). Potential savings only cover audited requests and are understated until enough samples accumulate. Saved-token figures are estimates (stripped characters ÷ 4; Chinese is really about 3 bytes/token, so the true saving is only higher). Fees are weighted between the miss price and the cache-read price using each request\'s own KV hit ratio. Note: the saved-token count looks large, but the money is usually small — multi-turn sessions repeat their context heavily, so most stripped content sat in the cache-read region, and the read price is often tens of times cheaper than the miss price (e.g. 0.04 vs 2.0 per million). What drives cost is the size of the context itself, not stripping.',
     
     'tbl.alias': 'Proxy IDs', 'tbl.requests': 'Requests', 'tbl.success': 'Success', 'tbl.errors': 'Errors', 'tbl.avg_latency': 'Avg Latency', 'tbl.input_tokens': 'Input Tokens', 'tbl.output_tokens': 'Output Tokens', 'tbl.cache_hit': 'Cache Hit', 'tbl.cost': 'Cost', 'tbl.unit_price': 'Unit (CNY/1M)',
     
