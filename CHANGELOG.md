@@ -98,6 +98,24 @@
 - **README 的项目结构**同步到 `src/admin/` 切片布局与 `concat!` 拼接说明。
 
 ### 修复
+- **协议列显示假值 + 前后端推断规则漂移**（用户提问「为什么还要强制配置模型支持什么协议、能不能由模型自己决定」后核查发现）：
+  用户提问的直觉有一部分成立——**「像用官方 API 一样」AIGate 已经做到**（三个入口 × 三种上游协议是完整
+  矩阵，上游同协议时字节级直通，换客户端不必改配置）；但**「由模型决定协议」不可行**，三条硬证据：①
+  模型元信息不携带协议（models.dev 只有 context/output/vision/reasoning/tool_call，AIGate 已全量采集）；
+  ② 协议是**端点**属性而非模型属性（同一份 `deepseek-v4.1-flash` 在 commandcodeAI 只走 `/responses`、
+  在 DeepSeek 官方两端点都提供）；③ 参考项目 cc-switch 自身**也是配置驱动**，且比 AIGate 更细（十几个
+  `ProviderType`、数十个 `transform_*`，对 OAuth 供应商还**硬性锁定**协议，注释写明「这是不变量，不是
+  预设默认值」）。实测配置负担：650 模型里仅 95 个（14.6%）需手工标协议，其余 85.4% 走默认/推断即可。
+  但核查暴露两个**真实缺陷**并已修复：
+  **① 协议列显示假值**：面板下拉绑定的是配置值，未标注的模型一律显示「OpenAI」，而后端
+  `resolve_api_format` 会按供应商+模型名推断出 anthropic/responses——实测 **11/650 个模型「面板说
+  OpenAI、实际走 anthropic/responses」**。现新增 `effectiveApiFormat`（配置 > 供应商 > 推断 > openai）
+  与 `apiFormatInferred`；推断且非 openai 时加虚线边框 + 「自动 Xxx」徽标 + 悬停说明。
+  **② 前后端推断规则漂移**：前端 `defaultApiFormat` 是简化版（仅 4 条规则、无供应商条件、缺 go/zen
+  网关规则），**6/10 典型用例与后端不符**，后果是建模型时前端会替用户写入错误协议。现与后端逐条同源，
+  并新增 `test_fmt_rules.cjs`（25 项：逐例比对 + 后端源码片段存在性断言）防止再度漂移。
+  顺带修掉一个隐患：`startsWith` 类规则匹配**中转 ID**（形如 `go/minimax-m2.7`）时永不命中
+  （实测 `go/gpt-5.4`.startsWith('gpt-5') === false），现先剥 `供应商/` 前缀再匹配。
 - **Responses 协议下几乎没有省量**（用户观察，已用真实日志量化）：`chat` 端点 3435 条请求
   里 **96.5%** 有剥离（中位 11.7 万 token），而 `responses` 端点 1545 条里只有 **8.8%**
   （中位 0）；同一模型对比更直接——`deepseek-v4.1-flash` 走 chat 是 98% 有剥离，走 responses
