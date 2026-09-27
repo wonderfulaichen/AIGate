@@ -126,6 +126,81 @@ function _logoWrap(svg) {
 // 注: 供应商 logo 的兜底底色 (PROVIDER_LOGO_PALETTE) 与品牌 SVG 是品牌标识, 不属图表语言, 单独保留。
 const CHART_PALETTE = ['#6366f1', '#06b6d4', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf'];
 // 语义色: 表达"这一类省量/这一类缓存状态", 与文案一一对应, 不参与上面按序取色的轮转。
+// ── 时间范围 / 粒度 (P3) ──
+// 单一事实源: 快捷档 → (范围, 粒度). 粒度由跨度自动推导, 不再让用户为"看多久"选两次
+// (范围与粒度是同一件事的两个投影, 分开选会出现"1 天 / 按月"这种无意义组合).
+// 阈值: ≤1 天→hour, ≤31 天→day, 更长→month (与既有三档 hour/day/month 语义一致).
+const SPAN_PRESETS = {
+  hour: ['1d', 'hour'],    // 近 24 小时, 按小时
+  day: ['29d', 'day'],     // 近 29 天, 按天 (与既有 day 档保持同值, 不改既有窗口口径)
+  month: ['365d', 'month'] // 近 12 个月, 按月
+};
+function granularityForDays(days) {
+  const d = Number(days) || 0;
+  if (d <= 1) return 'hour';
+  if (d <= 31) return 'day';
+  return 'month';
+}
+// 反向识别: 范围串 → 快捷档名 (不是任一快捷档时返回 '' —— UI 据此不高亮任何快捷按钮).
+function spanOfRange(range) {
+  const r = String(range || '');
+  for (const k in SPAN_PRESETS) {
+    if (SPAN_PRESETS[k][0] === r) return k;
+  }
+  return '';
+}
+// 页码省略算法 (P3): 总页数少时全列; 否则首尾固定 + 当前页邻域, 中间用 '…' 折叠.
+// 纯函数 —— 与渲染解耦, 可单独验算 (原先只有 上一页/下一页, 页数一多就没法直达).
+function pageNumbers(current, total) {
+  // 夹取到合法区间: 越界值 (轮询/清空导致页码缩水) 不能当成合法页, 否则省略窗口会偏出去.
+  const n = Math.max(1, Number(total) || 1);
+  const c = Math.min(n - 1, Math.max(0, Number(current) || 0));
+  if (n <= 7) { const a = []; for (let i = 0; i < n; i++) a.push(i); return a; }
+  const out = [];
+  const push = (v) => { if (out[out.length - 1] !== v) out.push(v); };
+  push(0);
+  const lo = Math.max(1, c - 1), hi = Math.min(n - 2, c + 1);
+  if (lo > 1) push('…');
+  for (let i = lo; i <= hi; i++) push(i);
+  if (hi < n - 2) push('…');
+  push(n - 1);
+  return out;
+}
+// 每页条数 (P3): 全局记忆 —— 报表/日志这类表格的"一页看多少"是用户习惯, 不该每张表各记一份.
+// 白名单校验, 防止手工改 localStorage 塞进 100000 把自己卡死.
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+function loadPageSize() {
+  try {
+    const v = parseInt(localStorage.getItem('aigate.pageSize') || '', 10);
+    if (PAGE_SIZE_OPTIONS.indexOf(v) >= 0) return v;
+  } catch (e) {}
+  return 20;
+}
+function savePageSize(n) {
+  const v = parseInt(n, 10);
+  if (PAGE_SIZE_OPTIONS.indexOf(v) < 0) return;
+  try { localStorage.setItem('aigate.pageSize', String(v)); } catch (e) {}
+}
+// 记录表排序取值 (P3): 数值列取数值 (缺失按 -1 排最后), 文本列取小写串.
+// 时间列用原始秒级时间戳 —— 显示是格式化串, 但排序必须按真实时间.
+function logSortValue(log, key) {
+  if (!log) return '';
+  switch (key) {
+    case 'time': return Number(log.timestamp) || 0;
+    case 'status': return Number(log.status) || 0;
+    case 'tokens': return (Number(log.prompt_tokens) || 0) + (Number(log.completion_tokens) || 0);
+    case 'latency': return Number(log.latency_ms) || 0;
+    case 'cache': {
+      const pt = Number(log.prompt_tokens) || 0;
+      return pt ? (Number(log.prompt_cache_hit_tokens) || 0) / pt : -1;
+    }
+    case 'error': return String(log.error || '');
+    case 'model': return String(log.model || '').toLowerCase();
+    case 'reasoning': return String(log.reasoning_effort || '');
+    case 'provider': return String(log.provider || '').toLowerCase();
+    default: return '';
+  }
+}
 const CHART_SEMANTIC = {
   strip: '#6366f1',   // 剥离推理链(普通轮次)
   stripTc: '#06b6d4', // 剥离推理链(工具轮次)

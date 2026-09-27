@@ -7,7 +7,7 @@
         const CK = 'aigate.cache-version';
         const VER = (window.AIGATE_VERSION && window.AIGATE_VERSION.version) || '';
         if (VER && localStorage.getItem(CK) !== VER) {
-          const KEEP = { [CK]: 1, 'aigate.analyticsSpan': 1, 'aigate_drawer_adv': 1 };
+          const KEEP = { [CK]: 1, 'aigate.analyticsSpan': 1, 'aigate_drawer_adv': 1, 'aigate.chartMode': 1 };
           const drop = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -25,6 +25,7 @@
       }
       document.title = t('app_title');
       this.restoreAnalyticsSpan();
+      this.restoreChartPrefs();
       await this.fetchCurrencyConfig();
       await this.fetchPeakSchedule();
       await this.switchTab('dashboard');

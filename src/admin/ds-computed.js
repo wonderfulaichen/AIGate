@@ -45,6 +45,34 @@
       if (!this.stats || !this.stats.total_requests) return '';
       return t('takeaway_health', this.sRateText, this.heroErrors, this.fmtMs(this.stats.avg_latency_ms));
     },
+    // ── 余额结论区 (P3) ──
+    // 回答"余额这个数意味着什么": 按剩余额给三档色 (充足/偏低/告警), 并把今日消耗折算成
+    // "还能用几天"的粗略估计. **只用已有字段** (row.balance + row.today_cost), 不新增后端口径.
+    // 无余额配置 (hasBalance=false) 的供应商不参与 —— 不把"没配"混进"没钱".
+    balanceTone(bal) {
+      const v = Number(bal);
+      if (!isFinite(v)) return 'var(--muted)';
+      if (v <= 0) return 'var(--err)';
+      if (v < 5) return 'var(--warn)';
+      return 'var(--ok)';
+    },
+    get balanceTakeaway() {
+      const rows = (this.providerRows || []).filter(r => r.hasBalance);
+      if (!rows.length) return '';
+      // 最少余额的那家 = 最可能先断供的, 优先提示它; 平手时取今日消耗更高的那家.
+      let low = rows[0];
+      for (const r of rows) {
+        const a = Number(r.balance), b = Number(low.balance);
+        if (a < b || (a === b && Number(r.today_cost) > Number(low.today_cost))) low = r;
+      }
+      const bal = Number(low.balance) || 0;
+      const day = Number(low.today_cost) || 0;
+      if (day > 0) {
+        const days = Math.floor(bal / day);
+        return t('balance_takeaway_days', low.provider, this.fmtMoney(bal), days > 999 ? '999+' : String(days));
+      }
+      return t('balance_takeaway_plain', low.provider, this.fmtMoney(bal));
+    },
     // ── 概览 hero 的作用域 ──
     //
     // **主数字一律用「窗口累计」口径**, 与卡片里的迷你折线严格同口径

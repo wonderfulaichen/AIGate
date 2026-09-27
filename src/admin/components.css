@@ -263,6 +263,34 @@ tr:hover td{background:rgba(99,102,241,.04)}
 /* 徽章列表溢出 (P2): 一格里最多显示 N 个, 多出的折成 "+N" 并由 title 给出全量清单 */
 .bdg-list{display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;min-width:0}
 .bdg-more{display:inline-flex;align-items:center;border-radius:999px;padding:2px 6px;font-size:var(--fs-9);font-weight:700;background:var(--fill-5);color:var(--muted);border:1px solid var(--border-subtle);cursor:default}
+/* ── 记录表增强 (P3) ── */
+/* 可排序表头: 悬停提示 + 当前列箭头 */
+.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+.th-sort:hover{color:var(--fg)}
+/* 横向滚动时固定首列 (时间) —— 记录页列多, 右滑后时间列离开视野就无法定位行 */
+th.th-sticky,td.th-sticky{position:sticky;left:0;z-index:1;background:var(--card)}
+th.th-sticky{z-index:2}
+tr:hover td.th-sticky{background:var(--card)}
+/* 列显隐下拉: 绝对定位在筛选条内, 不参与其布局 */
+.cols-pop{position:absolute;top:calc(100% + 4px);right:0;z-index:30;min-width:150px;padding:6px;background:var(--elevated);border:1px solid var(--border-s);border-radius:var(--rm);box-shadow:var(--shm)}
+.cols-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--rs);font-size:var(--fs-12);color:var(--fg);cursor:pointer;white-space:nowrap}
+.cols-row:hover{background:var(--fill-5)}
+/* tooltip 浮层内折叠行 (「其他 N 项」) */
+.tt-rest{opacity:.85}
+/* 页码按钮: 数字档统一尺寸, 省略号档退化为纯文本占位 (不可点) */
+.pg-item{font-size:var(--fs-11);padding:5px 9px;min-width:28px;justify-content:center}
+.pg-gap{background:transparent;color:var(--muted);cursor:default}
+.pg-gap:hover{background:transparent;color:var(--muted)}
+/* 移动端 (P3): 窄屏表格改为分组列表卡片 —— 横向滚动在手机上很难操作.
+   只改 @media 内的呈现, 桌面端表格结构不变. */
+@media(max-width:640px){
+  .rec-layout table,.rec-layout thead,.rec-layout tbody,.rec-layout th,.rec-layout td,.rec-layout tr{display:block}
+  .rec-layout thead{display:none}
+  .rec-layout tbody tr{border:1px solid var(--border);border-radius:var(--rm);margin-bottom:8px;padding:8px 10px;background:var(--card)}
+  .rec-layout td{border:none;padding:4px 0;display:flex;gap:8px;align-items:baseline}
+  .rec-layout td.th-sticky{position:static}
+  .rec-layout td::before{content:attr(data-l);flex:0 0 72px;color:var(--muted);font-size:var(--fs-10);text-transform:uppercase;letter-spacing:.04em}
+}
 /* ── new-api button ── */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:var(--fs-12);font-weight:600;cursor:pointer;transition:background var(--dur-fast),border-color var(--dur-fast);border:none}
 .btn-p{background:var(--primary);color:var(--primary-fg)}.btn-p:hover{background:var(--primary-h)}

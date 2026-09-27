@@ -34,10 +34,61 @@
         const q=this.logSearch.toLowerCase();
         r = r.filter(l=>l.model.toLowerCase().includes(q)||l.provider.toLowerCase().includes(q)||(l.error&&l.error.toLowerCase().includes(q))||String(l.status).includes(q));
       }
+      // P3: 点表头排序. 排序在**筛选之后**、分页之前 —— 否则只排当前页, 看着像乱序.
+      // 默认不排序 (保持后端返回的时间倒序), 点一次才启用.
+      if (this.logSortKey) {
+        const k = this.logSortKey, dir = this.logSortDir === 'asc' ? 1 : -1;
+        r = r.slice().sort((a, b) => {
+          const va = logSortValue(a, k), vb = logSortValue(b, k);
+          if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+          return String(va).localeCompare(String(vb)) * dir;
+        });
+      }
       return r;
+    },
+    // 点表头: 同列再点切换升/降; 换列则从降序开始 (日志最常看"最大/最慢").
+    toggleLogSort(key) {
+      if (!key) return;
+      if (this.logSortKey === key) this.logSortDir = this.logSortDir === 'desc' ? 'asc' : 'desc';
+      else { this.logSortKey = key; this.logSortDir = 'desc'; }
+      this.resetLogView();
+    },
+    logSortIcon(key) {
+      if (this.logSortKey !== key) return '';
+      return this.logSortDir === 'desc' ? '↓' : '↑';
+    },
+    // 列显隐 (P3): 记住偏好, 便于窄屏只留关心的列. 至少保留一列, 避免全隐藏后白屏.
+    toggleLogCol(k) {
+      const next = !this.logColsShown[k];
+      const wouldKeep = Object.keys(this.logColsShown).filter(x => x !== k && this.logColsShown[x]);
+      if (!next && wouldKeep.length === 0) { toast(t('log_cols_min'), 'warn'); return; }
+      this.logColsShown[k] = next;
+      try { localStorage.setItem('aigate.logCols', JSON.stringify(this.logColsShown)); } catch (e) {}
+    },
+    restoreLogCols() {
+      const def = { status: true, error: true, model: true, reasoning: true, provider: true, tokens: true, cache: true, latency: true };
+      try {
+        const s = JSON.parse(localStorage.getItem('aigate.logCols') || 'null');
+        if (s && typeof s === 'object') {
+          // 只接受已知列, 防止旧版本残留的键名把新版列弄丢
+          for (const k in def) if (typeof s[k] === 'boolean') def[k] = s[k];
+        }
+      } catch (e) {}
+      this.logColsShown = def;
     },
     // 复位到第 1 页 (筛选/搜索提交时调用); 顺带播报新的结果数 (既有文案 total_count, 无新增键).
     resetLogView() { this.logPage = 0; this._announceRecords(); },
+    // 每页条数 (P3): 改后回到第 1 页 (否则可能落到越界页) 并全局记忆.
+    // 只接受白名单内的值 —— 否则组件状态取非法值而持久化被拒, 两者不一致.
+    setPageSize(n) {
+      const v = parseInt(n, 10);
+      if (PAGE_SIZE_OPTIONS.indexOf(v) < 0) return;
+      this.pageSize = v;
+      savePageSize(v);
+      this.resetLogView();
+    },
+    // 页码省略算法 (纯函数在 core.js) —— 模板里直接调, 保持渲染与算法分离.
+    pageNumbers(cur, total) { return pageNumbers(cur, total); },
     // 分页跳转 (键盘/按钮统一入口): 夹取越界后播报「第 p/共 N 页 · 共 M 条」.
     gotoLogPage(p) {
       this.logPage = p;

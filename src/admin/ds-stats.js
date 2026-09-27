@@ -68,24 +68,56 @@
     modelProviderName(model) { return (model&&model.provider)||'—'; },
     modelErrorCount(model) { return Number(model&&model.errors||0); },
     get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
-    // 统一时间范围与粒度: 小时(24h)/天(30d)/月(12m). 每个选项同时决定窗口与桶大小, 避免两套控件重叠混乱.
+    // 统一时间范围与粒度. P3: 由「三档固定组合」升级为「快捷范围 + 自定义区间」——
+    // 每个范围**自动推导**合适粒度 (≤1 天→hour, ≤31 天→day, 更长→month), 不再要求用户
+    // 先选范围再单独选粒度 (两个控件表达同一件事, 且合法组合有限).
     setSpan(span) {
-      this.analyticsSpan = span;
-      const map = { hour: ['1d','hour'], day: ['29d','day'], month: ['365d','month'] };
-      const m = map[span];
-      if (m) { this.analyticsRange = m[0]; this.trendGranularity = m[1]; }
+      const m = SPAN_PRESETS[span];
+      if (!m) return;
+      this.applyRange(m[0], m[1]);
       try { localStorage.setItem('aigate.analyticsSpan', span); } catch (e) { /* privacy mode */ }
       this.fetchStats();
     },
-    // 恢复上次选择的时间范围; 非法值回退 day. 仅恢复状态, 不额外 fetch (走既有首载).
+    // 自定义天数区间: 粒度按跨度自动推导 (与快捷档同一张表, 避免两处阈值分叉).
+    setRangeDays(days) {
+      const d = Math.max(1, Math.min(3650, Math.round(Number(days) || 0)));
+      const g = granularityForDays(d);
+      this.applyRange(d + 'd', g);
+      try { localStorage.setItem('aigate.analyticsSpan', 'custom:' + d); } catch (e) {}
+      this.fetchStats();
+    },
+    // 写状态 (范围 + 粒度 + 高亮档); 供 setSpan / setRangeDays / restore 共用.
+    applyRange(range, granularity) {
+      this.analyticsRange = range;
+      this.trendGranularity = granularity;
+      this.analyticsSpan = spanOfRange(range);
+    },
+    // 当前粒度提示 (P3): 让"我选了几天"与"系统用了什么粒度"同时可见, 不必猜.
+    get granularityLabel() { return t('granularity_auto', this.trendGranularityLabel); },
+    // 恢复上次选择; 非法值回退 day. 仅恢复状态, 不额外 fetch (走既有首载).
     restoreAnalyticsSpan() {
-      const map = { hour: ['1d','hour'], day: ['29d','day'], month: ['365d','month'] };
-      let span = 'day';
-      try { span = localStorage.getItem('aigate.analyticsSpan') || 'day'; } catch (e) { span = 'day'; }
-      if (!map[span]) span = 'day';
-      this.analyticsSpan = span;
-      this.analyticsRange = map[span][0];
-      this.trendGranularity = map[span][1];
+      let raw = 'day';
+      try { raw = localStorage.getItem('aigate.analyticsSpan') || 'day'; } catch (e) { raw = 'day'; }
+      // 自定义区间 (custom:30) 与快捷档 (hour/day/month) 统一解析
+      const m = /^custom:(\d+)$/.exec(raw);
+      if (m) {
+        const d = Math.max(1, Math.min(3650, parseInt(m[1], 10) || 30));
+        this.applyRange(d + 'd', granularityForDays(d));
+        return;
+      }
+      if (SPAN_PRESETS[raw]) {
+        this.applyRange(SPAN_PRESETS[raw][0], SPAN_PRESETS[raw][1]);
+        return;
+      }
+      this.applyRange(SPAN_PRESETS.day[0], SPAN_PRESETS.day[1]);
+    },
+    // 当前窗口是否是某个快捷档 (供 UI 高亮; 自定义区间则都不高亮 —— 反向识别).
+    get analyticsSpanIsPreset() { return !!SPAN_PRESETS[this.analyticsSpan]; },
+    // 自定义区间输入: 当前天数 (仅当处于自定义档时有值, 否则空 —— 不假装知道用户想要几天).
+    get customDays() {
+      const m = /^(\d+)d$/.exec(this.analyticsRange || '');
+      if (!m || this.analyticsSpanIsPreset) return '';
+      return m[1];
     },
     // ── 更新亮点：取最新一条 changelog 作为弹窗内容 ──
     get whatsNewEntry() {

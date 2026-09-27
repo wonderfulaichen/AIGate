@@ -36,6 +36,8 @@ function dashboard() {
     firstReqTab: 'curl',
     // 概览页 FAQ 手风琴: -1 = 全部收起
     faqOpen: -1,
+    // P3: 接入引导 3/3 完成后清单默认收起; 页头「引导完成」徽章可点击重新展开核对.
+    onboardShowDone: false,
 
     // Data
     logs: [], selectedLog: null, health: [], stats: null, cache: null,
@@ -121,12 +123,19 @@ function dashboard() {
 
     // Logs
     logSearch: '', logProviderFilter: '', logStatusFilter: '', logTimeFilter: '', logPage: 0, pageSize: 20,
+    // P3: 每页条数选项 (与 core.js PAGE_SIZE_OPTIONS 一致; 白名单校验在 savePageSize).
+    pageSizeOptions: [20, 50, 100, 200],
     // 记录页搜索 IME 保护 (P1): logSearchDraft = 输入框实时值 (x-model), logSearch = 实际过滤值.
     // 拼音未上屏 (composing) 期间只改草稿不过滤; 上屏 (compositionend) 立即提交, 普通输入防抖 200ms.
     // 原实现 @input 直写 logSearch —— 中文每敲一个拼音字就过滤一次, 结果闪跳且易误筛.
     logSearchDraft: '', logSearchComposing: false, _logSearchT: null,
     // 记录页错误单元格的展开态 {timestamp: bool} —— 按日志时间戳存, 轮询重取 logs 不丢展开.
     logErrOpen: {},
+    // P3 记录表: 排序 (点表头) 与列显隐 (存 localStorage).
+    logSortKey: '', logSortDir: 'desc',
+    logColsShown: { status: true, error: true, model: true, reasoning: true, provider: true, tokens: true, cache: true, latency: true },
+    // 列显隐下拉开合 (点击外部关闭)
+    logColsOpen: false,
     // 全局 aria-live 播报文本 (P1): 分页/筛选等状态变化写入, 由 body-shell 的 sr-only 区播报.
     // 只在用户操作 (resetLogView/gotoLogPage) 时更新, 后台轮询不写 —— 无播报轰炸.
     liveMsg: '',

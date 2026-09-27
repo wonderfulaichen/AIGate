@@ -79,7 +79,16 @@
       const total=shown.reduce((s,r)=>s+r.v,0);
       let html='<div class="tt-h">'+this.escapeHtml(date)+' · '+t('trend_total')+' <b>'+this.fmtT(total)+'</b> tok</div>';
       if(!shown.length){html+='<div class="tt-r"><span class="tt-n tm">'+t('trend_no_requests')+'</span></div>';}
-      shown.forEach(s=>{html+='<div class="tt-r"><i style="background:'+s.color+'"></i><span class="tt-n">'+this.escapeHtml(s.label)+'</span><span class="tt-v">'+this.fmtT(s.v)+'</span></div>';});
+      // P3: 序列过多时折叠 —— 取前 15 直接列出, 其余汇总成一行「其他 N 项」(按值降序).
+      // 原实现把所有非零序列全列, 模型一多浮层就长出屏幕, 反而读不到关键项.
+      const TOP_N = 15;
+      const head = shown.slice(0, TOP_N);
+      const rest = shown.slice(TOP_N);
+      head.forEach(s=>{html+='<div class="tt-r"><i style="background:'+s.color+'"></i><span class="tt-n">'+this.escapeHtml(s.label)+'</span><span class="tt-v">'+this.fmtT(s.v)+'</span></div>';});
+      if(rest.length){
+        const rv=rest.reduce((a,b)=>a+b.v,0);
+        html+='<div class="tt-r tt-rest"><i></i><span class="tt-n tm">'+this.escapeHtml(t('trend_other_n',rest.length))+'</span><span class="tt-v tm">'+this.fmtT(rv)+'</span></div>';
+      }
       const tr=d.trendByTs&&d.trendByTs.get?d.trendByTs.get((d.dates[i]||[])[0]):null;
       if(tr){
         const cost=this.stats?.has_price_config?this.fmtMoney(tr.total_cost||0):t('chart_no_price');
@@ -92,6 +101,32 @@
       const palette=CHART_PALETTE;
       const total=Object.keys(sums).reduce((a,k)=>a+(sums[k]||0),0)||1;
       return keys.map((k,i)=>({k,label:k.split('/').slice(1).join('/')||k,color:palette[i%palette.length],tokens:sums[k]||0,pct:(sums[k]||0)/total*100,hidden:!!this.hiddenModels[k]}));
+    },
+    // 图头合计 (P3): 把"这张图一共多少"写在标题旁, 不必挨个加图例数字.
+    // 口径 = 图例各序列之和 (与图例逐项可对), 未展示的隐藏序列也计入 —— 它仍是窗口内用量.
+    get trendHeadTotal() {
+      const sums = (this.modelTrendData && this.modelTrendData.sums) || {};
+      let n = 0;
+      for (const k in sums) n += Number(sums[k]) || 0;
+      return n ? t('trend_head_total', this.fmtT(n)) : '';
+    },
+    // 图表偏好持久化 (P3): 记住"上次看的图型 (折线/柱状)", 重开面板不必再点一次.
+    // 仅存展示偏好 —— 不涉及范围/粒度 (那两个由时间筛选统一管, 已在 restoreAnalyticsSpan).
+    saveChartPrefs() {
+      try { localStorage.setItem('aigate.chartMode', this.chartMode || 'line'); } catch (e) {}
+    },
+    // 切换图型: 单一入口 (写偏好 + 重算), 避免模板里两处手写 chartMode=...;computeModelTrend().
+    setChartMode(m) {
+      if (m !== 'line' && m !== 'bar') return;
+      this.chartMode = m;
+      this.saveChartPrefs();
+      this.computeModelTrend();
+    },
+    restoreChartPrefs() {
+      try {
+        const m = localStorage.getItem('aigate.chartMode');
+        if (m === 'line' || m === 'bar') this.chartMode = m;
+      } catch (e) {}
     },
     toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
     // 图表上下文标签: 只在图表的展示区间**不同于整个窗口**时才输出
