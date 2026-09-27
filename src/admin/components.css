@@ -241,8 +241,20 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 .phd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
 .pt{font-size:clamp(1.5rem,2.8vw,1.875rem);font-weight:800;letter-spacing:-.025em;color:var(--fg);line-height:1.15}
 .ps{font-size:var(--fs-14);color:var(--muted);margin-top:5px}
-/* ── new-api form rows ── */
-.set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px}
+/* ── new-api form rows ──
+   设置行改为**独立卡片**: 原先是一长条"标题 + 控件"紧贴的平铺行, 十几项看下来毫无边界,
+   扫读时数不清有几项. 每项自成一块后, 边界与层级一眼可辨 (对照 cc-switch 的 ToggleRow).
+   做法: 只改 .set-row 自身的呈现, 并用 :has() 让**只装开关行的面板自动"消失"** ——
+   免得出现"卡片套卡片"的双层框. 这样无需改动设置页的 17 处行结构. */
+.set-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--card-nest);box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out)}
+.set-row:hover{border-color:var(--border-s);box-shadow:var(--elev-2)}
+.set-row+.set-row{margin-top:10px}
+/* 面板只承载开关行时, 退成透明容器 —— 行自己就是卡片 */
+.pnl:has(>.pnl-b>.set-row){background:transparent;border-color:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+.pnl:has(>.pnl-b>.set-row)>.pnl-b{padding:0}
+.pnl:has(>.pnl-b>.set-row)>.pnl-h{border-bottom:none;padding-left:0;padding-right:0}
+/* 若面板首行带内联 border-top (旧写法为区隔行), 卡片化后它是多余的同一色描边, 去掉更干净 */
+.set-row[style*="border-top"]{border-top-color:var(--border)!important}
 /* 左侧文案可收缩、右侧控件组保住宽度: 否则长说明会把多控件行挤到换行
    (实测「连接参数」一行三控件: 需要 347px 而只剩 341px, 第三个被挤到第二行, 行高 68 -> 161). */
 .set-row>*:first-child{flex:1 1 auto;min-width:0}
@@ -376,13 +388,19 @@ tr:hover td.th-sticky{background:var(--card)}
 .price-panel{position:fixed;right:0;top:0;bottom:0;width:430px;max-width:100vw;z-index:70;display:flex;flex-direction:column;background:var(--elevated);border-left:1px solid var(--border);box-shadow:var(--elev-3);overflow:hidden}
 .price-panel-bk{position:fixed;inset:0;background:var(--overlay-soft);z-index:69}
 .dr-bk{position:fixed;inset:0;background:var(--shade-3);z-index:60;backdrop-filter:blur(4px)}
-.dr{position:fixed;inset:0;z-index:61;display:flex;align-items:center;justify-content:center;padding:20px;pointer-events:none}
-.dr-card{pointer-events:auto;width:100%;max-width:1500px;max-height:calc(100dvh - 40px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--elevated);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--elev-3);overflow:hidden;animation:popIn var(--dur-slow) var(--ease-out)}
-@media(min-width:1600px){.dr{padding:20px 40px}}
-.dr-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 24px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dr{position:fixed;inset:0;z-index:61;display:flex;pointer-events:none}
+/* 供应商抽屉改**全屏面板** (对照 cc-switch FullScreenPanel):
+   原为"居中大弹窗 + 20px 边距", 在 138 个模型 × 十余列的场景下横向仍不够用.
+   全屏后模型表拿到全部宽度, 并去掉圆角/边框 (贴边时圆角无处安放). */
+.dr-card{pointer-events:auto;width:100%;height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--bg);overflow:hidden;animation:fspIn var(--dur-slow) var(--ease-out)}
+@media(prefers-reduced-motion:reduce){.dr-card{animation:none}}
+.dr-h{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0}
 .dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
 .dr-model-table-scroll{min-width:0;overflow-x:auto}
-.dr-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 24px;border-top:1px solid var(--border);flex-shrink:0}
+.dr-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0}
+/* 全屏后内容不再有"弹窗边距"约束: 用居中容器把表单类内容收在 1400px 内,
+   否则超宽屏下说明文字会拉成一整行 (表格类内容不受影响, 它在 .dr-model-table-scroll 里横滚). */
+.dr-inner{width:100%;max-width:1400px;margin:0 auto}
 /* ── section cards ── */
 .sec{margin:0;border-bottom:1px solid var(--border)}
 .sec:last-child{border-bottom:none}
@@ -467,3 +485,49 @@ tr:hover td.th-sticky{background:var(--card)}
 /* 进度条原语 (表格内/列表内): 轨道 + 填充 + 宽度过渡, 供命中率/占比复用. */
 .pbar{height:6px;border-radius:99px;background:var(--fill-5);overflow:hidden}
 .pbar>i{display:block;height:100%;border-radius:inherit;transition:width var(--dur-slow) var(--ease-out)}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   视觉原语 (对标 cc-switch 的 UsageHero / ToggleRow / FullScreenPanel)
+   —— 供各页复用; 新增页面请用这些, 不要再各写一套内联样式.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Hero 指标带: 一个玻璃大卡承载"一眼要看的全部关键数字" ──
+   结构 = 主体大数字(+≈副档) | 竖分隔的指标簇 | 全宽迷你趋势 | 底部统计格.
+   为什么值得单独做一个: 原先关键数字散在三张卡 + 三个小格里, 视线要来回跳;
+   合成一条"带"之后, 主次一眼分明. */
+.hero{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--border);border-radius:var(--rl);box-shadow:var(--elev-2);padding:22px 24px;position:relative;overflow:hidden}
+/* 顶部一层极淡主色扇形, 让 Hero 与普通面板区分开 (cc-switch 的 inset-0 渐变叠层同法) */
+.hero::before{content:"";position:absolute;inset:0;background:var(--tint-primary);opacity:.55;pointer-events:none}
+.hero>*{position:relative}
+.hero-top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.hero-lead{display:flex;align-items:center;gap:14px;min-width:0}
+.hero-ico{width:44px;height:44px;border-radius:13px;font-size:var(--fs-18)}
+.hero-label{font-size:var(--fs-12);font-weight:600;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+.hero-val{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:3px}
+.hero-num{font:800 2.15rem/1 'JetBrains Mono',monospace;letter-spacing:-.03em;color:var(--fg);font-variant-numeric:tabular-nums}
+.hero-approx{font-size:var(--fs-11);font-weight:600;color:var(--muted);background:var(--fill-4);padding:2px 7px;border-radius:7px;font-family:'Inter',sans-serif}
+/* 指标簇: 竖分隔线分组 (对照 cc-switch 的 w-px h-8 bg-border/60) */
+.hero-cluster{display:flex;align-items:center;gap:20px;background:var(--card-nest);border:1px solid var(--border);border-radius:14px;padding:12px 20px;box-shadow:var(--elev-1)}
+.hero-cell{display:flex;flex-direction:column;gap:3px;min-width:0}
+.hero-cell-l{font-size:var(--fs-10);font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.hero-cell-v{font:700 var(--fs-15) 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hero-div{width:1px;height:30px;background:var(--border);flex:none}
+.hero-spark{margin-top:16px}
+.hero-spark svg{display:block;width:100%;height:44px}
+/* 底部统计格: 图标 + 标签 + 值 */
+.hero-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border-subtle)}
+@media(max-width:1100px){.hero-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.hero-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.hero-cluster{width:100%;justify-content:space-between;gap:10px;padding:10px 14px}}
+.mini-stat{display:flex;align-items:center;gap:10px;min-width:0}
+.mini-stat .ibox{width:30px;height:30px;border-radius:9px}
+.mini-stat-l{font-size:var(--fs-11);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini-stat-v{font:700 var(--fs-13) 'JetBrains Mono',monospace;color:var(--fg);font-variant-numeric:tabular-nums;margin-top:2px}
+
+
+
+/* ── 统一空态: 虚线框 + 圆形图标底 + 标题 + 描述 + 主次按钮 ── */
+.empty-state{display:flex;flex-direction:column;align-items:center;text-align:center;padding:52px 20px}
+.empty-ic{width:56px;height:56px;border-radius:18px;display:flex;align-items:center;justify-content:center;background:var(--card-nest);border:1px solid var(--border);color:var(--muted);margin-bottom:16px;box-shadow:var(--elev-1)}
+.empty-t{font-size:var(--fs-16);font-weight:700;color:var(--fg);margin:0 0 8px;letter-spacing:-.01em}
+.empty-d{font-size:var(--fs-13);color:var(--muted);max-width:460px;margin:0 0 18px;line-height:1.65}
+

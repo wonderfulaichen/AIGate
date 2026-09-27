@@ -208,6 +208,18 @@ python .openbitfun\tmp\shoot.py s_dashboard --w=780 --as=narrow_ # 窄屏 (前�
 3. **`?tab` 变体必须保留一次 `fetchStats()`** —— 原 init 里 `switchTab('dashboard')` 还负责首次取数，
    直接换目标会跳过它，首载完成逻辑不跑、`loading` 恒为真，页面永远停在骨架。
 
+### 4.7 页面级组件模式
+
+| 位置 | 模式 | 要点 |
+|---|---|---|
+| 概览页 | `.hero` 指标带 | 主数字 + `≈` 副档 + `.hero-cluster`（竖分隔指标簇）+ 全宽 `.hero-spark` + `.hero-stats`（`.mini-stat` × 4） |
+| 设置页 | `.set-row` 卡片 | 只改 `.set-row` 自身 + `:has()` 让只装开关行的 `.pnl` 透明，**不改 17 处行结构** |
+| 供应商抽屉 | `.dr` 全屏面板 | 头/底栏玻璃化；`.dr-inner` 把表单类内容收在 1400px（超宽屏下文字不会拉成一行） |
+| 空态 | `.empty-*` | 56px 圆角图标方块 + 标题 + 描述 + 按钮 |
+
+**新增 `:has()` 用法前先确认它在本项目可用**（设置页 P3 起已在用，Chrome/Edge 105+ 支持）。
+用 `:has()` 做"条件性降级"（如"含开关行的面板不画框"）比改几十处 HTML 更稳。
+
 ## 5. 状态色与分级（单一事实源）
 
 - `bcls(tone)` / `bcolor(tone)` / `statusTone(tone)`（`core.js`）：tone ∈

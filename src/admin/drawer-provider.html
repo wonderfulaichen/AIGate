@@ -3,17 +3,18 @@
   <div class="dr-bk" @click="closeProviderDrawer()"></div>
   <div class="dr" role="dialog" aria-modal="true">
     <div class="dr-card">
-      <!-- Header -->
+      <!-- Header: 图标方块 + 可编辑名称 + 徽章组 (对照 cc-switch 面板头部) -->
       <div class="dr-h">
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="text" class="inp" style="font-size:var(--fs-15);font-weight:600;color:var(--fg);width:auto;min-width:80px;border:none;background:transparent;box-shadow:none;padding:0" x-model="drawerProv.name" @input="markDirty()">
-          <span class="bdg bdg-p" style="font-size:var(--fs-10)" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
-          <span class="bdg" :class="drawerSecCount(drawerProv)>=3?'bdg-s':'bdg-w'" style="font-size:var(--fs-10)" :title="t('dr_sec_hint')" x-text="t('dr_sec_progress',drawerSecCount(drawerProv))"></span>
-          <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg" style="background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-bd);font-size:var(--fs-10)">● <span x-text="t('health_ok')"></span></span></template>
-          <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg" style="background:var(--err-bg);color:var(--err);border:1px solid var(--err-bd);font-size:var(--fs-10)">● <span x-text="t('health_err')"></span></span></template>
-          <template x-if="healthOf(drawerProv.name)===''"><span class="bdg" style="background:var(--neutral-bg);color:var(--neutral-fg);border:1px solid var(--neutral-bd);font-size:var(--fs-10)">○ <span x-text="t('health_na')"></span></span></template>
+        <span class="ibox" x-html="providerLogo(drawerProv.name)" aria-hidden="true" style="background:var(--fill-3)"></span>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0">
+          <input type="text" class="inp" style="font-size:var(--fs-16);font-weight:700;color:var(--fg);width:auto;min-width:80px;border:none;background:transparent;box-shadow:none;padding:0" x-model="drawerProv.name" @input="markDirty()" :aria-label="t('provider_name')">
+          <span class="bdg bdg-p" x-text="(drawerProv.models||[]).length+' '+t('unit_models')"></span>
+          <span class="bdg" :class="drawerSecCount(drawerProv)>=3?'bdg-s':'bdg-w'" :title="t('dr_sec_hint')" x-text="t('dr_sec_progress',drawerSecCount(drawerProv))"></span>
+          <template x-if="healthOf(drawerProv.name)==='ok'"><span class="bdg bdg-s">● <span x-text="t('health_ok')"></span></span></template>
+          <template x-if="healthOf(drawerProv.name)==='error'"><span class="bdg bdg-e">● <span x-text="t('health_err')"></span></span></template>
+          <template x-if="healthOf(drawerProv.name)===''"><span class="bdg bdg-n">○ <span x-text="t('health_na')"></span></span></template>
         </div>
-        <button class="btn btn-g" @click="closeProviderDrawer()" style="padding:4px 8px" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
+        <button class="btn btn-g icon-btn" @click="closeProviderDrawer()" :title="t('close_label')" :aria-label="t('close_label')">✕</button>
       </div>
 
       <div class="dr-body">
