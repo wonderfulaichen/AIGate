@@ -26,26 +26,53 @@
   --ok-bg-strong:rgba(52,211,153,.15);--ok-bd-strong:rgba(52,211,153,.3);
   --err-bg-strong:rgba(239,68,68,.15);--err-bd-strong:rgba(239,68,68,.3);
   /* 圆角 */
-  --rs:6px;--rm:8px;--r:12px;--rl:14px;--pill:999px;
+  --rs:6px;--rm:calc(var(--rs) + 2px);--r:calc(var(--rs) * 2);--rl:calc(var(--rs) * 2 + 2px);--pill:999px;
   /* 阴影: 卡片 / 浮层 */
   --sh:0 1px 3px rgba(0,0,0,.3);--shm:0 20px 60px rgba(0,0,0,.45);
   /* 字阶(与既有取值一一对应,不改变任何视觉大小) */
   --fs-9:9px;--fs-10:10px;--fs-11:11px;--fs-12:12px;--fs-125:12.5px;--fs-13:13px;--fs-14:14px;--fs-15:15px;--fs-18:18px;
   /* 间距 */
   --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;
-  /* 动效时长 */
-  --dur-fast:.15s;--dur:.2s
+  /* 填充层级 (收敛重复的 rgba(255,255,255,*) 字面量; 逐值与原字面量相同) */
+  --fill-1:rgba(255,255,255,.02);--fill-15:rgba(255,255,255,.025);--fill-2:rgba(255,255,255,.03);
+  --fill-3:rgba(255,255,255,.04);--fill-4:rgba(255,255,255,.05);--fill-5:rgba(255,255,255,.06);
+  /* 描边补充: .10 介于 --border(.08) 与 --border-s(.12) 之间 */
+  --border-t:rgba(255,255,255,.10);
+  /* 暗部遮罩 (收敛 rgba(0,0,0,*)) */
+  --shade-1:rgba(0,0,0,.3);--shade-2:rgba(0,0,0,.45);--shade-3:rgba(0,0,0,.55);
+  /* 动效时长 (fast/normal/slow) 与缓动 */
+  --dur-fast:.15s;--dur:.2s;--dur-slow:.35s;--ease-out:cubic-bezier(.33,1,.68,1)
 }
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
 body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased}
 *,*::before,*::after{box-sizing:border-box}
-*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent}
+*{scrollbar-width:thin;scrollbar-color:var(--border-s) transparent}
 *::-webkit-scrollbar{width:6px;height:6px}
-*::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
+*::-webkit-scrollbar-thumb{background:var(--border-s);border-radius:99px}
 :focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .page-enter{animation:fadeIn .2s ease-out}
-@media(prefers-reduced-motion:reduce){.page-enter{animation:none!important}}
+/* 列表/卡片错峰入场 (stagger): 首屏与切页签时依次淡入, 让层次可读.
+   时长与延迟都很短 (.35s + 25ms/项) —— 只为引导视线, 不做装饰.
+   注意: 这些容器由 x-show 切换 display, 重新显示时动画会重放一次 (即"切页签重新入场"), 符合预期. */
+@keyframes riseIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.stagger>*{animation:riseIn var(--dur-slow) var(--ease-out) both}
+.stagger>*:nth-child(1){animation-delay:0ms}
+.stagger>*:nth-child(2){animation-delay:25ms}
+.stagger>*:nth-child(3){animation-delay:50ms}
+.stagger>*:nth-child(4){animation-delay:75ms}
+.stagger>*:nth-child(5){animation-delay:100ms}
+.stagger>*:nth-child(n+6){animation-delay:125ms}
+/* 长列表: 视口外不做布局/绘制 (新版本项目实测其"虚拟滚动"实际就是这条 + 分页).
+   仅用于非表格列表 —— content-visibility 对 table-row 支持不佳, 表格仍走分页. */
+.content-auto{content-visibility:auto;contain-intrinsic-size:0 80px}
+/* 降级: 关闭全部动效与过渡 (含新增 stagger/骨架流光).
+   例外: .spin (加载转圈) 与 .skel (骨架流光) 保留 —— 它们是"仍在加载"的唯一反馈,
+   去掉会让人以为界面卡死. 故单独放行. */
+@media(prefers-reduced-motion:reduce){
+  .page-enter,.stagger>*{animation:none!important}
+  *:not(.spin):not(.skel){transition-duration:.001ms!important;animation-duration:.001ms!important}
+}
 .layout{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;overflow:hidden}
 
 
@@ -57,7 +84,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .sb-glabel{padding:14px 12px 4px;font-size:var(--fs-10);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:.6;white-space:nowrap;overflow:hidden}
 .sb.colapsed .sb-glabel{opacity:0;height:0;padding:0;overflow:hidden}
 .sb-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;color:var(--muted);cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast);white-space:nowrap;text-decoration:none;font-size:var(--fs-13);font-weight:500;position:relative}
-.sb-item:hover{background:rgba(255,255,255,.06);color:var(--fg)}
+.sb-item:hover{background:var(--fill-5);color:var(--fg)}
 .sb-item.active{color:var(--primary);background:rgba(99,102,241,.08)}
 .sb-item.active::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:2px;height:16px;border-radius:0 2px 2px 0;background:var(--primary)}
 .sb-item svg{flex-shrink:0;width:18px;height:18px}
@@ -70,7 +97,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .page-wide{width:100%;max-width:1600px;margin:0 auto}
 .about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.about-capability{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.02);min-width:0}
+.about-capability{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--fill-1);min-width:0}
 .about-capability-icon{display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--indigo);font-size:var(--fs-15);font-weight:700}
 @media(max-width:640px){.about-capabilities{grid-template-columns:1fr}}
 .about-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:4px 2px 0}
@@ -85,7 +112,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .about-section{padding-top:20px;border-top:1px solid var(--border)}
 .about-section-title{font-size:var(--fs-12);font-weight:700;color:var(--fg);margin-bottom:10px}
 .about-endpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:rgba(255,255,255,.02);min-width:0}
+.about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--fill-1);min-width:0}
 .about-endpoint-method{font:700 10px 'JetBrains Mono',monospace;color:var(--indigo);min-width:34px}
 .about-endpoint-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .about-side{display:flex;flex-direction:column;gap:16px;min-width:0}
@@ -124,3 +151,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .sc-lbl{font-size:var(--fs-11);font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .sc-val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
 .sc-sub{font-size:var(--fs-11);color:var(--muted)}
+
+/* 亮色覆盖层结构 (预留): 默认暗色; 启用时由 <html class="light"> 覆盖语义层取值.
+   仅结构占位 —— 本轮不做亮色换肤 (与历史结论一致), 故不提供实际取值. */
+html.light{color-scheme:light}

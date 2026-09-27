@@ -1,5 +1,15 @@
 
     async fetchProxyConfig() { try { const r=await fetch('/admin/api/proxy-config', {headers:authHeaders()}); if(r.ok) this.proxyStatus=await r.json(); } catch(e){} },
+    // 可点击徽章复制 (P2): 徽章内就地复制短值 (key 后缀 / 模型 ID / 供应商名等).
+    // 复用全局 copyToClipboard (含非安全上下文回退), 与其它复制按钮共用 copiedField 状态位.
+    copyBadge(val, key) { return copyBadge.call(this, val, key); },
+    // 徽章列表溢出 (P2): 只显示前 n 项, 其余折成 "+N"; 返回 {shown, more, title}.
+    // 原先把所有协议/品牌徽章平铺, 模型多时会把表格行撑成多行 (行高跳动).
+    badgeList(list, n) {
+      const arr = (list || []).map(x => String(x));
+      const k = (n == null ? 2 : n);
+      return { shown: arr.slice(0, k), more: Math.max(0, arr.length - k), title: arr.join(' · ') };
+    },
     // 密钥是供应商的子资源: 按 provider 维度保存/清空.
     async clearProviderKey(pi) {
       const prov = this.providersFormData[pi];

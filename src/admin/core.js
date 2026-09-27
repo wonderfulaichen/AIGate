@@ -137,3 +137,65 @@ const CHART_SEMANTIC = {
   kvMiss: '#f59e0b',  // KV 未命中
   kvCreation: '#a78bfa', // KV 缓存写入
 };
+// ── 状态语义色表 (P2 badges) ──
+// 统一"状态 → 徽标类 / 圆点色 / 文字色"的映射, 避免各处手写 :class 三元链与内联硬编码色.
+// 与 CHART_SEMANTIC 取同一组 CSS 变量 (var(--ok) 等), 保证"同一语义在任何地方同一颜色".
+// 用法: :class="bcls(level)" / :style="'background:'+bcolor(level)"
+const STATUS_TONE = {
+  ok:      { cls: 'bdg-s', dot: 'var(--ok)',      fg: 'var(--ok-fg)',      raw: 'var(--ok)' },
+  warn:    { cls: 'bdg-w', dot: 'var(--warn)',    fg: 'var(--warn-fg)',    raw: 'var(--warn)' },
+  err:     { cls: 'bdg-e', dot: 'var(--err)',     fg: 'var(--err-fg)',     raw: 'var(--err)' },
+  info:    { cls: 'bdg-p', dot: 'var(--indigo)',  fg: 'var(--indigo)',     raw: 'var(--indigo)' },
+  neutral: { cls: 'bdg-n', dot: 'var(--neutral-fg)', fg: 'var(--neutral-fg)', raw: 'var(--neutral-fg)' },
+};
+function statusTone(tone) { return STATUS_TONE[tone] || STATUS_TONE.neutral; }
+function bcls(tone) { return statusTone(tone).cls; }
+function bcolor(tone) { return statusTone(tone).dot; }
+// 成功率分级 (单一事实源): 100 / ≥90 / ≥70 / 其余 —— 概览健康度、记录页、供应商行统一走这里,
+// 避免同一数字在不同页给出不同颜色 (历史缺陷: 概览按阈值变色而记录页写死绿色, 全错时显示绿色 0%).
+function rateTone(pct) {
+  const n = Number(pct);
+  if (!isFinite(n)) return 'neutral';
+  if (n >= 100) return 'ok';
+  if (n >= 90) return 'ok';
+  if (n >= 70) return 'warn';
+  return 'err';
+}
+// 复制原语 (P2): 图标态复制按钮的通用实现. 一律走 navigator.clipboard,
+// 失败回退 execCommand —— 面板可能在非安全上下文 (http://局域网 IP) 打开,
+// 此时 navigator.clipboard 不可用, 无回退就会"点了没反应".
+// 返回 Promise<bool>, 调用方据此决定图标/提示.
+function copyToClipboard(text) {
+  const s = String(text == null ? '' : text);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(s).then(() => true).catch(() => legacyCopy(s));
+  }
+  return Promise.resolve(legacyCopy(s));
+}
+function legacyCopy(s) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    // iOS 需要可选中范围
+    ta.select(); ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
+// 可点击徽章 (P2): 点一下把内容复制走, 徽章短暂显示"已复制"态.
+// 供 key/ID/模型名等短值就地面板内复制 —— 原先只能选中文本手动复制, 或去别处找 copy 按钮.
+function copyBadge(val, key) {
+  const txt = String(val == null ? '' : val);
+  const self = this;
+  return copyToClipboard(txt).then(function (ok) {
+    if (!ok) return;
+    // 复用既有的 copiedField 单一状态位 (与其它复制按钮互斥, 1.5s 后自动复位)
+    self.copiedField = key || txt;
+    if (self.copyTimer) clearTimeout(self.copyTimer);
+    self.copyTimer = setTimeout(function () { self.copiedField = ''; }, 1500);
+  });
+}

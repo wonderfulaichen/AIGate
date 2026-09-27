@@ -34,10 +34,11 @@
 </tr></thead>
 <tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
   <td><div style="width:28px;height:28px;border-radius:6px;overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
-  <td><div class="txsm fw6" x-text="prov.name"></div><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
+  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
   <td>
-    <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
-    <template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span class="bdg" :class="prov._testResult.success?'bdg-s':'bdg-e'" x-text="prov._testResult.success?t('health_ok'):t('health_err')"></span></template>
+    <!-- P2: 状态色统一走 bcls(tone) 语义表 (原为各处手写三元链, 同一状态在不同页取不同色) -->
+    <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).status_level==='ok'?'ok':'err')" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
+    <template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span class="bdg" :class="bcls(prov._testResult.success?'ok':'err')" x-text="prov._testResult.success?t('health_ok'):t('health_err')"></span></template>
     <template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span class="txs tm" x-text="t('health_na')"></span></template>
     <template x-if="prov._testResult && !prov._testResult.success">
       <div style="margin-top:4px;max-width:210px">
@@ -52,13 +53,14 @@
     </template>
   </td>
   <td class="txs tm mono"><template x-if="health.find(h => h.provider === prov.name)"><span x-text="fmtMs(health.find(h => h.provider === prov.name).latency_ms)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span x-text="fmtMs(prov._testResult.latency_ms||0)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span x-text="t('health_na')"></span></template></td>
-  <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).circuit==='closed'?'bdg-s':health.find(h=>h.provider===prov.name).circuit==='half-open'?'bdg-w':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
-  <td><span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span></td>
+  <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).circuit==='closed'?'ok':health.find(h=>h.provider===prov.name).circuit==='half-open'?'warn':'err')" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
+  <td><span class="bdg" :class="bcls(keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'ok':'warn')" x-text="keyStatusText(prov.name)"></span></td>
   <td>
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
       <span class="mono txsm" x-text="(prov.models||[]).length"></span>
       <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
     </div>
   </td>
   <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
@@ -72,14 +74,15 @@
 </div></div></template>
 <template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
   <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card">
-    <div class="plaza-ch"><div class="plaza-ic" x-html="providerLogo(prov.name)"></div><div style="min-width:0"><div class="plaza-nm" x-text="prov.name"></div><div class="plaza-ep" x-text="prov.endpoint"></div></div></div>
+    <div class="plaza-ch"><div class="plaza-ic" x-html="providerLogo(prov.name)"></div><div style="min-width:0"><div class="plaza-nm bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></div><div class="plaza-ep" x-text="prov.endpoint"></div></div></div>
     <div class="plaza-ft">
       <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
       <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):t('health_na')"></span>
       <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
       <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
       <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in provProtocols(prov)" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="bdg bdg-g" x-text="fmt"></span></template>
+      <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>

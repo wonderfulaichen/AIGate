@@ -2,7 +2,7 @@
 .onb-list{display:flex;flex-direction:column;gap:6px}
 .onb-step{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;border:1px solid transparent}
 .onb-step.cur{background:var(--primary-soft);border-color:rgba(99,102,241,.28)}
-.onb-num{flex:none;width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-11);font-weight:700;background:rgba(255,255,255,.06);color:var(--muted);border:1px solid var(--border-s)}
+.onb-num{flex:none;width:22px;height:22px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-11);font-weight:700;background:var(--fill-5);color:var(--muted);border:1px solid var(--border-s)}
 .onb-step.done .onb-num{background:var(--ok-bg-strong);color:var(--ok);border-color:var(--ok-bd-strong)}
 .onb-body{flex:1;min-width:0}
 .onb-t{font-size:var(--fs-13);font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
@@ -14,12 +14,12 @@
 .fr-hints{display:flex;gap:14px;flex-wrap:wrap;align-items:center;min-width:0}
 /* ── 统一空状态 (unified empty state: icon + title + desc + CTA) ── */
 .empty-state{display:flex;flex-direction:column;align-items:center;text-align:center;padding:44px 16px}
-.empty-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--muted);margin-bottom:12px}
+.empty-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--fill-4);border:1px solid var(--border);color:var(--muted);margin-bottom:12px}
 .empty-t{font-size:var(--fs-14);font-weight:600;color:var(--fg);margin:0 0 6px}
 .empty-d{font-size:var(--fs-12);color:var(--muted);max-width:420px;margin:0 0 14px;line-height:1.6}
 /* ── 供应商抽屉分节导航 (sticky, 每节状态 + 点击跳转) ── */
 .dr-secnav{position:sticky;top:0;z-index:3;display:flex;gap:6px;align-items:center;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--border)}
-.dr-secchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:var(--fs-11);font-weight:600;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--border);cursor:pointer;transition:border-color .15s,color .15s}
+.dr-secchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:var(--fs-11);font-weight:600;color:var(--muted);background:var(--fill-4);border:1px solid var(--border);cursor:pointer;transition:border-color .15s,color .15s}
 .dr-secchip:hover{color:var(--fg);border-color:var(--border-s)}
 .dr-secchip.done{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
 .dr-secdot{width:6px;height:6px;border-radius:50%;background:var(--warn);flex:none}
@@ -41,7 +41,7 @@
 /* ── 概览页 FAQ 手风琴 ── */
 .faq-list{display:flex;flex-direction:column;gap:2px}
 .faq-item{border-radius:8px;transition:background .15s}
-.faq-item.open{background:rgba(255,255,255,.03)}
+.faq-item.open{background:var(--fill-2)}
 .faq-q{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:10px 12px;background:none;border:none;cursor:pointer;text-align:left;font-size:var(--fs-13);font-weight:600;color:var(--fg)}
 .faq-q:hover{color:var(--indigo)}
 .faq-caret{flex:none;color:var(--muted);font-size:var(--fs-12)}
