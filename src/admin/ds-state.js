@@ -21,6 +21,9 @@ function dashboard() {  return {
     // 首次为 null 时才置位, 骨架同样遵守宽限期与最少驻留 1s (_provSkelAt).
     provLoading: false,
     _provSkelAt: 0,
+    // 并发守卫: loadProvidersForm 的调用序号. 三处调用点可能同时在飞, 只有最新一次
+    // 有权改 provLoading (详见该方法内的注释 —— 旧写法会因计时器交错导致骨架永久常驻).
+    _provLoadSeq: 0,
     // 记录页首载: logsFetched 首次置位前不显示统计卡/表格 —— stats 与 logs 是两个独立请求,
     // stats 先到时不能让「logs 还没回来」显示成 0 条 (无数据 ≠ 0); 失败也置位 (退回既有空态行为).
     logsFetched: false,

@@ -7,11 +7,24 @@
        // 供应商表单首载 (providersFormData 为 null): 独立加载态供骨架使用 (不与 stats 的 loading 耦合).
        // 宽限期 250ms: 首载更快则骨架从不显示 (与 ds-core.init 对 loading 的口径一致), 不闪跳;
        // 一旦显示, 收口时保证最少驻留 1s. 非首载 (刷新/切页带缓存) 不置位 —— 内容不被清空, 无闪烁.
+       //
+       // ⚠️ 并发守卫 (修 bug): 本函数有三处调用点 (init 的 switchTab('dashboard') / 切页签 /
+       //    openLogProvider 的回退), 两次请求可能同时在飞 —— 都读到 providersFormData === null,
+       //    各自起一个宽限期计时器并互相覆盖 this._provSkelT. 此前的收口写法是
+       //    「清共享计时器 → 判 skelShown → 收 provLoading」, 在两个计时器交错时会漏收口:
+       //    A 的 finally 清掉 B 的计时器后若 B 的回调已入队, 它仍会执行并把 provLoading 置 true,
+       //    而此后没有任何代码把它置回 false → **骨架永久常驻、工具栏永久消失** (用户实测截图).
+       //    现改法: 每次调用持有自增序号, 计时器回调与收口都先校验"自己是否仍是最新一次调用";
+       //    只有最新一次能改状态, 且收口在 finally 里无条件执行 (早于回调也没关系: 回调自带校验).
+       const seq = ++this._provLoadSeq;
+       const isCurrent = () => this._provLoadSeq === seq;
        const firstLoad = this.providersFormData === null;
-       let skelShown = false;
+       let timer = null;
        if (firstLoad) {
-         this._provSkelT = setTimeout(() => {
-           skelShown = true; this.provLoading = true; this._provSkelAt = Date.now();
+         timer = setTimeout(() => {
+           // 已被更新的请求取代 → 放弃这次骨架 (它的结果已无意义)
+           if (!isCurrent()) return;
+           this.provLoading = true; this._provSkelAt = Date.now();
          }, 250);
        }
        try {
@@ -59,12 +72,15 @@
           }
         } catch(e){}
         finally {
-          // 宽限期计时器收口; 骨架已显示则保证最少驻留 1s (与 ds-stats._endFirstLoad 同口径); 失败也收口, 不卡加载态.
-          if (firstLoad) {
-            if (this._provSkelT) { clearTimeout(this._provSkelT); this._provSkelT = null; }
-            if (skelShown && this.provLoading) {
+          // 收口 (无条件执行, 不依赖 skelShown 是否已被回调置位 —— 那正是旧写法的漏洞):
+          //   · 非最新调用 → 直接返回 (状态归最新那次管, 不插手)
+          //   · 计时器未触发 (宽限期内完成) → 清掉, 骨架从未显示, provLoading 保持 false
+          //   · 计时器已触发 → 保证自显示起最少驻留 1s 再收
+          if (firstLoad && isCurrent()) {
+            if (timer) clearTimeout(timer);
+            if (this.provLoading) {
               const remain = 1000 - (Date.now() - this._provSkelAt);
-              if (remain > 0) setTimeout(() => { this.provLoading = false; }, remain);
+              if (remain > 0) setTimeout(() => { if (isCurrent()) this.provLoading = false; }, remain);
               else this.provLoading = false;
             }
           }
