@@ -50,16 +50,18 @@
       for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" class="chart-grid"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" class="chart-axis">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
       if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" rx="3" fill="'+color+'"/>';});});}else{
         values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
-          const ptsStr=pts.map(p=>p[0]+','+p[1]).join(' ');
+          // 平滑曲线 (smooth() 此前只定义未使用 -> 图上一直是折角)
+          const lineD=smooth(pts);
           const gid='tg'+si;
           // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性
           const areaOp=keys.length<=2?.22:(keys.length<=3?.13:.07);
           out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
             +'<stop offset="0" stop-color="'+color+'" stop-opacity="'+areaOp+'"/>'
             +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
-          const areaD='M'+x(0)+','+(top+ph)+' L'+pts.map(p=>p[0]+','+p[1]).join(' L')+' L'+x(n-1)+','+(top+ph)+' Z';
+          // 面积沿同一条平滑曲线闭合到基线, 与折线严格同形
+          const areaD=lineD+' L'+x(n-1)+','+(top+ph)+' L'+x(0)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
-          out+='<polyline points="'+ptsStr+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+          out+='<path d="'+lineD+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
           // 不画静态圆点 (对齐 cc-switch: 其图表全程无 dot, 靠悬停 activeDot)。
           // 点位由悬停十字线 + 浮层指示, 曲线本身保持干净。
         });
