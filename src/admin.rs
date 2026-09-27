@@ -1213,21 +1213,29 @@ pub async fn api_providers_fetch_models(
 
     // 2) 向上游拉取模型 (用真实 key 鉴权) + 并行的协议解析.
     //
-    // 协议解析**分三层, 逐层降级** (前两层零成本, 第三层 HEAD 探测也零 token):
-    //   ① 端点 URL 路径    —— 如 `/anthropic/v1`、`/responses` 直接读出 (实测覆盖 5.6%)
-    //   ② 内置 host 目录   —— src/provider_catalog.rs, 按服务方 host 查 (实测覆盖 92%)
-    //   ③ HEAD 探测兜底    —— 任意未收录网关, 用 HEAD 判路径存在性, **不生成 token**
+    // 顺序: **先探测 (零 token) → 探测失败才用零请求的静态层兜底**。
+    // 之所以不是"先查表": 静态层只能给出「已知支持」的单一主协议, 拿不到「还支持哪些」——
+    // 例如 deepseek 在目录里记为 openai, 而它实测**也支持 responses**; 先查表就会把这条信息
+    // 丢掉 (多协议正是本功能的核心价值)。既然 HEAD 探测不产生 token (无请求体 → 不触发生成),
+    // "省请求"不再是理由, 故以探测为主。
+    //
+    // 静态兜底两层 (探测被 WAF/网络挡住时用):
+    //   ① 端点 URL 路径  —— 如 `/anthropic/v1`、`/responses` 直接读出 (实测覆盖 5.6%)
+    //   ② 内置 host 目录 —— src/provider_catalog.rs, 按服务方 host 查 (实测覆盖 92%)
     // 为什么要按"服务方"而不是"模型"判断协议: 实测同名模型跨服务方协议会不同
     // (claude-opus-4-8 在 anthropic 官方走 anthropic、在 302ai 等转售商走 openai),
-    // 即协议取决于**谁在提供服务**。故三层都围绕"服务方"展开。
+    // 即协议取决于**谁在提供服务**。
     let (ids, probed) = tokio::join!(
         crate::providers::fetch_models_from_upstream(&state.client, &provider, &key),
         async {
-            // 前两层免费: 命中即返回, 不发任何探测请求
-            if let Some(free) = crate::providers::free_protocol_guess(&provider) {
-                return free;
+            let p = crate::providers::probe_protocols(&state.client, &provider, &key, None).await;
+            // 探测成功 → 它是**实测**结果, 比静态表可靠, 直接用 (通常还是超集:
+            // 目录记 deepseek 为 openai, 探测给出 openai+responses)。
+            // 探测为空 → 回退静态层 (URL 路径 / 内置目录); 仍为空则由前端提示手配。
+            if !p.is_empty() {
+                return p;
             }
-            crate::providers::probe_protocols(&state.client, &provider, &key, None).await
+            crate::providers::free_protocol_guess(&provider).unwrap_or_default()
         },
     );
     let ids = match ids {
