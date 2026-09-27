@@ -1,3 +1,7 @@
+// ── 趋势图 ──
+// 模型趋势 SVG 计算 / 悬停浮层 / 图例 / 图表偏好
+// 主要成员: computeModelTrend / onTrendHover / trendTooltipHtml
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     computeModelTrend() {
       const rows=this.stats?.model_trends||[]; const sums={};

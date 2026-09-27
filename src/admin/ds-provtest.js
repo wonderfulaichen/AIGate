@@ -1,3 +1,7 @@
+// ── 连通性测试与拉取差异 ──
+// 单供应商测试 + 拉取模型的新增/已存在/下架三态
+// 主要成员: testProvider / fetchDiffGroups / applyFetchDiff
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
       importModels(pi, event){
         const prov=this.providersFormData[pi];

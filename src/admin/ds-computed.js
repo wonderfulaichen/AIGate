@@ -1,3 +1,7 @@
+// ── 计算属性 ──
+// 成功率 / hero 指标 / 结论行 / 余额健康度 / 环图 SVG
+// 主要成员: rateColor / sRate / balanceTakeaway / donutSvg
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
 
     // Computed

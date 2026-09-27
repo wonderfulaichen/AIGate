@@ -1,3 +1,7 @@
+// ── 模型元信息 ──
+// models.dev 上下文与视觉标签 + 参考价查询
+// 主要成员: fetchModelMeta / metaFor / refCostFor
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     // ── 模型元信息 (models.dev): 点击展开 chips 面板 (上下文/输出/视觉/推理/工具) ──
     async fetchModelMeta() {

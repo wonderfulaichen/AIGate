@@ -1,3 +1,7 @@
+// ── 统计与时间范围 ──
+// stats 拉取与首次加载收口 + 时间范围/粒度 + 明细筛选
+// 主要成员: fetchStats / _endFirstLoad / setSpan / setRangeDays
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async fetchStats(rangeOverride, manual)   {
       if (manual) this._refreshing = true;
@@ -11,10 +15,15 @@
         if(r.ok) {
           // 数据先落位 (数字即时可算), loading 的切换交给 _endFirstLoad 统一管理:
           // 骨架已显示 → 最少驻留 1s 再切内容; 从未显示 (宽限期内完成) → 立即切.
-          const firstLoad = this.loading;
+          // ⚠️ 判据不能用 this.loading —— 快照预热会把 loading 提前置 false (有旧数据可看),
+          //    此时它已不代表"首次加载尚未收口". 故用独立标记 _firstLoadDone.
+          const firstLoad = !this._firstLoadDone;
           this.stats=await r.json();
           this.statsError=false;
-          if (firstLoad) this._endFirstLoad(); else this.loading=false;
+          // 落到最新数据后写快照 (供下次打开预热)
+          this.saveStatsSnapshot();
+          if (firstLoad) { this._firstLoadDone = true; this._endFirstLoad(); }
+          this.loading=false;
           this.fetchModelMeta(); await this.$nextTick();
           this.computeModelTrend();
           if(this.$refs.trendScroll){ this.$refs.trendScroll.scrollLeft=this.$refs.trendScroll.scrollWidth; }

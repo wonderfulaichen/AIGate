@@ -1,4 +1,50 @@
+// ── 生命周期 ──
+// init / switchTab / 轮询 / 基础数据拉取 (logs/health/changelog)
+// 主要成员: init / switchTab / startPoll / fetchLogs
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
+
+    // stats 快照预热 (P4): 把上一次拿到的 stats 存 localStorage, 首帧先渲染它再后台刷新 ——
+    // 消除"打开面板一片骨架"的等待感. 只用作**展示**, 不参与任何计算决策
+    // (金额/口径仍以本次拉取的新数据为准); 版本升级时随旧缓存一起清理.
+    _STATS_SNAP_KEY: 'aigate.statsSnapshot',
+    saveStatsSnapshot() {
+      if (!this.stats) return;
+      try {
+        // 只存渲染所需字段, 避免把整棵大树塞进 localStorage (趋势数组可能很长)
+        const s = this.stats;
+        localStorage.setItem(this._STATS_SNAP_KEY, JSON.stringify({
+          total_requests: s.total_requests, total_cost: s.total_cost, error_count: s.error_count,
+          total_prompt_tokens: s.total_prompt_tokens, total_completion_tokens: s.total_completion_tokens,
+          total_cache_hit_tokens: s.total_cache_hit_tokens, avg_latency_ms: s.avg_latency_ms,
+          gen_speed: s.gen_speed, gen_samples: s.gen_samples, has_price_config: s.has_price_config,
+          per_model: (s.per_model || []).slice(0, 12), per_provider: (s.per_provider || []).slice(0, 12),
+          top_models: (s.top_models || []).slice(0, 12), today_requests: s.today_requests,
+          trends: [], source_window: s.source_window, window_minutes: s.window_minutes,
+          audit: s.audit, _snapshot: true,
+        }));
+      } catch (e) { /* 配额/隐私模式: 快照是优化, 失败无妨 */ }
+    },
+    loadStatsSnapshot() {
+      try {
+        const raw = localStorage.getItem(this._STATS_SNAP_KEY);
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        return (s && typeof s === 'object' && s._snapshot) ? s : null;
+      } catch (e) { return null; }
+    },
+    // 快照仅用于"有数据可画" —— 折线/环图依赖 trends/per_model, 快照里 trends 是空的,
+    // 故只在**首次加载期间**注入, 一旦真实数据到达立刻覆盖 (见 ds-stats.fetchStats).
+    applyStatsSnapshot() {
+      if (this.stats) return;
+      const snap = this.loadStatsSnapshot();
+      if (!snap) return;
+      if (!(Number(snap.total_requests) > 0)) return;  // 别用"0 请求"的旧快照盖住空态判断
+      this.stats = snap;
+      this.loading = false;   // 有内容可看 → 不必再显示骨架
+      // 注意: 这里**不设** _firstLoadDone —— 快照不是最新数据, 真实拉取仍算首次收口
+      // (见 ds-stats.fetchStats 的 firstLoad 判据), 那时才按"骨架最少驻留"规则收尾.
+    },
 
     async init() {
       // localStorage 版本键: 版本变化时清理旧 UI 缓存 —— 结构迁移后旧数据会毒害新逻辑.
@@ -26,6 +72,8 @@
       document.title = t('app_title');
       this.restoreAnalyticsSpan();
       this.restoreChartPrefs();
+      // 快照预热: 先铺上次的数据 (消除骨架等待), 随后的 fetchStats 会覆盖为最新值.
+      this.applyStatsSnapshot();
       await this.fetchCurrencyConfig();
       await this.fetchPeakSchedule();
       await this.switchTab('dashboard');

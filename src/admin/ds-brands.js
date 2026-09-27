@@ -1,3 +1,7 @@
+// ── 供应商品牌与模型 ID ──
+// 品牌色与 logo 解析 / 中转 ID 生成 / 免费判定 / 熔断重置
+// 主要成员: providerLogo / transitId / modelIdDupHint
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     // 品牌徽章: 从上游模型名/供应商名识别品牌, 返回 {label, color}
     // 品牌徽章: 移植自 new-api MODEL_CATEGORY_RULES

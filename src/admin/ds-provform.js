@@ -1,3 +1,7 @@
+// ── 模型表格编辑 ──
+// 供应商表单载入 / 模型增删 / 批量应用 (思考档/协议/免费)
+// 主要成员: loadProvidersForm / addModel / applyBulkEffort
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async loadProvidersForm() {
        // 供应商表单首载 (providersFormData 为 null): 独立加载态供骨架使用 (不与 stats 的 loading 耦合).

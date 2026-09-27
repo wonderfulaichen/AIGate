@@ -1,3 +1,7 @@
+// ── 保存与拉取 ──
+// providers.json 落盘 + 上游模型拉取 + 新增供应商
+// 主要成员: saveProvidersForm / fetchProviderModels / confirmAddProvider
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
      // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
     // 待用户点"保存配置"才持久化 —— 避免直接写盘冲掉表单里其它未保存改动.

@@ -1,3 +1,7 @@
+// ── 格式化与审计 ──
+// 金额/时间/耗时等格式化 + 省量审计面板的派生量
+// 主要成员: fmtMoney / fmtMs / auditAppliedSegs / kvSegs
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
 
 

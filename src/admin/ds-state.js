@@ -1,5 +1,8 @@
-function dashboard() {
-  return {
+// ── 状态字段 ──
+// dashboard() 的 return { 起始 + 全部响应式状态 (data)
+// 主要成员: activeTab / loading / stats / providersFormData / logSearch …
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
+function dashboard() {  return {
     activeTab: 'dashboard',
     sbCollapsed: false,
     loading: true,
@@ -9,6 +12,9 @@ function dashboard() {
     // 后台轮询不碰 loading (仅首次加载管理), 内容永不被刷新清空 —— 无 3s 频闪.
     skelReady: false,
     _skelShownAt: 0,
+    // 首次 stats 收口标记 (P4): 独立于 loading —— 快照预热会提前把 loading 置 false,
+    // 故不能用它判断"首次加载是否已收口" (见 ds-stats.fetchStats / _endFirstLoad).
+    _firstLoadDone: false,
     // 手动刷新指示: 仅用户点击触发 (后台轮询不置位), 供刷新按钮转圈.
     _refreshing: false,
     // 供应商表单独立加载态 (loadProvidersForm): 不与 stats 的 loading 耦合 —

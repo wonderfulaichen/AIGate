@@ -1,3 +1,7 @@
+// ── 个性化与计费配置 ──
+// 托盘 tooltip / 币种汇率 / 高峰时段 / 代理 / 日志清空导出
+// 主要成员: fetchTooltipConfig / saveCurrencyConfig / savePeakSchedule
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async fetchBalance() {
       this.balanceLoading = true;

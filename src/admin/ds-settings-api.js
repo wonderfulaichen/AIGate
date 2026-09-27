@@ -1,3 +1,7 @@
+// ── 设置项读写 ──
+// 缓存 / 裁剪 / 续写 / 剥离 / recall / 截断阈值的 GET+POST
+// 主要成员: fetchCache / setStripReasoning / setRecall
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async fetchCache() {
       try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}

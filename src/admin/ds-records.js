@@ -1,3 +1,7 @@
+// ── 记录页 ──
+// 筛选/搜索/排序/列显隐/分页 + 单条详情与派生指标
+// 主要成员: filteredLogs / toggleLogSort / pageNumbers / logCacheRate
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
 
     openLogDetail(log) { this._lastFocus = document.activeElement; this.selectedLog = log; },

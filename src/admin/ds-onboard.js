@@ -1,3 +1,7 @@
+// ── 接入引导与设置导航 ──
+// 3 步接入清单 (由真实数据推导) + 供应商总览 + 设置页分区表
+// 主要成员: onboardSteps / providerRows / settingsSections
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
 
     // 供应商总览: 以有请求记录的全部供应商为主序 (per_provider, 按请求数降序, 稳定不抖),

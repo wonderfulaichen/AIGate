@@ -1,3 +1,7 @@
+// ── 价格面板 ──
+// 单模型价格编辑 (高峰/空闲/缓存档) + 面板间复制粘贴
+// 主要成员: openPricePanel / priceFromPanel / applyPriceToSelected
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     // 单价编辑面板 (行列与供应商官方价目表一致: 项目 × 空闲/高峰时段)
     // 面板表单 → price 对象. 七项全为 0 视为「无价」, 返回 null.

@@ -1,3 +1,7 @@
+// ── 供应商表单 (列表侧) ──
+// 密钥增删 / 抽屉开合 / 分节完成度 / 可见性筛选 / 徽章复制
+// 主要成员: openProviderDrawer / drawerSecDone / copyBadge
+// (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async fetchProxyConfig() { try { const r=await fetch('/admin/api/proxy-config', {headers:authHeaders()}); if(r.ok) this.proxyStatus=await r.json(); } catch(e){} },
     // 可点击徽章复制 (P2): 徽章内就地复制短值 (key 后缀 / 模型 ID / 供应商名等).
