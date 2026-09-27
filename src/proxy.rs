@@ -683,7 +683,12 @@ pub async fn chat_completions(
             err_body
         };
         // 解析错误信息，添加中文说明
-        let err_msg = format_upstream_error(upstream_status, &err_body);
+        let mut err_msg = format_upstream_error(upstream_status, &err_body);
+        // 4xx 且请求体很大时补一句**实测得出**的原因提示 —— 否则 400 的中文说明
+        // ("模型不支持、参数缺失或格式错误") 会把用户引去排查协议/配置, 而真实原因是上下文/附件过大.
+        if matches!(upstream_status, 400 | 413 | 422) {
+            err_msg.push_str(&crate::i18n::oversize_hint(body_len_val));
+        }
         // 5xx 视为供应商故障 → 记失败 (可能触发熔断); 4xx (含 429) 视为
         // 客户端/配置问题, 供应商仍健康 → 记成功, 不熔断.
         report_breaker(&state.breakers, &provider_name, upstream_status < 500);
@@ -1386,7 +1391,11 @@ async fn relay_native_passthrough(
         let err_body = upstream.text().await.unwrap_or_default();
         warn!("{tag}: upstream {upstream_status}: {}", &err_body[..err_body.len().min(500)]);
         report_breaker(&state.breakers, &provider_name, upstream_status < 500);
-        let err_msg = format_upstream_error(upstream_status, &err_body);
+        let mut err_msg = format_upstream_error(upstream_status, &err_body);
+        // 同上: 大请求体的 4xx 补实测原因提示
+        if matches!(upstream_status, 400 | 413 | 422) {
+            err_msg.push_str(&crate::i18n::oversize_hint(body_len_val));
+        }
         let lb = state.log_buffer.clone();
         let (m2, p2, ep2, up2) = (model.clone(), provider_name.clone(), endpoint.clone(), model_cfg.upstream_model.clone());
         let err_clone = err_msg.clone();

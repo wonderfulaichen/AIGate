@@ -77,6 +77,36 @@ pub fn pick(zh: &'static str, en: &'static str) -> &'static str {
     }
 }
 
+/// 4xx 且请求体很大时的**追加提示**（否则返回空串，不干扰原文案）。
+///
+/// 为什么需要：400 的状态码说明写的是"模型不支持、参数缺失或格式错误"——那是**猜测**，
+/// 而实测（provider=commandcodeAI 的 4843 条请求）显示，4 次 400 **全部**出现在请求体
+/// ≥2.36MB 的请求上；按体积分组，≥1MB 的失败率 20.7%、<1MB 仅 0.9%（**22 倍**）。
+/// 上游只回笼统的 `invalid request error + trace_id`，用户从错误里根本看不出真正原因是
+/// "上下文/附件太大"，于是被那句猜测引去排查协议与配置（本项目的真实投诉即是如此）。
+///
+/// 阈值取 1MiB：低于它的失败与该问题无关，加提示只会变成噪声。
+pub fn oversize_hint(req_bytes: usize) -> String {
+    const MB: usize = 1024 * 1024;
+    if req_bytes < MB {
+        return String::new();
+    }
+    let mb = req_bytes as f64 / MB as f64;
+    // 4 字节 ≈ 1 token 的粗估（中文实测约 0.72~0.87 倍，故标注"≈"）
+    let ktok = req_bytes as f64 / 4.0 / 1000.0;
+    match current_lang() {
+        Lang::Zh => format!(
+            "（本次请求体 {mb:.1} MB ≈ {ktok:.0}K tokens —— 超大请求常被上游笼统拒绝，\
+             多为上下文超长或附件过大：可缩短会话、减少附件，或改用上下文更大的模型）"
+        ),
+        Lang::En => format!(
+            " (request body {mb:.1} MB ≈ {ktok:.0}K tokens - very large requests are often \
+             rejected generically, usually an over-long context or oversized attachment: \
+             shorten the session, drop attachments, or use a model with a larger context)"
+        ),
+    }
+}
+
 /// 规范化键: 转小写并去除所有非字母数字字符.
 ///
 /// 使 `rate_limit_error` / `RateLimitError` / `rate-limit-error` / `rate limit error`
@@ -550,5 +580,26 @@ mod tests {
         // 5) 未知内容原样保留.
         assert_eq!(translate_upstream_message("some vendor specific failure"),
                    "some vendor specific failure");
+    }
+
+    /// 低于 1MiB 不提示 —— 否则每条 400 都挂一句无关的话, 只会变成噪声.
+    #[test]
+    fn oversize_hint_silent_below_threshold() {
+        assert_eq!(oversize_hint(0), "");
+        assert_eq!(oversize_hint(1000), "");
+        assert_eq!(oversize_hint(1024 * 1024 - 1), "");
+    }
+
+    /// 达到 1MiB 起给出提示, 且**带上真实体积** (用户据此判断要不要缩上下文).
+    #[test]
+    fn oversize_hint_reports_actual_size() {
+        let h = oversize_hint(1024 * 1024);
+        assert!(h.starts_with('（'), "应为中文追加语: {h}");
+        assert!(h.contains("1.0 MB"), "应报出体积: {h}");
+        assert!(h.contains("tokens"), "应给出 token 量级: {h}");
+
+        // 实测那条 400 的请求体为 2361624 字节 -> 应显示 2.3 MB
+        let h2 = oversize_hint(2_361_624);
+        assert!(h2.contains("2.3 MB"), "2361624 字节应显示 2.3 MB: {h2}");
     }
 }
