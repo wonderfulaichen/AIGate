@@ -1211,11 +1211,30 @@ pub async fn api_providers_fetch_models(
         (provider, key)
     };
 
-    // 2) 向上游拉取模型 (用真实 key 鉴权)
-    let ids = match crate::providers::fetch_models_from_upstream(&state.client, &provider, &key).await
-    {
+    // 2) 向上游拉取模型 (用真实 key 鉴权) + **并行探测该上游支持哪些协议**.
+    //
+    // 为什么要探测: 协议既不在模型元信息里 (models.dev 模型级字段无协议), 也不能只靠官方元数据
+    // 推断 (实测用户 7 个供应商中 3 个未被收录; 且即便收录也只反映主协议, 而 DeepSeek 官方
+    // 的 /v1/responses 实测同样可用)。拉取模型本来就在打上游, 顺带探测零额外操作。
+    // 探测失败不影响拉取 (是附加信息)。
+    let (ids, probed) = tokio::join!(
+        crate::providers::fetch_models_from_upstream(&state.client, &provider, &key),
+        crate::providers::probe_protocols(&state.client, &provider, &key, None),
+    );
+    let ids = match ids {
         Ok(ids) => ids,
         Err(e) => return Json(serde_json::json!({ "error": e })),
+    };
+
+    // 拿到模型清单后**再补一次探测**: 用该上游真实存在的模型名 (而非占位符) 重试。
+    // 原因: 部分上游的 WAF 会拦"不存在的模型"这类请求 (实测 ginka 用占位名三个端点全
+    // 403 Cloudflare 1010), 用真名可显著提高探测成功率。仅在首轮探测为空时才重试,
+    // 避免正常情况多打一轮请求。
+    let probed = if probed.is_empty() {
+        let hint = ids.first().map(|s| s.as_str());
+        crate::providers::probe_protocols(&state.client, &provider, &key, hint).await
+    } else {
+        probed
     };
 
     // 3) 合并进内存注册表 (新增未存在的, 跳过已有) + 计算已下架.
@@ -1257,6 +1276,9 @@ pub async fn api_providers_fetch_models(
         "removed": removed.clone(),
         "removed_count": removed.len(),
         "message": crate::i18n::msg_models_fetched(ids.len(), added, skipped),
+        // 实测该上游支持的协议 (按端点探测). 空数组 = 探测不到 (网络/鉴权问题), 前端据此不发建议.
+        // 用途: 拉取后作为新增模型的**建议** api_formats, 用户可直接采纳或改。
+        "probed_protocols": probed,
     }))
 }
 

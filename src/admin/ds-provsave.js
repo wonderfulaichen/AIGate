@@ -14,6 +14,15 @@
         if (r.ok && d.success) {
           // 去重: 基于 upstream_model (与后端 add_models 一致), 而非 model_id.
           const existingUpstream = new Set(prov.models.map(m=>m.upstream_model||m.model_id));
+          // 后端顺带探测到的"该上游实测支持哪些协议" (拉取模型时并行探测, 零额外操作).
+          // 用途: 作为新增模型的 api_formats 建议值 —— 协议既不在模型元信息里
+          // (models.dev 模型级无协议字段), 也无法从官方元数据推断出"还支持哪些"
+          // (实测 DeepSeek 的 /v1/responses 同样可用, 但元数据只标主协议),
+          // 故只能问上游本身。探测为空时不建议 (不猜)。
+          const probed = Array.isArray(d.probed_protocols) ? d.probed_protocols : [];
+          // 仅当探测到 ≥2 个协议时才写建议值: 单个协议没有信息增量
+          // (而 defaultApiFormat/api_format 已能表达), 免得给每个模型都塞一个同值字段.
+          const suggestFmts = probed.length > 1 ? probed.slice() : null;
           let added=0;
           const addedItems=[];
           for (const id of (d.models||[])) {
@@ -22,11 +31,19 @@
               // 避免跨供应商同名 ID 冲突导致路由被静默覆盖; 不满意可直接改.
               const prefixed = this.transitId(prov.name, id);
               // 传入供应商名: 网关专属推断规则 (go / zen) 需要它, 否则会漏判 (见 defaultApiFormat).
-              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:this.defaultApiFormat(id, prov.name), origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
+              const guessed = this.defaultApiFormat(id, prov.name);
+              prov.models.push({ model_id:prefixed, upstream_model:id, reasoning_effort:'', api_format:guessed,
+                // 探测建议: 覆盖推断(推断只知道单协议). _fmtTouched 保持 false, 让用户在面板仍可改.
+                api_formats: suggestFmts ? suggestFmts.slice() : null,
+                origin:'fetched', _isNew:true, _removed:false, free:this.autoFree(id,id), _freeTouched:false, _fmtTouched:false });
               existingUpstream.add(id);
               added++;
               addedItems.push({ model_id:prefixed, upstream_model:id });
             }
+          }
+          // 多协议探测结果提示用户 (有信息量才提示)
+          if (suggestFmts) {
+            toast(t('probed_protocols', suggestFmts.map(f=>t('fmt.'+f)).join(' / ')), 'info', 'probe_ok');
           }
           // 标记已下架: 仅按【上游模型ID】(upstream_model, 缺省回落中转ID) 比对,
           // 中转ID 是用户可改的别名, 不能作为与上游清单比对的依据.

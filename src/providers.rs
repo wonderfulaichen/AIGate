@@ -533,7 +533,98 @@ pub fn normalize_format(name: &str) -> String {
     }
 }
 
-/// 从 providers.json 拉取模型 ID 列表.
+/// 探测某上游**实际支持哪些协议** (按端点路径逐个试打).
+///
+/// 为什么需要探测: 协议既不在模型元信息里 (models.dev 的模型级字段只有 context/cost/
+/// modalities/reasoning 等, **没有协议**), 也不总是能从官方元数据推出来 ——
+/// 实测用户的 7 个供应商里 3 个 (commandcodeAI / ginka / arromega) **未被 models.dev 收录**;
+/// 即便收录 (如 deepseek 的 npm=@ai-sdk/openai-compatible) 也只反映"主协议",
+/// 而 DeepSeek 的 `/v1/responses` 实测同样可用。故"还支持哪些协议"只能问上游本身。
+///
+/// `model_hint`: 探测用的模型名 —— 优先传该上游**真实存在的模型**(如刚拉取到的第一个),
+/// 而不是占位符: 部分上游的 WAF 会拦"不存在的模型"这类可疑请求 (实测 ginka 用占位名
+/// 三个端点全 403 Cloudflare 1010), 用真名可显著提高探测成功率。
+///
+/// 判据 (实测标定):
+/// - **2xx / 400 / 402 / 429 → 支持**: 请求已通过路由, 返回的是业务层错误 (参数不合法 /
+///   余额不足 / 限流)。实测 DeepSeek 余额不足时两个端点都返 402 而非 404, 证明路径存在。
+/// - **404 / 405 / 501 → 不支持**: 路径不存在。
+/// - **401 / 403 → 无法判断**(不据此断言不支持): 可能是 key 问题或反爬拦截。
+///
+/// 请求体用最小成本形态 (`max_tokens=1` / `max_output_tokens=16`, 单词 prompt),
+/// 三个端点各一次; 失败不影响调用方 (探测是附加信息, 拿不到就留空由用户手配)。
+pub async fn probe_protocols(
+    client: &Client,
+    provider: &ProviderConfig,
+    key: &str,
+    model_hint: Option<&str>,
+) -> Vec<String> {
+    let model = model_hint.unwrap_or("probe");
+    let ep = provider.endpoint.trim_end_matches('/');
+    let base = {
+        let mut b = ep.to_string();
+        for suf in ["/chat/completions", "/responses", "/messages"] {
+            if let Some(stripped) = b.strip_suffix(suf) {
+                b = stripped.to_string();
+                break;
+            }
+        }
+        b
+    };
+    // 每个协议用各自形态的最小请求 (字段名不同: chat 用 messages/max_tokens,
+    // responses 用 input/max_output_tokens, anthropic 用 messages/max_tokens + 版本头)。
+    let candidates: [(&str, String, serde_json::Value, bool); 3] = [
+        (
+            "openai",
+            format!("{base}/chat/completions"),
+            serde_json::json!({"model": model, "max_tokens": 1,
+                "messages":[{"role":"user","content":"hi"}]}),
+            false,
+        ),
+        (
+            "anthropic",
+            format!("{base}/messages"),
+            serde_json::json!({"model": model, "max_tokens": 1,
+                "messages":[{"role":"user","content":"hi"}]}),
+            true,   // 需要 anthropic-version 头
+        ),
+        (
+            "responses",
+            format!("{base}/responses"),
+            serde_json::json!({"model": model, "max_output_tokens": 16, "input": "hi"}),
+            false,
+        ),
+    ];
+
+    let mut found: Vec<String> = Vec::new();
+    for (proto, url, body, needs_ver) in candidates {
+        let mut req = client.post(&url).json(&body);
+        if !key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        if needs_ver {
+            req = req.header("anthropic-version", "2023-06-01");
+        }
+        if let Some(headers) = &provider.headers {
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+        }
+        match req.timeout(Duration::from_secs(20)).send().await {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                // 见函数头判据: 业务层错误也算"路径存在"
+                if (200..300).contains(&code) || matches!(code, 400 | 402 | 429) {
+                    found.push(proto.to_string());
+                }
+            }
+            Err(_) => { /* 网络错误/超时: 本次探测不到, 不记 */ }
+        }
+    }
+    found
+}
+
+/// 从上游 `/v1/models` 拉取模型 ID 列表.
 ///
 /// - 端点推导: 把 provider.endpoint 中的 `/chat/completions` 替换为 `/models`
 ///   (兼容 DeepSeek / opencode(zen/go) 等 OpenAI 兼容网关).
