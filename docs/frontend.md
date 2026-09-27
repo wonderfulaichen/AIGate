@@ -12,7 +12,7 @@ src/admin/
 ├── base.css                   :root token / reset / 全局 / 动效基础
 ├── components.css             组件类 (徽章/卡片/按钮/表格/骨架/设置行)
 ├── pages.css                  页签专属 + [x-cloak] + toast
-├── body-shell.html            <body> 壳: skip 链接 + 顶栏 + 侧栏 + main 起点
+├── body-shell.html            <body> 壳: skip 链接 + 顶栏(品牌+胶囊导航+全局控件) + main 起点
 ├── page-{overview,analytics,records,settings,providers,about}.html   六个页签模板
 ├── footer.html                页脚
 ├── modal-whatsnew-recall.html / modal-add-fetchdiff.html / drawer-provider.html / panel-price.html
@@ -142,6 +142,31 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
 - 模态/抽屉/价格面板统一 `background:var(--elevated)` + `box-shadow:var(--elev-3)`，入场用 `popIn`
   （`prefers-reduced-motion` 下已关闭）。
 - 新增表面类时**照抄这组 token**，不要在组件里另写阴影/模糊：那正是改造前"扁平无层次"的成因。
+
+### 4.3 外壳骨架：顶栏导航（无侧栏）
+
+骨架（对标 cc-switch：顶部导航 + 全宽内容，**没有左侧栏**）：
+
+```
+[◆ AIGate v0.6.1] [概览|分析|记录 ‖ 供应商 ‖ 设置|关于]   …弹性…   [主题 ▾][语言 ▾]
+─────────────────────────────────────────────────────────────────────────────
+main: 全宽内容（.main，自身滚动）
+```
+
+- 由 `body-shell.html` 定义；`.hdr` 56px 玻璃底，`.navseg` 是分段胶囊（容器 `--fill-4` + `rounded-12px`，
+  激活项 `--card-glass` + `--elev-1` —— 即"胶囊里浮起一枚"）。分组用 `.navseg-sep` 细分隔线，**不用分组标题**
+  （横排下太占位）。
+- 为什么拆掉侧栏：导航原先独占 200px 一整列纵向空间，而数据面板更缺**横向**空间。
+- 窄屏（≤820px）：`.hdr-name/.hdr-ver` 隐藏、`.navseg-i span` 隐藏 → 导航退化为纯图标横排。
+- 导航项必须带 `:aria-current="activeTab===X?'page':null"`；`nav` 带 `:aria-label="t('nav_aria')"`。
+- **新增导航项时同步四处**：`navseg` 内的 `<a>`、`switchTab` 的分支、页面模板的 `x-show`、i18n 的 `nav.*`。
+
+### 4.4 动效陷阱：`both` 填充会让内容消失
+
+`.stagger>*{animation:...both}` 在动画**未推进**时元素停在 `opacity:0`（`both` = 开始时也用首帧）。
+实测：headless 的不可见 iframe 里整块内容肉眼不可见；后台标签页被节流时同样有风险。
+**结论：不要给数据密集的列表/卡片新加 `stagger`**；确需入场动效时优先用不带 `both` 的写法。
+（概览页 `.ov-side` 的既有用法保留，但别扩散。）
 
 ## 5. 状态色与分级（单一事实源）
 

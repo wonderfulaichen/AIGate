@@ -88,6 +88,10 @@
       return v.toFixed(1) + '%';
     },
     fmtT(n) { if(n<1000) return n; if(n<1000000) return (n/1000).toFixed(1)+'K'; return (n/1000000).toFixed(1)+'M'; },
+    // 精确整数 + 千分位 (对照 cc-switch UsageHero 的主体大数字: 精确值配 toLocaleString).
+    // 与 fmtT 的分工: 大字号用本函数给**精确值**, 旁边的小胶囊再用 fmtT 给**量级缩写** ——
+    // 两者并列才既有精度又不费眼; 只用 fmtT 会让"44.5K"既当主值又当副档, 信息重复.
+    fmtInt(n) { return Math.round(Number(n) || 0).toLocaleString(); },
     // 省量明细行: "标签 <tokens> ≈ <费用>". 费用为 0 (未配置价格/免费) 时省略.
     auditLine(labelKey, tokens, fee) {
       const tk = this.fmtT(tokens || 0);

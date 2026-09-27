@@ -74,7 +74,7 @@
   </div></td>
 </tr></template></tbody></table>
 </div></div></template>
-<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid stagger">
+<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
   <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable">
     <!-- 标题行: 图标方块 + 名称(可点复制) + 徽章组. 对齐 cc-switch ProviderCard 的
          「drag/图标 + 名称 + 状态徽章 + (URL 行独立成第二行)」结构 -->

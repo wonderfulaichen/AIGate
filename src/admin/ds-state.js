@@ -4,7 +4,6 @@
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 function dashboard() {  return {
     activeTab: 'dashboard',
-    sbCollapsed: false,
     loading: true,
     // ── 首次加载三态外壳 (P1): skeleton(骨架) / empty(空态) / normal(内容) ──
     // skelReady: 骨架宽限期 (250ms, ds-core.init 定时点亮) —— 首载快于宽限期则骨架从不出现, 不闪跳.

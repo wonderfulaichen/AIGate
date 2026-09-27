@@ -165,12 +165,13 @@
     get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
     get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
-    // ── 指标卡的「≈ 副档位」与「大数字」 (对标 cc-switch UsageHero) ──
-    // 手法: 主数字给精确值, 副档位给一个**更易读的量级** (如 44,500 → ≈44.5K).
-    // 这样既保留精确性, 又让人一眼抓住量级 —— 原实现只有精确值, 六位数要自己数字位.
+    // ── 指标卡的「主值精确 + ≈ 副档缩写」 (对标 cc-switch UsageHero) ──
+    // 大字号给**精确值**, 右侧小胶囊给**量级缩写**: 六位数直接看容易数错位, 缩写一眼抓量级.
+    // 两者缺一都不完整 —— 只给精确值要自己数位, 只给缩写则丢掉精度.
+    get heroTokensExact() { return this.fmtInt(this.heroTokens); },
     get heroTokensApprox() {
       const n = this.heroTokens;
-      if (!n || n < 10000) return '';   // 小于 1 万时不副档 (原值已够易读, 加了反而啰嗦)
+      if (!n || n < 10000) return '';   // 小于 1 万时缩写无信息增量 (原值已够易读)
       return '≈ ' + this.fmtT(n);
     },
     // 费用三态 (未配价 / 未命中配价模型 / 有值) 决定颜色: 无值时用弱化色, 免得"—"被染成警示黄.

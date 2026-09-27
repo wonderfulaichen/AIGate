@@ -1,36 +1,40 @@
 </head>
 <body>
 <div class="layout" x-data="dashboard()" x-init="init()">
-<!-- skip 链接: 键盘首个 Tab 落点, 越过侧栏直达主内容 (平时移出视口, 聚焦才滑入).
+<!-- skip 链接: 键盘首个 Tab 落点, 越过顶栏直达主内容 (平时移出视口, 聚焦才滑入).
      必须在 x-data 作用域内 —— 否则 x-text="t(...)" 无 Alpine 上下文, 文本为空. -->
 <a href="#main-content" class="skip-link" x-text="t('skip_main')"></a>
+<!-- 顶栏: 品牌 + 分段胶囊导航 + 右侧全局控件.
+     骨架变更: 原为"左侧栏 200px + 顶栏 44px"两件套, 导航独占一整列纵向空间;
+     数据面板更缺横向空间, 故按 cc-switch 的骨架改为「顶部导航 + 全宽内容」,
+     导航做成分段胶囊 (对照其 AppSwitcher: bg-muted rounded-xl p-1 + 激活项 bg-background shadow-sm).
+     分组仍保留, 但改用细分隔线而非分组标题 —— 横排下标题太占位. -->
 <header class="hdr">
-  <button @click="sbCollapsed=!sbCollapsed" class="btn-g" style="padding:4px 6px;border-radius:6px" :title="t('toggle_sidebar')" :aria-label="t('toggle_sidebar')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-  </button>
-  <span class="hdr-title">AIGate</span>
+  <div class="hdr-brand">
+    <span class="hdr-logo" aria-hidden="true">◆</span>
+    <span class="hdr-name">AIGate</span>
+    <span class="hdr-ver mono">v<span x-text="version.version"></span></span>
+  </div>
+  <nav class="navseg" :aria-label="t('nav_aria')">
+    <a href="#" @click.prevent="switchTab('dashboard')" class="navseg-i" :class="{'active':activeTab==='dashboard'}" :aria-current="activeTab==='dashboard'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span x-text="t('nav.dashboard')"></span></a>
+    <a href="#" @click.prevent="switchTab('analytics')" class="navseg-i" :class="{'active':activeTab==='analytics'}" :aria-current="activeTab==='analytics'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg><span x-text="t('nav.analytics')"></span></a>
+    <a href="#" @click.prevent="switchTab('records')" class="navseg-i" :class="{'active':activeTab==='records'}" :aria-current="activeTab==='records'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span x-text="t('nav.records')"></span></a>
+    <span class="navseg-sep" aria-hidden="true"></span>
+    <a href="#" @click.prevent="switchTab('providers')" class="navseg-i" :class="{'active':activeTab==='providers'}" :aria-current="activeTab==='providers'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="6" rx="2"/><rect x="3" y="15" width="18" height="6" rx="2"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="18" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.providers')"></span></a>
+    <span class="navseg-sep" aria-hidden="true"></span>
+    <a href="#" @click.prevent="switchTab('settings')" class="navseg-i" :class="{'active':activeTab==='settings'}" :aria-current="activeTab==='settings'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span x-text="t('nav.settings')"></span></a>
+    <a href="#" @click.prevent="switchTab('about')" class="navseg-i" :class="{'active':activeTab==='about'}" :aria-current="activeTab==='about'?'page':null"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.about')"></span></a>
+  </nav>
   <div class="hdr-right">
-    <span class="txs mono tm">v<span x-text="version.version"></span></span>
-    <select class="sel" style="font-size:var(--fs-11);padding:3px 24px 3px 8px" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'">
+    <!-- 主题与语言提到顶栏: 面板外观属"随时可调"的全局偏好, 不必钻进设置页 -->
+    <select class="sel sel-mini" :value="themeMode" @change="setTheme($event.target.value)" :title="t('ui_theme')" :aria-label="t('ui_theme')">
+      <option value="dark" x-text="t('theme_dark')"></option><option value="light" x-text="t('theme_light')"></option><option value="system" x-text="t('theme_system')"></option>
+    </select>
+    <select class="sel sel-mini" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'" :title="t('ui_language')" :aria-label="t('ui_language')">
       <option value="zh-CN" x-text="t('lang_zh')"></option><option value="en-US" x-text="t('lang_en')"></option>
     </select>
   </div>
 </header>
-<div class="body">
-<nav class="sb" :class="{'colapsed':sbCollapsed}">
-  <div class="sb-nav">
-    <div class="sb-glabel" x-text="t('nav_group.monitor')"></div>
-    <a href="#" @click.prevent="switchTab('dashboard')" class="sb-item" :class="{'active':activeTab==='dashboard'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span x-text="t('nav.dashboard')"></span></a>
-    <a href="#" @click.prevent="switchTab('analytics')" class="sb-item" :class="{'active':activeTab==='analytics'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="12" width="4" height="9" rx="1"/><rect x="10" y="7" width="4" height="14" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg><span x-text="t('nav.analytics')"></span></a>
-    <a href="#" @click.prevent="switchTab('records')" class="sb-item" :class="{'active':activeTab==='records'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span x-text="t('nav.records')"></span></a>
-    <div class="sb-glabel" x-text="t('nav_group.config')"></div>
-
-    <a href="#" @click.prevent="switchTab('providers')" class="sb-item" :class="{'active':activeTab==='providers'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="6" rx="2"/><rect x="3" y="15" width="18" height="6" rx="2"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="18" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.providers')"></span></a>
-    <a href="#" @click.prevent="switchTab('settings')" class="sb-item" :class="{'active':activeTab==='settings'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span x-text="t('nav.settings')"></span></a>
-    <div class="sb-glabel" x-text="t('nav_group.system')"></div>
-    <a href="#" @click.prevent="switchTab('about')" class="sb-item" :class="{'active':activeTab==='about'}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg><span x-text="t('nav.about')"></span></a>
-  </div>
-</nav>
 <main class="main" id="main-content" tabindex="-1">
 <!-- 全局播报区 (aria-live=polite): 分页/筛选等状态变化用既有文案播报给屏幕阅读器; 平时视觉隐藏 -->
 <span class="sr-only" role="status" aria-live="polite" x-text="liveMsg"></span>

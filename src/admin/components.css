@@ -101,6 +101,7 @@ tbody tr:hover td:first-child{box-shadow:inset 2px 0 0 var(--primary)}
 .ov-secondary-value{font:600 1rem 'JetBrains Mono',monospace;color:var(--fg);margin-top:4px}
 .mini-spark{height:28px;margin-top:8px;opacity:.9;overflow:hidden}
 .mini-spark svg{display:block;width:100%;height:28px}
+@media(max-width:1024px){.ov-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.ov-summary-grid,.ov-secondary-grid{grid-template-columns:1fr}}
 /* 图标方块 (对标 cc-switch 的 p-2.5 rounded-xl bg-gradient-to-br):
    底色由内联 style 给 (语义色), 这里负责尺寸/圆角/内阴影质感与悬停微缩放. */
