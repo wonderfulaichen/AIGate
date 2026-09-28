@@ -66,6 +66,13 @@ p{margin:0}
  font-size:1.02rem;color:var(--indigo);background:rgba(99,102,241,.13);border:1px solid rgba(99,102,241,.26);margin-bottom:.75rem}
 .gc p{color:var(--muted);font-size:.88rem;line-height:1.64}
 
+.num-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+.nm{background:linear-gradient(165deg,rgba(99,102,241,.14),rgba(99,102,241,.03));
+ border:1px solid rgba(99,102,241,.30);border-radius:16px;padding:1.3rem 1.35rem}
+.nmv{font-size:clamp(1.5rem,2.9vw,2.35rem);font-weight:800;letter-spacing:-.03em;color:#fff;
+ font-variant-numeric:tabular-nums;line-height:1.05}
+.nml{margin-top:.5rem;font-size:.83rem;color:var(--muted);line-height:1.55}
+@media(max-width:1150px){.num-row{grid-template-columns:repeat(2,1fr)}}
 .st-row{display:grid;gap:1rem}
 .st-row.three{grid-template-columns:repeat(3,1fr)}
 .st-item{background:var(--card);border:1px solid var(--bd);border-radius:15px;padding:1.15rem 1.25rem}
@@ -123,9 +130,12 @@ p{margin:0}
 <div class="deck" id="deck">
 <section class="s cover"><div class="glow"></div><div class="cv">
   <div class="logo">◆</div><h1>AIGate</h1>
-  <p class="tag">本地 LLM 网关</p><p class="claim">一个地址接入所有编程工具，<br>一个面板管住所有模型供应商</p>
-  <div class="facts"><div class="f"><span class="fv">单文件</span><span class="fl">一个 exe，零外部依赖</span></div><div class="f"><span class="fv">多协议</span><span class="fl">OpenAI / Anthropic / Responses</span></div><div class="f"><span class="fv">可观测</span><span class="fl">逐请求记账与费用</span></div><div class="f"><span class="fv">原理透明</span><span class="fl">每条机制都可讲清判据与参数</span></div></div></div></section>
+  <p class="tag">本地 LLM 网关</p><p class="claim">一个地址接入所有编程工具，<br>把重复上下文以最低成本送出去</p>
+  <div class="facts"><div class="f"><span class="fv">单文件</span><span class="fl">一个 exe，零外部依赖</span></div><div class="f"><span class="fv">多协议</span><span class="fl">OpenAI / Anthropic / Responses</span></div><div class="f"><span class="fv">可观测</span><span class="fl">逐请求记账与费用</span></div><div class="f"><span class="fv">省量为主</span><span class="fl">实测省下输入总量的 23.3%</span></div></div></div></section>
 <section class="s"><h2>换一个模型，要改一圈配置</h2><p class="lead">编程工具与模型供应商各自演进，夹在中间的人最累</p><div class="pain-grid"><div class="pain"><h4>协议不统一</h4><p>OpenAI 的 <code>/chat/completions</code>、Anthropic 的 <code>/messages</code>、OpenAI 的 <code>/responses</code> —— 客户端与上游各说各话</p></div><div class="pain"><h4>每个客户端各配一份</h4><p>Cursor、Claude Code、Trae… 换供应商就得逐个改 base_url 与密钥</p></div><div class="pain"><h4>同名模型只能留一个</h4><p>两家供应商都有 <code>claude-opus</code> 时，客户端里只能二选一</p></div><div class="pain"><h4>花销与失败都看不见</h4><p>用了多少、贵在哪、为什么 400 —— 只能靠猜</p></div></div></section>
+<section class="s"><h2>省下来的，是重复的上下文</h2><p class="lead">编程工具的输入里，绝大部分是<b>每次都要重发的历史</b> —— 这决定了账单结构</p>
+  <div class="num-row"><div class="nm"><div class="nmv">363 : 1</div><div class="nml">输入 : 输出<br>实测 5000 次请求</div></div><div class="nm"><div class="nmv">98.7%</div><div class="nml">输入命中 KV 缓存<br>即本来就是重复内容</div></div><div class="nm"><div class="nmv">3.84 亿</div><div class="nml">剥离推理链省下的 tokens<br>占输入总量 23.3%</div></div><div class="nm"><div class="nmv">66.3%</div><div class="nml">从中受益的请求占比</div></div></div>
+  <p class="foot-note">所以本产品的第一目标不是「少发请求」，而是<b>让重复上下文以最低成本传输</b>：不破坏上游缓存、剥掉冗余推理、并且让你看见省在哪。</p></section>
 <section class="s"><h2>把复杂性收进一个本地网关</h2><p class="lead">客户端只认一个地址；协议、路由、计量、韧性，全在网关里解决</p>
   <div class="flow">
     <div class="fcol"><div class="fcol-t">你的编程工具</div><span class="node">Cursor</span><span class="node">Claude Code</span><span class="node">Trae / 其他</span></div>
@@ -139,7 +149,7 @@ p{margin:0}
   <p class="foot-note">「直传」意味着请求体<b>逐字节保真</b>：Anthropic 的 thinking 块与 signature、Responses 的 reasoning item 都不会被往返翻译掉。</p></section>
 <section class="s"><h2>原理：网关怎么知道上游支持什么</h2><p class="lead">三路取证，按可靠性递减 —— 关键是<b>零成本</b>，不需要用户先点一次探测</p>
   <div class="pr-grid"><div class="pr"><span class="prn">1</span><div><h4>端点路径信号</h4><p>端点 URL 里带 <code>/anthropic/</code> 或 <code>/responses</code> 段就直接读出来。注意只认有区分度的段：<code>/chat/completions</code> 是所有兼容网关的默认路径，不能当信号</p></div></div><div class="pr"><span class="prn">2</span><div><h4>内置目录</h4><p>按<b>服务方域名</b>查表（不是按模型名）—— 同名模型跨服务方协议会不同，协议取决于谁在提供服务</p></div></div><div class="pr"><span class="prn">3</span><div><h4>HEAD 探测</h4><p>对三个候选路径发 <b>HEAD</b> 请求：<b>没有请求体 → 不触发生成 → 零 token</b>。判据：<code>404/501</code> = 不存在，其余（含 <code>405</code> 方法不允许）= 存在</p></div></div><div class="pr"><span class="prn">4</span><div><h4>对照哨兵</h4><p>先探一个必定不存在的路径。若连它也返回「存在类」状态，说明该站对所有路径状态一致 —— 此时<b>判定为不可判别并放弃</b>，不给出假结论</p></div></div></div><p class="foot-note">三路结果取并集：客户端协议在集合内就直传；集合为空（= 没有任何「不支持」的证据）时<b>尊重客户端选择</b>，不静默改协议。</p></section>
-<section class="s"><h2>核心能力</h2><p class="lead">围绕「让模型像官方一样直连」设计</p><div class="grid-2"><div class="gc"><div class="gci">↔</div><h4>协议自动匹配</h4><p>客户端入口即意图；命中直传，字段不被往返翻译</p></div><div class="gc"><div class="gci">◇</div><h4>模型别名与共存</h4><p>中转 ID 与上游真名解耦；同名模型跨供应商各自成路由</p></div><div class="gc"><div class="gci">↓</div><h4>省量与计量</h4><p>剥离推理链、历史裁剪、响应缓存；逐请求记账</p></div><div class="gc"><div class="gci">◷</div><h4>可观测与韧性</h4><p>请求日志、趋势、余额；熔断、退避重试、超时与体积上限</p></div></div></section>
+<section class="s"><h2>核心能力</h2><p class="lead">围绕「让模型像官方一样直连」设计</p><div class="grid-2"><div class="gc"><div class="gci">↓</div><h4>省量（核心）</h4><p>剥离推理链、历史裁剪、响应缓存 —— 且不破坏上游 KV 缓存；实测省下输入总量的 23.3%</p></div><div class="gc"><div class="gci">↔</div><h4>协议自动匹配</h4><p>客户端入口即意图；命中直传，字段不被往返翻译</p></div><div class="gc"><div class="gci">◇</div><h4>模型别名与共存</h4><p>中转 ID 与上游真名解耦；同名模型跨供应商各自成路由</p></div><div class="gc"><div class="gci">◷</div><h4>可观测与韧性</h4><p>逐请求记账看得见省量；熔断、退避重试、超时与体积上限</p></div></div></section>
 <section class="s"><h2>省量：三种手段，各自的判据</h2><p class="lead">叠加使用，但取舍都有明确理由 —— 不是能省就省</p>
   <div class="st-row three"><div class="st-item"><h4>剥离推理链</h4><p>剥掉带 <code>tool_calls</code> 的 assistant 消息里的推理链。<b>Anthropic 链路一律不剥</b>：extended thinking 的 thinking 块必须连签名原样回传，剥掉会 400。开关粒度按<b>模型</b>而非供应商 —— 同一中转下混着多种协议</p></div><div class="st-item"><h4>历史裁剪</h4><p>只保留最近 N 个 user 轮。默认 <b>0 = 不裁剪</b>，优先保上下文完整性；真超限时由<b>紧急瘦身</b>兜底</p></div><div class="st-item"><h4>响应缓存</h4><p>只缓存 <code>stream:false</code> 且 2xx 的响应。键 = <b>去掉 stream 字段后的请求体做确定性序列化</b>，内存受条目上限 + TTL 双约束</p></div></div>
   <div class="honest">被剥离的内容绝大多数落在上游的<b>缓存命中区</b>，而命中价与未命中价相差数十倍 —— 所以省下的<b>金额</b>远小于 token 数给人的印象。<b>决定成本的始终是上下文规模本身。</b></div></section>
