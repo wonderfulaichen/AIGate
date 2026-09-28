@@ -66,12 +66,12 @@ p{margin:0}
  mask-image:radial-gradient(65% 60% at 28% 45%,#000,transparent)}
 .cv{position:relative}
 .eyebrow{font-size:.72rem;letter-spacing:.34em;color:var(--c1);font-weight:700;text-transform:uppercase}
-.logo{width:78px;height:78px;border-radius:23px;display:flex;align-items:center;justify-content:center;
- margin-top:1.1rem;color:var(--c1);
- background:linear-gradient(160deg,rgba(124,134,255,.22),rgba(176,107,255,.10));
- border:1px solid rgba(124,134,255,.38);
- box-shadow:0 14px 40px rgba(124,134,255,.22),inset 0 1px 0 rgba(255,255,255,.14)}
-.logo svg{width:40px;height:40px}
+/* 品牌图标: 直接用项目资产 icon.svg 的构图 (圆角方块 + 渐变 + 中央枢纽 + 四节点),
+   故容器不再自绘底色, 只负责尺寸与投影 */
+.logo{width:82px;height:82px;margin-top:1.1rem;display:block;
+ border-radius:24px;overflow:hidden;
+ box-shadow:0 16px 44px rgba(99,102,241,.30),0 0 0 1px rgba(255,255,255,.07)}
+.logo svg{width:100%;height:100%;display:block}
 .claim{font-size:clamp(1.35rem,2.7vw,2.35rem);font-weight:700;letter-spacing:-.03em;
  margin-top:1.5rem;line-height:1.32;color:#e9ebf5}
 .sub{color:var(--muted);font-size:clamp(.92rem,1.3vw,1.12rem);margin-top:1rem;max-width:44rem;line-height:1.65}
@@ -124,8 +124,8 @@ p{margin:0}
 .hub{background:linear-gradient(160deg,rgba(124,134,255,.24),rgba(176,107,255,.09));
  border:1px solid rgba(124,134,255,.45);border-radius:19px;padding:1.3rem 1.9rem;text-align:center;
  box-shadow:0 16px 46px rgba(124,134,255,.20),inset 0 1px 0 rgba(255,255,255,.10)}
-.hub-ico{display:flex;justify-content:center;color:var(--c1);margin-bottom:.55rem}
-.hub-ico svg{width:26px;height:26px}
+.hub-ico{display:flex;justify-content:center;margin-bottom:.55rem}
+.hub-ico svg{width:30px;height:30px;border-radius:9px;display:block;box-shadow:0 6px 18px rgba(99,102,241,.34)}
 .hub-n{font-size:1.35rem;font-weight:780;letter-spacing:-.025em}
 .hub-s{font-size:.76rem;color:var(--c1);margin-top:.3rem}
 
@@ -250,9 +250,7 @@ p{margin:0}
 <section class="s cover"><div class="mesh"></div><div class="grid-bg"></div>
   <div class="cv">
     <div class="eyebrow">LOCAL LLM GATEWAY</div>
-    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-      <path d="M12 2l8.66 5v10L12 22l-8.66-5V7L12 2z"/><path d="M3.3 7L12 12l8.7-5M12 12v10"/>
-    </svg></div>
+    <div class="logo"><svg viewBox="0 0 256 256" fill="none"><defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="48" fill="url(#ag)"/><circle cx="128" cy="128" r="32" fill="#fff" opacity=".95"/><circle cx="128" cy="128" r="20" fill="#6366f1"/><g fill="#fff" opacity=".85"><circle cx="72" cy="80" r="10"/><circle cx="184" cy="80" r="10"/><circle cx="72" cy="176" r="10"/><circle cx="184" cy="176" r="10"/></g><g stroke="#fff" stroke-width="3" opacity=".4" stroke-linecap="round"><line x1="82" y1="85" x2="112" y2="118"/><line x1="174" y1="85" x2="144" y2="118"/><line x1="82" y1="171" x2="112" y2="138"/><line x1="174" y1="171" x2="144" y2="138"/></g></svg></div>
     <h1>AIGate</h1>
     <p class="claim">把重复的上下文，<br>以最低成本送出去</p>
     <p class="sub">一个地址接入所有编程工具，一个面板管住所有模型供应商</p>
@@ -265,7 +263,7 @@ p{margin:0}
   <div class="flow">
     <div class="fcol"><div class="fcol-t">你的编程工具</div><span class="node">Cursor</span><span class="node">Claude Code</span><span class="node">Trae / 其他</span></div>
     <div class="wire"><svg viewBox="0 0 80 12" preserveAspectRatio="none"><path d="M0 6 H68" class="wireline"/><path d="M64 1 L74 6 L64 11" class="wirehead"/></svg></div>
-    <div class="hub"><div class="hub-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7L12 2z"/><path d="M3.3 7L12 12l8.7-5M12 12v10"/></svg></div>
+    <div class="hub"><div class="hub-ico"><svg viewBox="0 0 256 256" fill="none"><defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="48" fill="url(#ag)"/><circle cx="128" cy="128" r="32" fill="#fff" opacity=".95"/><circle cx="128" cy="128" r="20" fill="#6366f1"/><g fill="#fff" opacity=".85"><circle cx="72" cy="80" r="10"/><circle cx="184" cy="80" r="10"/><circle cx="72" cy="176" r="10"/><circle cx="184" cy="176" r="10"/></g><g stroke="#fff" stroke-width="3" opacity=".4" stroke-linecap="round"><line x1="82" y1="85" x2="112" y2="118"/><line x1="174" y1="85" x2="144" y2="118"/><line x1="82" y1="171" x2="112" y2="138"/><line x1="174" y1="171" x2="144" y2="138"/></g></svg></div>
       <div class="hub-n">AIGate</div><div class="hub-s">本地 · 单文件 · 零外部依赖</div></div>
     <div class="wire"><svg viewBox="0 0 80 12" preserveAspectRatio="none"><path d="M0 6 H68" class="wireline"/><path d="M64 1 L74 6 L64 11" class="wirehead"/></svg></div>
     <div class="fcol"><div class="fcol-t">模型供应商</div><span class="node">OpenAI 兼容</span><span class="node">Anthropic</span><span class="node">自建 / 中转</span></div>
@@ -273,15 +271,15 @@ p{margin:0}
 <section class="s"><h2>协议由客户端决定，不由网关替你选</h2><p class="lead">客户端打哪个入口，就用哪个协议转发 —— 上游本来就支持就直传，不支持才转换</p>
   <table class="matrix"><thead><tr><th>客户端入口</th><th>网关行为</th><th>发往上游</th></tr></thead><tbody><tr><td><code>/v1/chat/completions</code></td><td class="ok">命中即直传</td><td><code>/chat/completions</code></td></tr><tr><td><code>/v1/messages</code></td><td class="ok">命中即直传</td><td><code>/messages</code></td></tr><tr><td><code>/v1/responses</code></td><td class="ok">命中即直传</td><td><code>/responses</code></td></tr></tbody></table>
   <p class="foot-note">「直传」= 请求体<b>逐字节保真</b>：Anthropic 的 thinking 块与 signature、Responses 的 reasoning item 都不会被往返翻译掉。</p></section>
-<section class="s"><h2>为什么不是「网关自己猜协议」</h2><p class="lead">这是整个项目最关键的架构决定，也踩过坑</p>
+<section class="s"><h2>为什么不是「网关自己猜协议」</h2><p class="lead">协议由谁决定，决定了这个网关是「透明管道」还是「多一层翻译」</p>
   <div class="tr-list"><div class="tr"><div class="tr-k">朴素做法</div><div class="tr-v"><div class="tr-w">让配置者手动为每个模型勾选它支持什么协议</div><div class="tr-o">真实配置里 <b>233 个模型无一勾选</b> —— 功能等于不存在</div></div></div><div class="tr"><div class="tr-k">另一种朴素做法</div><div class="tr-v"><div class="tr-w">网关按模型名猜协议（claude-* → anthropic，grok-* → responses）</div><div class="tr-o">实测同名模型<b>跨服务方协议不同</b>：<code>claude-opus-4-8</code> 在官方走 anthropic、在转售商走 openai —— 协议取决于<b>谁在提供服务</b>，不是模型名</div></div></div><div class="tr hi"><div class="tr-k">我们的做法</div><div class="tr-v"><div class="tr-w">客户端入口即意图：打 <code>/v1/responses</code> 就是要 Responses 协议。网关只需回答「上游能不能接」</div><div class="tr-o">零手工配置；命中即直传，字段不丢</div></div></div><div class="tr"><div class="tr-k">为什么敢这么做</div><div class="tr-v"><div class="tr-w">没有任何证据表明上游不支持时，<b>尊重客户端的选择</b>，而不是静默换成 chat</div><div class="tr-o">宁可让上游回一个诚实的错误，也不要静默换协议 —— 后者会掩盖真实失败点，也丢掉了直传才有的字段保真</div></div></div></div></section>
 <section class="s"><h2>核心能力</h2><p class="lead">以省量为主线，其余三项都是为它服务</p><div class="grid-2"><div class="gc core"><div class="gci">↓</div><h4>省量（主线）</h4><p>剥离推理链、历史裁剪、响应缓存 —— 且<b>不破坏上游 KV 缓存</b></p></div><div class="gc"><div class="gci">↔</div><h4>协议自动匹配</h4><p>客户端入口即意图；命中直传，字段不被往返翻译</p></div><div class="gc"><div class="gci">◇</div><h4>模型别名与共存</h4><p>中转 ID 与上游真名解耦；同名模型跨供应商各自成路由</p></div><div class="gc"><div class="gci">◷</div><h4>可观测与韧性</h4><p>省量逐项可见；熔断、退避重试、超时与体积上限</p></div></div></section>
 <section class="s"><h2>省量：三种手段，各自的判据</h2><p class="lead">叠加使用，但每一处取舍都有理由 —— 不是能省就省</p>
   <div class="st-row three"><div class="st-item"><h4>剥离推理链</h4><p>剥掉带 <code>tool_calls</code> 的 assistant 消息里的推理链。<b>Anthropic 链路一律不剥</b>：extended thinking 的 thinking 块必须连签名原样回传，剥掉会 400。开关粒度按<b>模型</b>而非供应商 —— 同一中转下混着多种协议</p></div><div class="st-item"><h4>历史裁剪</h4><p>只保留最近 N 个 user 轮。默认 <b>0 = 不裁剪</b>，优先保上下文完整性；真超限时由<b>紧急瘦身</b>兜底</p></div><div class="st-item"><h4>响应缓存</h4><p>只缓存 <code>stream:false</code> 且 2xx 的响应。键 = <b>去掉 stream 字段后的请求体做确定性序列化</b></p></div></div><div class="honest">被剥离的内容绝大多数落在上游的<b>缓存命中区</b> —— 所以省下的<b>金额</b>远小于 token 数给人的印象。但反过来看：正因为它落在命中区，剥离才<b>不会破坏缓存</b>，两者是同一件事的两面。</div></section>
-<section class="s"><h2>剥离为什么不会把缓存打坏</h2><p class="lead">这是「省量」能不能成立的关键 —— 也是设计时最纠结的地方</p>
+<section class="s"><h2>剥离为什么不会把缓存打坏</h2><p class="lead">省量的前提是不把上游缓存打坏 —— 两者是同一件事的两面</p>
   <div class="tr-list"><div class="tr"><div class="tr-k">朴素做法</div><div class="tr-v"><div class="tr-w">把所有历史里的推理链都剥掉，省得最多</div><div class="tr-o">会改动<b>前缀</b>，导致上游 KV 缓存全部失效 —— 下一次请求的输入从「命中价」变成「未命中价」，<b>反而更贵</b></div></div></div><div class="tr"><div class="tr-k">另一种做法</div><div class="tr-v"><div class="tr-w">干脆不剥，保持请求体完全不变</div><div class="tr-o">缓存最稳，但白白多付那部分推理链的传输费。实测推理链占输入的比例不低</div></div></div><div class="tr hi"><div class="tr-k">我们的做法</div><div class="tr-v"><div class="tr-w">只剥「带 <code>tool_calls</code> 的 assistant 消息」里的推理链，改动集中在<b>追加区之后</b></div><div class="tr-o">前面已缓存的前缀不受影响 —— 实测剥离后命中率仍为 <b>98.7%</b></div></div></div><div class="tr"><div class="tr-k">代价与边界</div><div class="tr-v"><div class="tr-w">Anthropic 协议不剥（签名校验会失败）；个别模型要求 reasoning 与 tool_calls 并存，也可单独关掉</div><div class="tr-o">留出「按模型开关」这一层，而不是全局一刀切</div></div></div></div></section>
 <section class="s"><h2>坏上游怎么被隔离，又怎么自动恢复</h2><p class="lead">按供应商维度做熔断：三态状态机，参数写在配置里</p>
-  <div class="tr-list"><div class="tr"><div class="tr-k">朴素做法</div><div class="tr-v"><div class="tr-w">上游报错就一直重试</div><div class="tr-o">把请求打在已挂的端点上，客户端一直等到超时；还可能把上游彻底压垮</div></div></div><div class="tr"><div class="tr-k">另一种做法</div><div class="tr-v"><div class="tr-w">一失败就永久拉黑该供应商</div><div class="tr-o">上游往往只是短暂抖动 —— 永久拉黑会把「可恢复」当成「已死」</div></div></div><div class="tr hi"><div class="tr-k">我们的做法</div><div class="tr-v"><div class="tr-w">三态熔断：<b>连续失败 4 次</b>、或窗口内<b>错误率超 60%</b>（窗口 20 条）→ 断开；等 <b>60 秒</b> 放行<b>单个</b>探测；探测<b>连续成功 2 次</b> → 恢复</div><div class="tr-o">失败期快速失败，抖动期自动试探，恢复后自动回流</div></div></div><div class="tr"><div class="tr-k">设计要点</div><div class="tr-v"><div class="tr-w">探测名额<b>只允许被同一个请求认领一次</b></div><div class="tr-o">若实现里被同一请求消耗两次，探测就永远发不出去、熔断永不自动恢复 —— 这类缺陷不报错，只表现为「一直 503，只能手动重置」</div></div></div></div></section>
+  <div class="tr-list"><div class="tr"><div class="tr-k">朴素做法</div><div class="tr-v"><div class="tr-w">上游报错就一直重试</div><div class="tr-o">把请求打在已挂的端点上，客户端一直等到超时；还可能把上游彻底压垮</div></div></div><div class="tr"><div class="tr-k">另一种做法</div><div class="tr-v"><div class="tr-w">一失败就永久拉黑该供应商</div><div class="tr-o">上游往往只是短暂抖动 —— 永久拉黑会把「可恢复」当成「已死」</div></div></div><div class="tr hi"><div class="tr-k">我们的做法</div><div class="tr-v"><div class="tr-w">三态熔断：<b>连续失败 4 次</b>、或窗口内<b>错误率超 60%</b>（窗口 20 条）→ 断开；等 <b>60 秒</b> 放行<b>单个</b>探测；探测<b>连续成功 2 次</b> → 恢复</div><div class="tr-o">失败期快速失败，抖动期自动试探，恢复后自动回流</div></div></div><div class="tr"><div class="tr-k">设计要点</div><div class="tr-v"><div class="tr-w">半开状态只放行<b>一个</b>探测请求，其余仍被拒绝</div><div class="tr-o">避免探测期被正常流量压垮 —— 探测才有机会真正打到上游并验证恢复</div></div></div></div></section>
 <section class="s"><h2>为什么省量以 token 计，而不以金额计</h2><p class="lead">价格会变，token 不会 —— 这决定了面板的主口径</p>
   <div class="tr-list"><div class="tr"><div class="tr-k">朴素做法</div><div class="tr-v"><div class="tr-w">面板直接展示「省了多少钱」</div><div class="tr-o">价格随供应商调整、随促销变化、随高峰时段浮动 —— 同一个省量数字，隔一周就不再成立，反而让人怀疑数据</div></div></div><div class="tr"><div class="tr-k">另一种做法</div><div class="tr-v"><div class="tr-w">只显示总花费</div><div class="tr-o">看不到钱花在什么结构上，也就不知道该优化什么</div></div></div><div class="tr hi"><div class="tr-k">我们的做法</div><div class="tr-v"><div class="tr-w">以 <b>token</b> 作为省量主口径（剥离 / 裁剪 / 缓存三类分别记账），金额作为<b>参考</b>并明确标注为估算</div><div class="tr-o">token 是<b>实在的</b>：无论单价怎么变，少发的 tokens 都不会被计费</div></div></div><div class="tr"><div class="tr-k">金额怎么估</div><div class="tr-v"><div class="tr-w">按该请求自身的 KV 命中比例，在「未命中价」与「缓存价」之间加权；未配价的模型显示「—」而非 0</div><div class="tr-o"><b>「没配价」与「免费」是两件事</b>，混为一谈会严重误导</div></div></div></div></section>
 <section class="s"><h2>怎么发现模型开始「鬼打墙」</h2><p class="lead">推理模型偶发陷入重复输出，会一直烧 token 直到上限</p>
