@@ -33,11 +33,18 @@ verify_*.ps1
 
 # ZCode 工作记忆
 .zcode/
+# ZCode 工具自己的排除配置（内容 ≠ .gitignore：含 ZCode 默认规则，故两者不合并）
+.zcodeignore
 
 # 临时调试/备份文件
+# 注: NUL / served_check.html / design-preview/ / transform.py 已于 2026-09-30 从根目录清掉
+#     （其中 NUL 与 served_check.html 会被工具重新生成，故条目保留，避免再次污染 git status）
 NUL
 served_check.html
 design-preview/
 transform.py
 .openbitfun/
 .prism/
+
+# 归档区: 清理根目录时把「有内容但一过性」的遗留物移进来待复核，整目录确认无用后可手动删
+_trash/
