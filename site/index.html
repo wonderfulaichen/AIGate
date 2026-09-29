@@ -831,7 +831,7 @@ AIGATE_ADMIN_TOKEN=        # 留空则不鉴权</code></pre>
         <p>检查 <code>target/release/</code> 目录下是否有 <code>providers.json</code> 和 <code>.env</code>。首次启动会自动生成，如权限不足可手动创建空文件。更详细的错误信息会通过 Windows 消息框显示。</p>
       </details>
       <details data-reveal data-delay="1">
-        <summary>Token 统计为 0，或数字带 <code>≈</code> 前缀</summary>
+        <summary><span>Token 统计为 0，或数字带 <code>≈</code> 前缀</span></summary>
         <p>带 <code>≈</code> 表示该条请求上游未返回 <code>usage</code>，AIGate 按可见文本估算（中文实际约 3 字节/token，估算偏保守），并标记为估算值而非实测。若大量请求都是估算，通常是上游不支持 <code>usage</code> 字段。</p>
       </details>
       <details data-reveal data-delay="2">
