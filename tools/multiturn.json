@@ -1,0 +1,153 @@
+{
+  "without": [
+    {
+      "turn": 1,
+      "sent_bytes": 1099,
+      "recv_bytes": 1096,
+      "messages": 3,
+      "with_reasoning": 1
+    },
+    {
+      "turn": 2,
+      "sent_bytes": 2079,
+      "recv_bytes": 2076,
+      "messages": 5,
+      "with_reasoning": 2
+    },
+    {
+      "turn": 3,
+      "sent_bytes": 3590,
+      "recv_bytes": 3587,
+      "messages": 8,
+      "with_reasoning": 3
+    },
+    {
+      "turn": 4,
+      "sent_bytes": 4570,
+      "recv_bytes": 4567,
+      "messages": 10,
+      "with_reasoning": 4
+    },
+    {
+      "turn": 5,
+      "sent_bytes": 5550,
+      "recv_bytes": 5547,
+      "messages": 12,
+      "with_reasoning": 5
+    },
+    {
+      "turn": 6,
+      "sent_bytes": 7061,
+      "recv_bytes": 7058,
+      "messages": 15,
+      "with_reasoning": 6
+    },
+    {
+      "turn": 7,
+      "sent_bytes": 8041,
+      "recv_bytes": 8038,
+      "messages": 17,
+      "with_reasoning": 7
+    },
+    {
+      "turn": 8,
+      "sent_bytes": 9021,
+      "recv_bytes": 9018,
+      "messages": 19,
+      "with_reasoning": 8
+    },
+    {
+      "turn": 9,
+      "sent_bytes": 10532,
+      "recv_bytes": 10529,
+      "messages": 22,
+      "with_reasoning": 9
+    },
+    {
+      "turn": 10,
+      "sent_bytes": 11513,
+      "recv_bytes": 11510,
+      "messages": 24,
+      "with_reasoning": 10
+    }
+  ],
+  "with_strip": [
+    {
+      "turn": 1,
+      "sent_bytes": 1099,
+      "recv_bytes": 266,
+      "messages": 3,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 2,
+      "sent_bytes": 2079,
+      "recv_bytes": 416,
+      "messages": 5,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 3,
+      "sent_bytes": 3590,
+      "recv_bytes": 1097,
+      "messages": 8,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 4,
+      "sent_bytes": 4570,
+      "recv_bytes": 1247,
+      "messages": 10,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 5,
+      "sent_bytes": 5550,
+      "recv_bytes": 1397,
+      "messages": 12,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 6,
+      "sent_bytes": 7061,
+      "recv_bytes": 2078,
+      "messages": 15,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 7,
+      "sent_bytes": 8041,
+      "recv_bytes": 2228,
+      "messages": 17,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 8,
+      "sent_bytes": 9021,
+      "recv_bytes": 2378,
+      "messages": 19,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 9,
+      "sent_bytes": 10532,
+      "recv_bytes": 3059,
+      "messages": 22,
+      "with_reasoning": 0
+    },
+    {
+      "turn": 10,
+      "sent_bytes": 11513,
+      "recv_bytes": 3210,
+      "messages": 24,
+      "with_reasoning": 0
+    }
+  ],
+  "final": {
+    "turn": 10,
+    "sent": 11513,
+    "recv_no_strip": 11510,
+    "recv_strip": 3210,
+    "saved": 8300
+  }
+}

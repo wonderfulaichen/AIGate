@@ -14,7 +14,8 @@
 > 🔁 同日还做了一遍复核：部署份哈希/PID/线上版本、未推送提交数（15）、工作区文件数（10）
 > 与**未跟踪列表（已清空）**都已按实测更正；顺手查出 `verify_logo.py` PART D 的 mtime 误报（见 §2.1 复测补记）。
 >
-> ⚠️ **仍要留意两条**：生成器在 `.openbitfun/tmp/` 且**不入库**（§7 待定）；`site/index.html` **不要再动**。
+> ✅ **工具链已入库**（2026-09-30）：门禁 / 生成器 / 取证脚本 + 4 个口径快照 JSON 全在 `tools/`，受版本管理（见 §4）。
+> ⚠️ 仍要留意：`site/index.html` **不要再动**；`.openbitfun/` 仍是**本地草稿区**（隔离实例 / 截图 / 视频 / 预览），不入库。
 >
 > 上一轮（09-29 重建部署轮）已闭环 §2.2「CHANGELOG 未重烤」—— 重烤 + 重部署完成。
 >
@@ -147,9 +148,10 @@ shape 页又直接读 shape 的字段 → **谁重跑一次就把这个对齐冲
 **验收**：`shoot_deck_hd.py 8 10 12`（强制终态那套）重拍相关页，第 9 页实测显示 **97.5% / 2.5%**，
 排版无变化 ✓。
 
-⚠️ **遗留（重要）**：生成器位于 `.openbitfun/tmp/gen_deck.py`，而 `.openbitfun/` **被 `.gitignore` 忽略** ——
-**它不在仓库里**。也就是说"回灌"目前只落在本地磁盘上：换机器 / 换新对话（若工作区不是同一份）就取不到。
-要不要把它（连同其它门禁脚本）移进仓库纳入版本管理，见 §7。
+✅ **已解决（2026-09-30）**：工具链整体搬进仓库 `tools/`（详见 §4 与 §7）—— **43 个文件**
+（37 个脚本 + 4 个口径快照 JSON + 2 个门禁输入 `split_manifest.json` / `admin_orig.html`）已纳入版本管理，
+不再只存在于本地磁盘。搬完后全部重跑验证：生成器产物与提交版**逐字节一致**、12 道门禁全绿、
+端到端 `e2e_proto_auto_any.py` PASS。
 
 ### 2.1c ⚠️ 今起的新纪律：产物不许手改
 
@@ -179,9 +181,9 @@ shape 页又直接读 shape 的字段 → **谁重跑一次就把这个对齐冲
 （09-28 就因此误判过一次）。判定 exe 内容一律：
 
 ```powershell
-python .openbitfun\tmp\e2e_proto_auto_any.py "<exe 完整路径>"   # 行为实测
-python .openbitfun\tmp\cl_dump.py "<exe>" out.json             # 烤入资源, 比哈希
-python .openbitfun\tmp\check_exe_logo.py [exe...]              # 品牌标: 新/旧, 直接字节命中
+python tools/e2e_proto_auto_any.py "<exe 完整路径>"   # 行为实测
+python tools/cl_dump.py "<exe>" out.json             # 烤入资源, 比哈希
+python tools/check_exe_logo.py [exe...]              # 品牌标: 新/旧, 直接字节命中
 ```
 
 ⚠️ **资源管理器里显示的图标不能作为判据** —— 它受 Windows 图标缓存影响：exe 换了同名路径之后，
@@ -225,8 +227,9 @@ git -c http.proxy= -c https.proxy=http://127.0.0.1:7890 push origin main
 | 「未跟踪：`HANDOFF.md`」 | ❌ 已更正 —— `HANDOFF.md` **已入库**（`git ls-files` 命中），当前是 ` M` 状态 |
 | 「未跟踪：`assets/68hub/`、`assets/cc-switch/`」 | ❌ 已更正 —— **两个目录都不存在**（`assets/` 下只剩 `screenshots/`），故也不在未跟踪列表里 |
 
-注意 `.openbitfun/` 被忽略 —— 里面放着**全部验证脚本**（见 §4），不在仓库里，
-换机器/新对话时要另外取用。
+注意：**验证脚本自 2026-09-30 起已入库 `tools/`**（见 §4）—— 换机器 / 换新对话都取得到。
+`.openbitfun/` 被忽略，它现在只放**本地产物**：隔离实例 `iso_*`、截图 `shots/`、视频 `video/`、
+预览 `preview/`、图标核对 `logo_check/`。
 
 ---
 
@@ -286,31 +289,37 @@ git -c http.proxy= -c https.proxy=http://127.0.0.1:7890 push origin main
 
 ---
 
-## 4. 验证工装（`.openbitfun/tmp/`，**未纳入仓库**）
+## 4. 验证工装（`tools/`，**已纳入仓库**，2026-09-30 起）
+
+> 迁移口径：**脚本与它的输入在 `tools/`（入库），产物输出仍写 `.openbitfun/tmp/`（本地草稿区，不入库）**。
+> 脚本内部一律用 `__file__` 推导仓库根，可在任意工作目录调用（个别脚本的用法行还写着旧路径，不影响运行）。
+> ⚠️ **3 处刻意保留的绝对路径**（指向仓库之外的本机资源，已就地注释）：
+> `check_exe_logo.py` 的部署份 exe、`savings_audit.py` / `savings_shape.py` 的真实日志
+> `AI中转\data\logs.jsonl` —— 换机器要改这三行。
 
 ### 4.1 前端门禁（改前端后全跑）
 
 ```powershell
-node .openbitfun/tmp/verify_parts.js       # 切片拼接自洽 + 20 JS 部件语法 + include 顺序
-node .openbitfun/tmp/check_i18n.cjs        # i18n 中英双表缺键/重复键（build.rs 也拦）
-node .openbitfun/tmp/test_pages.cjs        # 页码/排序/粒度/分级 纯函数
-node .openbitfun/tmp/test_ime.cjs          # 搜索 IME 行为
-node .openbitfun/tmp/test_provload.cjs     # 供应商加载并发收口
-node .openbitfun/tmp/test_fmt_rules.cjs    # 前后端协议规则同源
-python .openbitfun/tmp/balance.py          # 标签配平（会吞掉后续页面）
-python .openbitfun/tmp/theme_complete.py   # 浅色 token 覆盖完整
-python .openbitfun/tmp/theme_dark_diff.py  # 暗色零变化（比对生效颜色集合）
-python .openbitfun/tmp/theme_contrast.py   # 浅色 WCAG 对比度
+node tools/verify_parts.js       # 切片拼接自洽 + 20 JS 部件语法 + include 顺序
+node tools/check_i18n.cjs        # i18n 中英双表缺键/重复键（build.rs 也拦）
+node tools/test_pages.cjs        # 页码/排序/粒度/分级 纯函数
+node tools/test_ime.cjs          # 搜索 IME 行为
+node tools/test_provload.cjs     # 供应商加载并发收口
+node tools/test_fmt_rules.cjs    # 前后端协议规则同源
+python tools/balance.py          # 标签配平（会吞掉后续页面）
+python tools/theme_complete.py   # 浅色 token 覆盖完整
+python tools/theme_dark_diff.py  # 暗色零变化（比对生效颜色集合）
+python tools/theme_contrast.py   # 浅色 WCAG 对比度
 ```
 
 ### 4.2 截图工作流（headless Edge）
 
 ```powershell
-python .openbitfun\tmp\build_preview.py            # 拼接 + fetch 桩 + 生成 ?tab 变体
-python .openbitfun\tmp\mkwrap.py                   # 生成 wrapper（设主题 + 100% 宽 iframe）
-python .openbitfun\tmp\shoot.py s_dashboard --h=1200
-python .openbitfun\tmp\shoot.py s_dashboard --w=780 --as=narrow_
-python .openbitfun\tmp\shoot_deck.py 2             # 演示文稿第 3 页
+python tools/build_preview.py            # 拼接 + fetch 桩 + 生成 ?tab 变体
+python tools/mkwrap.py                   # 生成 wrapper（设主题 + 100% 宽 iframe）
+python tools/shoot.py s_dashboard --h=1200
+python tools/shoot.py s_dashboard --w=780 --as=narrow_
+python tools/shoot_deck.py 2             # 演示文稿第 3 页
 ```
 
 三条硬约束（都踩过）：
@@ -351,13 +360,13 @@ python .openbitfun\tmp\shoot_deck.py 2             # 演示文稿第 3 页
 > ⚠️ **产物不许手改**（2026-09-30 立的规矩，见 §2.1b/§2.1c）：演示稿只能由生成器产出。
 > 手改产物 → 下次重跑即被覆盖。改样式/文案一律改 `gen_deck.py` 再重跑。
 > 回灌是否成立，用「重跑生成器 + 与改前产物逐行对比」自证（当时只剩 5 行数据差异）。
-> ⚠️ 生成器在 `.openbitfun/tmp/`，**不入库**（`.openbitfun/` 被忽略）—— 见 §7。
+> ✅ 生成器与门禁脚本都在 `tools/`（**已入库**）；截图/视频等产物仍写 `.openbitfun/tmp/`（本地草稿区）。
 
 改完必须截图核对（生成成功 ≠ 排版正确）。**优先用 `shoot_deck_hd.py`**，它比 `shoot_deck.py` 可靠：
 
 ```powershell
-python .openbitfun\tmp\shoot_deck_hd.py 8 10 12     # 0-based 页码, 输出 1920x1080 到 video/deck_hd/
-python .openbitfun\tmp\shoot_deck.py 0 8 17         # 1600x900 预览用, 偶发空白/中间态
+python tools/shoot_deck_hd.py 8 10 12     # 0-based 页码, 输出 1920x1080 到 video/deck_hd/
+python tools/shoot_deck.py 0 8 17         # 1600x900 预览用, 偶发空白/中间态
 ```
 
 - `shoot_deck_hd.py` 注入 CSS **禁掉全部过渡并强制 `.on` 终态**，且**直接写 `data-to` 真值** ——
@@ -381,7 +390,7 @@ python .openbitfun\tmp\shoot_deck.py 0 8 17         # 1600x900 预览用, 偶发
 ### 4.5 品牌标同源门禁（2026-09-30 新增）
 
 ```powershell
-python .openbitfun\tmp\verify_logo.py     # 四部分全绿才算过
+python tools/verify_logo.py     # 四部分全绿才算过
 ```
 
 - **PART A** 五处矢量落点与母版 `icon.svg` **逐属性**比对（rect + 两条 path + 颜色）。
@@ -503,7 +512,8 @@ python .openbitfun\tmp\verify_logo.py     # 四部分全绿才算过
 - **移到 `_trash/<日期>/` 待复核 —— 有内容但一过性**：探测快照 `served_check.html`、
   一次性脚本 `transform.py`、探索稿 `design-preview/`、工具记忆 `.zcode/`。
   `_trash/` 已入 `.gitignore`；**整目录确认无用后再手动删**，不要当场抹掉。
-- **一律不动**：`.openbitfun/`（门禁与工装脚本，见 §4）、`data/`（运行实例的密钥与日志）、
+- **一律不动**：`.openbitfun/`（本地草稿区：隔离实例 / 截图 / 视频 / 预览 —— 工装脚本已移到 `tools/`）、
+  `data/`（运行实例的密钥与日志）、
   `target/`（cargo 构建缓存，清了下次全量重编）、`参考源码/`、`assets/`、`.codebuddy/`。
 
 两条 `.gitignore` 约定（2026-09-30 新增）：
@@ -609,7 +619,7 @@ git -c http.proxy= -c https.proxy=http://127.0.0.1:7890 push origin main
 | 项 | 说明 |
 |---|---|
 | ~~⚠️ 演示稿的改动只存在于「产物」里~~ | ✅ 已结（§2.1b）：已把 Apple 化 + 新标 + 装饰 + 文案**整体回灌** `gen_deck.py`，并用「重跑 + 与改前产物逐行对比」证明（只剩 5 行数据刷新）。**今起产物不许手改**（§2.1c） |
-| ⚠️ **生成器不入库（这是回灌唯一的软肋）** | `gen_deck.py` 在 `.openbitfun/tmp/`，而 `.openbitfun/` 被 `.gitignore` 忽略 → **回灌只落在本地磁盘**。待定：要不要把生成器（连带 `verify_logo.py` 等门禁脚本）移进仓库（如 `tools/`）纳入版本管理 |
+| ~~⚠️ **生成器不入库（这是回灌唯一的软肋）**~~ | ✅ 已解决（2026-09-30）：工具链搬进 `tools/` 并入库，**43 个文件** —— 37 个脚本（生成器 + 12 道门禁 + 取证与采集）+ 4 个口径快照 JSON + 门禁依赖的 `split_manifest.json` / `admin_orig.html`。搬完重跑验证：生成器产物与提交版**逐字节一致**、12 道门禁全绿、`e2e_proto_auto_any.py` PASS |
 | ~~⚠️ 演示稿「没改」的口径分歧~~ | ✅ 已结（§2.1a）：用户 2026-09-30 确认「其实已经是新的了」 |
 | ~~**提交本轮改动**~~ | ✅ 已完成（2026-09-30，用户明确要求后提交） |
 | ~~重建 + 重部署 exe~~ | ✅ 本轮已完成（§2.1 部署状态）：哈希 `704FC5D8…`，当前实例 PID 50692 |

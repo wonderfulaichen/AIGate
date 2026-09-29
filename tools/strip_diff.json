@@ -1,0 +1,79 @@
+{
+  "before": {
+    "messages": 8,
+    "assistant_plain": 2,
+    "assistant_toolcall": 1,
+    "messages_with_reasoning": 3,
+    "reasoning_bytes": 1776,
+    "body_bytes": 5932
+  },
+  "after": {
+    "messages": 8,
+    "assistant_plain": 2,
+    "assistant_toolcall": 1,
+    "messages_with_reasoning": 0,
+    "reasoning_bytes": 0,
+    "body_bytes": 1142
+  },
+  "detail": [
+    {
+      "index": 2,
+      "role": "assistant",
+      "has_tool_calls": false,
+      "reasoning_before": 571,
+      "reasoning_after": 0
+    },
+    {
+      "index": 4,
+      "role": "assistant",
+      "has_tool_calls": true,
+      "reasoning_before": 634,
+      "reasoning_after": 0
+    },
+    {
+      "index": 6,
+      "role": "assistant",
+      "has_tool_calls": false,
+      "reasoning_before": 571,
+      "reasoning_after": 0
+    }
+  ],
+  "saved_bytes": 4790,
+  "strip_saved_tokens_est": 1197,
+  "upstream_fields": [
+    [
+      "content",
+      "role"
+    ],
+    [
+      "content",
+      "role"
+    ],
+    [
+      "content",
+      "role"
+    ],
+    [
+      "content",
+      "role"
+    ],
+    [
+      "content",
+      "role",
+      "tool_calls"
+    ],
+    [
+      "content",
+      "role",
+      "tool_call_id"
+    ],
+    [
+      "content",
+      "role"
+    ],
+    [
+      "content",
+      "role"
+    ]
+  ]
+}

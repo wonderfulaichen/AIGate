@@ -1,0 +1,18 @@
+{
+  "logs": 5000,
+  "strip": 403813372,
+  "trim": 0,
+  "resp_cache": 0,
+  "total_saved": 403813372,
+  "strip_toolcall": 393848629,
+  "strip_plain": 9964743,
+  "toolcall_share_pct": 97.53233951846448,
+  "prompt_tokens": 1684308622,
+  "cache_hit": 1658270201,
+  "cache_miss": 19570389,
+  "completion": 4438135,
+  "hit_rate_pct": 98.83359664102535,
+  "in_out_ratio": 379.50819927739917,
+  "saved_share_of_input_pct": 23.975022553794183,
+  "req_with_savings_pct": 65.4
+}

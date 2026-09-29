@@ -1,0 +1,49 @@
+{
+  "logs": 5000,
+  "ok": 4900,
+  "req_with_savings": 3248,
+  "req_with_savings_pct": 66.28571428571429,
+  "saved_total": 413399100,
+  "top20_pct_share": 50.88315238228627,
+  "top10_count": 324,
+  "top10_share": 29.332119010418744,
+  "median_saved": 120505,
+  "p90_saved": 357390,
+  "max_saved": 398944,
+  "median_strip_ratio": 37.07529146757307,
+  "p90_strip_ratio": 97.36368684437885,
+  "median_input": 314835,
+  "p90_input": 668576,
+  "big_input_pct": 90.57837727365624,
+  "toolcall_tokens": 403845200,
+  "toolcall_share": 97.68894030006355,
+  "plain_tokens": 9553900,
+  "plain_share": 2.3110596999364534,
+  "top_models": [
+    {
+      "model": "commandcodeAI/deepseek/deepseek-v4.1-flash",
+      "saved": 350074665,
+      "reqs": 3143
+    },
+    {
+      "model": "commandcodeAI/xiaomi/mimo-v2.6-flash",
+      "saved": 43065751,
+      "reqs": 1342
+    },
+    {
+      "model": "commandcodeAI/deepseek/deepseek-v4-flash",
+      "saved": 11971487,
+      "reqs": 274
+    },
+    {
+      "model": "ginka/gpt-5.6-sol",
+      "saved": 4848196,
+      "reqs": 92
+    },
+    {
+      "model": "ginka/gpt-5.6-terra",
+      "saved": 3439001,
+      "reqs": 47
+    }
+  ]
+}
