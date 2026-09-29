@@ -3,16 +3,39 @@
 // 主要成员: computeModelTrend / onTrendHover / trendTooltipHtml
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
+    // 趋势图交叉淡入 (数据驱动): x-html 是**整段替换**, 没法靠 CSS 过渡, 只能由 JS 打标.
+    // 只在内容真的变了才播 —— 3s 轮询下数据常常没变, 少了这个判据就会变成每 3s 一次频闪.
+    // 空图/首次/降级直接换 (空态是另一块 DOM, 对它做淡出没有意义).
+    // **force 通路**: 切时间范围/图型时置 _trendForceFade, 让"内容碰巧相同"也重播一次 ——
+    // 用户刚点了控件, 必须有反馈, 否则读作"点了没反应".
+    // ⚠️ 有 pending 的淡入时不能走"内容相同就早退": 那个 pending 定时器握的是**旧** html,
+    //    放它跑完就会把已显示的旧图又贴回来 (所以 pending 时先清定时器再判重).
+    _setTrendHtml(html) {
+      const force = this._trendForceFade;
+      this._trendForceFade = false;
+      const pending = !!this._trendFadeTimer;
+      if (!pending && !force && this.modelTrendSvgHtml === html) return;
+      clearTimeout(this._trendFadeTimer); this._trendFadeTimer = 0;
+      if (!html || !this.modelTrendSvgHtml || prefersReducedMotion()) {
+        this.modelTrendSvgHtml = html; this.trendFading = false; return;
+      }
+      this.trendFading = true;
+      this._trendFadeTimer = setTimeout(() => {
+        this._trendFadeTimer = 0;
+        this.modelTrendSvgHtml = html;
+        this.trendFading = false;
+      }, 160);
+    },
     computeModelTrend() {
       const rows=this.stats?.model_trends||[]; const sums={};
       rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||'');sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
       const allKeys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6);
       const keys=allKeys.filter(k=>!this.hiddenModels[k]);
       this.modelTrendData={keys:allKeys,sums,dates:[],series:[],xPct:[],trendByTs:new Map()};
-      if(!rows.length||!keys.length){this.modelTrendSvgHtml='';return;}
+      if(!rows.length||!keys.length){this._setTrendHtml('');return;}
       const trends=(this.stats.trends||[]).filter(x=>x&&x.ts);
       const dates=[...new Map(trends.map(r=>[r.ts,r.date])).entries()].sort((a,b)=>a[0]-b[0]);
-      if(!dates.length){this.modelTrendSvgHtml='';return;}
+      if(!dates.length){this._setTrendHtml('');return;}
       // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
       const W=900,H=260,left=56,right=20,top=22,bottom=40,pw=W-left-right,ph=H-top-bottom;
       const palette=CHART_PALETTE;
@@ -53,22 +76,30 @@
           // 平滑曲线 (smooth() 此前只定义未使用 -> 图上一直是折角)
           const lineD=smooth(pts);
           const gid='tg'+si;
-          // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性
-          const areaOp=keys.length<=2?.22:(keys.length<=3?.13:.07);
+          // 多序列层次 (本轮): keys 已按用量降序, 故 si=0 即**主序列**。主序列满强度,
+          // 其余按排名递减**描边不透明度** —— 线宽仍固定 2px (frontend.md 的约定),
+          // 只靠不透明度做层级, 让"主脉络"先被读到, 而不是 N 条同级线互相打架.
+          const lead = si===0;
+          const lineOp = lead ? 1 : Math.max(.42, .78 - si*.09);
+          // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性。
+          // 且**只有主序列给到可感知的面**, 其余压到很淡 —— 多层渐变叠加会把整图糊成色块.
+          const areaOp = lead
+            ? (keys.length<=2?.22:(keys.length<=3?.14:.10))
+            : (keys.length<=2?.13:.045);
           out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
             +'<stop offset="0" stop-color="'+color+'" stop-opacity="'+areaOp+'"/>'
             +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
           // 面积沿同一条平滑曲线闭合到基线, 与折线严格同形
           const areaD=lineD+' L'+x(n-1)+','+(top+ph)+' L'+x(0)+','+(top+ph)+' Z';
           out+='<path d="'+areaD+'" fill="url(#'+gid+')"/>';
-          out+='<path d="'+lineD+'" stroke="'+color+'" class="chart-line"/>';
+          out+='<path d="'+lineD+'" stroke="'+color+'" stroke-opacity="'+lineOp+'" class="chart-line"/>';
           // 不画静态圆点 (对齐 cc-switch: 其图表全程无 dot, 靠悬停 activeDot)。
           // 点位由悬停十字线 + 浮层指示, 曲线本身保持干净。
         });
       }
       out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+(top+ph)+'" y2="'+(top+ph)+'" class="chart-base"/>';
       const step=Math.max(1,Math.ceil(n/8));dates.forEach((d,i)=>{if(i%step===0||i===n-1)out+='<text x="'+x(i)+'" y="'+(H-12)+'" text-anchor="middle" class="chart-axis">'+this.escapeHtml(d[1]||'')+'</text>';});out+='</svg>';
-      this.modelTrendSvgHtml=out;
+      this._setTrendHtml(out);
     },
     // ── Token 趋势悬停: 十字线 + 该时段各模型用量浮层 ──
     onTrendHover(ev) {
@@ -132,6 +163,7 @@
       if (m !== 'line' && m !== 'bar') return;
       this.chartMode = m;
       this.saveChartPrefs();
+      this._trendForceFade = true;   // 切图型必须给反馈 (见 _setTrendHtml 的 force 说明)
       this.computeModelTrend();
     },
     restoreChartPrefs() {

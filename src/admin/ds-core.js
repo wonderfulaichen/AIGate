@@ -21,7 +21,7 @@
           per_model: (s.per_model || []).slice(0, 12), per_provider: (s.per_provider || []).slice(0, 12),
           top_models: (s.top_models || []).slice(0, 12), today_requests: s.today_requests,
           trends: [], source_window: s.source_window, window_minutes: s.window_minutes,
-          audit: s.audit, _snapshot: true,
+          audit: s.audit, session: s.session, _snapshot: true,
         }));
       } catch (e) { /* 配额/隐私模式: 快照是优化, 失败无妨 */ }
     },
@@ -187,7 +187,10 @@
       }
       this.activeTab = tabId;
       this.logPage = 0;
-      if (tabId==='dashboard') { this.fetchStats(); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
+      // 切回概览重播 KPI 数字补间: 补间槽是持久对象, 目标值没变时 numTween 会直接返回旧值,
+      // 故必须显式打 replay 标 (否则只有"手动刷新"能重播, 切页签毫无数字反馈).
+      // 首次加载传 false (守 numTween 的"初值即真值"约束, 避免首屏像加载动画).
+      if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
       if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); this.fetchDegradations(); }
       if (tabId==='records') { this.fetchLogs(); }
       if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
@@ -215,12 +218,25 @@
       // 竞态防护: 快速切换/轮询叠加时先 abort 上一次 —— 旧响应后到会覆盖新数据.
       if (this._logsAbort) { try { this._logsAbort.abort(); } catch(e){} }
       const ac = new AbortController(); this._logsAbort = ac;
-      try { const r=await fetch('/admin/api/logs', {headers:authHeaders(), signal: ac.signal}); if(r.ok) { this.logs=await r.json(); this.clampLogPage(); } } catch(e){}
+      try { const r=await fetch('/admin/api/logs', {headers:authHeaders(), signal: ac.signal}); if(r.ok) { this.logs=await r.json(); this._markNewLogs(); this.clampLogPage(); } } catch(e){}
       finally {
         // 被后续请求取代 (abort): 首载归属交给后来者, 本次不置 logsFetched —— 否则会被
         // 一次被取消的请求把「无数据」提前显示成 0 条 (无数据 ≠ 0).
         if (this._logsAbort === ac) { this._logsAbort = null; this.logsFetched = true; }
       }
+    },
+    // 新到的日志行高亮 (数据驱动动效): 只在**最新一条的时间戳变大**时给那一行打标,
+    // 由 CSS `.row-flash` 播一次 1.1s 主色底 (见 components.css).
+    // 首载只记住不闪 —— 否则每次打开记录页整表都在闪, 反而看不出哪条是新的.
+    _markNewLogs() {
+      const top = this.logs.length ? Number(this.logs[0].timestamp) || 0 : 0;
+      if (!top) { this._lastTopLogTs = 0; this._flashLogTs = 0; return; }
+      if (!this._lastTopLogTs) { this._lastTopLogTs = top; return; }
+      if (top <= this._lastTopLogTs) return;
+      this._lastTopLogTs = top;
+      this._flashLogTs = top;
+      clearTimeout(this._flashLogTimer);
+      this._flashLogTimer = setTimeout(() => { this._flashLogTs = 0; }, 1200);
     },
     async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
     healthOf(name) { const h=(this.health||[]).find(x=>x.provider===name); return h?(h.status_level||''):''; },

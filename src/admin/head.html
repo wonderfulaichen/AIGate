@@ -31,4 +31,5 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <script defer src="/admin/static/alpine.min.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- 字体: 不引外链 —— 面板是零外部依赖的单文件应用, 且 fonts.googleapis.com 在国内不可达
+     (实测反而拖慢首帧并落到回退字体)。字体族统一由 base.css 的 --font-ui / --font-mono 定义。 -->

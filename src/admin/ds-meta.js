@@ -58,8 +58,11 @@
     },
     fmtTok(n) { if(!n) return '—'; if(n>=1e6) return (Math.round(n/1e5)/10)+'M'; if(n>=1000) return Math.round(n/1000)+'K'; return String(n); },
     // 模型元信息 chips 面板内容 (数据源 models.dev, 仅数字/布尔/i18n 文案, x-html 安全)
-    // 注: color 会作为 SVG 呈现属性 (stop-color/stroke) 输出, CSS 变量在该位置不解析,
-    // 故调用方传真实色值而非 var(...)。
+    // 迷你趋势线。
+    // ⚠️ SVG **呈现属性** (stroke=/stop-color=) 不解析 CSS 变量, 所以外观不能靠属性传色 ——
+    // 改造前调用点因此写死了旧品牌色 (紫), 换主色后这条线不会跟着变。
+    // 现改为**走 CSS 类**: 元素只挂 class, 取色交给 CSS 的 --spk (默认 --accent),
+    // 于是它随主题与品牌色自动更新。若调用方要指定色, 传第 2 参, 会以内联 --spk 覆盖。
     sparklineSvg(values,color) {
       const vals=(values||[]).map(Number).filter(v=>Number.isFinite(v));
       if(vals.length<2) return '';
@@ -70,7 +73,9 @@
       const pts=vals.map((v,i)=>`${p+(w-2*p)*i/(vals.length-1)},${h-p-(v-mn)/span*(h-2*p)}`);
       const d='M'+pts.join(' L');
       const area=`${p},${h} ${pts.join(' ')} ${w-p},${h}`;
-      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="sp${Math.abs(color.length+vals.length)}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".24"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" fill="url(#sp${Math.abs(color.length+vals.length)})"/><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+      const gid='spk'+Math.abs((String(color||'').length)+vals.length);
+      const style=color?` style="--spk:${color}"`:'';
+      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"${style}><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="spk-stop" stop-opacity=".24"/><stop offset="1" class="spk-stop" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" class="spk-fill" fill="url(#${gid})"/><polyline points="${pts.join(' ')}" class="spk-line"/></svg>`;
     },
     metaChipsHtml(m) {
       const meta=this.metaFor(m);

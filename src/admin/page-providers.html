@@ -33,7 +33,7 @@
 <th style="text-align:right" x-text="t('actions')"></th>
 </tr></thead>
 <tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
-  <td><div style="width:28px;height:28px;border-radius:6px;overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
+  <td><div style="width:28px;height:28px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
   <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
   <td>
     <!-- P2: 状态色统一走 bcls(tone) 语义表 (原为各处手写三元链, 同一状态在不同页取不同色) -->
@@ -44,7 +44,7 @@
       <div style="margin-top:4px;max-width:210px">
         <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
         <template x-if="prov._errOpen">
-          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
             <div x-text="prov._testResult.status"></div>
             <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
           </div>
@@ -109,7 +109,7 @@
       <div style="margin-top:6px">
         <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
         <template x-if="prov._errOpen">
-          <div style="margin-top:4px;padding:6px 8px;border-radius:6px;background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
+          <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
             <div x-text="prov._testResult.status"></div>
             <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
           </div>

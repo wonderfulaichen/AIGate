@@ -153,6 +153,20 @@ function dashboard() {  return {
     liveMsg: '',
     // 焦点归还: 打开浮层时记录触发元素, 关闭后把焦点还回去 (键盘用户不迷路).
     _lastFocus: null,
+    // ── 数据驱动动效的瞬时状态 (全部下划线前缀 = 非业务状态, 不持久化) ──
+    // KPI 数字补间槽位: key -> {shown, target, timer, gen}. **必须是响应式对象** ——
+    // 模板里 x-text 读的就是 shown, 靠它逐帧触发重渲染 (详见 ds-fmt.js::numTween).
+    _numAnim: {},
+    // 补间"代数": 手动刷新时 +1, 让所有数字从 0 重滚一遍 (即使目标值没变).
+    // 用代数而非布尔 —— 布尔会被第一个消费它的 key 关掉, 其余 key 就漏掉了.
+    _numReplayGen: 0,
+    // 趋势图交叉淡入: fading=true 时 SVG 容器压到 .45 不透明度, 换完 html 再复位.
+    trendFading: false, _trendFadeTimer: 0,
+    // 切时间范围/图型时置真: 让趋势图**即使内容相同也重播**一次淡入 (否则用户点了控件毫无反馈).
+    _trendForceFade: false,
+    // 新日志行高亮: _flashLogTs 是"本次新到"的时间戳, 行模板按它打 .row-flash;
+    // _lastTopLogTs 是上一次列表最新一条的时间戳, 用来判断"到底有没有新行".
+    _flashLogTs: 0, _lastTopLogTs: 0, _flashLogTimer: 0,
 
     // Donut chart
     donutColors: CHART_PALETTE,

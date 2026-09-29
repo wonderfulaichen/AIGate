@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path, State};
@@ -170,6 +170,21 @@ pub struct LogBuffer {
     session_cache_hit_tokens: Arc<AtomicU64>,
     /// 本轮上游 KV Cache 未命中 token 累计.
     session_cache_miss_tokens: Arc<AtomicU64>,
+    // ─── 今日 (东八区日界) 累计计数 ───
+    // 与 session_* 分开维护: session 是"进程启动以来"(重启清零), 今日是"自然日"(跨日清零).
+    // 两者都独立于滚动窗口, 所以都不会像 total_requests 那样饱和在 5000.
+    /// 最近一次累加所属的东八区日序号; 与当前日不符即触发今日计数归零.
+    today_day: Arc<AtomicI64>,
+    /// 今日请求总数.
+    today_requests: Arc<AtomicU64>,
+    /// 今日成功请求数.
+    today_success: Arc<AtomicU64>,
+    /// 今日输入 token 累计.
+    today_prompt_tokens: Arc<AtomicU64>,
+    /// 今日输出 token 累计.
+    today_completion_tokens: Arc<AtomicU64>,
+    /// 今日上游 KV Cache 命中 token 累计.
+    today_cache_hit_tokens: Arc<AtomicU64>,
 }
 
 impl LogBuffer {
@@ -186,6 +201,14 @@ impl LogBuffer {
             session_completion_tokens: Arc::new(AtomicU64::new(0)),
             session_cache_hit_tokens: Arc::new(AtomicU64::new(0)),
             session_cache_miss_tokens: Arc::new(AtomicU64::new(0)),
+            // 初值 -1 而非 0: 0 是 1970-01-01 的日序号, 首次 push 时 swap 必然不等 → 触发一次归零,
+            // 保证计数从干净状态开始 (若初值取 0 且首条日志恰好落在日序号 0, 会漏掉这次归零).
+            today_day: Arc::new(AtomicI64::new(-1)),
+            today_requests: Arc::new(AtomicU64::new(0)),
+            today_success: Arc::new(AtomicU64::new(0)),
+            today_prompt_tokens: Arc::new(AtomicU64::new(0)),
+            today_completion_tokens: Arc::new(AtomicU64::new(0)),
+            today_cache_hit_tokens: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -325,6 +348,28 @@ impl LogBuffer {
             .fetch_add(log.prompt_cache_hit_tokens as u64, Ordering::Relaxed);
         self.session_cache_miss_tokens
             .fetch_add(log.prompt_cache_miss_tokens as u64, Ordering::Relaxed);
+        // ─── 今日 (东八区日界) 累计: 跨日先归零, 再累加 ───
+        // 用 `swap` 让"第一个发现跨日的线程"独家负责清零, 从而**不必每请求加锁**。
+        // 已知极小概率: 清零与并发累加交错时, 会丢掉跨日瞬间的 1~2 条计数 —— 一天只发生一次,
+        // 且只影响自然日切换那一刹那的边界请求, 不值得为此引入互斥锁 (那会给热路径加锁开销)。
+        let day = tz_day_index(now_ts());
+        if self.today_day.swap(day, Ordering::AcqRel) != day {
+            self.today_requests.store(0, Ordering::Relaxed);
+            self.today_success.store(0, Ordering::Relaxed);
+            self.today_prompt_tokens.store(0, Ordering::Relaxed);
+            self.today_completion_tokens.store(0, Ordering::Relaxed);
+            self.today_cache_hit_tokens.store(0, Ordering::Relaxed);
+        }
+        self.today_requests.fetch_add(1, Ordering::Relaxed);
+        if !is_log_error(&log) {
+            self.today_success.fetch_add(1, Ordering::Relaxed);
+        }
+        self.today_prompt_tokens
+            .fetch_add(log.prompt_tokens as u64, Ordering::Relaxed);
+        self.today_completion_tokens
+            .fetch_add(log.completion_tokens as u64, Ordering::Relaxed);
+        self.today_cache_hit_tokens
+            .fetch_add(log.prompt_cache_hit_tokens as u64, Ordering::Relaxed);
         // 日级 rollup 实时累加 (跨滚动窗口的持久化统计), 节流触发异步落盘.
         if let Some(book) = &self.rollup {
             book.record(&log);
@@ -342,7 +387,7 @@ impl LogBuffer {
         }
     }
 
-    /// 本轮 (进程启动以来) 累计统计快照, 不受日志滚动窗口封顶影响.
+    /// 本轮 (进程启动以来) + 今日 (东八区日界) 累计统计快照, 两者都不受日志滚动窗口封顶影响.
     pub fn session_stats(&self) -> SessionStats {
         SessionStats {
             requests: self.session_requests.load(Ordering::Relaxed),
@@ -351,6 +396,13 @@ impl LogBuffer {
             completion_tokens: self.session_completion_tokens.load(Ordering::Relaxed),
             cache_hit_tokens: self.session_cache_hit_tokens.load(Ordering::Relaxed),
             cache_miss_tokens: self.session_cache_miss_tokens.load(Ordering::Relaxed),
+            today: TodayStats {
+                requests: self.today_requests.load(Ordering::Relaxed),
+                success: self.today_success.load(Ordering::Relaxed),
+                prompt_tokens: self.today_prompt_tokens.load(Ordering::Relaxed),
+                completion_tokens: self.today_completion_tokens.load(Ordering::Relaxed),
+                cache_hit_tokens: self.today_cache_hit_tokens.load(Ordering::Relaxed),
+            },
         }
     }
 
@@ -667,6 +719,7 @@ pub async fn admin_static(Path(file): Path<String>) -> impl IntoResponse {
 /// 改前端按文件编辑; 严禁调整 include 顺序 (顺序即字节序, 即行为).
 const ADMIN_HTML: &str = concat!(
     include_str!("admin/head.html"),
+    include_str!("admin/font.css"),
     include_str!("admin/base.css"),
     include_str!("admin/components.css"),
     include_str!("admin/pages.css"),
@@ -916,8 +969,32 @@ pub async fn api_providers_get(
     let registry = state.registry.read().await;
     match registry.to_json() {
         Ok(json_str) => {
-            let parsed: serde_json::Value =
+            let mut parsed: serde_json::Value =
                 serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+            // 补一枚**只读**计算字段 `_static_formats` (零成本协议推测的结果: URL 路径信号 +
+            // 内置 host 目录), 供面板计算「该上游可用哪些协议」。
+            //
+            // 为什么由后端下发而不是前端复刻: 目录有 178 条 host 映射, 复制进 JS 必然与
+            // Rust 侧漂移; 而这一层正是 `available_api_formats` 的组成之一 —— 前端漏了它,
+            // 就会出现「面板显示 OpenAI, 后端实际发 /messages」(如端点为 `.../anthropic/v1`
+            // 或仅在 host 目录里的供应商)。
+            //
+            // 下划线前缀 + 保存端白名单构造 → 不会被写回 providers.json。
+            if let Some(list) = parsed.get_mut("providers").and_then(|p| p.as_array_mut()) {
+                let providers = registry.providers();
+                for pv in list.iter_mut() {
+                    let Some(name) = pv.get("name").and_then(|n| n.as_str()) else {
+                        continue;
+                    };
+                    let Some(p) = providers.iter().find(|x| x.name == name) else {
+                        continue;
+                    };
+                    let static_formats = crate::providers::free_protocol_guess(p);
+                    if let Some(sf) = static_formats {
+                        pv["_static_formats"] = serde_json::json!(sf);
+                    }
+                }
+            }
             Json(serde_json::json!({ "json": json_str, "parsed": parsed }))
         }
         Err(e) => Json(serde_json::json!({ "error": e })),
@@ -2307,6 +2384,31 @@ pub async fn api_tool_output_limit_set(
 
 // ─── 使用统计 ───
 
+/// 东八区"日序号" (自 epoch 起的天数) —— 用它判断是否跨日, 比存日期串更省且无解析开销.
+/// 与 `today_start` 口径必须一致 (同一个 TZ_OFFSET_SECS), 否则会出现"跨日了但没归零"。
+fn tz_day_index(ts: u64) -> i64 {
+    (ts as i64 + TZ_OFFSET_SECS).div_euclid(86400)
+}
+
+/// 今日 (东八区日界) 累计统计 —— 在 push 时累加, 跨日自动归零.
+///
+/// **为什么不能从 logs.jsonl 现算**: 日志文件有 `store::MAX_LINES`(5000) 行滚动上限,
+/// 当日量一旦达到这个数, 从文件筛 `timestamp >= today_start` 就会**饱和**。概览 Hero 的
+/// 「窗口累计」正是这样卡在 5000 的 —— 这里在写入路径独立累加, 与文件上限彻底解耦。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TodayStats {
+    /// 今日请求总数 (含错误/缓存命中).
+    pub requests: u64,
+    /// 今日成功请求数 (status < 400).
+    pub success: u64,
+    /// 今日输入 token 累计.
+    pub prompt_tokens: u64,
+    /// 今日输出 token 累计.
+    pub completion_tokens: u64,
+    /// 今日上游 KV Cache 命中 token 累计.
+    pub cache_hit_tokens: u64,
+}
+
 /// 本轮 (进程启动以来) 累计统计 — 在 push 时原子累加, 不受日志 5000 条滚动窗口封顶影响.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SessionStats {
@@ -2322,6 +2424,8 @@ pub struct SessionStats {
     pub cache_hit_tokens: u64,
     /// 本轮上游 KV Cache 未命中 token 累计.
     pub cache_miss_tokens: u64,
+    /// 今日累计 (东八区日界, 跨日自动归零) —— 同样不受文件 5000 行上限影响.
+    pub today: TodayStats,
 }
 
 /// 单个模型的聚合统计.
@@ -4648,6 +4752,30 @@ mod tests {
         let logs = rt.block_on(buf.drain_all());
         assert_eq!(logs[0].resp_cache_saved_tokens, 6050);
         assert_eq!(logs[0].prompt_tokens, 0);
+    }
+
+    /// 今日计数: 跨日必须**先归零再累加**, 且不受 session 口径影响.
+    /// 这条逻辑最容易在重构中被写错 (把归零漏掉 → 今日数字只增不减), 故单独钉住.
+    #[test]
+    fn today_stats_reset_on_day_boundary() {
+        let buf = LogBuffer::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let log = mk("m", "p", 80, 20);
+            buf.push(log.clone()).await;
+            assert_eq!(buf.session_stats().today.requests, 1, "首条应计入今日");
+
+            // 模拟跨日: 把"最近累加所属日"改成昨天 → 下一条 push 必须触发归零.
+            // 直接改字段而非等到真跨日, 否则这条断言无法在测试里复现.
+            buf.today_day
+                .store(tz_day_index(now_ts()) - 1, Ordering::Relaxed);
+            buf.push(log).await;
+
+            let st = buf.session_stats();
+            assert_eq!(st.today.requests, 1, "跨日后应从 1 重新开始, 而不是累加到 2");
+            assert_eq!(st.requests, 2, "session 计数不因跨日重置 (它是进程级口径)");
+            assert_eq!(buf.today_day.load(Ordering::Relaxed), tz_day_index(now_ts()));
+        });
     }
 
     /// 本轮 (进程级) 累计: push 时原子累加, 请求/成功/输入/输出/KV 命中均正确.

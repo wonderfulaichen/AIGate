@@ -211,6 +211,21 @@ impl ModelConfig {
         client_format: &str,
     ) -> String {
         let client = normalize_format(client_format);
+        // 0) 显式**单值** `api_format` = 硬约束 (用户手动锁定该模型只能走这条).
+        //
+        // 必须置于"客户端协议命中可用集"之前 —— 否则供应商探测到多协议时, 客户端的
+        // 入口协议会越过用户的显式设置 (旧序下第 1 步直接放行), 表现为
+        // "我手动把协议改成 openai 了, 客户端打 responses 它却仍走 responses".
+        // 仅在**未声明候选集**时锁: 声明了 `api_formats` 即以候选集为准 (表达更细,
+        // 允许客户端在集合内自选), 这与 available_api_formats 的优先级一致.
+        if !self.has_explicit_formats() {
+            if let Some(f) = self.api_format.as_ref() {
+                let n = normalize_format(f);
+                if is_known_format(&n) {
+                    return n;
+                }
+            }
+        }
         let available = self.available_api_formats(provider, model_id);
         // 1) 客户端协议可用 → 原样直通 (无需跨协议翻译)
         if available.iter().any(|f| *f == client) {
@@ -1227,6 +1242,22 @@ mod tests {
         let p = prov_ep("x", "https://gw.example.com/v1/chat/completions");
         assert_eq!(mc(Some("responses"), None).pick_api_format(&p, "m", "openai"), "responses");
         assert_eq!(mc(Some("anthropic"), None).pick_api_format(&p, "m", "openai"), "anthropic");
+    }
+
+    /// 单值 `api_format` 在**有探测结果**时也必须锁死 —— 否则用户"手动改成 openai"
+    /// 根本不生效 (客户端打 anthropic 仍会被放行)。
+    #[test]
+    fn single_api_format_locks_even_when_probes_exist() {
+        let p = prov_probed("relay", &["openai", "anthropic", "responses"]);
+        // 显式标注该模型只走 openai
+        let m = mc(Some("openai"), None);
+        assert_eq!(m.pick_api_format(&p, "m", "anthropic"), "openai",
+            "显式 api_format=openai 应锁死; 客户端协议不得越权");
+        assert_eq!(m.pick_api_format(&p, "m", "responses"), "openai");
+        assert_eq!(m.pick_api_format(&p, "m", "openai"), "openai");
+        // anthropic 同理
+        let m2 = mc(Some("anthropic"), None);
+        assert_eq!(m2.pick_api_format(&p, "m", "openai"), "anthropic");
     }
 
     /// 客户端入口协议命中候选集 → 用客户端那个 (可走原生直通, 避免跨协议转换).

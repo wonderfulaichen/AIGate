@@ -34,6 +34,13 @@ function authHeaders() {
   if (window.AIGATE_TOKEN) h['Authorization'] = 'Bearer ' + window.AIGATE_TOKEN;
   return h;
 }
+// 用户是否要求减少动效. CSS 侧由 base.css 的 @media(prefers-reduced-motion) 统一降级,
+// 但**JS 驱动的补间/交叉淡入不在 CSS 管辖内** —— 每一处都必须自己过这个判据, 否则残障用户
+// 仍会看到"数字滚动"这类强制动效.
+function prefersReducedMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch (e) { return false; }
+}
 // 供应商 logo — 内联官方品牌 SVG (来源 @lobehub/icons, MIT; 缺失项手绘近似).
 // 全部离线内嵌, 无外部依赖. fill="currentColor" 使其跟随主题文字色 (明暗自适应).
 // 键为 provider id (providers.json), 含常见别名. 缺失时由 providerLogo() 回退首字母徽标.
@@ -41,7 +48,7 @@ function _plogo(bg, txt, fg) {
   fg = fg || '#fff';
   return '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">'
     + '<rect width="28" height="28" rx="6" fill="' + bg + '"/>'
-    + '<text x="14" y="14" dy=".35em" text-anchor="middle" font-family="Arial,sans-serif" '
+    + '<text x="14" y="14" dy=".35em" text-anchor="middle" font-family="system-ui,-apple-system,\'Segoe UI\',Roboto,sans-serif" '
     + 'font-size="12" font-weight="700" fill="' + fg + '">' + txt + '</text></svg>';
 }
 const PROVIDER_SVG = {
@@ -120,11 +127,40 @@ function _logoWrap(svg) {
   if (!svg) return _plogo('#374151', '?');
   return '<span style="width:100%;height:100%;display:inline-flex">' + svg + '</span>';
 }
+// ── 品牌图标 (项目真实资产, 与 icon.svg 同源) ──
+// 顶栏与关于页原先用文字符号 "◆" 占位 —— 而项目本就有正式图标 (网关枢纽造型: 中心节点 +
+// 四向连接, 恰好对应"AI 网关"这个产品)。占位符没有任何理由留着。
+// 内联而非 <img src>: 零额外请求、可直接用 CSS 控制尺寸、且配色与品牌色同源。
+// 配色 = --primary(systemBlue) 一族, 两种主题下同一套 (应用图标不该随主题变色)。
+let _brandSeq = 0;
+function brandLogoSvg() {
+  const gid = 'agt' + (_brandSeq++);   // 同页可能出现两次 (顶栏 + 关于页), 渐变 id 必须唯一
+  return '<svg viewBox="0 0 256 256" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">'
+    + '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">'
+    + '<stop offset="0%" stop-color="#0a84ff"/><stop offset="100%" stop-color="#0071e8"/></linearGradient></defs>'
+    + '<rect x="8" y="8" width="240" height="240" rx="56" fill="url(#' + gid + ')"/>'
+    + '<circle cx="128" cy="128" r="32" fill="#fff" opacity=".95"/>'
+    + '<circle cx="128" cy="128" r="20" fill="#0071e8"/>'
+    + '<g fill="#fff" opacity=".85"><circle cx="72" cy="80" r="10"/><circle cx="184" cy="80" r="10"/>'
+    + '<circle cx="72" cy="176" r="10"/><circle cx="184" cy="176" r="10"/></g>'
+    + '<g stroke="#fff" stroke-width="3" opacity=".4" fill="none" stroke-linecap="round">'
+    + '<line x1="82" y1="85" x2="112" y2="118"/><line x1="174" y1="85" x2="144" y2="118"/>'
+    + '<line x1="82" y1="171" x2="112" y2="138"/><line x1="174" y1="171" x2="144" y2="138"/>'
+    + '<line x1="72" y1="60" x2="72" y2="70"/><line x1="72" y1="186" x2="72" y2="196"/>'
+    + '<line x1="184" y1="60" x2="184" y2="70"/><line x1="184" y1="186" x2="184" y2="196"/>'
+    + '<line x1="52" y1="80" x2="62" y2="80"/><line x1="194" y1="80" x2="204" y2="80"/>'
+    + '<line x1="52" y1="176" x2="62" y2="176"/><line x1="194" y1="176" x2="204" y2="176"/></g></svg>';
+}
 // ── 图表共享色板 ──
 // 面板里所有"序列取色"的地方(环图 / 模型趋势图 / 趋势图图例 / 构成比例条)统一从这里取,
 // 避免同一份数据在不同图上换色导致"图例对不上颜色"。改色只改这一处。
 // 注: 供应商 logo 的兜底底色 (PROVIDER_LOGO_PALETTE) 与品牌 SVG 是品牌标识, 不属图表语言, 单独保留。
-const CHART_PALETTE = ['#6366f1', '#06b6d4', '#f59e0b', '#34d399', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf'];
+//
+// 取色原则: 直接采用 **Apple 系统色** (iOS/macOS 真值), 首位是 systemBlue —— 与品牌强调色同源,
+// 故主序列天然带上品牌色。苹果这套系统色本身就被设计成"彼此可区分且和谐", 比自造调色板更稳。
+// 首尾相接处刻意选远色相 (蓝↔橙, 紫↔绿, 粉↔青), 保证图例按用量排序后相邻两条曲线仍分得开。
+// 数值是数据而非主题, 故不随 html.light 覆盖 (这些系统色在白底与黑底上都可读)。
+const CHART_PALETTE = ['#0a84ff', '#ff9f0a', '#bf5af2', '#30d158', '#ff375f', '#40c8e0', '#5e5ce6', '#ffd60a'];
 // 语义色: 表达"这一类省量/这一类缓存状态", 与文案一一对应, 不参与上面按序取色的轮转。
 // ── 时间范围 / 粒度 (P3) ──
 // 单一事实源: 快捷档 → (范围, 粒度). 粒度由跨度自动推导, 不再让用户为"看多久"选两次
@@ -202,15 +238,15 @@ function logSortValue(log, key) {
   }
 }
 const CHART_SEMANTIC = {
-  strip: '#6366f1',   // 剥离推理链(普通轮次)
-  stripTc: '#06b6d4', // 剥离推理链(工具轮次)
-  trim: '#a78bfa',    // 历史裁剪
-  respCache: '#34d399', // 响应缓存
-  exempt: '#f59e0b',  // 被豁免的推理链
-  dup: '#fb923c',     // 重复内容块
-  kvHit: '#06b6d4',   // KV 命中
-  kvMiss: '#f59e0b',  // KV 未命中
-  kvCreation: '#a78bfa', // KV 缓存写入
+  strip: '#0a84ff',   // 剥离推理链(普通轮次) —— 与品牌强调色一致
+  stripTc: '#40c8e0', // 剥离推理链(工具轮次) —— systemTeal
+  trim: '#bf5af2',    // 历史裁剪 —— systemPurple
+  respCache: '#30d158', // 响应缓存 —— systemGreen
+  exempt: '#ff9f0a',  // 被豁免的推理链 —— systemOrange
+  dup: '#ff375f',     // 重复内容块 —— systemPink
+  kvHit: '#40c8e0',   // KV 命中
+  kvMiss: '#ff9f0a',  // KV 未命中
+  kvCreation: '#bf5af2', // KV 缓存写入
 };
 // ── 状态语义色表 (P2 badges) ──
 // 统一"状态 → 徽标类 / 圆点色 / 文字色"的映射, 避免各处手写 :class 三元链与内联硬编码色.
@@ -220,7 +256,7 @@ const STATUS_TONE = {
   ok:      { cls: 'bdg-s', dot: 'var(--ok)',      fg: 'var(--ok-fg)',      raw: 'var(--ok)' },
   warn:    { cls: 'bdg-w', dot: 'var(--warn)',    fg: 'var(--warn-fg)',    raw: 'var(--warn)' },
   err:     { cls: 'bdg-e', dot: 'var(--err)',     fg: 'var(--err-fg)',     raw: 'var(--err)' },
-  info:    { cls: 'bdg-p', dot: 'var(--indigo)',  fg: 'var(--indigo)',     raw: 'var(--indigo)' },
+  info:    { cls: 'bdg-p', dot: 'var(--accent)',  fg: 'var(--accent)',     raw: 'var(--accent)' },
   neutral: { cls: 'bdg-n', dot: 'var(--neutral-fg)', fg: 'var(--neutral-fg)', raw: 'var(--neutral-fg)' },
 };
 function statusTone(tone) { return STATUS_TONE[tone] || STATUS_TONE.neutral; }

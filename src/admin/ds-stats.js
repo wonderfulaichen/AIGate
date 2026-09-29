@@ -3,7 +3,7 @@
 // 主要成员: fetchStats / _endFirstLoad / setSpan / setRangeDays
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
-    async fetchStats(rangeOverride, manual)   {
+    async fetchStats(rangeOverride, manual, replay)   {
       if (manual) this._refreshing = true;
       // 竞态防护: 快速切换时间范围/手动刷新叠加时先 abort 上一次 —— 旧响应后到会覆盖新范围的数据.
       if (this._statsAbort) { try { this._statsAbort.abort(); } catch(e){} }
@@ -20,6 +20,10 @@
           const firstLoad = !this._firstLoadDone;
           this.stats=await r.json();
           this.statsError=false;
+          // 手动刷新 / 切回概览: 让 KPI 数字从 0 重滚一遍. 放在 stats 落位之后 —— 重播读的是**新**目标值.
+          // (刷新期间内容区被骨架顶掉, 数字本就不可见; 正是靠这里打标, 骨架撤下后才有一轮滚动)
+          // ⚠️ replay 与 manual 分开: 切页签要重播数字但不该弹骨架 (内容本就在, 弹骨架是频闪).
+          if (manual || replay) this.replayNumTweens();
           // 落到最新数据后写快照 (供下次打开预热)
           this.saveStatsSnapshot();
           if (firstLoad) { this._firstLoadDone = true; this._endFirstLoad(); }
@@ -85,6 +89,7 @@
       if (!m) return;
       this.applyRange(m[0], m[1]);
       try { localStorage.setItem('aigate.analyticsSpan', span); } catch (e) { /* privacy mode */ }
+      this._trendForceFade = true;   // 切范围必须给反馈: 即使新旧区间碰巧同形也重播一次淡入
       this.fetchStats();
     },
     // 自定义天数区间: 粒度按跨度自动推导 (与快捷档同一张表, 避免两处阈值分叉).
@@ -93,6 +98,7 @@
       const g = granularityForDays(d);
       this.applyRange(d + 'd', g);
       try { localStorage.setItem('aigate.analyticsSpan', 'custom:' + d); } catch (e) {}
+      this._trendForceFade = true;
       this.fetchStats();
     },
     // 写状态 (范围 + 粒度 + 高亮档); 供 setSpan / setRangeDays / restore 共用.

@@ -16,16 +16,20 @@
       return v >= 95 ? '#34d399' : v >= 80 ? '#f59e0b' : '#ef4444';
     },
     // 成功率(数值): 供配色阈值使用; 无数据返回 0 (配色另由 sRateText 判为灰).
-    // 口径与**同面板**的「平均延迟」「生成速度」保持一致, 都用窗口累计 ——
-    // 原先此处用今日、而旁边两项用窗口, 同一张卡片里混了两个尺度.
+    // ── 今日成功率 ──
+    // 口径与 Hero 主数字一致 (今日) —— 成功率是"今日请求/今日成功"之比, 两个计数器都有, 故可切.
+    // 注: 面板里另外两处速率/延迟指标 (平均延迟 / 生成速度) 仍是窗口口径, 原因见 Hero 那段注释.
     get sRate() {
-      if(!this.stats||!this.stats.total_requests) return 0;
-      return (this.stats.total_requests-(this.stats.error_count||0))/this.stats.total_requests*100;
+      const d = this.heroTodayStats;
+      const n = Number(d.requests || 0);
+      if (!n) return 0;
+      return Number(d.success || 0) / n * 100;
     },
-    // 窗口内无请求 ≠ "100% 成功" —— 那是没有数据, 与全部成功是两回事.
+    // 今日无请求 ≠ "100% 成功" —— 那是没有数据, 与全部成功是两回事.
     get sRateText() {
-      if(!this.stats||!this.stats.total_requests) return '—';
-      return this.fmtPct(this.sRate);
+      if (!Number(this.heroTodayStats.requests || 0)) { this._numSettle('sRate', 0); return '—'; }
+      // 小数补间: 切页签/刷新时从 0 滚起 (语义值与计数类同一套重播代数).
+      return this.fmtPct(this._numTweenRaw('sRate', this.sRate));
     },
     // ── 面板底部一句话结论 (只陈述已有数字, 百分比走 fmtPct) ──
     get distTopTakeaway() {
@@ -47,7 +51,8 @@
     },
     get healthTakeaway() {
       if (!this.stats || !this.stats.total_requests) return '';
-      return t('takeaway_health', this.sRateText, this.heroErrors, this.fmtMs(this.stats.avg_latency_ms));
+      // 结论句用**原始**成功率, 不走补间 —— 否则整句会跟着数字滚动, 读起来乱.
+      return t('takeaway_health', this.fmtPct(this.sRate), this.heroErrors, this.fmtMs(this.stats.avg_latency_ms));
     },
     // ── 余额结论区 (P3) ──
     // 回答"余额这个数意味着什么": 按剩余额给三档色 (充足/偏低/告警), 并把今日消耗折算成
@@ -79,28 +84,40 @@
     },
     // ── 概览 hero 的作用域 ──
     //
-    // **主数字一律用「窗口累计」口径**, 与卡片里的迷你折线严格同口径
-    // (折线画的就是 stats.trends 整个窗口) —— 这是本面板最看重的一条: 数字与图形不得打架.
     //
-    // 历史: 最初六个数只显示"今日", 每天开始打开面板全是 0 而折线有峰 (口径不一致);
-    // 上一版改成"今日有请求就显示今日", 修好了全 0, 但引入了新矛盾 ——
-    // 今日有请求时主数字是今日口径 (例: 22), 旁边的折线却仍是窗口口径 (峰值可达数百),
-    // 同一张卡片里两个尺度. 且注释声称"现在数字与图形同口径", 与实现不符.
-    // 现统一为窗口口径, 今日用量以文字形式附在提示里 (见 heroRequestsHint), 不再抢主位.
-    get heroToday() { return Number((this.stats&&this.stats.today_requests)||0) > 0; },
-    get heroScopeLabel() { return t('window_label'); },
-    get heroScopeHint() { return t('hero_scope_window_hint'); },
-    get heroRequests() { const s=this.stats||{}; return Number(s.total_requests||0); },
-    get heroErrors() { const s=this.stats||{}; return Number(s.error_count||0); },
+    // ── Hero 口径 = 今日 (东八区日界) ──
+    // 口径演进(踩过两次, 记下来免得再来回改):
+    //   ① 最初只显示"今日" → 每天开面板全是 0 而折线有峰 (数字与图形不同尺度);
+    //   ② 上一轮统一改成"窗口口径" → 数字与折线同尺度了, 但**窗口源自日志文件的 5000 行滚动上限**
+    //      (store::MAX_LINES), 于是「请求」永久饱和在 5000 —— 用户实测报障, 这不是巧合而是截断;
+    //   ③ 现在: 请求/成功/Token/KV 走**后端在写入路径独立累加的今日计数** (`stats.session.today`),
+    //      它与文件上限解耦、不受 5000 截断; 折线保持窗口口径(它是趋势形态), 并在提示行**显式标注窗口**。
+    // ⚠️ 无法切今日的两项: 「平均延迟」「生成速度」需要逐条日志聚合, 计数器里没有对应累加器,
+    //   故仍是窗口口径 —— 这是当前口径的**真实边界**, 不要用注释假装统一。
+    get heroTodayStats() { return ((this.stats || {}).session || {}).today || {}; },
+    get heroToday() { return Number(this.heroTodayStats.requests || 0) > 0; },
+    // 标签文案: 复用既有 today_label (「今日」), 口径说明用新增的 hero_scope_today_hint
+    // (原文案 hero_scope_window_hint「今日暂无请求，显示整个统计窗口的累计」已与实际行为不符, 已删除).
+    get heroScopeLabel() { return t('today_label'); },
+    get heroScopeHint() { return t('hero_scope_today_hint'); },
+    get heroRequests() { return Number(this.heroTodayStats.requests || 0); },
+    // 今日错误 = 今日请求 − 今日成功 (后端只累加这两个, 不再多维护一个计数器).
+    get heroErrors() {
+      const d = this.heroTodayStats;
+      return Math.max(0, Number(d.requests || 0) - Number(d.success || 0));
+    },
+    // 窗口口径的**可见**标注: 折线画的是窗口, 故把窗口合计写在主数字提示行里.
+    // 原先这个信息藏在「窗口累计」标签里、而数字又被 5000 截断, 等于把口径说了却没说清.
+    get heroWindowNote() {
+      const s = this.stats || {};
+      const n = Number(s.total_requests || 0);
+      const days = Number(s.window_minutes || 0) / 1440;
+      // 跨度不足 1 天时不带上「最近 N 天」—— 一天内没有跨度的概念, 写了反而是噪声.
+      const span = days >= 1 ? ' · ' + t('window_span_days', days.toFixed(1)) : '';
+      return t('window_label') + ' ' + this.fmtInt(n) + span;
+    },
     get heroRequestsHint() {
-      // 提示只补主数字**没有**的信息: 主数字已是"请求总数", 故这里只给错误数,
-      // 不再重复一遍总数 (原先渲染成「错误 70 · 总计 2619」而主数字正是 2619,
-      // 同屏把同一个数说了两遍, 白占提示行三分之一).
-      // 今日有请求时把今日用量附在末尾 —— 它是补充, 不与主数字混排取值.
-      const base = t('errors_only', this.heroErrors);
-      return this.heroToday
-        ? base + ' · ' + t('today_label') + ' ' + Number((this.stats && this.stats.today_requests) || 0)
-        : base;
+      return t('errors_only', this.heroErrors) + ' · ' + this.heroWindowNote;
     },
     get heroCost() { const s=this.stats||{}; return Number(s.total_cost||0); },
     // ── 优化省量卡的口径披露 (修 3 个易误读点) ──
@@ -151,9 +168,10 @@
     // 判据用 has_priced_request (后端按"实际被请求的模型是否有价"给出), 缺失时回退旧行为.
     get heroCostText() {
       const s = this.stats || {};
-      if (!s.has_price_config) return '—';
-      if (s.has_priced_request === false) return '—';
-      return this.fmtMoney(this.heroCost);
+      if (!s.has_price_config) { this._numSettle('heroCost', 0); return '—'; }
+      if (s.has_priced_request === false) { this._numSettle('heroCost', 0); return '—'; }
+      // 小数补间: 金额保留 2 位 (fmtMoney), 不能走取整的 numTween.
+      return this.fmtMoney(this._numTweenRaw('heroCost', this.heroCost));
     },
     // 费用提示: 与上面三态对应, 避免提示与数字互相矛盾.
     get heroCostHint() {
@@ -162,13 +180,13 @@
       if (s.has_priced_request === false) return t('price_not_applied');
       return t('cost_estimated');
     },
-    get heroPrompt() { const s=this.stats||{}; return Number(s.total_prompt_tokens||0); },
-    get heroCompletion() { const s=this.stats||{}; return Number(s.total_completion_tokens||0); },
+    get heroPrompt() { return Number(this.heroTodayStats.prompt_tokens || 0); },
+    get heroCompletion() { return Number(this.heroTodayStats.completion_tokens || 0); },
     get heroTokens() { return this.heroPrompt + this.heroCompletion; },
     // ── 指标卡的「主值精确 + ≈ 副档缩写」 (对标 cc-switch UsageHero) ──
-    // 大字号给**精确值**, 右侧小胶囊给**量级缩写**: 六位数直接看容易数错位, 缩写一眼抓量级.
-    // 两者缺一都不完整 —— 只给精确值要自己数位, 只给缩写则丢掉精度.
-    get heroTokensExact() { return this.fmtInt(this.heroTokens); },
+    // 大字号给**精确值** —— 由模板直接 `fmtInt(numTween('heroTokens',heroTokens))` 输出
+    // (要过数字补间, 故不再单开一个 getter), 右侧小胶囊给**量级缩写**:
+    // 六位数直接看容易数错位, 缩写一眼抓量级. 两者缺一都不完整.
     get heroTokensApprox() {
       const n = this.heroTokens;
       if (!n || n < 10000) return '';   // 小于 1 万时缩写无信息增量 (原值已够易读)
@@ -182,11 +200,27 @@
     },
     // 命中率口径: 命中 / 总输入 token (与统计页一致). 分母为 0 = 没有数据, 给 '—' 而非 0%.
     get heroCacheText() {
-      const s=this.stats||{};
-      const h=Number(s.total_cache_hit_tokens||0);
-      const pt=Number(s.total_prompt_tokens||0);
-      if(!pt) return '—';
-      return this.fmtPct(h/pt*100);
+      // 与 Hero 同口径 (今日): 命中 / 今日输入 token.
+      const d = this.heroTodayStats;
+      const h = Number(d.cache_hit_tokens || 0);
+      const pt = Number(d.prompt_tokens || 0);
+      if (!pt) { this._numSettle('kvHit', 0); return '—'; }
+      // 小数补间: 命中率是百分比, 不能走取整的 numTween.
+      return this.fmtPct(this._numTweenRaw('kvHit', h / pt * 100));
+    },
+    // ── 两项窗口口径指标的小数补间出口 ──
+    // 平均延迟 / 生成速度没有"今日"累加器 (需逐条日志聚合), 仍是窗口口径 —— 见 heroTodayStats
+    // 上方的口径说明. 它们统一走 _numTweenRaw, 使切页签/刷新时与其它 KPI 一起从 0 滚起.
+    get avgLatencyText() {
+      const n = Number((this.stats || {}).avg_latency_ms || 0);
+      if (!(n > 0)) { this._numSettle('avgLatency', 0); return '—'; }
+      return this.fmtMs(this._numTweenRaw('avgLatency', n));
+    },
+    get genSpeedText() {
+      const n = Number((this.stats || {}).gen_speed || 0);
+      if (!(n > 0)) { this._numSettle('genSpeed', 0); return '—'; }
+      // 保留一位小数, 与原来 `gen_speed.toFixed(1)+' tok/s'` 的终值一致.
+      return this._numTweenRaw('genSpeed', n).toFixed(1) + ' tok/s';
     },
     get donutSvg() {
       if(!this.stats||!this.stats.per_model.length) return '';

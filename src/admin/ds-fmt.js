@@ -92,6 +92,76 @@
     // 与 fmtT 的分工: 大字号用本函数给**精确值**, 旁边的小胶囊再用 fmtT 给**量级缩写** ——
     // 两者并列才既有精度又不费眼; 只用 fmtT 会让"44.5K"既当主值又当副档, 信息重复.
     fmtInt(n) { return Math.round(Number(n) || 0).toLocaleString(); },
+    // ── KPI 数字补间 (数据驱动动效) ──
+    // 三条硬约束 (不是风格选择, 改前先读):
+    //  ① **不能用 requestAnimationFrame** —— 面板在后台标签/无头浏览器里会被降频甚至停摆,
+    //     补间会卡在半途永不收尾; setInterval 仍会跑, 且下面按"真实流逝时间"求进度:
+    //     即便被节流到 1s 一跳, 下一跳也算出 p=1 直接落终值 —— 自愈, 不需要额外兜底定时器.
+    //  ② **初值即真值**: 只有"目标变了"才补间. 否则每次开面板数字都从 0 滚起, 读起来像加载动画.
+    //     (手动刷新的"重播"是这条的唯一例外, 见 _numReplayGen —— 那是用户主动动作, 有明确因果.)
+    //  ③ **时长 ≤400ms**: 概览按 3s 轮询, 补间若更长就永远追不上下一次更新, 变成"数字一直在动".
+    // 读端(numTween)只读不写 shown; 写只发生在 interval 回调与重播分支里.
+    // 计数类指标 (token / 请求数) = 取整后走通用内核; 语义值 (百分比/延迟/速度/金额) 见 _numTweenRaw.
+    numTween(key, target) { return Math.round(this._numTweenRaw(key, target)); },
+    // 通用补间内核 (**小数安全**): numTween 与语义值调用方共用, 差别只在外面是否取整.
+    // ⚠️ 语义值不能走 numTween —— 取整会把 76.9% 显示成 77%, 改掉事实 (见 fmtPct 的舍入红线).
+    _numTweenRaw(key, target) {
+      const tgt = Number(target) || 0;
+      // 建槽时 gen 记成**当前代数** —— 所以首次渲染不重播 (约束②), 只有之后代数涨了才重播.
+      const s = this._numAnim[key] || (this._numAnim[key] = { shown: tgt, target: tgt, timer: 0, gen: this._numReplayGen });
+      // 手动刷新 / 切页签触发重播: 从 0 滚到目标 (值没变也滚), 让"我刚刷新过/刚切回"在数字上可见.
+      // ⚠️ 只能在这里重置 shown —— 累加 _numReplayGen 会触发 x-text 重跑, 从而进到这个分支.
+      if (s.gen !== this._numReplayGen) {
+        s.gen = this._numReplayGen;
+        s.target = tgt;
+        this._stopNumTween(s);
+        s.shown = tgt <= 0 || prefersReducedMotion() ? tgt : 0;
+        if (s.shown !== tgt) this._startNumTween(s);
+        return s.shown;
+      }
+      if (s.target !== tgt) {
+        s.target = tgt;
+        // prefers-reduced-motion 下直接跳终值: CSS 的降级规则管不到 JS 补间, 必须自己判.
+        if (prefersReducedMotion()) { this._stopNumTween(s); s.shown = tgt; }
+        else this._startNumTween(s);
+      }
+      return s.shown;
+    },
+    // 手动刷新 / 切页签的入口: 代数 +1 → 所有已建槽的数字下一帧从 0 重滚.
+    replayNumTweens() { this._numReplayGen++; },
+    // KPI 数字的**统一出口** (5 处复用), 一次解决两件事:
+    //  ① 值 ≤0 给占位 '—' —— 全站口径"无数据 ≠ 0" (见 frontend.md §6). 今日请求全失败时
+    //     token 累加器就是 0, 显示 0 会被读成"算了但结果为零", 而事实是"没有可用数据".
+    //  ② 有值时走补间. fmt: 'int' = 精确千分位 (主数字), 其余 = 量级缩写 (副档/小格).
+    numText(key, value, fmt) {
+      const n = Math.round(Number(value) || 0);
+      if (n <= 0) { this._numSettle(key, n); return '—'; }
+      const v = this.numTween(key, n);
+      return fmt === 'int' ? this.fmtInt(v) : this.fmtT(v);
+    },
+    // 归零/无数据时把补间槽**直接落值**, 不走补间. 两个理由:
+    //  ① 显示的是 '—', 补间一个看不见的数字纯属空转;
+    //  ② 不落值它会停在旧数字上 —— 实测归零后立刻恢复, 补间从**中间值**起滚 (8223→5000),
+    //     而不是从 0 起滚, 起点是错的. 落值后恢复才是干净的 0→新值.
+    _numSettle(key, v) {
+      const t = Math.round(Number(v) || 0);
+      const s = this._numAnim[key];
+      if (!s) return;   // 没建过槽: 不必为 0 建, 首次有值时会走"初值即真值"
+      this._stopNumTween(s);
+      s.shown = t; s.target = t;
+    },
+    // 目标在补间途中再变时不用重启定时器 —— 回调读的是实时的 s.target, 曲线自然转向新终点.
+    _startNumTween(s) {
+      if (s.timer) return;
+      const dur = 380, from = s.shown, t0 = Date.now();
+      s.timer = setInterval(() => {
+        const p = Math.min(1, (Date.now() - t0) / dur);
+        const e = 1 - Math.pow(1 - p, 3);            // ease-out cubic (与 --ease-out 同族的减速感)
+        s.shown = p >= 1 ? s.target : from + (s.target - from) * e;
+        if (p >= 1) this._stopNumTween(s);
+      }, 32);
+    },
+    _stopNumTween(s) { if (s.timer) { clearInterval(s.timer); s.timer = 0; } },
     // 省量明细行: "标签 <tokens> ≈ <费用>". 费用为 0 (未配置价格/免费) 时省略.
     auditLine(labelKey, tokens, fee) {
       const tk = this.fmtT(tokens || 0);
@@ -112,7 +182,7 @@
         .replace(/"/g, '&quot;');
       return esc
         .replace(/\*\*([^*]+)\*\*/g, '<strong style="color:var(--fg)">$1</strong>')
-        .replace(/`([^`]+)`/g, '<code class="mono" style="font-size:var(--fs-11);background:rgba(255,255,255,.06);padding:1px 4px;border-radius:3px">$1</code>');
+        .replace(/`([^`]+)`/g, '<code class="mono" style="font-size:var(--fs-11);background:var(--fill-5);padding:1px 4px;border-radius:var(--rs)">$1</code>');
     },
     // 省量审计窗口标签: 明确覆盖的实际时间范围与采样覆盖度.
     // 「当前窗口」= 内存里的日志缓冲区 (启动时从磁盘加载历史), 因此可能跨越很久, 必须说清.

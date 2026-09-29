@@ -1,112 +1,168 @@
 <style>
 :root{
   color-scheme:dark;
-  /* surface 层 */
-  --bg:#0c0c10;--card:#16161c;--elevated:#1c1c24;--input:#1c1c24;
-  /* 文本两级 */
-  --fg:#e8e8ec;--muted:#9aa0aa;
-  /* 描边三级: subtle → default → strong */
-  --border-subtle:rgba(255,255,255,.06);--border:rgba(255,255,255,.08);--border-s:rgba(255,255,255,.12);
-  /* 主色 / 强调 */
-  --primary:#6366f1;--primary-h:#5457e5;--primary-fg:#fff;--primary-soft:rgba(99,102,241,.12);--indigo:#818cf8;
-  /* 状态色四元组: 本色 / 徽标底 / 徽标字 / 徽标描边 */
-  --ok:#34d399;--ok-bg:rgba(52,211,153,.12);--ok-fg:#a7f3d0;--ok-bd:rgba(52,211,153,.25);
-  --warn:#f59e0b;--warn-bg:rgba(245,158,11,.12);--warn-fg:#fde68a;--warn-bd:rgba(245,158,11,.25);
-  --err:#ef4444;--err-bg:rgba(239,68,68,.12);--err-fg:#fca5a5;--err-bd:rgba(239,68,68,.25);
-  --neutral-bg:rgba(156,163,175,.12);--neutral-fg:#9ca3af;--neutral-bd:rgba(156,163,175,.25);
-  --info-bg:rgba(56,189,248,.12);--info-fg:#38bdf8;--info-bd:rgba(56,189,248,.25);
-  /* 图表/强调用的补充色(与内联取值精确对应) */
-  --purple:#a78bfa;--cyan:#22d3ee;--amber:#fbbf24;
-  /* 图表补充: 环图"其他"汇总扇区 / 排名前三的奖牌色 */
-  --chart-rest:#3b3d48;--rank-1:#fbbf24;--rank-2:#9ca3af;--rank-3:#cd7f32;
+  /* ── 表面层: 对齐 Apple 系统语义色 (iOS/macOS 26 真值) ──
+     暗色底是**纯黑** (#000), 内容面是 secondarySystemBackground #1C1C1E ——
+     苹果分组列表正是这样分层的: 靠"黑 vs 深灰"拉层次, 而不是靠到处描边。 */
+  --bg:#1c1c1e;--card:#2c2c2e;--elevated:#3a3a3c;--input:#2c2c2e;
+  /* 文本: label / secondaryLabel (苹果真值本身带 alpha) */
+  --fg:#fff;--muted:rgba(235,235,245,.62);
+  /* 描边: 由 Apple separator (rgba(84,84,88,.65)) 分档 */
+  --border-subtle:rgba(84,84,88,.36);--border:rgba(84,84,88,.5);--border-s:rgba(84,84,88,.72);
+  /* 容器描边: 苹果的卡片**不画边框**, 靠填充差分层。暗色下留一道极淡发丝线收边,
+     亮色下直接透明 (白卡放在 #F2F2F7 上本就分得清)。控件类仍用 --border。 */
+  --surface-border:rgba(255,255,255,.09);
+  /* ── 强调色: Apple systemBlue ──
+     ⚠️ 分工: --primary 是**填充面**(按钮底) —— 苹果原值 #0A84FF 配白字只有 3.6:1, 不达 AA,
+       故压深到 #0b6fe0 (4.8:1), 观感仍是苹果蓝; --accent 是**文字/图标/线**, 用苹果原值。 */
+  --primary:#0b6fe0;--primary-h:#0961c6;--primary-fg:#fff;--primary-soft:rgba(10,132,255,.16);--accent:#0a84ff;
+  --secondary:#bf5af2;--secondary-soft:rgba(191,90,242,.16);
+  /* 状态色: Apple systemGreen / systemOrange / systemRed / systemTeal */
+  --ok:#30d158;--ok-bg:rgba(48,209,88,.16);--ok-fg:#30d158;--ok-bd:rgba(48,209,88,.32);
+  --warn:#ff9f0a;--warn-bg:rgba(255,159,10,.16);--warn-fg:#ff9f0a;--warn-bd:rgba(255,159,10,.32);
+  --err:#ff453a;--err-bg:rgba(255,69,58,.16);--err-fg:#ff453a;--err-bd:rgba(255,69,58,.32);
+  --neutral-bg:rgba(120,120,128,.24);--neutral-fg:#8e8e93;--neutral-bd:rgba(120,120,128,.42);
+  --info-bg:rgba(64,200,224,.16);--info-fg:#40c8e0;--info-bd:rgba(64,200,224,.32);
+  /* 图表底板与排名奖牌色 */
+  --chart-rest:#48484a;--rank-1:#ffd60a;--rank-2:#8e8e93;--rank-3:#cd7f32;
   /* 浅底版状态色(提示条: 比徽标更淡的底) */
-  --ok-bg-soft:rgba(52,211,153,.1);--ok-bd-soft:rgba(52,211,153,.2);
-  --err-bg-soft:rgba(239,68,68,.1);--err-bd-soft:rgba(239,68,68,.2);
+  --ok-bg-soft:rgba(48,209,88,.14);--ok-bd-soft:rgba(48,209,88,.26);
+  --err-bg-soft:rgba(255,69,58,.14);--err-bd-soft:rgba(255,69,58,.26);
   /* 强底版状态色(行内小徽标) */
-  --ok-bg-strong:rgba(52,211,153,.15);--ok-bd-strong:rgba(52,211,153,.3);
-  --err-bg-strong:rgba(239,68,68,.15);--err-bd-strong:rgba(239,68,68,.3);
-  /* 圆角 */
-  --rs:7px;--rm:calc(var(--rs) + 2px);--r:calc(var(--rs) * 2);--rl:calc(var(--rs) * 2 + 2px);--pill:999px;
-  /* 阴影: 卡片 / 浮层 */
-  --sh:0 1px 3px rgba(0,0,0,.3);--shm:0 20px 60px rgba(0,0,0,.45);
-  /* 字阶 —— 全面重做时整体上移一档: 原 9/10/11px 的"小字海"是密集老面板的主因.
-   正文基准 15px, 最小档 11px (不再有 9px 正文). */
-  --fs-9:11px;--fs-10:11.5px;--fs-11:12.5px;--fs-12:13px;--fs-125:13.5px;--fs-13:14px;--fs-14:15px;--fs-15:16px;--fs-18:19.5px;
+  --ok-bg-strong:rgba(48,209,88,.2);--ok-bd-strong:rgba(48,209,88,.4);
+  --err-bg-strong:rgba(255,69,58,.2);--err-bd-strong:rgba(255,69,58,.4);
+  /* ── 几何: 圆角尺度 (对齐 Apple 的连续圆角观感) ──
+     改造前全站有 17 种以上圆角字面量, 只有 12 处走 token —— "没有几何语言"正是它读起来
+     不成体系的直接原因。现收敛为 4 档 + 胶囊: 小控件偏方、容器偏圆, 比上一轮更柔和。
+     50% 仅用于真圆(圆点), 不参与本尺度。
+     **硬性要求**: 新组件一律用这几档, 不得再写圆角字面量。 */
+  --rs:6px;--rm:10px;--r:14px;--rl:18px;--pill:999px;
+  /* 阴影: 苹果靠"材质 + 亮度"分层, 阴影只做很轻的托底 (不是 Material 式抬升) */
+  --sh:0 1px 2px rgba(0,0,0,.32);--shm:0 24px 60px rgba(0,0,0,.55);
+  /* ── 字阶 ──
+     改造前 9 档全挤在 11→19.5px (整段区间仅 1.77 倍), 且 **面板标题 16px 只比正文 15px 大 1px**、
+     `.about-section-title` 13px 甚至比正文还小 —— 层级名义上存在、视觉上不存在.
+     本轮把两头拉开, 中间密集区**刻意不动** (--fs-9..--fs-13 占全部引用的 93%, 是密度所在):
+       · 标题区: --fs-15 16→20px · --fs-18 19.5→26px
+       · 主数字另开两档 (--fs-kpi / --fs-hero), 不再复用正文档 —— 数字与文字是两个轴.
+     结果: 正文 15 → Hero 48 = **3.2 倍**跨度 (改造前 2.3 倍). */
+  --fs-9:11px;--fs-10:11.5px;--fs-11:12.5px;--fs-12:13px;--fs-125:13.5px;--fs-13:14px;--fs-14:15px;
+  --fs-15:20px;--fs-18:26px;--fs-kpi:34px;--fs-hero:48px;
+  /* 图标字形尺寸 —— 属**图标轴**而非字阶: 字形大小不该混在文字尺度里(否则调标题会连带放大图标) */
+  --icon-sm:16px;--icon-md:22px;--icon-lg:30px;
+  /* ── 字体族 (单一事实源) ──
+     ① UI: **首位是内嵌的 Inter** (见 src/admin/font.css, 变量字体 latin 子集 base64 进二进制)。
+        为什么要内嵌: 面板要做出 Apple 观感, 就必须有一款有 SF 血统的无衬线; 而 Windows 上
+        system-ui 只会落到 Segoe UI, 与 SF 差得远 —— 光靠系统栈永远做不出苹果感。
+        Inter 是公认的 SF 网页替代 (按 SF/Helvetica 血统设计), 且 OFL 许可可内嵌。
+        其后是系统栈兜底: 装了 SF 的 Mac 会优先用 SF Pro, 中文落到 PingFang / 微软雅黑 UI
+        (与苹果自身做法一致: SF 管拉丁, PingFang 管中文)。
+     ② 等宽: **只用于真正的代码类内容** —— 端点 URL / 模型 ID / HTTP 方法 / JSON。
+        ⚠️ 数字**不再**用等宽: 苹果用的是 SF 的 tabular figures (比例字 + 等宽数字),
+        等宽字是"终端/机器"的语言, 全站数字用等宽正是上一轮读起来"俗"的主因之一。
+     注: 本 token 与主题无关, 故 html.light 里**不需要**覆盖。 */
+  --font-ui:'Inter',-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  --font-mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Mono",Consolas,Menlo,Monaco,"Microsoft YaHei UI","Microsoft YaHei",monospace;
   /* 间距 */
   --sp-1:4px;--sp-5:20px;--sp-6:24px;--sp-7:32px;--sp-2:8px;--sp-3:12px;--sp-4:16px;
-  /* 填充层级 (收敛重复的 rgba(255,255,255,*) 字面量; 逐值与原字面量相同) */
-  --fill-1:rgba(255,255,255,.02);--fill-15:rgba(255,255,255,.025);--fill-2:rgba(255,255,255,.03);
-  --fill-3:rgba(255,255,255,.04);--fill-4:rgba(255,255,255,.05);--fill-5:rgba(255,255,255,.06);
-  /* 描边补充: .10 介于 --border(.08) 与 --border-s(.12) 之间 */
-  --border-t:rgba(255,255,255,.10);
+  /* ── 填充层级: Apple fill 体系 (灰底 + alpha), 不是"白叠加/黑叠加" ──
+     苹果的 fill 是同一个中性灰配不同透明度, 深浅两套主题各自调 alpha —— 这比"白/黑叠加"
+     更能保持中性, 也让主题切换时色相不漂。 */
+  --fill-1:rgba(120,120,128,.12);--fill-15:rgba(120,120,128,.16);--fill-2:rgba(120,120,128,.20);
+  --fill-3:rgba(120,120,128,.26);--fill-4:rgba(120,120,128,.32);--fill-5:rgba(120,120,128,.40);
+  /* 描边补充 (介于 --border 与 --border-s 之间) */
+  --border-t:rgba(84,84,88,.6);
   /* 暗部遮罩 (收敛 rgba(0,0,0,*)) */
   --shade-1:rgba(0,0,0,.3);--shade-2:rgba(0,0,0,.45);--shade-3:rgba(0,0,0,.55);
-  /* 动效时长 (fast/normal/slow) 与缓动 */
-  --dur-fast:.15s;--dur:.2s;--dur-slow:.35s;--ease-out:cubic-bezier(.33,1,.68,1);
+  /* ── 动效: 缓动换成 Apple 风格的"快出慢停" (非 Material/线性) ──
+     --dur-quick 是"按下/悬停"这类**即时**反馈档: .16s 在手指离开前就开始收尾, 读不出反馈;
+     --ease-spring / --dur-spring 是**弹簧档, 只给开关滑块** —— 它的物理隐喻是"卡到位".
+     实测教训: 过冲 1.56 + 240ms 时, 过冲只占最后 ~70ms 且幅度约 2.3px, **肉眼读不出来**;
+     故提到 1.8 并把时长拉到 .32s (过冲段 ~110ms / ~3.4px) 才成为可感知的信号.
+     其余位移一律走 --ease-out (过冲用错地方就是廉价感). */
+  --dur-quick:.12s;--dur-fast:.16s;--dur:.24s;--dur-slow:.4s;--dur-spring:.32s;
+  --ease-out:cubic-bezier(.32,.72,0,1);--ease-spring:cubic-bezier(.34,1.8,.5,1);
   /* ── 主题相关补充 ──
      原则: 凡「白叠加 / 黑叠加」**必须**走 token —— 浅色下叠加方向要反转, 写死会在白底上消失
-     (如 rgba(255,255,255,.26) 的十字线在白底上是隐形的) 或过重 (黑遮罩压白底会显脏)。
-     下列暗色取值与原字面量逐一相同, 故暗色视觉零变化。 */
-  --sb-bg:rgba(12,12,16,.8);                 /* 侧栏底色 (原 .sb 硬编码) */
-  --hdr-bg:rgba(12,12,16,.92);               /* 顶栏底色 (原 .hdr 硬编码) */
-  --overlay:rgba(0,0,0,.6);                  /* 模态遮罩 (原 .log-modal) */
-  --overlay-soft:rgba(0,0,0,.4);             /* 轻遮罩 (原 .price-panel-bk) */
-  --rule-strong:rgba(255,255,255,.26);       /* 图表十字线 (原 .trend-crosshair) */
-  --track:rgba(255,255,255,.25);             /* 转圈轨道 (原 .spin) */
-  --skeleton:rgba(255,255,255,.07);          /* 骨架降级底色 (原 .skel) */
-  --sh-sm:0 1px 3px rgba(0,0,0,.2);          /* 分段控件选中阴影 (原 .seg-i.a) */
-  /* 主色软底梯度: 收敛散落的 rgba(99,102,241,α)。α 各有含义故逐档建 token,
-     浅色块里换成同α的深主色, 组件无需分主题写两套。 */
-  --primary-soft-deep:rgba(99,102,241,.08);
-  --primary-badge:rgba(99,102,241,.15);
-  --primary-soft-h:rgba(99,102,241,.18);
-  --primary-bd-soft:rgba(99,102,241,.25);
-  --primary-bd:rgba(99,102,241,.3);
-  --row-hover:rgba(99,102,241,.04);
-  --err-bd-mid:rgba(239,68,68,.28);
-  --warn-bg-strong:rgba(245,158,11,.15);
-  /* 其余主题敏感表面 (暗色取值 == 原字面量) */
-  --tip-bg:rgba(18,19,24,.96);               /* 图表悬停气泡底 (原 .trend-tip) */
-  --tgl-off:#3a3a44;                         /* 开关关闭态轨道 (原 .tgl.off) */
-  --violet:#8b5cf6;                          /* 排名条渐变终点 (原 .an-rank-bar) */
-  --purple-soft:rgba(167,139,250,.12);       /* 紫色分区图标底 (原 .sec-ic.purple) */
-  --err-h:#dc2626;                           /* 危险按钮悬停 (原 .btn-d:hover) */
-  --toast-shadow:0 8px 24px rgba(0,0,0,.35); /* Toast 投影 (原 .toast-it) */
-  --toast-err-bg:#2a1416;--toast-ok-bg:#0f2a20;--toast-warn-bg:#2a2110;
-  /* ── 表面质感层 (对标 cc-switch 的 Card + glass) ──
-     原设计是"纯色卡片 + 1px 边框", 层级只能靠边框区分, 扁平且无纵深。
-     这几组 token 给出纵深: 玻璃半透明表面 / 三级阴影 / 状态色柔光。 */
-  --card-glass:rgba(22,22,28,.72);           /* 玻璃卡片底 (配合 backdrop-filter) */
-  --card-nest:rgba(12,12,16,.45);            /* 嵌套统计块底 (比卡片更深一档) */
-  --glass-blur:blur(14px);                   /* 玻璃模糊半径 */
-  /* 阴影三级: 静置 / 悬停抬升 / 浮层 */
-  --elev-1:0 1px 2px rgba(0,0,0,.24);
-  --elev-2:0 4px 14px rgba(0,0,0,.30);
-  --elev-3:0 12px 34px rgba(0,0,0,.40);
-  /* 状态色柔光: 高亮卡片用同色系低透明投影, 让"选中"有体积而非仅换边框色 */
-  --glow-primary:0 4px 16px rgba(99,102,241,.16);
-  --glow-ok:0 4px 16px rgba(52,211,153,.14);
-  --glow-warn:0 4px 16px rgba(245,158,11,.14);
-  --glow-err:0 4px 16px rgba(239,68,68,.14);
-  /* 渐变叠层 (卡片高亮时从左侧扫入的扇形) */
-  --tint-primary:linear-gradient(90deg,rgba(99,102,241,.10),transparent);
-  --tint-ok:linear-gradient(90deg,rgba(52,211,153,.10),transparent);
-  /* 图标方块顶边内高光: 暗色下用白叠加做"顶面受光"的体积感 */
-  --inset-hi:inset 0 1px 0 rgba(255,255,255,.06)
+     (如 rgba(255,255,255,.26) 的十字线在白底上是隐形的) 或过重 (黑遮罩压白底会显脏)。 */
+  --sb-bg:rgba(28,28,30,.72);                     /* 侧栏底色 (随 --bg 走) */
+  --hdr-bg:rgba(28,28,30,.72);                   /* 顶栏底色: 苹果的工具栏是**半透明材质**, 不做实心 */
+  --overlay:rgba(0,0,0,.55);                  /* 模态遮罩 */
+  --overlay-soft:rgba(0,0,0,.35);             /* 轻遮罩 */
+  --rule-strong:rgba(120,120,128,.5);         /* 图表十字线 */
+  --track:rgba(120,120,128,.32);              /* 转圈轨道 */
+  --skeleton:rgba(120,120,128,.2);            /* 骨架降级底色 */
+  --sh-sm:0 1px 2px rgba(0,0,0,.3);          /* 分段控件选中阴影 */
+  /* 品牌软底梯度: α 各有含义故逐档建 token (苹果 systemBlue 各档 alpha) */
+  --primary-soft-deep:rgba(10,132,255,.12);
+  --primary-badge:rgba(10,132,255,.2);
+  --primary-soft-h:rgba(10,132,255,.26);
+  --primary-bd-soft:rgba(10,132,255,.32);
+  --primary-bd:rgba(10,132,255,.42);
+  --row-hover:rgba(10,132,255,.10);
+  --err-bd-mid:rgba(255,69,58,.4);
+  --warn-bg-strong:rgba(255,159,10,.22);
+  /* 其余主题敏感表面 */
+  --tip-bg:rgba(58,58,60,.96);                /* 图表悬停气泡底 (用 tertiarySystemBackground) */
+  --tgl-off:#48484a;                          /* 开关关闭态轨道 (Apple systemGray4 附近) */
+  --violet:#5e5ce6;                           /* 排名条渐变终点 (Apple systemIndigo) */
+  --err-h:#ff6961;                            /* 危险按钮**悬停文字色** (暗色下提亮) */
+  --toast-shadow:0 10px 30px rgba(0,0,0,.5);  /* Toast 投影 */
+  --toast-err-bg:#2c1b1a;--toast-ok-bg:#14281a;--toast-warn-bg:#2c2415;
+  /* ── 材质层: 半透明 + 背景模糊 (Apple vibrancy) ──
+     ⚠️ 玻璃只在"背后真有内容可模糊"时才有视觉意义。改造前画布是纯色, 于是
+     backdrop-filter 去模糊一个纯色 = 零可见效果、只付 GPU 成本。现在画布铺了
+     **柔和氛围渐变** (见 --amb / body), 毛玻璃才真正读得出来。 */
+  --card-glass:rgba(44,44,46,.72);            /* 玻璃卡片底 (secondarySystemBackground 半透明) */
+  --card-nest:rgba(58,58,60,.62);              /* 嵌套块底 (比卡片更亮一档, 苹果靠"提亮"分层) */
+  --glass-blur:blur(30px) saturate(180%);     /* 苹果材质的模糊半径更大 + 提饱和 */
+  /* 画布氛围: 柔和多段径向渐变 (低饱和) —— 既是"桌面感"的底, 也是玻璃的"可模糊内容"。
+     苹果的毛玻璃是"透过它看到后面的壁纸", 所以背后必须有明暗与色相变化, 纯色不行。 */
+  --amb:radial-gradient(1500px 800px at 6% -14%,rgba(10,132,255,.20),transparent 74%),
+        radial-gradient(1300px 740px at 94% -4%,rgba(191,90,242,.15),transparent 72%),
+        radial-gradient(1400px 860px at 56% 116%,rgba(64,200,224,.13),transparent 74%);
+  /* 阴影三级: 静置 / 悬停 / 浮层 (苹果的阴影很轻, 分层主要靠材质亮度) */
+  --elev-1:0 1px 2px rgba(0,0,0,.32);
+  --elev-2:0 6px 20px rgba(0,0,0,.38);
+  --elev-3:0 18px 48px rgba(0,0,0,.55);
+  /* 状态色柔光: 高亮卡片用同色系低透明投影 */
+  --glow-primary:0 4px 18px rgba(10,132,255,.22);
+  --glow-ok:0 4px 18px rgba(48,209,88,.18);
+  --glow-warn:0 4px 18px rgba(255,159,10,.18);
+  --glow-err:0 4px 18px rgba(255,69,58,.18);
+  /* 渐变叠层 (卡片高亮时从左侧扫入) */
+  --tint-primary:linear-gradient(90deg,rgba(10,132,255,.14),transparent);
+  --tint-ok:linear-gradient(90deg,rgba(48,209,88,.12),transparent);
+  /* 图标方块顶边内高光 (暗色下白叠加做"顶面受光") */
+  --inset-hi:inset 0 1px 0 rgba(255,255,255,.08)
 }
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased}
+/* 画布: 纯色底 + 柔和氛围渐变。(1) 苹果的"桌面/壁纸"底 —— 毛玻璃透过它才成立;
+   (2) 没有它, backdrop-filter 只是在模糊一个纯色, 等于零效果。
+   用 background-image 而非额外 DOM: 零元素、零重排, 且随主题走 token。 */
+body{
+  color:var(--fg);font-family:var(--font-ui);font-size:var(--fs-14);line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  background-color:var(--bg);
+  background-image:var(--amb);
+  background-attachment:fixed;
+}
 *,*::before,*::after{box-sizing:border-box}
 *{scrollbar-width:thin;scrollbar-color:var(--border-s) transparent}
 *::-webkit-scrollbar{width:6px;height:6px}
-*::-webkit-scrollbar-thumb{background:var(--border-s);border-radius:99px}
+*::-webkit-scrollbar-thumb{background:var(--border-s);border-radius:var(--pill)}
 :focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-.page-enter{animation:fadeIn .2s ease-out}
+/* 入场位移 4px→8px: 4px 在 60Hz 屏上约等于"没动" —— 上一轮用户实测反馈"没动效", 主因就是它.
+   8px 是"刚好看得见又不喧宾夺主"的下限; 时长/缓动全部收进令牌, 不再写字面量.
+   ⚠️ 不加 fill-mode(`both`): 页面根挂着动画时 `transform` 会长期存在, 让根成为
+   fixed/absolute 后代的包含块 (浮层会跟着根跑偏). 自然结束回落到元素自身样式即可. */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.page-enter{animation:fadeIn var(--dur) var(--ease-out)}
+/* 骨架→内容: 数据到位后内容整体淡入, 避免"骨架被一次性替换"的硬切 */
+.fade-in{animation:fadeIn var(--dur) var(--ease-out)}
 /* 列表/卡片错峰入场 (stagger): 首屏与切页签时依次淡入, 让层次可读.
    时长与延迟都很短 (.35s + 25ms/项) —— 只为引导视线, 不做装饰.
    注意: 这些容器由 x-show 切换 display, 重新显示时动画会重放一次 (即"切页签重新入场"), 符合预期. */
-@keyframes riseIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes riseIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .stagger>*{animation:riseIn var(--dur-slow) var(--ease-out) both}
 .stagger>*:nth-child(1){animation-delay:0ms}
 .stagger>*:nth-child(2){animation-delay:25ms}
@@ -121,7 +177,7 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
    例外: .spin (加载转圈) 与 .skel (骨架流光) 保留 —— 它们是"仍在加载"的唯一反馈,
    去掉会让人以为界面卡死. 故单独放行. */
 @media(prefers-reduced-motion:reduce){
-  .page-enter,.stagger>*{animation:none!important}
+  .page-enter,.fade-in,.stagger>*,.hb{animation:none!important}
   *:not(.spin):not(.skel){transition-duration:.001ms!important;animation-duration:.001ms!important}
 }
 .layout{display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0;overflow:hidden}
@@ -130,16 +186,19 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
    顶栏用玻璃底, 与卡片同一套质感. */
 .hdr{height:56px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0;position:relative;z-index:20}
 .hdr-brand{display:flex;align-items:center;gap:8px;flex:none}
-.hdr-logo{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--primary-soft);color:var(--indigo);font-size:var(--fs-12);font-weight:800;box-shadow:var(--inset-hi)}
+/* 顶栏品牌图标: 用项目**真实图标** (brandLogoSvg, 与 icon.svg 同源), 不再用 "◆" 占位。
+   SVG 自带圆角方块底与配色, 故容器去掉 background/color/font-size, 只负责尺寸与圆角
+   (圆角与 SVG 里的 rx 对齐, 好让外阴影贴住图形轮廓)。 */
+.hdr-logo{width:26px;height:26px;flex:none;display:block;border-radius:6px;overflow:hidden}
 .hdr-name{font-size:var(--fs-14);font-weight:700;letter-spacing:-.01em;color:var(--fg)}
-.hdr-ver{font-size:var(--fs-10);color:var(--muted);background:var(--fill-4);padding:2px 6px;border-radius:6px}
+.hdr-ver{font-size:var(--fs-10);color:var(--muted);background:var(--fill-4);padding:2px 6px;border-radius:var(--rm)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
 /* 分段胶囊导航 —— 对照 cc-switch AppSwitcher: 容器 bg-muted rounded-xl p-1,
    激活项 bg-background + shadow-sm (即"胶囊里浮起一枚"). 分组用细分隔线, 不用分组标题 (横排太占位). */
-.navseg{display:inline-flex;align-items:center;gap:2px;background:var(--fill-4);border:1px solid var(--border-subtle);border-radius:12px;padding:3px;min-width:0;overflow-x:auto;scrollbar-width:none;flex:0 1 auto}
+.navseg{display:inline-flex;align-items:center;gap:2px;background:var(--fill-4);border:1px solid var(--border-subtle);border-radius:var(--rl);padding:3px;min-width:0;overflow-x:auto;scrollbar-width:none;flex:0 1 auto}
 .navseg::-webkit-scrollbar{display:none}
 .navseg-sep{width:1px;height:16px;background:var(--border);margin:0 4px;flex:none}
-.navseg-i{display:inline-flex;align-items:center;gap:7px;padding:0 12px;height:30px;border-radius:9px;font-size:var(--fs-12);font-weight:600;color:var(--muted);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),box-shadow var(--dur-fast);flex:none}
+.navseg-i{display:inline-flex;align-items:center;gap:7px;padding:0 12px;height:30px;border-radius:var(--r);font-size:var(--fs-12);font-weight:600;color:var(--muted);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),box-shadow var(--dur-fast);flex:none}
 .navseg-i:hover{color:var(--fg);background:var(--fill-4)}
 .navseg-i.active{background:var(--card-glass);color:var(--fg);box-shadow:var(--elev-1)}
 .navseg-i svg{width:15px;height:15px;flex:none}
@@ -151,17 +210,17 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .page-wide{width:100%;max-width:1600px;margin:0 auto}
 .about-page{width:100%;max-width:1600px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .about-capabilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.about-capability{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card-nest);min-width:0;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out)}
+.about-capability{display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border:1px solid var(--surface-border);border-radius:var(--rl);background:var(--card-nest);min-width:0;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out)}
 .about-capability:hover{border-color:var(--border-s);box-shadow:var(--elev-2)}
-.about-capability-icon{display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex:0 0 32px;border-radius:10px;background:var(--primary-soft);color:var(--indigo);font-size:var(--fs-15);font-weight:700;box-shadow:var(--inset-hi)}
+.about-capability-icon{display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex:0 0 32px;border-radius:var(--r);background:var(--primary-soft);color:var(--accent);font-size:var(--icon-sm);font-weight:700;box-shadow:var(--inset-hi)}
 @media(max-width:640px){.about-capabilities{grid-template-columns:1fr}}
 .about-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:4px 2px 0}
 .about-hero-lead{display:flex;align-items:center;gap:16px;min-width:0}
-/* 应用图标: 与顶栏品牌同源 (菱形), 但放大为 Hero 尺度 */
-.about-logo{width:56px;height:56px;border-radius:17px;flex:none;display:flex;align-items:center;justify-content:center;font-size:24px;background:var(--primary-soft);color:var(--indigo);box-shadow:var(--elev-2),var(--inset-hi)}
-.about-ver{font-size:var(--fs-12);font-weight:600;color:var(--muted);background:var(--fill-4);padding:3px 8px;border-radius:8px;vertical-align:4px;letter-spacing:0}
-.about-eyebrow{font-size:var(--fs-11);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--indigo);margin-bottom:6px}
-.about-hero-title{font-size:clamp(1.5rem,3vw,2rem);font-weight:800;letter-spacing:-.03em;color:var(--fg);line-height:1.15}
+/* 关于页 Hero 的应用图标: 同源品牌图标, 放大到 Hero 尺度 (圆角对齐 SVG 的 rx) */
+.about-logo{width:56px;height:56px;flex:none;display:block;border-radius:12px;overflow:hidden;box-shadow:var(--elev-2)}
+.about-ver{font-size:var(--fs-12);font-weight:600;color:var(--muted);background:var(--fill-4);padding:3px 8px;border-radius:var(--r);vertical-align:4px;letter-spacing:0}
+.about-eyebrow{font-size:var(--fs-11);font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+.about-hero-title{font-size:var(--fs-18);font-weight:800;letter-spacing:-.03em;color:var(--fg);line-height:1.15}
 .about-hero-desc{font-size:var(--fs-13);color:var(--muted);margin-top:6px}
 .about-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.8fr);gap:16px;align-items:start}
 /* 关于页主列: 只做纵向容器 —— 三张卡各自成块, 不再用 border-top 硬分一堵墙 */
@@ -173,9 +232,9 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .about-card .about-section-title{margin-bottom:12px}
 .about-section-title{font-size:var(--fs-12);font-weight:700;color:var(--fg);margin-bottom:10px}
 .about-endpoints{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--fill-1);min-width:0}
-.about-endpoint-method{font:700 11.5px 'JetBrains Mono',monospace;color:var(--indigo);min-width:34px}
-.about-endpoint-path{font:11px 'JetBrains Mono',monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.about-endpoint{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--r);background:var(--fill-1);min-width:0}
+.about-endpoint-method{font:700 var(--fs-10) var(--font-mono);color:var(--accent);min-width:34px}
+.about-endpoint-path{font:var(--fs-9) var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .about-side{display:flex;flex-direction:column;gap:16px;min-width:0}
 .about-side-panel{padding:20px}
 .about-tech{display:flex;gap:8px;flex-wrap:wrap}
@@ -198,21 +257,21 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
 .sg{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
 @media(max-width:1024px){.sg{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:640px){.sg{grid-template-columns:repeat(2,1fr)}}
-.si{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:4px;transition:border-color var(--dur-fast)}
+.si{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:4px;transition:border-color var(--dur-fast)}
 .si:hover{border-color:var(--border-s)}
 .si-l{font-size:var(--fs-11);font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
-.si-v{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
+.si-v{font-family:var(--font-ui);font-size:var(--fs-18);font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
 .si-s{font-size:var(--fs-11);color:var(--muted)}
 .sc-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:768px){.sc-row{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:480px){.sc-row{grid-template-columns:1fr}}
-.sc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden;transition:border-color var(--dur-fast)}
+.sc{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);padding:16px 18px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden;transition:border-color var(--dur-fast)}
 .sc:hover{border-color:var(--border-s)}
-.sc-accent{position:absolute;top:0;left:0;width:3px;height:100%;border-radius:0 2px 2px 0}
+.sc-accent{position:absolute;top:0;left:0;width:3px;height:100%;border-radius:0 var(--rs) var(--rs) 0}
 .sc-hdr{display:flex;align-items:center;justify-content:space-between}
-.sc-ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-15);flex-shrink:0}
+.sc-ic{width:32px;height:32px;border-radius:var(--r);display:flex;align-items:center;justify-content:center;font-size:var(--icon-sm);flex-shrink:0}
 .sc-lbl{font-size:var(--fs-11);font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.sc-val{font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
+.sc-val{font-family:var(--font-ui);font-size:var(--fs-18);font-weight:700;letter-spacing:-.02em;color:var(--fg);font-variant-numeric:tabular-nums;line-height:1.1}
 .sc-sub{font-size:var(--fs-11);color:var(--muted)}
 
 /* 亮色主题: 由 <html class="light"> 覆盖语义层取值。首帧类名由 head.html 的内联脚本按
@@ -228,66 +287,71 @@ body{background:var(--bg);color:var(--fg);font-family:'Inter',-apple-system,Blin
      只有"图表底板/汇总扇区"这类表面色 (--chart-rest) 才随主题走。 */
 html.light{
   color-scheme:light;
-  /* surface 与文本 */
-  --bg:#f5f6f8;--card:#fff;--elevated:#fff;--input:#fff;
-  --fg:#16181d;--muted:#5c6270;
-  /* 描边: 黑叠加 (方向反转) */
-  --border-subtle:rgba(16,18,26,.07);--border:rgba(16,18,26,.11);--border-s:rgba(16,18,26,.18);
-  --border-t:rgba(16,18,26,.14);
-  /* 主色: 加深以在白底上达标 */
-  --primary:#4f46e5;--primary-h:#4338ca;--primary-fg:#fff;
-  --primary-soft:rgba(79,70,229,.09);--indigo:#4f46e5;
-  /* 状态色四元组 */
-  --ok:#059669;--ok-bg:rgba(5,150,105,.10);--ok-fg:#047857;--ok-bd:rgba(5,150,105,.28);
-  --warn:#b45309;--warn-bg:rgba(180,83,9,.10);--warn-fg:#92400e;--warn-bd:rgba(180,83,9,.28);
-  --err:#dc2626;--err-bg:rgba(220,38,38,.09);--err-fg:#b91c1c;--err-bd:rgba(220,38,38,.28);
-  --neutral-bg:rgba(107,114,128,.10);--neutral-fg:#4b5563;--neutral-bd:rgba(107,114,128,.26);
-  --info-bg:rgba(2,132,199,.10);--info-fg:#0369a1;--info-bd:rgba(2,132,199,.26);
-  /* 图表强调补充色与底板 */
-  --purple:#7c3aed;--cyan:#0891b2;--amber:#b45309;
-  --chart-rest:#d4d7de;
+  /* 「分组背景」体系: systemGroupedBackground #F2F2F7 为底, 内容用纯白 —— 苹果本来的做法 */
+  --bg:#f2f2f7;--card:#fff;--elevated:#fff;--input:#f2f2f7;
+  --fg:#000;--muted:rgba(60,60,67,.62);
+  /* 描边: Apple separator (rgba(60,60,67,.29)) 分档 */
+  --border-subtle:rgba(60,60,67,.16);--border:rgba(60,60,67,.24);--border-s:rgba(60,60,67,.38);
+  --surface-border:transparent;
+  --border-t:rgba(60,60,67,.29);
+  /* 品牌色: 亮色下用苹果 systemBlue #007AFF 的稍深档以过 AA (白字 4.6:1),
+     --accent 供文字/图标 (白底 3.9:1, 只用于 ≥12.5px 半粗的标签与图标)。 */
+  --primary:#0071e8;--primary-h:#0062cc;--primary-fg:#fff;
+  --primary-soft:rgba(0,122,255,.12);--accent:#007aff;
+  --secondary:#af52de;--secondary-soft:rgba(175,82,222,.12);
+  /* 状态色: Apple systemGreen / Orange / Red / Teal 的亮色档 */
+  --ok:#34c759;--ok-bg:rgba(52,199,89,.14);--ok-fg:#1f8f3d;--ok-bd:rgba(52,199,89,.32);
+  --warn:#ff9500;--warn-bg:rgba(255,149,0,.14);--warn-fg:#a86000;--warn-bd:rgba(255,149,0,.32);
+  --err:#ff3b30;--err-bg:rgba(255,59,48,.12);--err-fg:#b3261e;--err-bd:rgba(255,59,48,.3);
+  --neutral-bg:rgba(120,120,128,.14);--neutral-fg:#6c6c70;--neutral-bd:rgba(120,120,128,.3);
+  --info-bg:rgba(48,176,199,.14);--info-fg:#1b7f93;--info-bd:rgba(48,176,199,.32);
+  /* 图表底板 */
+  --chart-rest:#e5e5ea;
+  /* 画布氛围: 亮色下用更低 alpha 的同族渐变 (亮底上重了会显脏) */
+  --amb:radial-gradient(1500px 800px at 6% -14%,rgba(0,122,255,.17),transparent 70%),
+        radial-gradient(1300px 740px at 94% -4%,rgba(175,82,222,.13),transparent 68%),
+        radial-gradient(1400px 860px at 56% 116%,rgba(48,176,199,.11),transparent 70%);
   /* 浅底/强底版状态色 */
-  --ok-bg-soft:rgba(5,150,105,.08);--ok-bd-soft:rgba(5,150,105,.22);
-  --err-bg-soft:rgba(220,38,38,.08);--err-bd-soft:rgba(220,38,38,.22);
-  --ok-bg-strong:rgba(5,150,105,.14);--ok-bd-strong:rgba(5,150,105,.3);
-  --err-bg-strong:rgba(220,38,38,.13);--err-bd-strong:rgba(220,38,38,.3);
-  /* 填充层级: 黑叠加 (方向反转, α 不变) */
-  --fill-1:rgba(16,18,26,.02);--fill-15:rgba(16,18,26,.025);--fill-2:rgba(16,18,26,.03);
-  --fill-3:rgba(16,18,26,.04);--fill-4:rgba(16,18,26,.05);--fill-5:rgba(16,18,26,.06);
+  --ok-bg-soft:rgba(52,199,89,.12);--ok-bd-soft:rgba(52,199,89,.28);
+  --err-bg-soft:rgba(255,59,48,.10);--err-bd-soft:rgba(255,59,48,.26);
+  --ok-bg-strong:rgba(52,199,89,.18);--ok-bd-strong:rgba(52,199,89,.4);
+  --err-bg-strong:rgba(255,59,48,.16);--err-bd-strong:rgba(255,59,48,.38);
+  /* 填充层级: 同一个中性灰, 亮色下 alpha 更低 (Apple fill 体系) */
+  --fill-1:rgba(120,120,128,.06);--fill-15:rgba(120,120,128,.08);--fill-2:rgba(120,120,128,.10);
+  --fill-3:rgba(120,120,128,.13);--fill-4:rgba(120,120,128,.16);--fill-5:rgba(120,120,128,.20);
   /* 遮罩: 变轻 */
-  --shade-1:rgba(16,18,26,.10);--shade-2:rgba(16,18,26,.16);--shade-3:rgba(16,18,26,.22);
-  --overlay:rgba(16,18,26,.38);--overlay-soft:rgba(16,18,26,.22);
-  /* 阴影: 变轻 (亮色下重阴影显脏) */
-  --sh:0 1px 3px rgba(16,18,26,.10);--shm:0 16px 44px rgba(16,18,26,.18);
-  --sh-sm:0 1px 3px rgba(16,18,26,.10);
+  --shade-1:rgba(0,0,0,.08);--shade-2:rgba(0,0,0,.14);--shade-3:rgba(0,0,0,.2);
+  --overlay:rgba(0,0,0,.3);--overlay-soft:rgba(0,0,0,.18);
+  /* 阴影: 亮色下更轻 (苹果亮色几乎只有材质, 阴影很淡) */
+  --sh:0 1px 2px rgba(0,0,0,.06);--shm:0 20px 50px rgba(0,0,0,.16);
+  --sh-sm:0 1px 2px rgba(0,0,0,.08);
   /* 表面/规则线/转圈轨道/骨架 */
-  --sb-bg:rgba(255,255,255,.92);
-  --hdr-bg:rgba(255,255,255,.92);
-  --rule-strong:rgba(16,18,26,.22);--track:rgba(16,18,26,.18);--skeleton:rgba(16,18,26,.06);
-  /* 主色软底梯度: 换成深主色, α 与原档一致 */
-  --primary-soft-deep:rgba(79,70,229,.07);--primary-badge:rgba(79,70,229,.12);
-  --primary-soft-h:rgba(79,70,229,.14);--primary-bd-soft:rgba(79,70,229,.26);
-  --primary-bd:rgba(79,70,229,.32);--row-hover:rgba(79,70,229,.05);
-  --err-bd-mid:rgba(220,38,38,.28);--warn-bg-strong:rgba(180,83,9,.13);
-  /* 其余主题敏感表面: 亮色下改成浅底深字 (否则会是"深底 + 深字"读不出来) */
-  --tip-bg:rgba(255,255,255,.98);
-  --tgl-off:#cbd0d8;
-  --violet:#7c3aed;
-  --purple-soft:rgba(124,58,237,.10);
-  --err-h:#b91c1c;
-  --toast-shadow:0 8px 24px rgba(16,18,26,.12);
-  --toast-err-bg:#fef2f2;--toast-ok-bg:#f0fdf4;--toast-warn-bg:#fffbeb;
-  /* 表面质感层: 亮色下玻璃用白半透明 + 更淡的阴影 (亮色重阴影显脏) */
-  --card-glass:rgba(255,255,255,.82);
-  --card-nest:rgba(246,247,250,.9);
-  --elev-1:0 1px 2px rgba(16,18,26,.06);
-  --elev-2:0 4px 14px rgba(16,18,26,.10);
-  --elev-3:0 12px 34px rgba(16,18,26,.16);
-  --glow-primary:0 4px 16px rgba(79,70,229,.14);
-  --glow-ok:0 4px 16px rgba(5,150,105,.12);
-  --glow-warn:0 4px 16px rgba(180,83,9,.12);
-  --glow-err:0 4px 16px rgba(220,38,38,.12);
-  --tint-primary:linear-gradient(90deg,rgba(79,70,229,.08),transparent);
-  --tint-ok:linear-gradient(90deg,rgba(5,150,105,.08),transparent);
-  --inset-hi:inset 0 1px 0 rgba(16,18,26,.05);
+  --sb-bg:rgba(242,242,247,.72);
+  --hdr-bg:rgba(255,255,255,.72);
+  --rule-strong:rgba(120,120,128,.4);--track:rgba(120,120,128,.26);--skeleton:rgba(120,120,128,.14);
+  /* 品牌软底梯度 (苹果 systemBlue 各档 alpha, 亮色下略低) */
+  --primary-soft-deep:rgba(0,122,255,.09);--primary-badge:rgba(0,122,255,.14);
+  --primary-soft-h:rgba(0,122,255,.18);--primary-bd-soft:rgba(0,122,255,.26);
+  --primary-bd:rgba(0,122,255,.34);--row-hover:rgba(0,122,255,.06);
+  --err-bd-mid:rgba(255,59,48,.3);--warn-bg-strong:rgba(255,149,0,.18);
+  /* 其余主题敏感表面 */
+  --tip-bg:rgba(255,255,255,.94);
+  --tgl-off:#e5e5ea;
+  --violet:#5856d6;
+  --err-h:#8f1d16;                            /* 危险按钮**悬停文字色** (亮色下加深) */
+  --toast-shadow:0 10px 30px rgba(0,0,0,.14);
+  --toast-err-bg:#fff0ef;--toast-ok-bg:#f0fbf3;--toast-warn-bg:#fff8ec;
+  /* 材质层: 亮色下玻璃用白半透明 + 更淡的阴影 */
+  --card-glass:rgba(255,255,255,.72);
+  --card-nest:rgba(242,242,247,.9);
+  --elev-1:0 1px 2px rgba(0,0,0,.05);
+  --elev-2:0 6px 18px rgba(0,0,0,.09);
+  --elev-3:0 18px 44px rgba(0,0,0,.16);
+  --glow-primary:0 4px 18px rgba(0,122,255,.16);
+  --glow-ok:0 4px 18px rgba(52,199,89,.14);
+  --glow-warn:0 4px 18px rgba(255,149,0,.14);
+  --glow-err:0 4px 18px rgba(255,59,48,.14);
+  --tint-primary:linear-gradient(90deg,rgba(0,122,255,.10),transparent);
+  --tint-ok:linear-gradient(90deg,rgba(52,199,89,.10),transparent);
+  --inset-hi:inset 0 1px 0 rgba(255,255,255,.9);
 }

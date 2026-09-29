@@ -173,14 +173,23 @@
     //
     // 这是「协议由编程工具(客户端入口)决定, 网关只负责支持」的能力侧: 面板据此回答
     // "这个模型能用哪几种协议", 用户无需再逐个模型勾选候选集。
-    // 三路证据: ① 模型级 api_formats (显式即约束, 声明了就以此为准)
+    // 四路证据 (与后端逐条对齐):
+    //          ① 模型级 api_formats (显式即约束, 声明了就以此为准)
     //          ② 供应商级 probed_protocols (「拉取模型」时零 token 实测到的服务方能力)
-    //          ③ resolveApiFormat 的配置/推断值
-    // ②③ 取并集: 探测能发现"还支持哪些" (推断做不到 —— 实测 DeepSeek 元数据只标 openai,
+    //          ③ 静态层 _static_formats (后端下发的「URL 路径信号 + 内置 host 目录」结果)
+    //          ④ resolveApiFormat 的配置/推断值
+    // ②③④ 取并集: 探测能发现"还支持哪些" (推断做不到 —— 实测 DeepSeek 元数据只标 openai,
     // 但 /v1/responses 同样可用), 推断则保住单个模型的已知用法 (如 zen 的 minimax 走 /messages)。
+    //
+    // ⚠️ ③ 曾缺失: 目录有 178 条 host 映射, 前端复刻必漂移, 故改由后端随 providers 下发
+    // (`_static_formats`, 只读)。漏掉它会出现「面板显示 OpenAI, 后端实际发 /messages」——
+    // 例如端点为 `.../anthropic/v1` 或仅命中 host 目录、从未点过「拉取模型」的供应商。
     availableApiFormats(m, prov) {
       if (this.hasExplicitFormats(m)) return this._knownFormats(m.api_formats);
       const out = this._knownFormats(prov && prov.probed_protocols);
+      this._knownFormats(prov && prov._static_formats).forEach(f => {
+        if (!out.includes(f)) out.push(f);
+      });
       const inferred = this.resolveApiFormat(m, prov);
       if (inferred && this._KNOWN_FORMATS.includes(inferred) && !out.includes(inferred)) out.push(inferred);
       return out;
@@ -190,6 +199,13 @@
     // (打 /v1/messages 就用 anthropic、打 /v1/responses 就用 responses),
     // 故界面另用 availableApiFormats 并列展示"能用哪几条", 两者一起才完整。
     effectiveApiFormat(m, prov) {
+      // 0) 显式**单值** api_format 是硬约束 —— 与后端 pick_api_format 的第 0 步逐条对齐。
+      //    必须放在"可用集含 openai"之前: 否则供应商探测到多协议时, 这里会先返回 openai,
+      //    而后端已按用户的显式设置锁死 → 面板显示与真实转发再次不符。
+      if (!(m && Array.isArray(m.api_formats) && this._knownFormats(m.api_formats).length > 0)) {
+        const explicit = m && this.normalizeFormat(m.api_format);
+        if (explicit && this._KNOWN_FORMATS.includes(explicit)) return explicit;
+      }
       const avail = this.availableApiFormats(m, prov);
       if (avail.includes('openai')) return 'openai';
       if (this.hasExplicitFormats(m)) return avail[0];

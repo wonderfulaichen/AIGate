@@ -1,15 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="100%" stop-color="#4f46e5"/>
+      <stop offset="0%" stop-color="#0a84ff"/>
+      <stop offset="100%" stop-color="#0071e8"/>
     </linearGradient>
   </defs>
   <!-- Rounded square background -->
   <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bg)"/>
   <!-- Central hub circle -->
   <circle cx="128" cy="128" r="32" fill="#ffffff" opacity="0.95"/>
-  <circle cx="128" cy="128" r="20" fill="#6366f1"/>
+  <circle cx="128" cy="128" r="20" fill="#0071e8"/>
   <!-- Connection nodes -->
   <g fill="#ffffff" opacity="0.85">
     <circle cx="72" cy="80" r="10"/>
