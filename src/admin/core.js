@@ -128,28 +128,22 @@ function _logoWrap(svg) {
   return '<span style="width:100%;height:100%;display:inline-flex">' + svg + '</span>';
 }
 // ── 品牌图标 (项目真实资产, 与 icon.svg 同源) ──
-// 顶栏与关于页原先用文字符号 "◆" 占位 —— 而项目本就有正式图标 (网关枢纽造型: 中心节点 +
-// 四向连接, 恰好对应"AI 网关"这个产品)。占位符没有任何理由留着。
-// 内联而非 <img src>: 零额外请求、可直接用 CSS 控制尺寸、且配色与品牌色同源。
-// 配色 = --primary(systemBlue) 一族, 两种主题下同一套 (应用图标不该随主题变色)。
-let _brandSeq = 0;
+// 造型 = **闸门通路**: 门框右缘留口, 一枚箭头穿过开口 —— 母题直接取自品牌名里的 Gate,
+// 也正是产品在做的事 (在门口只放行必要的那份)。顶栏与关于页原先用文字符号 "◆" 占位,
+// 占位符没有任何理由留着。
+// 内联而非 <img src>: 零额外请求、可直接用 CSS 控制尺寸。
+// 单色实心 systemBlue (#0a84ff) + 纯白负形, **不做渐变** —— 应用图标不该随主题变色, 而面板的
+// UI 主色 (--accent) 本来就是同一个蓝; 去掉渐变后也不再需要"同页唯一"的 gid 了。
+// ⚠️ 与 icon.svg / site/index.html / docs/product-deck.html(两处) / build.rs 的 32px 光栅同源,
+//    改一处必须五处同步 —— 校验: python .openbitfun/tmp/verify_logo.py
+//    比例细节见 icon.svg 顶部注释(门框右缘敞开、箭杆与左柱留间隙、门框 20 与箭头 32 拉开主次
+//    —— 都是按 28px 实机反推的; 线宽等粗或间距不足时, 三根横线会被读成字母 E)。
 function brandLogoSvg() {
-  const gid = 'agt' + (_brandSeq++);   // 同页可能出现两次 (顶栏 + 关于页), 渐变 id 必须唯一
   return '<svg viewBox="0 0 256 256" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">'
-    + '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1">'
-    + '<stop offset="0%" stop-color="#0a84ff"/><stop offset="100%" stop-color="#0071e8"/></linearGradient></defs>'
-    + '<rect x="8" y="8" width="240" height="240" rx="56" fill="url(#' + gid + ')"/>'
-    + '<circle cx="128" cy="128" r="32" fill="#fff" opacity=".95"/>'
-    + '<circle cx="128" cy="128" r="20" fill="#0071e8"/>'
-    + '<g fill="#fff" opacity=".85"><circle cx="72" cy="80" r="10"/><circle cx="184" cy="80" r="10"/>'
-    + '<circle cx="72" cy="176" r="10"/><circle cx="184" cy="176" r="10"/></g>'
-    + '<g stroke="#fff" stroke-width="3" opacity=".4" fill="none" stroke-linecap="round">'
-    + '<line x1="82" y1="85" x2="112" y2="118"/><line x1="174" y1="85" x2="144" y2="118"/>'
-    + '<line x1="82" y1="171" x2="112" y2="138"/><line x1="174" y1="171" x2="144" y2="138"/>'
-    + '<line x1="72" y1="60" x2="72" y2="70"/><line x1="72" y1="186" x2="72" y2="196"/>'
-    + '<line x1="184" y1="60" x2="184" y2="70"/><line x1="184" y1="186" x2="184" y2="196"/>'
-    + '<line x1="52" y1="80" x2="62" y2="80"/><line x1="194" y1="80" x2="204" y2="80"/>'
-    + '<line x1="52" y1="176" x2="62" y2="176"/><line x1="194" y1="176" x2="204" y2="176"/></g></svg>';
+    + '<rect x="8" y="8" width="240" height="240" rx="56" fill="#0a84ff"/>'
+    + '<path d="M148 56 H52 V200 H148" fill="none" stroke="#ffffff" stroke-width="20"'
+    + ' stroke-linecap="round" stroke-linejoin="round"/>'
+    + '<path d="M104 112 H176 V104 L220 128 L176 152 V144 H104 Z" fill="#ffffff"/></svg>';
 }
 // ── 图表共享色板 ──
 // 面板里所有"序列取色"的地方(环图 / 模型趋势图 / 趋势图图例 / 构成比例条)统一从这里取,

@@ -1,36 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a84ff"/>
-      <stop offset="100%" stop-color="#0071e8"/>
-    </linearGradient>
-  </defs>
-  <!-- Rounded square background -->
-  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bg)"/>
-  <!-- Central hub circle -->
-  <circle cx="128" cy="128" r="32" fill="#ffffff" opacity="0.95"/>
-  <circle cx="128" cy="128" r="20" fill="#0071e8"/>
-  <!-- Connection nodes -->
-  <g fill="#ffffff" opacity="0.85">
-    <circle cx="72" cy="80" r="10"/>
-    <circle cx="184" cy="80" r="10"/>
-    <circle cx="72" cy="176" r="10"/>
-    <circle cx="184" cy="176" r="10"/>
-  </g>
-  <!-- Connection lines -->
-  <g stroke="#ffffff" stroke-width="3" opacity="0.4" fill="none" stroke-linecap="round">
-    <line x1="82" y1="85" x2="112" y2="118"/>
-    <line x1="174" y1="85" x2="144" y2="118"/>
-    <line x1="82" y1="171" x2="112" y2="138"/>
-    <line x1="174" y1="171" x2="144" y2="138"/>
-    <!-- Outer connections -->
-    <line x1="72" y1="60" x2="72" y2="70"/>
-    <line x1="72" y1="186" x2="72" y2="196"/>
-    <line x1="184" y1="60" x2="184" y2="70"/>
-    <line x1="184" y1="186" x2="184" y2="196"/>
-    <line x1="52" y1="80" x2="62" y2="80"/>
-    <line x1="194" y1="80" x2="204" y2="80"/>
-    <line x1="52" y1="176" x2="62" y2="176"/>
-    <line x1="194" y1="176" x2="204" y2="176"/>
-  </g>
+  <!-- AIGate 标志 · 闸门通路
+       母题 = 品牌名里的 Gate, 也正是产品在做的事: 在门口只放行必要的那一份。
+       单色实心 systemBlue (#0a84ff) + 纯白负形, **不做渐变** —— 应用图标不该随主题变色,
+       而 UI 主色本来就是同一个蓝。
+       ⚠️ 本文件是**母版**: 面板 core.js::brandLogoSvg()、site/index.html、
+       docs/product-deck.html(封面 + 流向 hub 两处) 与 build.rs 的 32px 光栅都必须与它同源。
+       改一处要五处同步, 校验:
+         python .openbitfun/tmp/verify_logo.py
+       几何(画布 256, 墨迹 x 42–220 / y 46–210, 居中):
+         底    rect 8,8 240×240 rx 56  (圆角占 23%)
+         门框  上臂/左柱/下臂, **右缘完全敞开**: M148 56 H52 V200 H148, 描边 20 圆头
+         箭头  杆 y 112–144 由 x104 贯到 176, 描边 32; 头 apex (220,128), 两翼落 y 104/152
+       ⚠️ 比例是**按 28px 实机反推**出来的, 三处别改回去(实测会被读成字母 E):
+         ① 门框右缘那两根短柱在 28px 下直接消失 → 索性不留;
+         ② 箭杆与门框左柱要留 ≥40 单位间隙(28px 下约 4.6px) —— 否则箭杆正好落在门框中部,
+            和上/下臂一起构成"E"的中间横杠;
+         ③ **主次必须靠线宽拉开**: 门框 20 / 箭头 32。两者等粗时, 三根横线在 28px 下
+            会被眼睛并成字母 E —— 这是 v1(等粗) 与 v2(仅拉开间隙) 两版的实测结论。 -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#0a84ff"/>
+  <path d="M148 56 H52 V200 H148" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M104 112 H176 V104 L220 128 L176 152 V144 H104 Z" fill="#ffffff"/>
 </svg>
