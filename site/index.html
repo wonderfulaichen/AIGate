@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="zh-CN" data-chapter="cover">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>AIGate · 本地 LLM 网关，把重复的上下文不再重复传一遍</title>
+<meta name="description" content="AIGate 是一个本地 LLM 网关：一个地址接入所有编程工具，一个面板管住所有模型供应商。实测输入是输出的 380 倍、98.8% 命中 KV 缓存，通过剥离历史推理链省下 24.0% 的输入 tokens。单文件 exe，零外部依赖。">
+<meta name="theme-color" content="#06060a">
+<meta name="color-scheme" content="dark">
+
+<!-- 社交卡片 -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="AIGate · 本地 LLM 网关">
+<meta property="og:description" content="把重复的上下文，不再重复传一遍。一个地址接入所有编程工具，一个面板管住所有模型供应商。">
+<meta property="og:image" content="assets/s_dashboard.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AIGate · 本地 LLM 网关">
+<meta name="twitter:description" content="把重复的上下文，不再重复传一遍。">
+<meta name="twitter:image" content="assets/s_dashboard.png">
+
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+
+<!-- 首帧标记: 仅当 JS 可用时才允许"滚动进场"把元素藏起来。
+     这样在 JS 被禁用/失败时，正文永远是完整可见的（不能靠 JS 才看得到内容）。 -->
+<script>document.documentElement.classList.add('js');</script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════
+   设计令牌 —— 与产品面板/演示稿同一套色板。
+   规则: 组件里不写颜色/圆角/时长/缓动字面量，一律走 token。
+   ═══════════════════════════════════════════════════════════ */
+:root{
+  /* 面 */
+  --bg:#06060a; --bg-2:#0a0a12; --card:rgba(255,255,255,.038); --card-2:rgba(255,255,255,.055);
+  /* 文字 */
+  --fg:#f0f1f6; --muted:#9aa2b4; --dim:#6b7386;
+  /* 描边 */
+  --bd-subtle:rgba(255,255,255,.055); --bd:rgba(255,255,255,.10); --bd-strong:rgba(255,255,255,.16);
+  /* 主色与状态 */
+  --c1:#7c86ff; --c2:#b06bff; --c3:#38d9d9;
+  --ok:#3ddc97; --warn:#f7b955; --err:#ff7a85;
+  --grad:linear-gradient(120deg,var(--c1),var(--c2) 55%,var(--c3));
+  /* 圆角: 四档 + 胶囊 */
+  --rs:8px; --rm:12px; --r:16px; --rl:22px; --pill:999px;
+  /* 间距 */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px; --sp-8:72px;
+  /* 动效 */
+  --dur-quick:.12s; --dur-fast:.18s; --dur:.26s; --dur-slow:.5s;
+  --ease-out:cubic-bezier(.22,.8,.25,1); --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  /* 字体族 */
+  --font-ui:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,'Microsoft YaHei',sans-serif;
+  --font-mono:'JetBrains Mono',Consolas,'Courier New',monospace;
+  /* 版心 */
+  --wrap:1180px;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-ui);
+  font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased;
+  font-feature-settings:'kern' 1;
+  /* 用 clip 而非 hidden: overflow:hidden 会让 body 变成滚动容器，
+     从而破坏顶栏的 position:sticky（页面本身已在各 section 内做裁剪） */
+  overflow-x:clip;
+}
+img{max-width:100%;display:block}
+a{color:var(--c3);text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3,h4{margin:0;line-height:1.25;letter-spacing:-.02em}
+p{margin:0}
+code{font-family:var(--font-mono);font-size:.86em;background:rgba(124,134,255,.14);
+  color:#c9cfff;padding:2px 6px;border-radius:var(--rs);white-space:nowrap}
+b,strong{color:#fff;font-weight:650}
+hr{border:0;border-top:1px solid var(--bd-subtle);margin:var(--sp-7) 0}
+
+/* 焦点可见: 全站统一，键盘用户必须看得见 */
+:focus-visible{outline:2px solid var(--c1);outline-offset:3px;border-radius:var(--rs)}
+
+/* 跳到主内容 */
+.skip{position:absolute;left:-9999px;top:0;z-index:100;background:var(--c1);color:#0b0b12;
+  padding:var(--sp-3) var(--sp-4);border-radius:0 0 var(--rm) 0;font-weight:650}
+.skip:focus{left:0}
+
+.wrap{width:100%;max-width:var(--wrap);margin:0 auto;padding:0 var(--sp-5)}
+.eyebrow{font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--c1);font-weight:700}
+.lead{color:var(--muted);font-size:1.05rem;max-width:64rem}
+.note{margin-top:var(--sp-5);font-size:.85rem;color:var(--dim);line-height:1.8;
+  padding-left:var(--sp-4);border-left:2px solid rgba(124,134,255,.35);max-width:72rem}
+
+/* ── 顶栏 ── */
+.hdr{position:sticky;top:0;z-index:20;background:rgba(6,6,10,.72);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--bd-subtle)}
+.hdr-in{display:flex;align-items:center;gap:var(--sp-5);height:64px}
+.brand{display:flex;align-items:center;gap:var(--sp-3);color:var(--fg);font-weight:700;
+  letter-spacing:-.02em;font-size:1.05rem}
+.brand:hover{text-decoration:none}
+.brand svg{width:28px;height:28px;border-radius:var(--rs);display:block}
+.nav{display:flex;gap:var(--sp-5);margin-left:auto;font-size:.9rem}
+.nav a{color:var(--muted);transition:color var(--dur-fast)}
+.nav a:hover{color:var(--fg);text-decoration:none}
+.hdr-cta{display:flex;gap:var(--sp-3);align-items:center}
+
+/* ── 按钮 ── */
+.btn{display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-3) var(--sp-4);
+  border-radius:var(--rm);font-size:.9rem;font-weight:620;border:1px solid var(--bd);
+  color:var(--fg);background:var(--card);cursor:pointer;
+  transition:transform var(--dur-fast) var(--ease-out),border-color var(--dur-fast),
+             box-shadow var(--dur-fast),background-color var(--dur-fast)}
+.btn:hover{text-decoration:none;border-color:var(--bd-strong);transform:translateY(-2px);
+  box-shadow:0 10px 28px rgba(0,0,0,.35)}
+.btn:active{transform:translateY(0) scale(.98)}
+.btn-primary{background:var(--grad);color:#0b0b12;border-color:transparent;font-weight:700}
+.btn-primary:hover{box-shadow:0 14px 34px rgba(124,134,255,.4)}
+.btn-sm{padding:var(--sp-2) var(--sp-3);font-size:.84rem}
+
+/* ── 区块骨架 ── */
+.sec{padding:var(--sp-8) 0;position:relative;scroll-margin-top:80px}
+.sec-h{display:flex;flex-direction:column;gap:var(--sp-3);margin-bottom:var(--sp-6)}
+.sec-h h2{font-size:clamp(1.5rem,3.1vw,2.35rem);font-weight:760}
+.sec-h .lead{font-size:1rem}
+
+/* ── Hero ── */
+.hero{padding:calc(var(--sp-8) + var(--sp-6)) 0 var(--sp-8);position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:-20%;pointer-events:none;z-index:-1;
+  background:radial-gradient(38% 45% at 78% 18%,rgba(124,134,255,.30),transparent 65%),
+             radial-gradient(34% 40% at 92% 62%,rgba(176,107,255,.24),transparent 65%),
+             radial-gradient(30% 36% at 62% 88%,rgba(56,217,217,.16),transparent 65%)}
+.hero h1{font-size:clamp(3rem,8vw,5.4rem);font-weight:820;letter-spacing:-.045em;line-height:.98;
+  margin:var(--sp-4) 0 0;
+  background:linear-gradient(180deg,#fff,#b9c0d8);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent}
+.claim{font-size:clamp(1.3rem,2.7vw,2.15rem);font-weight:700;letter-spacing:-.03em;
+  margin-top:var(--sp-5);color:#e9ebf5}
+.sub{color:var(--muted);margin-top:var(--sp-3);max-width:44rem}
+.badges{display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-top:var(--sp-5)}
+.badge{font-size:.76rem;padding:var(--sp-1) var(--sp-3);border-radius:var(--pill);
+  border:1px solid var(--bd);background:var(--card);color:var(--muted);
+  font-family:var(--font-mono)}
+.badge.ver{color:var(--c1);border-color:rgba(124,134,255,.35);background:rgba(124,134,255,.10)}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-4);margin-top:var(--sp-6)}
+.fact{display:flex;flex-direction:column;gap:var(--sp-1)}
+.fact .v{font-family:var(--font-mono);font-size:1.15rem;font-weight:760;color:#fff}
+.fact .l{font-size:.82rem;color:var(--dim);line-height:1.5}
+.cta-row{display:flex;flex-wrap:wrap;gap:var(--sp-3);margin-top:var(--sp-6)}
+
+/* ── 卡片网格 ── */
+.grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-4)}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-4)}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-4)}
+/* 网格子项必须允许收缩到内容宽度以下。否则内部的 <pre>（white-space:pre）
+   会以其最小内容宽撑宽整条轨道 → 窄屏出现整页横向滚动
+   （实测 390px 时溢出 162px、768px 时溢出 238px，均来自 #start 的两个代码块）。 */
+.grid-2>*,.grid-3>*,.grid-4>*{min-width:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);
+  padding:var(--sp-5);transition:transform var(--dur) var(--ease-out),border-color var(--dur),
+  box-shadow var(--dur)}
+.card:hover{transform:translateY(-4px);border-color:rgba(124,134,255,.4);
+  box-shadow:0 16px 40px rgba(0,0,0,.34)}
+.card h3{font-size:1rem;margin-bottom:var(--sp-3);color:#fff}
+.card p{color:var(--muted);font-size:.9rem}
+.card .tag{font-family:var(--font-mono);font-size:.72rem;color:var(--c1);
+  text-transform:uppercase;letter-spacing:.12em;margin-bottom:var(--sp-2)}
+
+/* 痛点卡 */
+.pain{border-left:3px solid var(--err);background:linear-gradient(120deg,rgba(255,122,133,.07),transparent 70%)}
+.pain:hover{border-color:var(--err);border-left-color:var(--err)}
+.pain .n{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;
+  border-radius:var(--rs);font-size:.76rem;font-weight:700;color:var(--err);
+  background:rgba(255,122,133,.12);border:1px solid rgba(255,122,133,.3);
+  margin-bottom:var(--sp-2)}
+.pain h3{color:#ffd9dc}
+
+/* KPI */
+.kpi{background:linear-gradient(165deg,rgba(124,134,255,.16),rgba(124,134,255,.025));
+  border:1px solid rgba(124,134,255,.3);border-radius:var(--r);padding:var(--sp-5);
+  position:relative;overflow:hidden}
+.kpi::after{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:var(--grad);opacity:.65}
+.kpi .v{font-family:var(--font-mono);font-size:clamp(1.5rem,2.9vw,2.2rem);font-weight:820;color:#fff;
+  line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.kpi .v i{font-style:normal;font-size:.5em;color:var(--c1);margin-left:2px;font-weight:700}
+.kpi .l{margin-top:var(--sp-3);font-size:.83rem;color:var(--muted)}
+
+/* ── 图表 ── */
+.chart{position:relative;margin-top:var(--sp-6)}
+.curve{width:100%;height:clamp(210px,30vh,300px);display:block;overflow:visible}
+.cg{stroke:rgba(255,255,255,.075);stroke-width:1}
+.ct{fill:var(--dim);font-size:11px;font-family:var(--font-mono)}
+.lw{fill:none;stroke:var(--warn);stroke-width:2.4;stroke-linejoin:round;stroke-linecap:round}
+.ls{fill:none;stroke:var(--c1);stroke-width:2.4;stroke-linejoin:round;stroke-linecap:round}
+.dw{fill:var(--warn)} .ds{fill:var(--c1)}
+/* 描边生长用 pathLength="1" 做声明式动画 —— 不依赖 JS 计时，
+   因此不存在"先闪一下画好的图再重画"的问题。
+   注意选择器写成 `.in .curve ...`（后代）而非 `.curve.in ...`：
+   触发时 .in 是加在容器 .chart 上的，写成 .curve.in 会永远不匹配 ——
+   实测后果是"开着 JS 反而不画曲线和 20 个数据点"，比不开 JS 还差。 */
+.js .curve path{stroke-dasharray:1;stroke-dashoffset:1;
+  transition:stroke-dashoffset 1.7s var(--ease-out) .35s}
+.js .in .curve path{stroke-dashoffset:0}
+.js .curve circle{opacity:0;transform:scale(0);transform-box:fill-box;transform-origin:center;
+  transition:opacity .48s ease,transform .6s var(--ease-spring)}
+.js .in .curve circle{opacity:1;transform:scale(1);
+  transition-delay:calc(.35s + var(--i,0) * 60ms)}
+.chart-legend{display:flex;gap:var(--sp-5);flex-wrap:wrap;margin-top:var(--sp-4);
+  font-size:.85rem;color:var(--muted)}
+.chart-legend .sw{width:12px;height:12px;border-radius:3px;display:inline-block;margin-right:var(--sp-2)}
+.sw-w{background:var(--warn)} .sw-s{background:var(--c1)}
+
+/* 条块填充 */
+.bar-track{height:15px;border-radius:var(--rs);background:rgba(255,255,255,.055);overflow:hidden}
+.bar-fill{height:100%;width:var(--w);border-radius:var(--rs);
+  background:linear-gradient(90deg,rgba(247,185,85,.78),rgba(247,185,85,.42))}
+.js .bar-fill{width:0;transition:width 1.44s var(--ease-out) .35s}
+.js .in .bar-fill{width:var(--w)}
+
+/* ── 表格 ── */
+.tbl{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);
+  border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;font-size:.9rem}
+.tbl th{text-align:left;padding:var(--sp-3) var(--sp-4);font-size:.74rem;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.1em;font-weight:650;border-bottom:1px solid var(--bd)}
+.tbl td{padding:var(--sp-4);border-bottom:1px solid var(--bd-subtle);color:var(--muted);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tbody tr{transition:background var(--dur-fast)}
+.tbl tbody tr:hover{background:rgba(124,134,255,.06)}
+.tbl .ok{color:var(--ok);font-weight:620}
+.tbl .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* 徽标 */
+.bdg{display:inline-block;font-size:.74rem;font-weight:700;padding:2px var(--sp-2);
+  border-radius:var(--rs);white-space:nowrap}
+.bdg-never{background:rgba(255,122,133,.14);color:var(--err);border:1px solid rgba(255,122,133,.32)}
+.bdg-yes{background:rgba(61,220,151,.14);color:var(--ok);border:1px solid rgba(61,220,151,.32)}
+.bdg-maybe{background:rgba(247,185,85,.14);color:var(--warn);border:1px solid rgba(247,185,85,.32)}
+
+/* 取舍行 */
+.tr-row{display:grid;grid-template-columns:minmax(9rem,11rem) 1fr;gap:var(--sp-5);
+  background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:var(--sp-4) var(--sp-5);
+  position:relative;overflow:hidden;transition:border-color var(--dur-fast),transform var(--dur-fast) var(--ease-out)}
+.tr-row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;
+  background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.03))}
+.tr-row:hover{border-color:rgba(124,134,255,.35);transform:translateX(3px)}
+.tr-row.hi{border-color:rgba(124,134,255,.45);
+  background:linear-gradient(120deg,rgba(124,134,255,.13),rgba(124,134,255,.02))}
+.tr-row.hi::before{background:var(--grad)}
+.tr-k{font-size:.85rem;font-weight:680;color:var(--dim)}
+.tr-row.hi .tr-k{color:#c3c9ff}
+.tr-v{color:#d6dae6;font-size:.9rem}
+.tr-o{margin-top:var(--sp-2);padding-left:var(--sp-3);border-left:2px solid rgba(124,134,255,.35);
+  color:var(--muted);font-size:.86rem}
+.stack{display:grid;gap:var(--sp-3)}
+
+/* 诚实提示条 */
+.honest{margin-top:var(--sp-5);padding:var(--sp-4) var(--sp-5);border-radius:var(--r);
+  background:linear-gradient(120deg,rgba(247,185,85,.10),rgba(247,185,85,.03));
+  border:1px solid rgba(247,185,85,.26);color:#ecdcc0;font-size:.9rem}
+
+/* ── 截图 ── */
+.shots{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--sp-4);margin-top:var(--sp-6)}
+.shot{margin:0;background:var(--card);border:1px solid var(--bd);border-radius:var(--r);
+  overflow:hidden;transition:transform var(--dur) var(--ease-out),border-color var(--dur)}
+.shot:hover{transform:translateY(-4px);border-color:rgba(124,134,255,.4)}
+.shot img{width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top left;background:var(--bg-2)}
+.shot figcaption{padding:var(--sp-3) var(--sp-4);font-size:.82rem;color:var(--muted)}
+.shot.wide{grid-column:1/-1}
+
+/* ── 步骤 ── */
+.steps{display:grid;gap:var(--sp-3);margin-top:var(--sp-5)}
+.step{display:flex;gap:var(--sp-4);align-items:flex-start;background:var(--card);
+  border:1px solid var(--bd);border-radius:var(--r);padding:var(--sp-4) var(--sp-5);
+  transition:border-color var(--dur-fast),transform var(--dur-fast) var(--ease-out)}
+.step:hover{border-color:rgba(124,134,255,.35);transform:translateX(3px)}
+.step .n{flex:none;width:30px;height:30px;border-radius:var(--rs);display:flex;
+  align-items:center;justify-content:center;font-weight:700;font-size:.9rem;color:#0b0b12;
+  background:var(--grad)}
+.step .t{display:block;font-weight:650;margin-bottom:var(--sp-1)}
+.step .d{display:block;color:var(--muted);font-size:.89rem}
+
+/* ── 代码块 ── */
+pre{margin:var(--sp-4) 0 0;background:var(--bg-2);border:1px solid var(--bd);
+  border-radius:var(--r);padding:var(--sp-4);overflow:auto;font-size:.84rem;line-height:1.7}
+pre code{background:none;color:#c9cfff;padding:0;white-space:pre;font-size:1em}
+.kbd{font-family:var(--font-mono);font-size:.8rem;padding:1px 6px;border-radius:var(--rs);
+  background:rgba(255,255,255,.08);border:1px solid var(--bd);color:#dfe3ee}
+
+/* ── FAQ ── */
+.faq{display:grid;gap:var(--sp-3);margin-top:var(--sp-5)}
+details{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);
+  padding:var(--sp-4) var(--sp-5);transition:border-color var(--dur-fast)}
+details[open]{border-color:rgba(124,134,255,.35)}
+summary{cursor:pointer;font-weight:640;color:#fff;list-style:none;display:flex;
+  align-items:center;justify-content:space-between;gap:var(--sp-4)}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--c1);font-family:var(--font-mono);font-size:1.1rem;
+  transition:transform var(--dur-fast) var(--ease-out)}
+details[open] summary::after{transform:rotate(45deg)}
+details p{margin-top:var(--sp-3);color:var(--muted);font-size:.9rem}
+
+/* ── 页脚 ── */
+.ftr{border-top:1px solid var(--bd-subtle);margin-top:var(--sp-8);padding:var(--sp-7) 0;
+  background:var(--bg-2)}
+.ftr-in{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:var(--sp-6)}
+.ftr h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:var(--dim);
+  margin-bottom:var(--sp-3)}
+.ftr ul{list-style:none;padding:0;margin:0;display:grid;gap:var(--sp-2);font-size:.87rem}
+.ftr a{color:var(--muted)}
+.ftr a:hover{color:var(--fg)}
+.ftr .cv{font-size:.85rem;color:var(--muted);max-width:34rem}
+
+/* ── 滚动进场（仅在 .js 下生效，见页首内联脚本） ── */
+.js [data-reveal]{opacity:0;transform:translateY(20px);
+  transition:opacity var(--dur-slow) var(--ease-out),transform var(--dur-slow) var(--ease-out)}
+.js [data-reveal].in{opacity:1;transform:none}
+.js [data-reveal][data-delay="1"]{transition-delay:.07s}
+.js [data-reveal][data-delay="2"]{transition-delay:.14s}
+.js [data-reveal][data-delay="3"]{transition-delay:.21s}
+
+/* ── 响应式: 移动优先的三处塌缩 ── */
+@media(max-width:900px){
+  .nav{display:none}
+  .facts{grid-template-columns:repeat(2,1fr)}
+  .grid-3,.grid-4{grid-template-columns:repeat(2,1fr)}
+  .ftr-in{grid-template-columns:1fr 1fr}
+  .shots{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  :root{--sp-8:56px;--sp-7:36px}
+  .grid-2,.grid-3,.grid-4,.facts,.shots{grid-template-columns:1fr}
+  .tr-row{grid-template-columns:1fr;gap:var(--sp-2)}
+  .ftr-in{grid-template-columns:1fr}
+  .hdr-in{height:56px}
+  .lead{font-size:.95rem}
+  /* 窄屏下 code 允许折行，否则长模型名 / 长路径会顶破版心 */
+  code{white-space:normal;word-break:break-all}
+  pre code{white-space:pre}
+}
+/* 宽屏: 截图并排更好看 */
+@media(min-width:1200px){.shots{grid-template-columns:repeat(2,1fr)}}
+
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition-duration:.001ms!important;animation-duration:.001ms!important}
+  .js [data-reveal]{opacity:1!important;transform:none!important}
+  .js .curve path{stroke-dashoffset:0!important}
+  .js .curve circle{opacity:1!important;transform:none!important}
+  .js .bar-fill{width:var(--w)!important}
+  .card:hover,.shot:hover,.btn:hover,.step:hover,.tr-row:hover{transform:none}
+}
+
+@media print{
+  body{background:#fff;color:#000}
+  .hdr,.cta-row,.skip{display:none}
+  .sec{padding:16px 0;page-break-inside:avoid}
+  .card,.kpi,.tbl,.shot,details{border-color:#ccc!important;background:none!important}
+  .shot img{filter:none}
+  a{color:#000}
+}
+</style>
+</head>
+
+<body>
+<a class="skip" href="#main">跳到主内容</a>
+
+<!-- ═══════════ 顶栏 ═══════════ -->
+<header class="hdr">
+  <div class="wrap hdr-in">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 256 256" fill="none" aria-hidden="true"><defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect x="8" y="8" width="240" height="240" rx="48" fill="url(#ag)"/><circle cx="128" cy="128" r="32" fill="#fff" opacity=".95"/><circle cx="128" cy="128" r="20" fill="#6366f1"/><g fill="#fff" opacity=".85"><circle cx="72" cy="80" r="10"/><circle cx="184" cy="80" r="10"/><circle cx="72" cy="176" r="10"/><circle cx="184" cy="176" r="10"/></g><g stroke="#fff" stroke-width="3" opacity=".4" stroke-linecap="round"><line x1="82" y1="85" x2="112" y2="118"/><line x1="174" y1="85" x2="144" y2="118"/><line x1="82" y1="171" x2="112" y2="138"/><line x1="174" y1="171" x2="144" y2="138"/></g></svg>
+      <span>AIGate</span>
+    </a>
+    <nav class="nav" aria-label="页内导航">
+      <a href="#savings">省量数据</a>
+      <a href="#ability">核心能力</a>
+      <a href="#protocol">协议策略</a>
+      <a href="#panel">面板预览</a>
+      <a href="#start">快速开始</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="hdr-cta">
+      <a class="btn btn-sm" href="https://github.com/wonderfulaichen/AIGate" rel="noopener">GitHub</a>
+      <a class="btn btn-sm btn-primary" href="https://afdian.com/item/6043ebfa923111f1854d5254001e7c00?utm_source=copylink&utm_medium=link" target="_blank" rel="noopener">下载</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ═══════════ 1 Hero ═══════════ -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="eyebrow">Local LLM Gateway</div>
+    <h1>AIGate</h1>
+    <p class="claim">把重复的上下文，<br>不再重复传一遍</p>
+    <p class="sub">一个地址接入所有编程工具，一个面板管住所有模型供应商。本地运行、单文件交付、零外部依赖。</p>
+
+    <div class="badges">
+      <!-- 版本号单一真相源: Cargo.toml / CHANGELOG.md 最新条目 -->
+      <span class="badge ver">v0.7.0 · 2026-09-28</span>
+      <span class="badge">Windows 10/11</span>
+      <span class="badge">GPLv3</span>
+      <span class="badge">Rust · axum</span>
+    </div>
+
+    <div class="facts">
+      <!-- 计数目标独占一个 span: data-count 会覆写 textContent，
+           若把 "380 : 1" 整串交给它，" : 1" 会被抹掉 -->
+      <div class="fact"><span class="v"><span data-count="380">380</span> : 1</span><span class="l">输入 : 输出（实测）</span></div>
+      <div class="fact"><span class="v"><span data-count="24.0">24.0</span>%</span><span class="l">省下输入总量的比例</span></div>
+      <div class="fact"><span class="v">3 协议</span><span class="l">OpenAI / Anthropic / Responses</span></div>
+      <div class="fact"><span class="v">单文件</span><span class="l">一个 exe，零外部依赖</span></div>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://afdian.com/item/6043ebfa923111f1854d5254001e7c00?utm_source=copylink&utm_medium=link" target="_blank" rel="noopener">下载 AIGate.exe</a>
+      <a class="btn" href="https://github.com/wonderfulaichen/AIGate" rel="noopener">查看源码</a>
+      <a class="btn" href="#start">三步开始使用</a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 2 痛点 ═══════════ -->
+<section class="sec" id="pain">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>上下文在重复搬运，却看不出重复在哪</h2>
+      <p class="lead">先用数据看清请求体的结构 —— 这决定了该优化什么。</p>
+    </div>
+
+    <div class="grid-2">
+      <article class="card pain" data-reveal>
+        <span class="n">1</span>
+        <h3>输入是输出的 380 倍</h3>
+        <p>实测 <b>5000</b> 次请求：输入 <b>16.84 亿</b> tokens，输出仅 <b>444 万</b>。大头从来不是「模型想了多久」，而是「每次重发了多少历史」。</p>
+      </article>
+      <article class="card pain" data-reveal data-delay="1">
+        <span class="n">2</span>
+        <h3>98.8% 的输入命中缓存</h3>
+        <p>也就是说：这些内容<b>本来就在被反复重发</b>。优化方向不是少发请求，而是<b>别把重复内容再传一遍</b>。</p>
+      </article>
+      <article class="card pain" data-reveal data-delay="2">
+        <span class="n">3</span>
+        <h3>却看不见重复在哪</h3>
+        <p>客户端只告诉你发了多少，不告诉你请求体里什么在重复；换一个供应商，一切又从零开始猜。</p>
+      </article>
+      <article class="card pain" data-reveal data-delay="3">
+        <span class="n">4</span>
+        <h3>协议与配置还得各配一遍</h3>
+        <p>OpenAI / Anthropic / Responses 三种协议并存，每个客户端单独配 <code>base_url</code> 与密钥。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 3 省量数据 ═══════════ -->
+<section class="sec" id="savings">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>省下来的，是重复的上下文</h2>
+      <p class="lead">第一目标：<b>不破坏上游缓存，同时剥掉真正冗余的部分</b>。</p>
+    </div>
+
+    <!-- 数字来源: savings_audit.json (in_out_ratio / hit_rate_pct / total_saved / req_with_savings_pct) -->
+    <div class="grid-4" data-reveal>
+      <div class="kpi"><div class="v"><span data-count="380">380</span><i>倍</i></div><div class="l">输入 ÷ 输出<br>大头在重复搬运</div></div>
+      <div class="kpi"><div class="v"><span data-count="98.8">98.8</span><i>%</i></div><div class="l">输入命中 KV 缓存<br>本就是重复内容</div></div>
+      <div class="kpi"><div class="v"><span data-count="4.04">4.04</span><i>亿</i></div><div class="l">剥离省下的 tokens<br>占输入总量 24.0%</div></div>
+      <div class="kpi"><div class="v"><span data-count="65.4">65.4</span><i>%</i></div><div class="l">从中受益的请求占比</div></div>
+    </div>
+
+    <!-- 实测 10 轮会话: 客户端发出 11,513 B → 不剥离上游收 11,510 B / 剥离后收 3,210 B -->
+    <div class="chart" data-reveal>
+      <h3 style="font-size:1.05rem;margin-bottom:var(--sp-3)">推理链越滚越大，而每轮都要重发</h3>
+      <svg class="curve" viewBox="0 0 1000 300" preserveAspectRatio="none" role="img"
+           aria-label="10 轮会话的上下文体积对比：不剥离从 6.44K 升到 11.51K，剥离后稳定在 3.21K 以内">
+        <line x1="74" y1="254" x2="870" y2="254" class="cg"/><text x="64" y="258" class="ct" text-anchor="end">0K</text>
+        <line x1="74" y1="197" x2="870" y2="197" class="cg"/><text x="64" y="201" class="ct" text-anchor="end">2K</text>
+        <line x1="74" y1="140" x2="870" y2="140" class="cg"/><text x="64" y="144" class="ct" text-anchor="end">5K</text>
+        <line x1="74" y1="83"  x2="870" y2="83"  class="cg"/><text x="64" y="87"  class="ct" text-anchor="end">8K</text>
+        <line x1="74" y1="26"  x2="870" y2="26"  class="cg"/><text x="64" y="30"  class="ct" text-anchor="end">11K</text>
+        <path class="lw" pathLength="1" d="M74.0 232.3 L162.4 212.9 L250.9 182.9 L339.3 163.5 L427.8 144.1 L516.2 114.2 L604.7 94.8 L693.1 75.4 L781.6 45.4 L870.0 26.0"/>
+        <path class="ls" pathLength="1" d="M74.0 248.7 L162.4 245.8 L250.9 232.3 L339.3 229.3 L427.8 226.3 L516.2 212.8 L604.7 209.9 L693.1 206.9 L781.6 193.4 L870.0 190.4"/>
+        <g class="dots">
+          <circle class="dw" style="--i:0"  cx="74.0"  cy="232.3" r="3"/><circle class="dw" style="--i:1"  cx="162.4" cy="212.9" r="3"/><circle class="dw" style="--i:2"  cx="250.9" cy="182.9" r="3"/><circle class="dw" style="--i:3"  cx="339.3" cy="163.5" r="3"/><circle class="dw" style="--i:4"  cx="427.8" cy="144.1" r="3"/><circle class="dw" style="--i:5"  cx="516.2" cy="114.2" r="3"/><circle class="dw" style="--i:6"  cx="604.7" cy="94.8" r="3"/><circle class="dw" style="--i:7"  cx="693.1" cy="75.4" r="3"/><circle class="dw" style="--i:8"  cx="781.6" cy="45.4" r="3"/><circle class="dw" style="--i:9"  cx="870.0" cy="26.0" r="3"/>
+          <circle class="ds" style="--i:10" cx="74.0"  cy="248.7" r="3"/><circle class="ds" style="--i:11" cx="162.4" cy="245.8" r="3"/><circle class="ds" style="--i:12" cx="250.9" cy="232.3" r="3"/><circle class="ds" style="--i:13" cx="339.3" cy="229.3" r="3"/><circle class="ds" style="--i:14" cx="427.8" cy="226.3" r="3"/><circle class="ds" style="--i:15" cx="516.2" cy="212.8" r="3"/><circle class="ds" style="--i:16" cx="604.7" cy="209.9" r="3"/><circle class="ds" style="--i:17" cx="693.1" cy="206.9" r="3"/><circle class="ds" style="--i:18" cx="781.6" cy="193.4" r="3"/><circle class="ds" style="--i:19" cx="870.0" cy="190.4" r="3"/>
+        </g>
+        <text x="74.0"  y="274" class="ct" text-anchor="middle">1</text><text x="162.4" y="274" class="ct" text-anchor="middle">2</text>
+        <text x="250.9" y="274" class="ct" text-anchor="middle">3</text><text x="339.3" y="274" class="ct" text-anchor="middle">4</text>
+        <text x="427.8" y="274" class="ct" text-anchor="middle">5</text><text x="516.2" y="274" class="ct" text-anchor="middle">6</text>
+        <text x="604.7" y="274" class="ct" text-anchor="middle">7</text><text x="693.1" y="274" class="ct" text-anchor="middle">8</text>
+        <text x="781.6" y="274" class="ct" text-anchor="middle">9</text><text x="870.0" y="274" class="ct" text-anchor="middle">10</text>
+      </svg>
+      <div class="chart-legend">
+        <span><i class="sw sw-w"></i>不剥离 11,510 B</span>
+        <span><i class="sw sw-s"></i>剥离后 3,210 B</span>
+      </div>
+      <p class="note">末轮：客户端发出 <b>11,513 B</b> → 不剥离时上游收 <b>11,510 B</b>，剥离后只收 <b>3,210 B</b>（<b>省 8,300 B，72%</b>）。差值逐轮<b>扩大</b>（第 1 轮 −830 B → 第 10 轮 −8,300 B）：历史越长，重复搬运越多。</p>
+    </div>
+
+    <div class="grid-2" style="margin-top:var(--sp-7)">
+      <div class="card" data-reveal>
+        <div class="tag">单请求量级</div>
+        <div class="grid-2" style="gap:var(--sp-3)">
+          <div><div class="kpi" style="padding:var(--sp-4)"><div class="v" style="font-size:1.35rem"><span data-count="120505">120,505</span><i style="font-size:.42em">tokens</i></div><div class="l">单请求省量中位数</div></div></div>
+          <div><div class="kpi" style="padding:var(--sp-4)"><div class="v" style="font-size:1.35rem"><span data-count="314835">314,835</span><i style="font-size:.42em">tokens</i></div><div class="l">单请求输入中位数</div></div></div>
+        </div>
+        <p style="margin-top:var(--sp-3)">p90 省量达 <b>357,390</b> —— 不是省零头；91% 的请求输入 ≥10 万 tokens。</p>
+      </div>
+
+      <div class="card" data-reveal data-delay="1">
+        <div class="tag">剥离集中在哪一层</div>
+        <div class="bar-track" style="--w:97.5%" role="img" aria-label="带工具调用的轮次占剥离总量 97.5%"><div class="bar-fill"></div></div>
+        <p style="margin-top:var(--sp-3)">带 <code>tool_calls</code> 的轮次 <b>97.5%</b> · 普通 assistant <b>2.5%</b></p>
+        <p>大头在多工具调用的轮次 —— 而这一层默认<b>仅在 chat 协议</b>开启。省量最大的 <b>20%</b> 请求贡献了 <b>51%</b> 的省量总量。</p>
+      </div>
+    </div>
+
+    <p class="note">省下的 token 是<b>实在的</b>：不论上游怎么变，少发的 tokens 就不必再传输一遍。这也是为什么面板把省量<b>按 token 逐项记账</b> —— 剥离 / 裁剪 / 缓存三类分开，看得见每一项省了多少。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 4 核心能力 ═══════════ -->
+<section class="sec" id="ability">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>核心能力</h2>
+      <p class="lead">以省量为主线，其余三项都是为它服务。</p>
+    </div>
+
+    <div class="grid-2">
+      <article class="card" data-reveal style="border-color:rgba(124,134,255,.42);background:linear-gradient(160deg,rgba(124,134,255,.13),rgba(124,134,255,.02))">
+        <div class="tag">主线</div>
+        <h3>省量</h3>
+        <p>剥离推理链、历史裁剪、响应缓存 —— 且<b>不破坏上游 KV 缓存</b>。</p>
+      </article>
+      <article class="card" data-reveal data-delay="1">
+        <div class="tag">协议</div>
+        <h3>协议自动匹配</h3>
+        <p>客户端入口即意图；命中直传，字段不被往返翻译。</p>
+      </article>
+      <article class="card" data-reveal data-delay="2">
+        <div class="tag">路由</div>
+        <h3>模型别名与共存</h3>
+        <p>中转 ID 与上游真名解耦；同名模型跨供应商各自成路由。</p>
+      </article>
+      <article class="card" data-reveal data-delay="3">
+        <div class="tag">运维</div>
+        <h3>可观测与韧性</h3>
+        <p>省量逐项可见；熔断、退避重试、超时与体积上限。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 5 协议策略 ═══════════ -->
+<section class="sec" id="protocol">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>协议由客户端决定，不由网关替你选</h2>
+      <p class="lead">客户端打哪个入口，就用哪个协议转发 —— 上游本来就支持就直传，不支持才转换。</p>
+    </div>
+
+    <table class="tbl" data-reveal>
+      <thead><tr><th>客户端入口</th><th>网关行为</th><th>发往上游</th></tr></thead>
+      <tbody>
+        <tr><td><code>/v1/chat/completions</code></td><td class="ok">命中即直传</td><td><code>/chat/completions</code></td></tr>
+        <tr><td><code>/v1/messages</code></td><td class="ok">命中即直传</td><td><code>/messages</code></td></tr>
+        <tr><td><code>/v1/responses</code></td><td class="ok">命中即直传</td><td><code>/responses</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="grid-3" style="margin-top:var(--sp-5)">
+      <article class="card" data-reveal>
+        <h3>为什么不让你手动勾</h3>
+        <p>让配置者逐个模型勾选支持什么协议 —— 真实配置里 <b>652 个模型无一勾选</b>，功能等于不存在。</p>
+      </article>
+      <article class="card" data-reveal data-delay="1">
+        <h3>为什么也不靠猜</h3>
+        <p>按模型名推断（<code>claude-*</code> → anthropic）会错：同名模型<b>跨服务方协议不同</b>，<code>claude-opus-4-8</code> 在官方走 anthropic、在转售商走 openai。</p>
+      </article>
+      <article class="card" data-reveal data-delay="2">
+        <h3>没证据时怎么办</h3>
+        <p>没有任何证据说上游不支持 → 尊重客户端的选择。宁可让上游回一个诚实的错误，也不要静默换协议（后者会掩盖真实失败点）。</p>
+      </article>
+    </div>
+
+    <p class="note">「直传」= 请求体<b>逐字节保真</b>：thinking 块与 signature、reasoning item 都不会被往返翻译掉。反之，<b>转换必有代价</b> —— 这也是为什么 responses 直通路径的省量恒为 0（不经过剥离）。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 6 设计取舍 ═══════════ -->
+<section class="sec" id="tradeoff">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>剥离到什么程度，才不至于帮倒忙</h2>
+      <p class="lead">剥离是<b>有损且不可逆</b>的 —— 所以边界要靠判据划，不能一刀切。</p>
+    </div>
+
+    <div class="stack">
+      <div class="tr-row" data-reveal>
+        <div class="tr-k">粗暴做法</div>
+        <div class="tr-v">把所有历史里的推理链都剥掉，省得最多
+          <div class="tr-o">推理链与 <code>tool_calls</code> 常常是<b>配对</b>关系：要求二者并存时，剥了就得到 400 —— 省下的 token 还不够赔一次失败重试。</div>
+        </div>
+      </div>
+      <div class="tr-row" data-reveal data-delay="1">
+        <div class="tr-k">另一种做法</div>
+        <div class="tr-v">干脆不剥，保持请求体完全不变
+          <div class="tr-o">最稳，但白白多付那部分推理链的传输费。实测这类内容在多轮会话里占比很高，且<b>每轮都会重发</b>。</div>
+        </div>
+      </div>
+      <div class="tr-row hi" data-reveal data-delay="2">
+        <div class="tr-k">我们的做法</div>
+        <div class="tr-v">分两层，且按<b>上游协议</b>判定（不是按供应商 —— 同一家常同时提供三种协议）：普通 assistant 推理链默认剥；带 <code>tool_calls</code> 的走协议开关；<b>Anthropic 恒不剥</b>
+          <div class="tr-o">既拿到省量，又不制造必然失败的请求。<code>anthropic_mode</code> 那条<b>优先于</b>模型级开关 —— 宁可少省，也不能因为误勾而让请求必挂。</div>
+        </div>
+      </div>
+      <div class="tr-row" data-reveal data-delay="3">
+        <div class="tr-k">为什么按协议而非供应商</div>
+        <div class="tr-v">供应商只是换 endpoint，<b>协议</b>才决定剥离是否安全
+          <div class="tr-o">实测反例：<code>claude-opus-4-8</code> 在官方走 anthropic、在转售商走 openai —— 按供应商开关必然误判。</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin:var(--sp-7) 0 var(--sp-4);font-size:1.05rem" data-reveal>剥不剥，先看协议，再看层</h3>
+    <table class="tbl" data-reveal>
+      <thead><tr><th>情形</th><th>判定</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>Anthropic 协议</td><td><span class="bdg bdg-never">绝不剥</span></td><td>thinking 块必须连签名回传，剥了上游必回 400。这条<b>优先于</b>模型级开关 —— 宁可少省，也不能造出必然失败的请求。</td></tr>
+        <tr><td>chat 协议 · 普通 assistant</td><td><span class="bdg bdg-yes">剥</span></td><td>默认开启。这是省量的基本盘。</td></tr>
+        <tr><td>chat 协议 · 带 tool_calls</td><td><span class="bdg bdg-yes">剥</span></td><td>默认开启（实测安全）—— 这也是省量的<b>大头（97.5%）</b>。</td></tr>
+        <tr><td>Responses 协议 · reasoning item</td><td><span class="bdg bdg-maybe">可选</span></td><td>与相邻 function_call 的配对关系<b>未经实测</b>，剥掉可能因序列不合法而 400 —— 交用户在真实上游试开。</td></tr>
+        <tr><td>响应缓存 / 历史裁剪</td><td><span class="bdg bdg-maybe">可选</span></td><td>裁剪默认 <b>0 = 关</b>（优先保上下文）；缓存只对非流式生效。</td></tr>
+      </tbody>
+    </table>
+
+    <div class="honest" data-reveal>
+      三种协议、两层结构、一个总闸 —— 判定顺序不可颠倒：<b>协议安全的红线优先于一切省量</b>。三者也不叠加成「省得更多」就完事：剥离丢思考过程、裁剪丢历史、缓存只对非流式生效，所以默认只开<b>代价最可控</b>的那一项。
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 7 面板预览 ═══════════ -->
+<section class="sec" id="panel">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>界面：暗色与亮色，同一套设计语言</h2>
+      <p class="lead">首帧即正确，不会先闪一下暗色；主题在顶栏随时切换。启动后访问 <code>http://127.0.0.1:8787/admin</code>。</p>
+    </div>
+
+    <div class="shots">
+      <figure class="shot" data-reveal>
+        <img src="assets/s_dashboard.png" alt="AIGate 管理面板「概览」页（暗色）：统计卡片、模型用量排名、Token 趋势图" loading="lazy" width="1400" height="2100">
+        <figcaption>概览 · 暗色：总请求量、成功率、平均延迟、输入/输出 Tokens、缓存命中率</figcaption>
+      </figure>
+      <figure class="shot" data-reveal data-delay="1">
+        <img src="assets/s_light_dashboard.png" alt="AIGate 管理面板「概览」页（亮色主题）" loading="lazy" width="1400" height="2100">
+        <figcaption>概览 · 亮色：同一套设计令牌，只切一个类名</figcaption>
+      </figure>
+      <figure class="shot" data-reveal>
+        <img src="assets/s_analytics.png" alt="AIGate 管理面板「分析」页：KPI 卡、Token 趋势图、省量审计" loading="lazy" width="1400" height="2100">
+        <figcaption>分析：KPI 卡 + 趋势图 + <b>省量审计</b>（按来源拆分、带折算费用与口径披露）</figcaption>
+      </figure>
+      <figure class="shot" data-reveal data-delay="1">
+        <img src="assets/s_records.png" alt="AIGate 管理面板「记录」页：请求流水与单条详情" loading="lazy" width="1400" height="2100">
+        <figcaption>记录：请求流水（模型、供应商、协议、状态码、延迟、费用），支持检索与导出</figcaption>
+      </figure>
+      <figure class="shot" data-reveal>
+        <img src="assets/s_providers.png" alt="AIGate 管理面板「供应商」页：供应商卡片与模型表格" loading="lazy" width="1400" height="2100">
+        <figcaption>供应商：连接测试、拉取模型、逐模型配置中转ID / 思考强度 / 协议 / 单价</figcaption>
+      </figure>
+      <figure class="shot" data-reveal data-delay="1">
+        <img src="assets/s_settings.png" alt="AIGate 管理面板「设置」页：性能与优化、响应缓存、个性化" loading="lazy" width="1400" height="2100">
+        <figcaption>设置：历史推理链瘦身、按协议剥离、历史裁剪、分时段计费、界面语言</figcaption>
+      </figure>
+    </div>
+
+    <table class="tbl" style="margin-top:var(--sp-6)" data-reveal>
+      <thead><tr><th>页面</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td>概览</td><td>统计卡片（请求 / Token / 费用 / 成功率 / 缓存命中率 / 生成速度）+ 模型用量排名 + 占比环 + Token 趋势图</td></tr>
+        <tr><td>分析</td><td>五张 KPI 卡 + Token 趋势图（悬停十字线 + 数值浮层）+ 省量审计 + 调用分布 + 调用排名 + 模型明细 + 供应商性能 + 余额查询</td></tr>
+        <tr><td>记录</td><td>请求流水，支持分页、检索、单条详情与 JSON 导出</td></tr>
+        <tr><td>供应商</td><td>供应商列表与编辑抽屉；熔断状态与「重置熔断」也在供应商卡片上</td></tr>
+        <tr><td>设置</td><td>性能与优化、响应缓存（实验功能）、个性化、分时段计费、连接与监控</td></tr>
+        <tr><td>关于</td><td>版本与构建信息、可折叠「更新日志」区块</td></tr>
+      </tbody>
+    </table>
+
+    <p class="note">Token 数据来源于上游响应中的 <code>usage</code> 字段；若上游未返回，AIGate 按可见文本估算并<b>在界面上标记为估算值</b>（<code>≈</code> 前缀）—— 不把估算当实测展示。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 8 快速开始 ═══════════ -->
+<section class="sec" id="start">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>三步开始使用</h2>
+      <p class="lead">为了部署简单，刻意把技术面做窄：单个可执行文件，无需 Node，也不需要静态文件目录。</p>
+    </div>
+
+    <div class="steps">
+      <div class="step" data-reveal>
+        <span class="n">1</span>
+        <div><span class="t">拿到 exe</span><span class="d">从 <a href="https://afdian.com/item/6043ebfa923111f1854d5254001e7c00?utm_source=copylink&utm_medium=link" target="_blank" rel="noopener">爱发电</a> 下载，或自行 <code>cargo build --release</code>（Rust 1.75+）</span></div>
+      </div>
+      <div class="step" data-reveal data-delay="1">
+        <span class="n">2</span>
+        <div><span class="t">启动</span><span class="d">直接运行 <code>AIGate.exe</code>，首次启动自动生成 <code>providers.json</code> 与 <code>.env</code>；浏览器打开面板完成初始化</span></div>
+      </div>
+      <div class="step" data-reveal data-delay="2">
+        <span class="n">3</span>
+        <div><span class="t">改客户端</span><span class="d">把编程工具的 API Base 指向 <code>http://127.0.0.1:8787/v1</code>，API Key 填任意值，模型 ID 用 <code>providers.json</code> 里的中转 ID</span></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:var(--sp-6)">
+      <div data-reveal>
+        <h3 style="font-size:.95rem">providers.json（路由与模型映射）</h3>
+<pre><code>{
+  "providers": [
+    {
+      "name": "deepseek",
+      "endpoint": "https://api.deepseek.com/v1/chat/completions",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "models": {
+        "deepseek-v4-flash-DS": {
+          "upstream_model": "deepseek-v4-flash",
+          "reasoning_effort": "max"
+        }
+      }
+    }
+  ]
+}</code></pre>
+      </div>
+      <div data-reveal data-delay="1">
+        <h3 style="font-size:.95rem">.env（密钥与开关，部分热切换）</h3>
+<pre><code>PORT=8787
+DEEPSEEK_API_KEY=          # 变量名须与 api_key_env 一致
+STRIP_HISTORY_REASONING=1  # 历史推理链瘦身
+STRIP_TOOLCALL_ON_CHAT=1   # Chat 协议下剥离工具轮次
+STRIP_TOOLCALL_ON_RESPONSES=0
+MAX_HISTORY_TURNS=0        # 0 = 不裁剪
+AIGATE_ADMIN_TOKEN=        # 留空则不鉴权</code></pre>
+      </div>
+    </div>
+
+    <p class="note">编辑 <code>providers.json</code> 后<b>无需重启</b> —— 检测到文件变化会自动重载路由表。密钥只经环境变量注入，不写入代码或配置文件。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 9 API 速查 ═══════════ -->
+<section class="sec" id="api">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>API 速查</h2>
+      <p class="lead">三个入口协议，一个模型列表，一个健康检查。</p>
+    </div>
+
+    <table class="tbl" data-reveal>
+      <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><span class="bdg bdg-yes">POST</span></td><td><code>/v1/chat/completions</code></td><td>OpenAI 兼容，支持流式（SSE）与非流式</td></tr>
+        <tr><td><span class="bdg bdg-yes">POST</span></td><td><code>/v1/messages</code></td><td>Anthropic Claude 格式入口，自动双向转换；该协议下不剥离推理链</td></tr>
+        <tr><td><span class="bdg bdg-yes">POST</span></td><td><code>/v1/responses</code></td><td>OpenAI Responses 入口；上游同为 Responses 时<b>原生直通</b>，SSE 字节级透传</td></tr>
+        <tr><td><span class="bdg bdg-maybe">GET</span></td><td><code>/v1/models</code></td><td>返回可用模型列表，列表项即模型中转 ID</td></tr>
+        <tr><td><span class="bdg bdg-maybe">GET</span></td><td><code>/health</code></td><td>健康检查，返回 <code>ok</code></td></tr>
+      </tbody>
+    </table>
+
+    <p class="note">路由采用<b>精确匹配</b>：客户端传的模型 ID 必须与 <code>models</code> 的 key 完全一致。不要在多个供应商下使用同一个中转 ID —— 路由表按 ID 索引，后配置者会静默覆盖前者。</p>
+  </div>
+</section>
+
+<!-- ═══════════ 10 常见问题 ═══════════ -->
+<section class="sec" id="faq">
+  <div class="wrap">
+    <div class="sec-h" data-reveal>
+      <h2>常见问题</h2>
+      <p class="lead">来自 README 的实战问答。</p>
+    </div>
+
+    <div class="faq">
+      <details data-reveal>
+        <summary>启动后闪退 / 无反应</summary>
+        <p>检查 <code>target/release/</code> 目录下是否有 <code>providers.json</code> 和 <code>.env</code>。首次启动会自动生成，如权限不足可手动创建空文件。更详细的错误信息会通过 Windows 消息框显示。</p>
+      </details>
+      <details data-reveal data-delay="1">
+        <summary>Token 统计为 0，或数字带 <code>≈</code> 前缀</summary>
+        <p>带 <code>≈</code> 表示该条请求上游未返回 <code>usage</code>，AIGate 按可见文本估算（中文实际约 3 字节/token，估算偏保守），并标记为估算值而非实测。若大量请求都是估算，通常是上游不支持 <code>usage</code> 字段。</p>
+      </details>
+      <details data-reveal data-delay="2">
+        <summary>请求返回 404「未找到模型」</summary>
+        <p>客户端传的模型 ID 不在 <code>models</code> 映射表中。检查 ID 是否完全匹配（含大小写、斜杠与供应商前缀）。可在面板「供应商」页或 <code>GET /v1/models</code> 查看可用 ID。</p>
+      </details>
+      <details data-reveal data-delay="3">
+        <summary>端口被占用</summary>
+        <p>修改 <code>.env</code> 中的 <code>PORT</code> 变量，或设置系统环境变量 <code>PORT</code>。</p>
+      </details>
+      <details data-reveal>
+        <summary>如何新增一个供应商</summary>
+        <p>① 在 <code>providers.json</code> 的 <code>providers</code> 数组中添加新条目；② 在 <code>.env</code> 中添加对应的 API Key 环境变量；③ 保存后自动生效（无需重启）。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ═══════════ 页脚 ═══════════ -->
+<footer class="ftr">
+  <div class="wrap ftr-in">
+    <div>
+      <h4>项目</h4>
+      <p class="cv">AIGate 是一个本地 LLM 网关：一个地址接入所有编程工具，一个面板管住所有模型供应商。本地运行、单文件交付。</p>
+      <p class="cv" style="margin-top:var(--sp-3)">
+        <!-- 数据口径: 页面上的省量数字读自本机实测请求日志的审计结果，
+             与面板「省量审计」同源；日志增长后数字会变化，以你面板实测为准。 -->
+        <b>数据口径</b>：本页省量数字来自本机实测请求日志的审计结果，与面板「省量审计」同源。日志增长后数字会变化，请以你面板的实测为准。
+      </p>
+    </div>
+    <div>
+      <h4>链接</h4>
+      <ul>
+        <li><a href="https://github.com/wonderfulaichen/AIGate" rel="noopener">GitHub 仓库</a></li>
+        <li><a href="https://afdian.com/item/6043ebfa923111f1854d5254001e7c00?utm_source=copylink&utm_medium=link" target="_blank" rel="noopener">下载</a></li>
+        <li><a href="https://github.com/wonderfulaichen/AIGate/blob/main/CHANGELOG.md" rel="noopener">更新日志</a></li>
+        <li><a href="https://github.com/wonderfulaichen/AIGate/blob/main/README.md" rel="noopener">README（完整配置指南）</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>版本与许可</h4>
+      <ul>
+        <li><span class="badge ver">v0.7.0 · 2026-09-28</span></li>
+        <li>GNU General Public License v3.0</li>
+        <li>Copyright &copy; 2026 wonderfulaichen</li>
+        <li><a href="https://github.com/wonderfulaichen/AIGate/blob/main/LICENSE" rel="noopener">查看 LICENSE</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   站点脚本 —— 全部为"增强"，任何一步失败都不影响内容可读:
+   · 滚动进场: IntersectionObserver；隐藏态只写在 .js 作用域内 (见 <head> 内联脚本)
+   · 数字滚动: 初值已是真值，JS 只把它从 0 数上来；若 JS 未执行，显示的仍是真值
+   · 图表绘制: 走 CSS 的 pathLength 声明式动画，本脚本不参与计时
+   ═══════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+  try{
+
+  function motionOK(){
+    return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  /* ── 滚动进场 ── */
+  var revealables = [].slice.call(document.querySelectorAll('[data-reveal]'));
+  if('IntersectionObserver' in window){
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(!en.isIntersecting) return;
+        en.target.classList.add('in');
+        io.unobserve(en.target);
+      });
+    }, {rootMargin:'0px 0px -12% 0px', threshold:0.08});
+    revealables.forEach(function(el){ io.observe(el); });
+  }else{
+    revealables.forEach(function(el){ el.classList.add('in'); });
+  }
+
+  /* 图表/条块需要 .in 触发（与卡片的进场分开，避免被父级延迟影响） */
+  var charts = [].slice.call(document.querySelectorAll('.curve,.bar-track'))
+                      .map(function(el){ return el.closest('.chart') || el.parentElement; });
+  if('IntersectionObserver' in window){
+    var io2 = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(!en.isIntersecting) return;
+        en.target.classList.add('in');
+        io2.unobserve(en.target);
+      });
+    }, {rootMargin:'0px 0px -10% 0px', threshold:0.2});
+    charts.forEach(function(el){ io2.observe(el); });
+  }else{
+    charts.forEach(function(el){ el.classList.add('in'); });
+  }
+
+  /* ── 数字滚动 (setInterval 驱动: 后台标签页下 rAF 会停摆，数字会永远停在 0) ── */
+  function countUp(el, to, dec){
+    var t0 = Date.now(), dur = 1100, done = false;
+    function finish(){
+      if(done) return; done = true;
+      clearInterval(iv); clearTimeout(guard);
+      el.textContent = to.toFixed(dec);
+    }
+    var iv = setInterval(function(){
+      var p = Math.min(1, (Date.now() - t0) / dur);
+      el.textContent = (to * (1 - Math.pow(1 - p, 3))).toFixed(dec);   // easeOutCubic
+      if(p >= 1) finish();
+    }, 30);
+    var guard = setTimeout(finish, dur + 700);   // 兜底: 无论如何都落到真值
+  }
+  if(motionOK()){
+    [].slice.call(document.querySelectorAll('[data-count]')).forEach(function(el){
+      // 小数位只能取自 data-count 自身。若按渲染出来的文本推断，
+      // "98.8" 会因为文本里含小数点而被判成两位 → 最终显示成 98.80。
+      var raw = el.getAttribute('data-count');
+      var to = parseFloat(raw);
+      if(isNaN(to)) return;
+      var dec = (raw.indexOf('.') >= 0) ? raw.split('.')[1].length : 0;
+      el.textContent = (0).toFixed(dec);
+      countUp(el, to, dec);
+    });
+  }
+  }catch(err){
+    /* 兜底: 本脚本任何一步抛错，都必须让内容重新可见 ——
+       否则 .js [data-reveal]{opacity:0} 会把整页正文藏住（内容不能依赖 JS 成功）。 */
+    [].slice.call(document.querySelectorAll('[data-reveal],.chart,.bar-track'))
+      .forEach(function(el){ el.classList.add('in'); });
+  }
+})();
+</script>
+</body>
+</html>
