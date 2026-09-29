@@ -334,7 +334,9 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .bdg-list{display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;min-width:0}
 .bdg-more{display:inline-flex;align-items:center;border-radius:var(--pill);padding:2px 6px;font-size:var(--fs-9);font-weight:700;background:var(--fill-5);color:var(--muted);border:1px solid var(--border-subtle);cursor:default}
 /* ── 设置页分区导航 (P3): 纵向长页面的章节直达 ── */
-.st-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;position:sticky;top:0;z-index:5;padding:8px 0;background:var(--bg)}
+/* 分节导航 (sticky): 底色必须用**半透明材质**, 不能铺实心 var(--bg) ——
+   页面底是 body 的 radial-gradient 氛围渐变, 实心底会把它切断成一条横贯的硬边暗带 (实测报障). */
+.st-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;position:sticky;top:0;z-index:5;padding:8px 0;background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
 .st-chip{padding:5px 11px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:var(--fs-11);font-weight:600;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
 .st-chip:hover{background:var(--fill-5);color:var(--fg);border-color:var(--border-s)}
 /* 设置表单: :has() 让 textarea / 开关行自动占满整行 —— 无需在两个文件里同步"哪些控件要全宽".

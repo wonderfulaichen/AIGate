@@ -191,6 +191,9 @@ python -m http.server 8898 --bind 127.0.0.1             # cwd = .openbitfun/tmp/
   背景发死。**结论：范围要大、alpha 要中** —— 大范围 + 中等 alpha 才是"环境光"，小范围高 alpha 就是光斑。
 - ⚠️ 不要在画布上再叠其它装饰（噪点/网格）—— 早期铺过工程网格，母题与产品不符且把背景读成"图纸"。
 - `--glass-blur` 提到 `blur(30px) saturate(180%)` —— 苹果材质的模糊半径更大且**提饱和**。
+- ⚠️ **粘性元素（`position:sticky`）的底色不能用实色 `var(--bg)`**：画布是氛围渐变，实色底会把
+  它整块切断、形成一条横贯的硬边暗带（设置页 `.st-nav` 实测报障）。一律走与顶栏同一材质：
+  `background:var(--hdr-bg)` + `backdrop-filter:var(--glass-blur)`。
 - ⚠️ **`theme_dark_diff.py` 的口径**：它按"零视觉变化"设计，用于判断"只换写法没动视觉"。
   在**刻意**改视觉的轮次（本轮的品牌色/中性色/层级/材质）它会大面积报差异 —— 这是预期内的，
   判据是**逐条确认差异是否都是本轮的刻意项**，不是要求它零差异。
@@ -299,7 +302,7 @@ CSS 那套（`.page-enter` / `.stagger` / transition）只管**结构性**动效
 |---|---|---|
 | 手动刷新重播 | `_numReplayGen` 代数 +1，`numTween` 发现自己的 `gen` 落后就从 0 重滚 | 刷新后数据常常没变，否则点了刷新毫无数字反馈 |
 | 切范围/图型重播 | `_trendForceFade` 标记，`_setTrendHtml` 消费；绕开"内容相同就早退" | 用户刚点了控件，内容碰巧同形也必须给反馈 |
-| 切页签重播 | `fetchStats(range, manual, replay)` 的 `replay` 标 + `_numReplayGen`；`replay` 与 `manual` **分离**（只重播、不弹骨架） | 补间槽是持久对象（`x-show` 切 `display` 不销毁 DOM），切页签目标值没变就永不重播 |
+| 切页签重播 | 概览/分析走 `fetchStats(range, manual, replay)` 的 `replay` 标（与 `manual` **分离**：只重播、不弹骨架）；记录页统计来自 logs，改在 `logsFetched` 已为真时补 `replayNumTweens()` | 补间槽是持久对象（`x-show` 切 `display` 不销毁 DOM），切页签目标值没变就永不重播 |
 | 零值占位 | `numText(key, value, fmt)` 统一出口：值 ≤0 给 `—` 并 `_numSettle` 落值 | 口径"无数据 ≠ 0"；顺带避免归零后从**中间值**起滚 |
 | 服务心跳 | `.hb` 低频呼吸（2.6s），"服务运行中"徽章用 | 常驻活跃读数 |
 
@@ -310,6 +313,9 @@ CSS 那套（`.page-enter` / `.stagger` / transition）只管**结构性**动效
   成功率 / 延迟 / 速度 / 金额会把 76.9% 显示成 77% —— 改掉事实，与 `fmtPct` 的舍入红线冲突。
   `numTween` 现为 `_numTweenRaw` 的取整包装；语义值配各自既有格式化函数（`fmtPct` / `fmtMs` /
   `fmtMoney` / `toFixed(1)`），保证**终值与不做补间时逐字节一致**。
+- **语义值另有模板级出口 `numTextFmt(key, value, fmt)`**：`fmt` ∈ `int/num/t/money/pct/dec2`。
+  与 `numText` 的分工是**不把 0 当"无数据"**（0 就是 0 —— 记录页"窗口请求 0 条"是事实，不是缺数据），
+  且支持小数。分析页 5 项、记录页 4 项统计都走它。
 - **心跳与"禁止环境动效"的边界**：看板规范禁止的是**纯装饰**的环境动效（背景流光/粒子）。
   心跳承载真实语义（进程存活）、幅度极小、位于页头角落，属"状态指示"而非装饰 —— 这个区分要守住，
   别再往页面上加类似的东西（数字 odometer 滚动、图表脉冲、背景流动光效都在禁止之列）。

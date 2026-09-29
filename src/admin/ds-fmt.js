@@ -139,6 +139,22 @@
       const v = this.numTween(key, n);
       return fmt === 'int' ? this.fmtInt(v) : this.fmtT(v);
     },
+    // ── 语义值补间出口 (模板用) ──
+    // 与 numText 的分工: numText 面向"计数"且把 ≤0 当"无数据"渲染成 '—';
+    // 本函数面向带小数 / 带单位 / 可合法为 0 的统计值 (费用/百分比/量级/延迟), **0 就是 0**.
+    // 各 fmt 的终值与原模板表达式逐字符一致 —— 补间只改过程中的中间态.
+    // ⚠️ 't' 必须先取整再缩写: fmtT 对 <1000 的值原样返回, 直接喂补间中的小数会渲染成 "466.93".
+    numTextFmt(key, value, fmt) {
+      const v = this._numTweenRaw(key, Number(value) || 0);
+      switch (fmt) {
+        case 'int':   return this.fmtInt(v);              // 千分位精确整数
+        case 'num':   return String(Math.round(v));       // 裸整数 (无千分位)
+        case 'money': return this.fmtMoney(v);            // 币种符号 + 2 位小数
+        case 'pct':   return this.fmtPct(v);              // 百分比 (含舍入红线保护)
+        case 'dec2':  return v.toFixed(2);                // 固定 2 位小数
+        default:      return this.fmtT(Math.round(v));    // 量级缩写 (K/M)
+      }
+    },
     // 归零/无数据时把补间槽**直接落值**, 不走补间. 两个理由:
     //  ① 显示的是 '—', 补间一个看不见的数字纯属空转;
     //  ② 不落值它会停在旧数字上 —— 实测归零后立刻恢复, 补间从**中间值**起滚 (8223→5000),

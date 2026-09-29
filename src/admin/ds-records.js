@@ -142,5 +142,9 @@
     // 独立错误列表: 直接来自 /admin/api/errors (已按时间倒序 + 仅错误), 与请求窗口解耦.
     get recordErrorCount() { return this.logs.filter(l=>Number(l.status)>=400 || !!l.error).length; },
     get recordSuccessRate() { return this.logs.length ? (this.logs.length-this.recordErrorCount)/this.logs.length*100 : 0; },
-    get recordSuccessRateText() { return this.logs.length ? this.fmtPct(this.recordSuccessRate) : '—'; },
+    // 成功率(文本): 走小数补间 —— 切页签/刷新时与其它 KPI 一起从 0 滚起.
+    get recordSuccessRateText() {
+      if (!this.logs.length) { this._numSettle('recRate', 0); return '—'; }
+      return this.fmtPct(this._numTweenRaw('recRate', this.recordSuccessRate));
+    },
     get recordTokenCount() { return this.logs.reduce((s,l)=>s+(Number(l.prompt_tokens)||0)+(Number(l.completion_tokens)||0),0); },

@@ -191,8 +191,9 @@
       // 故必须显式打 replay 标 (否则只有"手动刷新"能重播, 切页签毫无数字反馈).
       // 首次加载传 false (守 numTween 的"初值即真值"约束, 避免首屏像加载动画).
       if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
-      if (tabId==='analytics') { this.fetchStats(); this.fetchBalance(); this.fetchDegradations(); }
-      if (tabId==='records') { this.fetchLogs(); }
+      if (tabId==='analytics') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchDegradations(); }
+      // 记录页的统计来自 logs (不走 stats): 已加载过才重播 —— 首访让骨架→内容自然出现, 不从 0 滚.
+      if (tabId==='records') { if (this.logsFetched) this.replayNumTweens(); this.fetchLogs(); }
       if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); this.fetchKeys(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
     },
 

@@ -7,10 +7,10 @@
     <div class="skel-card"><div class="skel skel-line" style="width:30%"></div><div class="skel skel-line" style="width:100%;height:10px;margin-top:8px"></div><div class="skel skel-line" style="width:92%;height:10px;margin-top:6px"></div><div class="skel skel-line" style="width:96%;height:10px;margin-top:6px"></div><div class="skel skel-line" style="width:88%;height:10px;margin-top:6px"></div></div>
   </div>
   <div class="rec-stats" x-show="!loading&&logsFetched">
-    <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="logs.length"></div></div>
-    <div class="rec-stat" :style="'cursor:pointer;'+(logStatusFilter==='error'?'outline:1px solid var(--err-bd)':'')" :title="t('opt.error')" @click="logStatusFilter=(logStatusFilter==='error'?'':'error');resetLogView()"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="recordErrorCount"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('current_window_requests')"></div><div class="rec-stat-value" x-text="numTextFmt('recCount',logs.length,'num')"></div></div>
+    <div class="rec-stat" :style="'cursor:pointer;'+(logStatusFilter==='error'?'outline:1px solid var(--err-bd)':'')" :title="t('opt.error')" @click="logStatusFilter=(logStatusFilter==='error'?'':'error');resetLogView()"><div class="rec-stat-label" x-text="t('error_requests')"></div><div class="rec-stat-value" style="color:var(--err)" x-text="numTextFmt('recErrors',recordErrorCount,'num')"></div></div>
     <div class="rec-stat"><div class="rec-stat-label" x-text="t('success_rate')"></div><div class="rec-stat-value" :style="'color:'+rateColor(recordSuccessRate,recordSuccessRateText)" x-text="recordSuccessRateText"></div></div>
-    <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="fmtT(recordTokenCount)"></div></div>
+    <div class="rec-stat"><div class="rec-stat-label" x-text="t('unit_tokens')"></div><div class="rec-stat-value" x-text="numTextFmt('recTokens',recordTokenCount,'t')"></div></div>
   </div>
   <div class="txs tm" style="margin:-6px 0 12px" x-show="!loading&&logsFetched" x-text="t('records_scope_hint',logs.length)"></div>
   <div class="rec-layout" x-show="!loading&&logsFetched">
