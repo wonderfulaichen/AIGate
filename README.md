@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange)
-[![Release](https://img.shields.io/github/v/release/wonderfulaichen/AIGate)](https://github.com/wonderfulaichen/AIGate/releases)
+[![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-%E7%88%B1%E5%8F%91%E7%94%B5-946ce6)](https://afdian.com/item/6043ebfa923111f1854d5254001e7c00?utm_source=copylink&utm_medium=link)
 
 **AIGate** 是一个本地 OpenAI 兼容反向代理，提供多供应商路由、模型名映射、参数注入、成本核算与实时监控面板等功能，并以桌面应用形式交付（原生窗口 + 系统托盘 + 后台运行）。
 
@@ -15,6 +15,7 @@
 - [功能特性](#功能特性)
 - [界面预览](#界面预览)
 - [系统要求](#系统要求)
+  - [下载](#下载)
   - [从源码构建](#从源码构建)
 - [配置指南](#配置指南)
   - [providers.json](#providersjson)
@@ -111,6 +112,14 @@ AIGate 管理面板「概览」页：实时展示总请求量、成功率、平�
 
 - Windows: 无需额外运行时（已静态链接）
 - 其他平台: 需安装 WebKit2GTK（`wry` 依赖）
+
+### 下载
+
+Windows 版 `AIGate.exe`（单文件、零外部依赖）从**爱发电**获取：
+
+<https://afdian.com/item/6043ebfa923111f1854d5254001e7c00>
+
+macOS / Linux 目前没有现成发行包，请从源码构建（见下）。
 
 ### 从源码构建
 
