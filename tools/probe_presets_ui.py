@@ -1,0 +1,245 @@
+# -*- coding: utf-8 -*-
+"""实机核对「内置预设 + 登录」前端链路 (隔离实例跑新构建份, 不碰部署).
+
+核对点 (改前端必须截图/实测核对 —— 生成成功 ≠ 渲染正确):
+  ① 供应商页「新增」弹窗: 预设卡片渲染 (CodeBuddy/说明/添加按钮), 点添加 → 变「已添加」
+  ② 卡片视图 buddyx: 「内置」徽章 + 「登录」按钮 + 删除 ✕ disabled + 「停用」按钮
+  ③ 点「登录」→ 登录弹窗 (标题/三个字段) → 填 token 提交 → 按钮变「重新登录」(状态刷新)
+  ④ 页面无 JS pageerror
+用法: python tools/probe_presets_ui.py
+"""
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_presets_ui")
+EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
+PG, PM = 8999, 9000
+
+PASS, FAIL = [], []
+
+
+def ck(name, ok, detail=""):
+    (PASS if ok else FAIL).append(name)
+    print(("PASS " if ok else "FAIL ") + name + ((" | " + str(detail)) if detail else ""))
+
+
+# ── 隔离实例 ──
+if os.path.isdir(ISO):
+    shutil.rmtree(ISO, ignore_errors=True)
+os.makedirs(os.path.join(ISO, "data"), exist_ok=True)
+shutil.copy(EXE, os.path.join(ISO, "AIGate.exe"))
+PROV = {"providers": [
+    {"name": "buddyx", "endpoint": "http://127.0.0.1:%d/v1/chat/completions" % PM,
+     "api_key_env": "K", "api_key_default": "d",
+     "preset": "buddy",
+     "auth": {"mode": "account", "refresh": {"endpoint": "http://127.0.0.1:%d/refresh" % PM,
+                                              "method": "POST",
+                                              "headers": {"X-Refresh-Token": "{refresh_token}"}}},
+     "models": {"buddyx/m": {"upstream_model": "m"}}},
+    {"name": "plain2", "endpoint": "http://127.0.0.1:%d/v1/chat/completions" % PM,
+     "api_key_env": "K", "api_key_default": "d",
+     "models": {"plain2/m": {"upstream_model": "m"}}},
+]}
+io.open(os.path.join(ISO, "providers.json"), "w", encoding="utf-8").write(json.dumps(PROV, indent=2))
+
+env = dict(os.environ)
+env.update(PORT=str(PG), AIGATE_DATA_DIR=os.path.join(ISO, "data"),
+           RUST_LOG="warn", AIGATE_NO_PROXY="1")
+proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+JS = r"""
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch();
+  const p = await b.newPage({ viewport: { width: 1700, height: 1100 } });
+  const errs = [];
+  p.on('pageerror', e => errs.push(String(e).slice(0, 200)));
+  await p.goto('http://127.0.0.1:%(pg)d/admin', { waitUntil: 'domcontentloaded' });
+  await p.waitForTimeout(2000);
+
+  const clickText = (txt, sel) => p.evaluate(({ txt, sel }) => {
+    const els = Array.from(document.querySelectorAll(sel || 'button,a,div,span'));
+    const t = els.find(e => e.children.length === 0 && (e.textContent || '').trim() === txt);
+    if (t) { t.click(); return true; }
+    return false;
+  }, { txt, sel });
+
+  // 切「供应商」页签
+  await clickText('供应商');
+  await p.waitForTimeout(1500);
+
+  // ① 打开「新增」弹窗
+  await clickText('新增');
+  await p.waitForTimeout(600);
+  const addModal = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none');
+    if (!m) return { open: false };
+    const txt = (m.innerText || '');
+    const btns = Array.from(m.querySelectorAll('button'));
+    const addBtn = btns.find(x => ['添加', '已添加'].includes((x.textContent || '').trim()));
+    return {
+      open: true,
+      has_preset_title: txt.includes('内置预设'),
+      has_codebuddy: txt.includes('CodeBuddy'),
+      has_desc: txt.includes('登录一次'),
+      has_custom_title: txt.includes('自定义'),
+      add_btn_exists: !!addBtn,
+      add_btn_text: addBtn ? (addBtn.textContent || '').trim() : '',
+      add_btn_disabled: addBtn ? addBtn.disabled : null,
+    };
+  });
+  // 点预设的「添加」
+  const clickedAdd = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none');
+    if (!m) return false;
+    const addBtn = Array.from(m.querySelectorAll('button'))
+      .find(x => (x.textContent || '').trim() === '添加' && !x.disabled);
+    if (addBtn) { addBtn.click(); return true; }
+    return false;
+  });
+  await p.waitForTimeout(400);
+  // 弹窗应自动关闭 (addFromPreset 设 showAddProvider=false)
+  const modalClosed = await p.evaluate(() =>
+    Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .every(x => getComputedStyle(x).display === 'none' || x.style.display === 'none'
+                  || !x.offsetParent));
+
+  // ② 卡片视图: 新添加的模板条目 (preset=buddy, name=buddy) 徽章/按钮
+  //    注意隔离配置里预设实例叫 buddyx; 新添加的名字是 buddy —— 两者都查
+  const card = await p.evaluate(() => {
+    const txt = document.body.innerText;
+    const cards = Array.from(document.querySelectorAll('.plaza-card'));
+    const c = cards.find(x => (x.innerText || '').includes('buddy') && (x.innerText || '').includes('内置'));
+    const btns = c ? Array.from(c.querySelectorAll('button')) : [];
+    const del = btns.find(x => (x.textContent || '').trim() === '✕');
+    return {
+      found: !!c,
+      has_badge_builtin: txt.includes('内置'),
+      has_login_btn: btns.some(x => ['登录', '重新登录'].includes((x.textContent || '').trim())),
+      has_disable_btn: btns.some(x => (x.textContent || '').trim() === '停用'),
+      del_disabled: del ? del.disabled : null,
+      del_title: del ? (del.title || '') : '',
+    };
+  });
+
+  // ③ 打开登录弹窗 → 填 token → 提交 → 按钮变「重新登录」
+  const loginOpened = await p.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('.plaza-card'));
+    const c = cards.find(x => (x.innerText || '').includes('buddy') && (x.innerText || '').includes('内置'));
+    if (!c) return false;
+    const btn = Array.from(c.querySelectorAll('button'))
+      .find(x => (x.textContent || '').trim() === '登录');
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  await p.waitForTimeout(500);
+  const loginModal = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (!m) return { open: false };
+    return {
+      open: true,
+      has_tok: !!m.querySelector('textarea'),
+      field_count: m.querySelectorAll('textarea,input').length,
+      has_submit: Array.from(m.querySelectorAll('button')).some(x => (x.textContent || '').includes('登录')),
+    };
+  });
+  await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (m) {
+      const ta = m.querySelectorAll('textarea')[0];
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, 'E2E_UI_TOKEN_1');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  await p.waitForTimeout(200);
+  await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (m) {
+      const btn = Array.from(m.querySelectorAll('button'))
+        .find(x => (x.textContent || '').trim() === '登录' && !x.disabled);
+      if (btn) btn.click();
+    }
+  });
+  await p.waitForTimeout(800);
+  const afterLogin = await p.evaluate(() => {
+    const txt = document.body.innerText;
+    return { has_relogin: txt.includes('重新登录') };
+  });
+
+  console.log(JSON.stringify({ addModal, clickedAdd, modalClosed, card, loginOpened, loginModal, afterLogin, errs }, null, 2));
+  await b.close();
+})().catch(e => { console.error(e); process.exit(1); });
+""" % {"pg": PG}
+
+d = os.path.join(ROOT, ".openbitfun", "tmp", "vidtools")
+tmp = os.path.join(d, "_probe_presets.js")
+with io.open(tmp, "w", encoding="utf-8") as f:
+    f.write(JS)
+env2 = dict(os.environ)
+env2["NODE_PATH"] = os.path.join(d, "node_modules")
+
+try:
+    # 等实例就绪
+    for _ in range(60):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:%d/admin/api/version" % PG, timeout=2)
+            break
+        except Exception:
+            time.sleep(0.5)
+    r = subprocess.run(["node", tmp], cwd=d, capture_output=True, text=True, timeout=180,
+                       encoding="utf-8", errors="replace", env=env2)
+    print(r.stdout)
+    if r.returncode != 0:
+        print("STDERR:", r.stderr[-1500:])
+
+    try:
+        out = json.loads(r.stdout)
+    except Exception:
+        out = {}
+
+    am = out.get("addModal", {})
+    ck("ui_addmodal_open", am.get("open") is True, am)
+    ck("ui_preset_section", am.get("has_preset_title") and am.get("has_codebuddy") and am.get("has_desc"), am)
+    ck("ui_custom_section", am.get("has_custom_title") is True, am)
+    ck("ui_preset_add_btn", am.get("add_btn_exists") and am.get("add_btn_text") in ("添加", "已添加"), am)
+    # 两种预期态: 预设未添加 → 按钮可点且点击生效; 已添加 (本探针环境 buddyx 即预设实例)
+    #   → 按钮渲染为「已添加」禁用态 (presetAdded 去重正确).
+    if am.get("add_btn_text") == "添加":
+        ck("ui_preset_add_click", out.get("clickedAdd") is True, "")
+    else:
+        ck("ui_preset_add_disabled_state", am.get("add_btn_disabled") is True, am)
+    cd = out.get("card", {})
+    ck("ui_card_badges", cd.get("found") and cd.get("has_badge_builtin"), cd)
+    ck("ui_card_login_btn", cd.get("has_login_btn"), cd)
+    ck("ui_card_disable_btn", cd.get("has_disable_btn"), cd)
+    ck("ui_del_disabled", cd.get("del_disabled") is True and "停用" in (cd.get("del_title") or ""), cd)
+    ck("ui_login_modal", out.get("loginOpened") and out.get("loginModal", {}).get("open"), out.get("loginModal"))
+    ck("ui_login_fields", out.get("loginModal", {}).get("field_count", 0) >= 3, out.get("loginModal"))
+    ck("ui_login_submit_relogin", out.get("afterLogin", {}).get("has_relogin"), out.get("afterLogin"))
+    ck("ui_no_pageerror", not out.get("errs"), out.get("errs"))
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+
+print("\n== %d passed, %d failed ==" % (len(PASS), len(FAIL)))
+if FAIL:
+    print("FAILED: " + ", ".join(FAIL))
+    sys.exit(1)

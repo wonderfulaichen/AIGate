@@ -1,0 +1,973 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AIGate PV</title>
+<style>
+/* ============================================================
+   AIGate 项目 PV —— 一个连续世界 + 一台飞行摄影机 (零剪切)
+   与 "PPT 动画" 的本质区别:
+     · 没有分镜版面。全世界 = 一个 6000x1080 的连续空间, 摄影机沿 x 飞行, 全片不切
+     · 消息卡片位置 = x(t) 纯函数, 永远在流 —— 摄影机停下画面也不会静止
+     · **跟拍主角卡**: 镜头咬住一张推理卡飞抵闸门, 看它被当场切开, 琥珀部分被吸收,
+       灰色正文继续下行 —— 这就是产品在做的事, 不是配图
+     · 剥离是因果的: 卡片的琥珀部分在闸门处物理消失 → 下游再无琥珀
+     · 文字只有贴在物体上的工程标注 (尺寸线/示数), 没有整句字幕
+   驱动: window.seek(tMs) 纯函数 → 逐帧截图即确定性 (无 CSS 过渡 / rAF / Date.now)。
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: #06070a; }
+body { font-family: "Segoe UI", -apple-system, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+       color: #f5f5f7; -webkit-font-smoothing: antialiased; }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* ── 远景 (视差层) —— 世界扩到 15000: 流 + 5 站点 + 面板 ── */
+#far { position: absolute; left: 0; top: 0; width: 15000px; height: 1080px; transform-origin: 0 0; }
+#far .blob { position: absolute; border-radius: 50%; filter: blur(110px); }
+#far .grid { position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(120,150,200,.05) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(120,150,200,.05) 1px, transparent 1px);
+  background-size: 140px 140px; }
+
+/* ── 主世界 ─────────────────────────────────────────────── */
+#world { position: absolute; left: 0; top: 0; width: 15000px; height: 1080px;
+         transform-origin: 0 0; will-change: transform; }
+
+/* 通道: 上下导轨 (消息在两条导轨之间流动) */
+#conduit .rail { position: absolute; left: 760px; width: 3980px; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, rgba(120,150,200,0), rgba(120,150,200,.46) 4%, rgba(120,150,200,.46) 96%, rgba(120,150,200,0)); }
+#conduit .r1 { top: 96px; } #conduit .r2 { top: 986px; }
+#conduit .band { position: absolute; left: 760px; top: 99px; width: 3980px; height: 887px;
+  background-image: repeating-linear-gradient(90deg, rgba(10,132,255,.07) 0 44px, transparent 44px 140px); }
+
+/* 客户端窗口 */
+#client { position: absolute; left: 130px; top: 300px; width: 620px; height: 500px;
+  background: linear-gradient(180deg, rgba(34,38,48,.97), rgba(16,19,26,.97));
+  border: 1px solid rgba(245,245,247,.16); border-radius: 18px;
+  box-shadow: 0 34px 90px rgba(0,0,0,.65); overflow: hidden; }
+#client .bar { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 18px;
+  background: rgba(245,245,247,.05); border-bottom: 1px solid rgba(245,245,247,.09); }
+#client .bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(245,245,247,.22); }
+#client .bar .t { font-size: 17px; color: rgba(245,245,247,.5); margin-left: 10px; letter-spacing: .09em; }
+#client .ln { height: 13px; border-radius: 6px; background: rgba(245,245,247,.13); margin: 17px 24px 0; }
+#client .ln.k { background: rgba(10,132,255,.45); }
+#client .ln.a { background: rgba(255,159,10,.45); }
+#client .foot { position: absolute; left: 24px; right: 24px; bottom: 20px; height: 42px; border-radius: 10px;
+  background: rgba(10,132,255,.17); border: 1px solid rgba(10,132,255,.45);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; font-weight: 700; color: #7cc0ff; letter-spacing: .12em; }
+
+/* ── 消息卡片 ───────────────────────────────────────────── */
+/* 不是抽象色条: 每张卡 = 角色条 + 内容行, 放大后能读出"这是一条消息" */
+#blocks { position: absolute; left: 0; top: 0; width: 6000px; height: 1080px; }
+.card { position: absolute; height: 64px; border-radius: 10px; transform-origin: 0 50%;
+        display: flex; align-items: center; gap: 12px; padding: 0 16px 0 12px; overflow: hidden; }
+.card .role { width: 8px; align-self: stretch; margin: 10px 0; border-radius: 4px; flex: none; }
+.card .body { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.card .body i { height: 4px; border-radius: 2px; background: currentColor; opacity: .55; }
+/* 历史 / 普通上下文 */
+.card.ctx  { color: rgba(206,220,240,.88);
+  background: linear-gradient(180deg, rgba(150,172,205,.30), rgba(112,134,170,.17));
+  border: 1px solid rgba(186,206,238,.26); }
+.card.ctx .role { background: rgba(206,220,240,.6); }
+/* 用户消息 */
+.card.user { color: rgba(178,214,255,.95);
+  background: linear-gradient(180deg, rgba(10,132,255,.42), rgba(10,132,255,.20));
+  border: 1px solid rgba(10,132,255,.72); }
+.card.user .role { background: #0a84ff; }
+/* 工具返回 */
+.card.tool { color: rgba(170,232,220,.9);
+  background: linear-gradient(180deg, rgba(48,209,188,.26), rgba(48,209,188,.12));
+  border: 1px solid rgba(48,209,188,.5); }
+.card.tool .role { background: #30d1bc; }
+/* 推理链 —— 琥珀色 + 虚线边 = "临时的、可剥的" */
+.card.reason { color: rgba(255,208,138,.95); height: 72px;
+  background: linear-gradient(180deg, rgba(255,159,10,.40), rgba(255,159,10,.18));
+  border: 1.5px dashed rgba(255,196,90,.9); box-shadow: 0 0 26px rgba(255,159,10,.26); }
+.card.reason .role { background: #ff9f0a; }
+/* 主角卡: 被跟拍的那张, 只在跟拍窗口内加一圈呼吸描边 */
+.card.hero { box-shadow: 0 0 0 2.5px rgba(255,224,170,.95), 0 0 52px rgba(255,159,10,.6); }
+
+/* ── 闸门 (品牌标造型放大) ──────────────────────────────── */
+#gate { position: absolute; left: 2600px; top: 60px; width: 400px; height: 960px; }
+#gate .house { position: absolute; left: 96px; top: 20px; width: 208px; height: 920px;
+  border: 3px solid rgba(10,132,255,.62); border-radius: 30px;
+  background: linear-gradient(180deg, rgba(10,132,255,.11), rgba(10,132,255,.03));
+  box-shadow: 0 0 90px rgba(10,132,255,.26), inset 0 0 60px rgba(10,132,255,.10); }
+/* 门内格栅: 只在门框宽度内, 不能糊成整屏竖纹 */
+#gate .comb { position: absolute; left: 104px; top: 20px; width: 192px; height: 920px; opacity: .5;
+  background: repeating-linear-gradient(90deg, rgba(10,132,255,.5) 0 2px, transparent 2px 22px); }
+#gate .blade { position: absolute; left: 197px; top: 20px; width: 6px; height: 920px; border-radius: 3px;
+  background: linear-gradient(180deg, rgba(10,132,255,0), #0a84ff 8%, #a8d4ff 50%, #0a84ff 92%, rgba(10,132,255,0));
+  box-shadow: 0 0 44px rgba(10,132,255,.95), 0 0 110px rgba(10,132,255,.5); }
+#gate svg { position: absolute; left: 130px; top: 452px; width: 148px; height: 148px; z-index: 3; }
+
+/* 被吸收的推理碎屑 */
+#sparks { position: absolute; left: 0; top: 0; width: 6000px; height: 1080px; }
+.sp { position: absolute; width: 9px; height: 9px; border-radius: 2px; background: #ffb445; }
+
+/* ── 真实面板: 不再用截图, 而是把**真实面板 HTML** 跑在 iframe 里 ─────────
+   用户: "最后的软件页面内容不应该是在动态变化吗?" —— 静态截图做不到。
+   现在面板是真的: 数字由 PV 时间轴驱动 Alpine 状态 (原始值一改, UI 的百分比/
+   图表/颜色全部自己联动), 并且缓慢滚动, 露出更多真实界面。
+   ⚠️ 预览 HTML 里 static 资源是绝对路径 → capture_pv.js 用路由把它接到真文件;
+      父页访问 iframe DOM 需要 --allow-file-access-from-files (同样在该脚本里)。 */
+#panelWrap { position: absolute; width: 1920px; height: 1080px; perspective: 1900px; }
+#panel { position: absolute; inset: 0; overflow: hidden; background: #0b0e14; border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(10,132,255,.35), 0 70px 170px rgba(0,0,0,.78); }
+#panel iframe { width: 1920px; height: 1080px; border: 0; display: block; background: #0b0e14; }
+#panel .glass { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(116deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,0) 32%); }
+
+/* ── 工程标注 ───────────────────────────────────────────── */
+.anno { position: absolute; white-space: nowrap; font-weight: 700; letter-spacing: .03em; }
+.anno .sm { font-weight: 500; opacity: .7; }
+.dim { position: absolute; height: 0; border-top: 2px solid rgba(10,132,255,.62); }
+.dim::before, .dim::after { content: ""; position: absolute; top: -11px; width: 2px; height: 22px; background: rgba(10,132,255,.75); }
+.dim::before { left: 0; } .dim::after { right: 0; }
+.dim .lab { position: absolute; top: -52px; left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-weight: 700; color: rgba(245,245,247,.95); }
+#scrim { position: absolute; inset: 0; background: #06070a; opacity: 0; z-index: 40; }
+/* ⚠️ 遮罩必须**全不透明**: 曾是 rgba(6,7,10,.84), 配上真实面板的亮底会从后面透出来
+   (终检联络表在 84.5/86.5/88.5s 抓到面板数字隐约可见)。收尾阶段音乐已淡出, 全黑无副作用。 */
+/* 字卡在屏幕空间居中 —— 不随摄影机缩放 */
+#endcard { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; opacity: 0; z-index: 50; text-align: center; }
+#endcard .logo { display: flex; align-items: center; gap: 34px; }
+#endcard .logo svg { width: 150px; height: 150px; }
+#endcard .logo .name { font-size: 118px; font-weight: 750; letter-spacing: -.01em; }
+#endcard .tagline { margin-top: 34px; font-size: 54px; color: rgba(245,245,247,.80); letter-spacing: .06em; }
+#endcard .links { margin-top: 54px; font-size: 33px; color: rgba(245,245,247,.42); letter-spacing: .03em; }
+
+/* ══ 90s 站点 (B/C/D/E) —— 每站一种视觉形态, 杜绝"画面单一" ══
+   全部挂在 #world 里 (世界坐标), 摄影机飞过去; 排版门禁检查它们的 .anno 标题 */
+.stn {
+  position: absolute;
+  /* v16 拆卡片: 圆角盒/描边/投影/顶栏全去掉 —— 用户 r11 反馈"后半段还是 PPT":
+     数据住在仪表盘卡片里 = 截图构图。改为内容直接铺在世界里 (Apple 数字页式),
+     只留一块柔光地垫做焦点, 矩形容器消失。overflow 放开让图表全出血。 */
+  background: none; border: none; box-shadow: none; overflow: visible;
+}
+.stn::before {
+  content: ""; position: absolute; inset: -90px -130px; z-index: -1;
+  background: radial-gradient(ellipse at 50% 46%,
+    rgba(10,132,255,.11), rgba(10,132,255,.035) 55%, transparent 76%);
+}
+.stn .hd {
+  height: 76px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0; background: none; border-bottom: none;
+  font-size: 24px; font-weight: 700; letter-spacing: .16em; color: rgba(245,245,247,.60);
+}
+.stn .hd > span:first-child::before {
+  content: ""; display: inline-block; width: 30px; height: 4px; border-radius: 2px;
+  background: #0a84ff; margin-right: 16px; vertical-align: middle;
+}
+.stn .hd .num { font-size: 40px; color: #7cc0ff; letter-spacing: .02em; }
+.stn .anno { position: static; }        /* 站内标题继承 .anno 字重, 但不参与绝对定位 */
+
+/* 站点 B: body 标本台 —— 消息行 + 琥珀推理片被摘除 */
+#stB { left: 5400px; top: 210px; width: 1140px; height: 640px; }
+#stB .rows { padding: 20px 26px; position: relative; }
+#stB .knife { position: absolute; top: 14px; bottom: 14px; width: 2px; left: 880px; z-index: 3;
+  background: linear-gradient(180deg, rgba(10,132,255,0), #7cc0ff 15%, #7cc0ff 85%, rgba(10,132,255,0));
+  box-shadow: 0 0 22px rgba(10,132,255,.85); }
+#stB .knife .tag { position: absolute; top: -6px; left: 12px; font-size: 17px; font-weight: 700;
+  color: #7cc0ff; white-space: nowrap; }
+#stB .tally { position: absolute; right: 26px; bottom: 12px; font-size: 20px; font-weight: 700;
+  color: rgba(245,245,247,.55); }
+#stB .r { display: flex; align-items: center; gap: 16px; height: 56px; }
+#stB .r .role { width: 92px; flex: none; font-size: 19px; font-weight: 700; color: rgba(245,245,247,.45); text-align: right; }
+#stB .r .msg { height: 34px; border-radius: 8px; background: rgba(245,245,247,.13); flex: 1; max-width: 560px; }
+#stB .r.user .msg { background: rgba(10,132,255,.32); }
+#stB .r.tool .msg { background: rgba(48,209,188,.22); }
+#stB .r .chip {           /* 推理片: 不断产生 → 被刀口摘除 */
+  height: 34px; width: 300px; border-radius: 8px; flex: none;
+  background: rgba(255,159,10,.30); border: 1.5px dashed rgba(255,196,90,.9);
+  position: relative; transform-origin: 0 50%;
+}
+#stB .chip::after { content: "reasoning"; position: absolute; left: 12px; top: 6px;
+  font-size: 17px; font-weight: 700; color: rgba(255,205,130,.95); }
+
+/* 站点 C: 折线图 (实测 10 轮) —— 加"游标"持续扫描
+   v16: svg 1340→1560 全出血 (占屏宽86%), viewBox 缩放连带字号/线宽一起放大;
+   right 边界核过: 末点 x=7300+1560*(1291/1340)+dot ≈ 8811 < 镜头右缘 8923 (z=1.10)。 */
+#stC { left: 7300px; top: 210px; width: 1340px; height: 640px; }
+#stC svg { position: absolute; left: 0; top: 76px; width: 1560px; height: auto; }
+#stC .phLine { stroke: rgba(245,245,247,.45); stroke-width: 2; stroke-dasharray: 5 5; }
+#stC .phDot { stroke: #0b0e14; stroke-width: 3; }
+
+/* 站点 D: 环形占比 —— 加环绕扫描点
+   v16: svg 640→760 放大居中, 去卡片后圆环就是画面主体。 */
+#stD { left: 9400px; top: 190px; width: 940px; height: 680px; }
+#stD svg { position: absolute; left: 90px; top: 104px; width: 760px; height: auto; }
+#stD .lg { position: absolute; left: 60px; right: 60px; font-size: 27px; display: flex;
+  align-items: center; gap: 14px; color: rgba(245,245,247,.75); }
+#stD .lg i { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+
+/* 站点 E: 四大数字 + 持续滚动的实时条
+   v16: 去格线 → 纯数字页; 92→168px (Apple 数字页体量), ticker 去边框浮条。
+   ⚠️ 容器 620→700 且 grid 必须给 ticker 留出 58px 底带 (inset bottom) ——
+   首版 168px 数字把下排键名顶进 ticker 带里, 两行字直接叠印 (y_60 探针实测)。 */
+#stE { left: 10850px; top: 200px; width: 1620px; height: 700px; }
+#stE .grid { position: absolute; inset: 76px 0 58px 0; display: grid;
+  grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+#stE .cell { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border: none; }
+#stE .cell .v { font-size: 168px; font-weight: 780; line-height: 1.05; color: #7cc0ff;
+  font-variant-numeric: tabular-nums; text-shadow: 0 0 60px rgba(10,132,255,.35); }
+#stE .cell .k { font-size: 30px; color: rgba(245,245,247,.62); margin-top: 18px; letter-spacing: .08em; }
+#stE .tickerBox { position: absolute; left: 0; right: 0; bottom: 0; height: 58px; overflow: hidden;
+  border-top: none; background: none; }
+#stE .ticker { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform; }
+#stE .ticker span { display: inline-block; margin: 0 34px; font-size: 26px; color: rgba(245,245,247,.66);
+  line-height: 58px; font-variant-numeric: tabular-nums; }
+#stE .ticker b { color: #7cc0ff; font-weight: 700; }
+
+/* 三步 (屏幕空间, 遮罩之上) */
+#steps { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 62px; opacity: 0; z-index: 45; }
+#steps .step { display: flex; align-items: center; gap: 30px; opacity: 0; transform: translateY(26px); }
+#steps .step .dot { width: 62px; height: 62px; border-radius: 50%; flex: none;
+  background: rgba(10,132,255,.18); border: 2px solid #0a84ff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; font-weight: 800; color: #0a84ff; }
+#steps .step .txt { font-size: 48px; font-weight: 650; letter-spacing: .02em; }
+#steps .step .txt code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 44px;
+  background: rgba(10,132,255,.14); border: 1px solid rgba(10,132,255,.4);
+  color: #7cc0ff; padding: 2px 14px; border-radius: 10px; }
+</style>
+</head>
+<body>
+<div id="far">
+  <div class="grid"></div>
+  <div class="blob" style="left:400px; top:-320px; width:1700px; height:1250px; background:rgba(10,132,255,.18)"></div>
+  <div class="blob" style="left:2300px; top:-480px; width:1600px; height:1150px; background:rgba(10,132,255,.12)"></div>
+  <div class="blob" style="left:4200px; top:150px; width:1900px; height:1350px; background:rgba(120,95,255,.14)"></div>
+</div>
+
+<div id="world">
+  <div id="conduit">
+    <div class="rail r1"></div><div class="rail r2"></div><div class="band" id="band"></div>
+  </div>
+
+  <div id="client">
+    <div class="bar"><i></i><i></i><i></i><div class="t">client</div></div>
+    <div class="ln k" style="width:290px"></div>
+    <div class="ln" style="width:452px"></div>
+    <div class="ln a" style="width:366px"></div>
+    <div class="ln" style="width:414px"></div>
+    <div class="ln k" style="width:232px"></div>
+    <div class="ln" style="width:386px"></div>
+    <div class="ln a" style="width:318px"></div>
+    <div class="foot">每次请求 · 全量重发</div>
+  </div>
+
+  <div id="blocks"></div>
+
+  <div id="gate">
+    <div class="house"></div><div class="comb"></div><div class="blade" id="blade"></div>
+    <!-- 品牌标 (icon.svg 同一套几何) -->
+    <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+      <rect x="8" y="8" width="240" height="240" rx="56" fill="#0a84ff"/>
+      <path d="M148 56 H52 V200 H148" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M104 112 H176 V104 L220 128 L176 152 V144 H104 Z" fill="#ffffff"/>
+    </svg>
+  </div>
+
+  <div id="sparks"></div>
+
+  <!-- ══ 站点 B–E: 省 token 原理与成果 (世界坐标, 摄影机飞抵) ══ -->
+  <div class="stn" id="stB">
+    <div class="hd"><span>同一个请求 · 转发前后</span><span class="num" id="stBbytes">{{STB_BYTES}}</span></div>
+    <div class="rows">
+      <div class="r user"><span class="role">user</span><span class="msg" style="width:46%"></span></div>
+      <div class="r"><span class="role">assistant</span><span class="msg" style="width:38%"></span><span class="chip" id="ch0"></span></div>
+      <div class="r user"><span class="role">user</span><span class="msg" style="width:52%"></span></div>
+      <div class="r"><span class="role">assistant</span><span class="msg" style="width:44%"></span><span class="chip" id="ch1"></span></div>
+      <div class="r tool"><span class="role">tool</span><span class="msg" style="width:40%"></span></div>
+      <div class="r"><span class="role">assistant</span><span class="msg" style="width:48%"></span><span class="chip" id="ch2"></span></div>
+      <div class="r user"><span class="role">user</span><span class="msg" style="width:44%"></span></div>
+      <div class="r"><span class="role">assistant</span><span class="msg" style="width:36%"></span></div>
+    </div>
+    <div class="knife"><span class="tag">剥离线</span></div>
+    <div class="tally" id="stBtally">已剥离 0 条推理链</div>
+  </div>
+
+  <div class="stn" id="stC">
+    <div class="hd"><span>10 轮会话 · 上游收到的字节</span><span class="num">不剥离 vs 剥离</span></div>
+    <svg width="1340" height="582" viewBox="0 0 1340 582">
+      <!-- 网格 -->
+      <g stroke="rgba(245,245,247,.09)" stroke-width="1">
+        <line x1="90" y1="60"  x2="1290" y2="60"/>
+        <line x1="90" y1="200" x2="1290" y2="200"/>
+        <line x1="90" y1="340" x2="1290" y2="340"/>
+        <line x1="90" y1="480" x2="1290" y2="480"/>
+      </g>
+      <g fill="rgba(245,245,247,.45)" font-size="20" font-family="Segoe UI">
+        <text x="30" y="66">12k</text><text x="30" y="206">8k</text>
+        <text x="30" y="346">4k</text><text x="42" y="486">0</text>
+        <text x="90" y="540">第1轮</text><text x="640" y="540">第5轮</text>
+        <text x="1210" y="540">第10轮</text>
+      </g>
+      <!-- 不剥离 (琥珀) 与剥离 (蓝): 点列由 build_pv_scene.py 从 multiturn.json 生成 -->
+      <polyline id="lnOff" fill="none" stroke="#ff9f0a" stroke-width="6"
+        stroke-linecap="round" points="{{P_OFF}}"/>
+      <polyline id="lnOn" fill="none" stroke="#0a84ff" stroke-width="6"
+        stroke-linecap="round" points="{{P_ON}}"/>
+      <circle id="dotOff" r="10" fill="#ff9f0a" cx="1291" cy="{{DOT_OFF_Y}}"/>
+      <circle id="dotOn" r="10" fill="#0a84ff" cx="1291" cy="{{DOT_ON_Y}}"/>
+      <text id="labOff" x="1090" y="{{LAB_OFF_Y}}" fill="#ffb445" font-size="30" font-weight="700" font-family="Segoe UI" style="opacity:0">{{LAB_OFF_T}}</text>
+      <text id="labOn" x="1090" y="{{LAB_ON_Y}}" fill="#7cc0ff" font-size="30" font-weight="700" font-family="Segoe UI" style="opacity:0">{{LAB_ON_T}}</text>
+      <!-- 游标: 持续左右扫描, 读数跟着变 (不是一次性揭示) -->
+      <g id="ph" style="opacity:0">
+        <line class="phLine" x1="90" y1="40" x2="90" y2="500"/>
+        <circle class="phDot" id="phOff" r="9" fill="#ff9f0a" cx="90" cy="461"/>
+        <circle class="phDot" id="phOn" r="9" fill="#0a84ff" cx="90" cy="479"/>
+      </g>
+      <text id="phRead" x="700" y="32" fill="rgba(245,245,247,.8)" font-size="24" font-weight="600"
+        font-family="Segoe UI" style="opacity:0">—</text>
+    </svg>
+  </div>
+
+  <div class="stn" id="stD">
+    <div class="hd"><span>省量分布 · 按层级</span></div>
+    <svg width="640" height="440" viewBox="0 0 640 440">
+      <circle cx="320" cy="200" r="150" fill="none" stroke="rgba(245,245,247,.10)" stroke-width="58"/>
+      <!-- 琥珀弧 = toolcall_share (97.5%): 圆周 2πr=942.5, 占 918.6 -->
+      <circle id="arcTc" cx="320" cy="200" r="150" fill="none" stroke="#ff9f0a" stroke-width="58"
+        stroke-linecap="round" stroke-dasharray="918.6 942.5" transform="rotate(-90 320 200)"/>
+      <circle id="arcPlain" cx="320" cy="200" r="150" fill="none" stroke="#0a84ff" stroke-width="58"
+        stroke-linecap="round" stroke-dasharray="23.9 942.5" stroke-dashoffset="-918.6" transform="rotate(-90 320 200)"/>
+      <text id="dPct" x="320" y="196" text-anchor="middle" fill="#f5f5f7" font-size="64" font-weight="750" font-family="Segoe UI">0%</text>
+      <text x="320" y="248" text-anchor="middle" fill="rgba(245,245,247,.6)" font-size="24" font-family="Segoe UI">带 tool_calls 层</text>
+      <!-- 环绕扫描点: 轨道 r=196 (环外) —— r=150 会从中心数字上压过去 (43s 帧实测) -->
+      <circle id="scan" r="10" fill="#ffffff" opacity="0" style="filter:drop-shadow(0 0 10px rgba(255,255,255,.9))"/>
+    </svg>
+    <div class="lg" style="bottom:64px"><i style="background:#ff9f0a"></i>带 tool_calls 的层 · 省量大头</div>
+    <div class="lg" style="bottom:22px"><i style="background:#0a84ff"></i>普通推理链 · 2.5%</div>
+  </div>
+
+  <div class="stn" id="stE">
+    <div class="hd"><span>5,000 次真实请求 · 实测成果</span></div>
+    <div class="grid">
+      <div class="cell"><div class="v" id="ev0">0</div><div class="k">剥离省下 tokens</div></div>
+      <div class="cell"><div class="v" id="ev1">0%</div><div class="k">占输入总量</div></div>
+      <div class="cell"><div class="v" id="ev2">0%</div><div class="k">请求因此受益</div></div>
+      <div class="cell" style="border-right:none"><div class="v" id="ev3">0</div><div class="k">单请求省量中位数</div></div>
+    </div>
+    <!-- 实时条: 模型省量持续流过 (数据来自 savings_shape.top_models) -->
+    <div class="tickerBox"><div class="ticker" id="ticker"></div></div>
+  </div>
+
+  <!-- 面板: 真实 HTML 跑在 iframe 里 (1920x1080, z=1 时满帧) -->
+  <div id="panelWrap" style="left:12900px; top:0"><div id="panel">
+    <iframe id="panelFrame" src="panel.html?sc=done&amp;saved=1" scrolling="no"></iframe>
+    <div class="glass"></div>
+  </div></div>
+
+  <!-- 标注: 文案由构建脚本按数据注入 (模板里不写死数字)
+       ⚠️ 坐标/字号/出现窗口必须按**该标注出现时的镜头景别**反推。
+       跟拍时 z≈1.06 → 可见世界 y ∈ [53,1023] (只有 970px 高, 比看起来窄得多);
+       量级段 z≈0.60 → 可见世界 x ∈ [cx-1600, cx+1600], 而镜头在 19.8–26.6s 里
+       从 cx≈3084 漂到 3450, 故安全区收窄成 x ∈ [2000,4500]。
+       这一切由 tools/verify_pv_layout.js 逐时刻量化把关 (阈值: 安全边 28px)。 -->
+  <div class="anno" id="a-repost" style="left:260px; top:854px; font-size:32px; opacity:0">
+    <span id="t-repost"></span>
+  </div>
+  <!-- 闸门铭牌: 贴死在闸门内部 (不是悬空大字) -->
+  <div class="anno num" id="a-brand" style="left:2600px; top:688px; width:400px; font-size:44px; opacity:0;
+       text-align:center; letter-spacing:.18em; color:rgba(168,212,255,.95)">
+    AIGate
+  </div>
+  <!-- 闸门字幕: 曾放 y=1002 且在跟拍时被切掉下缘 (用户截图)。
+       这一条最受限: 跟拍镜头咬住主角卡, 闸门在画面里以 420px/s 向右掠过,
+       字幕挂在闸门上 → 它能留在画面的窗口只有约 2.6s。按几何反推:
+         右缘 ≥28px 需 cx ≥ 3080-879+5 = 2206 → t ≥ 13.50s (实测 13.50s 时 cx=2196, 差 5px)
+         左缘 ≥28px 需 cx ≤ 2540+879 = 3419 → t ≤ 16.37s
+       故取 13.55s 起 / 16.25s 收 (盖住 15.47s 那一刀)。
+       框宽 540 → 长句自动换两行, 顶 y 900 让两行都在跟拍可见区 [53,1023] 内。 -->
+  <div class="anno" id="a-gate" style="left:2540px; top:900px; width:540px; font-size:32px; opacity:0;
+       color:#a8d4ff; text-align:center; white-space:normal; line-height:1.28">
+    <span id="t-gate"></span>
+  </div>
+  <div class="dim" id="dimA" style="left:2000px; top:1152px; width:1100px; opacity:0">
+    <span class="lab num" id="t-dimA"></span>
+  </div>
+  <div class="dim" id="dimB" style="left:3200px; top:1152px; width:1200px; opacity:0">
+    <span class="lab num" id="t-dimB"></span>
+  </div>
+  <div class="anno num" id="a-cache" style="left:2000px; top:1268px; width:2400px; font-size:46px; opacity:0;
+       color:rgba(245,245,247,.78); text-align:center; white-space:normal; line-height:1.34">
+    <span id="t-cache"></span>
+  </div>
+  <div class="anno num" id="a-body" style="left:5400px; top:884px; font-size:34px; opacity:0">
+    <span id="t-body"></span>
+  </div>
+</div>
+
+<!-- 遮罩与字卡: 屏幕空间 (body 下, **不在** #world 里)。
+     放进世界层会被摄影机的 translate+scale 一起放大/缩小 —— 收尾时 z=0.5,
+     遮罩只盖住视口中段 540px, 字卡也被缩成一半 (实测踩过)。 -->
+<div id="scrim"></div>
+<!-- 三步上手: 屏幕空间, 遮罩之上、字卡之下 -->
+<div id="steps">
+  <div class="step"><div class="dot">1</div><div class="txt">客户端只改一个 <code>base_url</code></div></div>
+  <div class="step"><div class="dot">2</div><div class="txt">面板里配供应商与模型</div></div>
+  <div class="step"><div class="dot">3</div><div class="txt">省量 · 协议 · 日志 实时可见</div></div>
+</div>
+<div id="endcard">
+  <div class="logo">
+    <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+      <rect x="8" y="8" width="240" height="240" rx="56" fill="#0a84ff"/>
+      <path d="M148 56 H52 V200 H148" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M104 112 H176 V104 L220 128 L176 152 V144 H104 Z" fill="#ffffff"/>
+    </svg>
+    <div class="name">AIGate</div>
+  </div>
+  <div class="tagline">让重复上下文，不再重复传一遍</div>
+  <div class="links">github.com/wonderfulaichen/AIGate</div>
+</div>
+
+<script>
+const D = {{DATA}};
+const W = 1920, H = 1080;
+
+/* ── 世界几何 (与上面 CSS 坐标一一对应) ─────────────────── */
+const FLOW_X0 = 760, FLOW_X1 = 4740, GATE_X = 2800;
+const LANES = 8, LANE_Y0 = 128, LANE_STEP = 110;   // 8 轨 × 110 = 880, 落在两条导轨之间
+const PER_LANE = 10;
+const SPEED = 420;                                  // 世界 px/s
+const SPAN = FLOW_X1 - FLOW_X0;                     // 3980 → 一圈 9.48s
+const SLOT = SPAN / PER_LANE;                       // 398: 同轨间距, 卡宽上限 < 它 → 永不重叠
+
+/* ── 数据注入 (全部来自 tools/*.json) ───────────────────── */
+document.getElementById('t-repost').textContent = D.repost;
+document.getElementById('t-gate').textContent = D.gate_label;
+document.getElementById('t-dimA').textContent = D.dim_a;
+document.getElementById('t-dimB').textContent = D.dim_b;
+document.getElementById('t-cache').innerHTML = D.cache;      // v15 起两行 (分工声明含 <br>)
+document.getElementById('t-body').innerHTML = D.body_line;   // 品牌蓝箭头 + 必留清单第二行
+
+/* ── 站 E 实时条内容 (模型省量, 数据来自 savings_shape.top_models; 复制两份做无缝循环) ── */
+(function buildTicker() {
+  const tk = document.getElementById('ticker');
+  if (!tk || !D.ticker) return;
+  const one = D.ticker.map((m) =>
+    '<span>' + m.model + ' <b>' + (m.saved / 1e8).toFixed(2) + ' 亿 tokens</b> · ' +
+    m.reqs.toLocaleString('en-US') + ' 次请求</span>').join('');
+  tk.innerHTML = one + one;              // 两份 → translateX 循环无跳变
+  requestAnimationFrame(() => { tk.__w = tk.scrollWidth / 2; });
+})();
+
+/* ── 消息卡 ─────────────────────────────────────────────── */
+const K = { CTX: 'ctx', USER: 'user', TOOL: 'tool', REASON: 'reason' };
+const host = document.getElementById('blocks');
+const cards = [];
+
+// 确定性伪随机 (不用 Math.random —— 每次录制必须逐帧一致)
+const rnd = (n) => { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); };
+
+function makeCard(lane, x0, kind, lines, w, hero) {
+  const el = document.createElement('div');
+  el.className = 'card ' + kind + (hero ? ' hero' : '');
+  el.style.width = w + 'px';
+  const role = document.createElement('div'); role.className = 'role';
+  const body = document.createElement('div'); body.className = 'body';
+  for (let i = 0; i < lines; i++) {
+    const ln = document.createElement('i');
+    ln.style.width = (44 + rnd(lane * 7 + x0 + i * 3) * 54) + '%';
+    body.appendChild(ln);
+  }
+  el.appendChild(role); el.appendChild(body);
+  host.appendChild(el);
+  const c = { el, x0, kind, y: LANE_Y0 + lane * LANE_STEP, hero: !!hero };
+  cards.push(c);
+  return c;
+}
+
+// 每轨 10 张, **等距排布** (x0 = k * SLOT) —— 同轨永不相撞
+for (let lane = 0; lane < LANES; lane++) {
+  for (let k = 0; k < PER_LANE; k++) {
+    const s = lane * 31 + k;
+    const r = rnd(s);
+    let kind, lines, w;
+    if (r < 0.26)       { kind = K.REASON; lines = 2; w = 250 + Math.floor(rnd(s + 11) * 120); }
+    else if (r < 0.42)  { kind = K.USER;   lines = 2; w = 230 + Math.floor(rnd(s + 12) * 130); }
+    else if (r < 0.54)  { kind = K.TOOL;   lines = 2; w = 220 + Math.floor(rnd(s + 13) * 120); }
+    else                { kind = K.CTX;    lines = 3; w = 240 + Math.floor(rnd(s + 14) * 130); }
+    makeCard(lane, k * SLOT, kind, lines, w, false);
+  }
+}
+
+/* ── 主角卡: 反解 x0 使它在 t=15.46875 恰好抵达刀口 ——
+       15.46875 = v6/v8 音乐的 bar9 第2拍 = 90ms 闸门静音点 (画面切片 ↔ 音乐切口三点对齐) ── */
+const HERO_LANE = 3, HERO_T = 15.46875;
+const HERO_X0 = ((GATE_X - FLOW_X0 - SPEED * HERO_T) % SPAN + SPAN * 4) % SPAN;
+const HERO = makeCard(HERO_LANE, HERO_X0, K.REASON, 2, 330, true);
+// 主角卡拆两片: 琥珀的推理部分 (会被吸收) + 灰色正文 (继续下行)
+HERO.el.classList.remove('reason', 'hero');
+HERO.el.style.cssText = 'width:330px;height:72px;border:0;background:none;box-shadow:none;padding:0;gap:0';
+{
+  const parts = document.createElement('div');
+  parts.style.cssText = 'display:flex;width:330px;height:72px';
+  parts.innerHTML =
+    '<div id="heroR" style="width:206px;height:72px;border-radius:10px 0 0 10px;border:1.5px dashed rgba(255,196,90,.95);border-right:0;' +
+      'background:linear-gradient(180deg,rgba(255,159,10,.42),rgba(255,159,10,.20));box-shadow:0 0 30px rgba(255,159,10,.35);' +
+      'display:flex;align-items:center;gap:10px;padding:0 10px">' +
+      '<div style="width:8px;align-self:stretch;margin:10px 0;border-radius:4px;background:#ff9f0a"></div>' +
+      '<div style="flex:1;display:flex;flex-direction:column;gap:8px">' +
+        '<i style="height:4px;border-radius:2px;background:rgba(255,208,138,.95);opacity:.6"></i>' +
+        '<i style="height:4px;border-radius:2px;background:rgba(255,208,138,.95);opacity:.6;width:72%"></i>' +
+      '</div>' +
+    '</div>' +
+    '<div id="heroB" style="width:124px;height:72px;border-radius:0 10px 10px 0;border:1px solid rgba(186,206,238,.3);border-left:0;' +
+      'background:linear-gradient(180deg,rgba(150,172,205,.32),rgba(112,134,170,.18));' +
+      'display:flex;flex-direction:column;justify-content:center;gap:8px;padding:0 12px">' +
+      '<i style="height:4px;border-radius:2px;background:rgba(206,220,240,.9);opacity:.55"></i>' +
+      '<i style="height:4px;border-radius:2px;background:rgba(206,220,240,.9);opacity:.55;width:64%"></i>' +
+    '</div>';
+  HERO.el.appendChild(parts);
+  HERO.parts = parts;
+}
+const heroR = () => document.getElementById('heroR');
+const heroB = () => document.getElementById('heroB');
+
+/* ── 碎屑 (推理部分被吸收时炸开) ────────────────────────── */
+const sparks = [];
+(() => {
+  const sh = document.getElementById('sparks');
+  for (let i = 0; i < 24; i++) {
+    const el = document.createElement('div');
+    el.className = 'sp';
+    sh.appendChild(el);
+    sparks.push({ el, ph: i / 24, side: i % 2 ? 1 : -1, up: 0.4 + ((i * 37) % 100) / 100 * 1.6 });
+  }
+})();
+
+/* ── 位置函数 ──────────────────────────────────────────── */
+const xOf = (x0, t) => FLOW_X0 + ((((x0 + SPEED * t / 1000) % SPAN) + SPAN) % SPAN);
+
+/* ── 摄影机关键帧: 单一连续飞行, 90s 全片零剪切 ─────────────
+   t 吸附 v9/v10 网格 (128BPM, cues visual_snap)。
+   ⚠️ 站点的 z 必须按**站点自身尺寸**反推 (留 8~12% 边距):
+      B 1140x640 → z .95 (屏上 1083x608) · C 1340x640 → z 1.0 · D 940x680 → z 1.05
+      E 1620x620 → z .95 · 面板 1920x1080 → z 1.0
+   探针图暴露过一版 z 只有 .72~.80 → 内容只占屏宽 44%, 大片留白像 PPT。 */
+const CAM = [
+  { t: 0,     cx: 1560,  cy: 545, z: 2.10 },   // ① 贴在流里 — ⚠️ z 别降 (1.78 实测更闪: 小卡变多,
+                                               //    空间频率高, 分块二阶差分 4.93 vs 2.10 的 3.66)
+  { t: 3750,  cx: 1880,  cy: 545, z: 0.56 },   // ② 拉远 (拍8) —— 对照实测: 拍10 更慢反而更闪
+                                               //    (高 z 停留更久, 流速×z 更大), 拍8 是局部最优
+  { t: 6094,  cx: 1180,  cy: 545, z: 0.86 },   // ③ 飞向客户端 (拍13)
+  { t: 10313, cx: 900,   cy: 545, z: 0.90 },   // ④ client: 每轮全量重发 (拍22)
+  { t: 13125, cx: 1700,  cy: 545, z: 0.80 },   // ⑤ build 起 (跟拍段覆盖)
+  { t: 16875, cx: 3300,  cy: 545, z: 0.60 },   // ⑥ 闸门后全景: 量级标注 (拍36)
+  { t: 18750, cx: 3300,  cy: 545, z: 0.60 },   // ⑥' 全景停驻 1.9s (读数窗口)
+  { t: 21094, cx: 5970,  cy: 530, z: 1.12 },   // ⑦ 站B body 标本台 (拍45) — z 按站点尺寸反推, 撑满画面
+  { t: 26719, cx: 6040,  cy: 530, z: 1.14 },   // ⑦' 站B 停驻 — **微漂 +70px/+0.02z**: 停驻段整幅静止
+                                                //    (重复帧扫描 MAD<2) 会读成"卡住", 漂移让视差层持续呼吸
+  { t: 28125, cx: 7970,  cy: 530, z: 1.06 },   // ⑧ 站C 折线图 (bar16)
+  { t: 39375, cx: 8050,  cy: 530, z: 1.10 },   // ⑧' 站C 停驻 (微漂 +80px, 推近 +0.04 治静止感)
+  { t: 41250, cx: 9870,  cy: 530, z: 1.32 },   // ⑨ 站D 环形 (bar22)
+  { t: 50625, cx: 9950,  cy: 530, z: 1.37 },   // ⑨' 站D 停驻 (微漂 +80px, 推近 +0.05)
+  { t: 52500, cx: 11660, cy: 510, z: 1.02 },   // ⑩ 站E 四大数字 (bar28)
+  { t: 61875, cx: 11760, cy: 510, z: 0.94 },   // ⑩' 站E 停驻 (微漂 +100px, z 缓拉)
+  { t: 63750, cx: 13860, cy: 540, z: 0.70 },   // ⑪ 面板接近 (bar34)
+  { t: 73125, cx: 13860, cy: 540, z: 1.00 },   // ⑫ 面板满帧 (拍156)
+  { t: 75000, cx: 13860, cy: 540, z: 1.00 },   // ⑬ 停驻读数 (bar40)
+  { t: 90000, cx: 13300, cy: 545, z: 0.80 },   // ⑭ 遮罩后缓慢拉远 (字卡期间)
+];
+const easeInOut = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const clamp01 = (x) => x < 0 ? 0 : x > 1 ? 1 : x;
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const easeOut = (x) => 1 - Math.pow(1 - clamp01(x), 3);
+const mix = (a, b, k) => a + (b - a) * k;
+
+function camKeys(t) {
+  if (t <= CAM[0].t) return CAM[0];
+  for (let i = 1; i < CAM.length; i++) {
+    if (t <= CAM[i].t) {
+      const a = CAM[i - 1], b = CAM[i];
+      const p = easeInOut((t - a.t) / (b.t - a.t));
+      return { cx: mix(a.cx, b.cx, p), cy: mix(a.cy, b.cy, p), z: mix(a.z, b.z, p) };
+    }
+  }
+  return CAM[CAM.length - 1];
+}
+
+// 跟拍窗口 (吸附 v8 网格): 13125=build 起咬住主角卡 → 15.46875 刀口切开(=音乐闸门静音点)
+// → 15.9375 松开 (cues visual_snap.release_track, 冲击音后一拍)
+const TRACK_A = 13125, TRACK_B = 15937.5;
+function camAt(t) {
+  const c = camKeys(t);
+  if (t < TRACK_A - 500 || t > TRACK_B + 500) return c;
+  const hx = xOf(HERO_X0, t);
+  // 主角卡停在画面偏左, 闸门因此从右侧滑入画面中央 —— 观众先看到"它", 再看到"门"
+  const tc = { cx: hx + 210, cy: 545, z: 1.08 };
+  const k = Math.min(seg(t, TRACK_A - 500, TRACK_A + 300), 1 - seg(t, TRACK_B - 300, TRACK_B + 500));
+  return { cx: mix(c.cx, tc.cx, k), cy: mix(c.cy, tc.cy, k), z: mix(c.z, tc.z, k) };
+}
+
+function applyCam(c) {
+  document.getElementById('world').style.transform =
+    'translate3d(' + (W / 2 - c.cx * c.z) + 'px,' + (H / 2 - c.cy * c.z) + 'px,0) scale(' + c.z + ')';
+  // 远景视差: 位置跟随 0.72 倍, 缩放变化减半
+  const fz = 1 + (c.z - 1) * 0.5;
+  const fcx = 3000 + (c.cx - 3000) * 0.72, fcy = 540 + (c.cy - 540) * 0.72;
+  document.getElementById('far').style.transform =
+    'translate3d(' + (W / 2 - fcx * fz) + 'px,' + (H / 2 - fcy * fz) + 'px,0) scale(' + fz + ')';
+}
+
+/* ── 真实面板驱动 ──────────────────────────────────────────
+   面板是真的 (iframe 里跑真实 admin HTML + 预览桩), 我只改 Alpine 状态的**原始值**,
+   UI 自己算百分比/画图表/变色。这样"内容在动态变化"是真的, 不是我贴的假数字。
+   ⚠️ 每帧重写是刻意的: 面板自身若有轮询刷新, 下一帧会被我们改回来 (自愈)。 */
+const PANEL_TARGETS = {
+  // [起始, 结束]: 数字滚动窗口。
+  // ⚠️ 两个教训 (成片实测):
+  //  ① 结束必须晚于 73125 (满帧停驻时刻), 否则观众看清面板时数字已定格;
+  //  ② 必须**线性**不能 easeOut —— easeOut 尾段太平, 73.5 与 74.3 实测同为 12,720 (又静止了)。
+  ramp: [65000, 75500],
+  rampEase: (x) => x,            // 线性
+  todayTokens: 12720,        // = 预览桩的 today.prompt_tokens + completion_tokens
+  todayRequests: 12,
+  cacheHitTokens: 3300,
+  genSpeed: 52.1,
+  latencyMs: 700,
+  todaySaved: null,          // 由 build 注入 (真实省量)
+  monthSaved: null,
+};
+let panelDoc = null, panelData = null;
+// 真实省量目标值 (savings_audit.json 注入) —— 必须写在 const 之后, 否则 TDZ 报错
+PANEL_TARGETS.todaySaved = D.panelToday;
+PANEL_TARGETS.monthSaved = D.panelMonth;
+
+function panelState() {
+  const f = $('panelFrame');
+  if (!f) return null;
+  if (panelDoc && panelDoc !== f.contentDocument) { panelDoc = null; panelData = null; }
+  if (!panelDoc) {
+    try { panelDoc = f.contentDocument; } catch (e) { return null; }
+    if (!panelDoc) return null;
+  }
+  if (!panelData) {
+    const el = panelDoc.querySelector('[x-data]');
+    if (!el) return null;
+    // Alpine v3: 数据在 _x_dataStack[0]
+    panelData = (el._x_dataStack && el._x_dataStack.length) ? el._x_dataStack[0] : null;
+  }
+  return panelData;
+}
+
+function drivePanel(t) {
+  const d = panelState();
+  if (!d || !d.stats) return;
+  const [a, b] = PANEL_TARGETS.ramp;
+  const p = PANEL_TARGETS.rampEase(seg(t, a, b));
+  // 实时感: ramp 结束后仍让延迟/生成速度持续小幅波动 (真实仪表的行为)
+  const live = t > b;
+  const jit = (k) => live ? (1 + k * (Math.sin(t / 640) * 0.5 + Math.sin(t / 270) * 0.5)) : 1;
+
+  // ⚠️ 必须**整体替换 stats 对象** (d.stats = newObj), 不能改嵌套字段 ——
+  //    实测 (KPI 序列 73.5/74.3/75.2): 嵌套写只让副标签(≈K)动, 主数字冻结在 12,720;
+  //    对象替换才会触发 Alpine 数字补间 (dbg_tw: 目标移动时显示值持续跟踪)。
+  const cur = d.stats;
+  const td = Object.assign({}, (cur.session && cur.session.today) || {
+    requests: 0, success: 0, prompt_tokens: 0, completion_tokens: 0, cache_hit_tokens: 0,
+  });
+  const tok = Math.round(PANEL_TARGETS.todayTokens * p);
+  td.prompt_tokens = Math.round(tok * 0.755);
+  td.completion_tokens = tok - Math.round(tok * 0.755);
+  td.requests = Math.round(PANEL_TARGETS.todayRequests * p);
+  td.success = td.requests;
+  td.cache_hit_tokens = Math.round(PANEL_TARGETS.cacheHitTokens * p);
+  const ns = Object.assign({}, cur, {
+    session: Object.assign({}, cur.session, { today: td }),
+    today_requests: td.requests,
+    today_strip_saved_tokens: PANEL_TARGETS.todaySaved
+      ? Math.round(PANEL_TARGETS.todaySaved * p) : cur.today_strip_saved_tokens,
+    month_opt_saved_tokens: PANEL_TARGETS.monthSaved
+      ? Math.round(PANEL_TARGETS.monthSaved * p) : cur.month_opt_saved_tokens,
+    total_opt_saved_tokens: PANEL_TARGETS.monthSaved
+      ? Math.round(PANEL_TARGETS.monthSaved * p) : cur.total_opt_saved_tokens,
+    gen_speed: PANEL_TARGETS.genSpeed * jit(0.035),
+    avg_latency_ms: Math.round(PANEL_TARGETS.latencyMs * (0.45 + 0.55 * p) * jit(0.06)),
+  });
+  d.stats = ns;
+
+  // 缓慢滚动: 露出 性能健康 / 模型列表 等下半屏内容 (持续位移 = "在动")
+  if (panelDoc) {
+    const y = 430 * easeInOut(seg(t, 68281, 75000));
+    const se = panelDoc.scrollingElement;
+    if (se && Math.abs((se.scrollTop || 0) - y) > 0.5) se.scrollTop = y;
+  }
+}
+
+/* ── 每帧 ──────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+
+window.seek = function (t) {
+  applyCam(camAt(t));
+
+  // 底纹与卡片同速 —— 摄影机停下, 流也不停
+  $('band').style.backgroundPositionX = (-(SPEED * t / 1000)) + 'px';
+
+  // 卡片: x = f(t); 推理卡跨过刀口时被吸收 (纯函数 → 天然幂等, 可任意跳帧)
+  // 跟拍窗口内其余推理卡压暗 —— 否则主角卡淹没在一片琥珀里, 观众不知道"正在处理哪一张"
+  const trackWin = seg(t, TRACK_A - 300, TRACK_A + 300) * (1 - seg(t, TRACK_B - 300, TRACK_B + 300));
+  for (const c of cards) {
+    const x = xOf(c.x0, t);
+    let o = 1, sy = 1, dx = 0;
+    if (c.kind === K.REASON && !c.hero) {
+      const p = seg(x, GATE_X - 90, GATE_X + 30);
+      o = 1 - p; sy = 1 - 0.92 * p; dx = -p * 34;
+      o *= 1 - 0.72 * trackWin;                     // 跟拍时退到背景
+    }
+    c.el.style.transform = 'translate3d(' + (x + dx) + 'px,' + c.y + 'px,0) scaleY(' + sy + ')';
+    c.el.style.opacity = o;
+  }
+
+  // ── 主角卡: 在刀口被切成两片, 琥珀片被吸收, 灰色片继续 ──
+  const hx = xOf(HERO_X0, t);
+  const cut = seg(hx, GATE_X - 6, GATE_X + 6);        // 0=未切 1=已切
+  const fly = easeInOut(seg(hx, GATE_X, GATE_X + 190)); // 吸收后的飞散进度
+  HERO.el.style.transform = 'translate3d(' + hx + 'px,' + HERO.y + 'px,0)';
+  const hr = heroR(), hb = heroB();
+  if (hr) {
+    hr.style.opacity = 1 - fly;
+    hr.style.filter = cut > 0 ? 'brightness(' + (1 + 0.9 * cut * (1 - fly)) + ')' : 'none';
+    hr.style.transform = 'translate(' + (fly * 96) + 'px,' + (-fly * 74) + 'px) rotate(' + (fly * 26) + 'deg) scale(' + (1 - fly * 0.45) + ')';
+  }
+  if (hb) {
+    hb.style.filter = cut > 0 ? 'brightness(' + (1 + 0.5 * cut * (1 - fly)) + ')' : 'none';
+    hb.style.transform = 'translateX(' + (fly * 12) + 'px)';
+  }
+  // 跟拍窗口内才给主角卡加呼吸描边 (窗口外它只是流里的一张普通卡)
+  const tracked = seg(t, TRACK_A, TRACK_A + 400) * (1 - seg(t, TRACK_B - 400, TRACK_B));
+  HERO.el.style.filter = tracked > 0.02
+    ? 'drop-shadow(0 0 ' + (14 + 10 * Math.sin(t / 130)) + 'px rgba(255,190,80,' + (0.75 * tracked) + '))' : 'none';
+
+  // 刀口: 有东西穿过时更亮
+  const pulse = 0.5 + 0.5 * Math.sin(t / 150);
+  $('blade').style.opacity = 0.7 + 0.3 * pulse;
+
+  // 碎屑: 只在闸门镜头段可见 (窗口吸附 128BPM 拍点)
+  const gateVis = seg(t, 13125, 13594) * (1 - seg(t, 19219, 20625));
+  $('sparks').style.opacity = gateVis;
+  for (const s of sparks) {
+    const age = ((t / 1000) * 0.9 + s.ph) % 1;
+    s.el.style.transform =
+      'translate3d(' + (GATE_X - 60 + s.side * age * 130) + 'px,' + (HERO.y + 36 - age * 190 * s.up) + 'px,0) scale(' + (1 - age * 0.7) + ')';
+    s.el.style.opacity = Math.sin(Math.PI * age) * 0.95;
+  }
+
+  // 面板: 先侧转, 随镜头推进逐渐转正 (关键帧 63750→73125 吸附 bar34/拍156)
+  const rot = -36 + 31 * easeOut(seg(t, 63750, 73125)) + 5 * easeOut(seg(t, 73125, 74531));
+  $('panel').style.transform = 'rotateY(' + rot + 'deg)';
+  $('panel').style.boxShadow = '0 0 0 1px rgba(10,132,255,' + (0.30 + 0.5 * seg(t, 65625, 73594)) + '), 0 70px 170px rgba(0,0,0,.78)';
+
+  // ══ 站点 C: 折线先"生长" (stroke-dashoffset), 随后由游标持续扫描 ══
+  // ⚠️ 起画要早于到站 (28125) —— 旧版 28594 才起, 到站后 0.5s 空图表 (终检 28.1s 实测)。
+  //    改为飞行途中 (27400) 就开始长, 观众"飞到时图已经在长"。
+  const cDraw = easeOut(seg(t, 27400, 34500));
+  for (const id of ['lnOff', 'lnOn']) {
+    const el = $(id);
+    if (!el) continue;
+    if (el.__len === undefined) { try { el.__len = el.getTotalLength(); } catch (e) { el.__len = 2000; } }
+    el.style.strokeDasharray = el.__len;
+    el.style.strokeDashoffset = el.__len * (1 - cDraw);
+  }
+  const cLab = seg(t, 34500, 35300);
+  for (const id of ['dotOff', 'dotOn', 'labOff', 'labOn']) {
+    const el = $(id);
+    if (el) el.style.opacity = cLab;
+  }
+
+  // ══ 站点 D: 环形先扫出一次, 随后由扫描点持续绕行 ══
+  const dDraw = easeOut(seg(t, 41719, 46875));
+  const arc = $('arcTc');
+  if (arc) arc.setAttribute('stroke-dasharray', (918.6 * dDraw) + ' 942.5');
+  const dPlain = $('arcPlain');
+  if (dPlain) dPlain.style.opacity = seg(t, 46875, 47813);
+  const dPct = $('dPct');
+  if (dPct) dPct.textContent = (97.5 * dDraw).toFixed(1) + '%';
+
+  // ══ 站点 B: 推理链**持续产生 → 在剥离线被摘除** (循环, 不是一次性揭示) ══
+  // 每片 chip 一个周期相位: 从右侧淡入(浮入) → 行到刀口位置 → 被摘除 → 重新来
+  const B_CYCLE = 2600;                       // 每片 2.6s 一轮
+  const stbAlive = seg(t, 20813, 21300);      // 进画后立刻开始
+  let bRemoved = 0;
+  for (let i = 0; i < 3; i++) {
+    const ch = $('ch' + i);
+    if (!ch) continue;
+    const ph = ((t - 20813) / B_CYCLE + i / 3) % 1;
+    const phClamped = (t < 20813) ? 0 : ph;
+    // 0–0.45: 贴着右侧待命; 0.45–0.72: 被"推到"刀口; 0.72–0.8: 被摘除; 0.8–1: 淡入重现
+    const push = seg(phClamped, 0.45, 0.72);
+    const gone = easeInOut(seg(phClamped, 0.72, 0.80));
+    const back = seg(phClamped, 0.86, 1.0);
+    const o = stbAlive * (1 - gone) * (0.35 + 0.65 * back);
+    ch.style.opacity = o;
+    ch.style.transform = 'translateX(' + (-push * 96 + gone * 150) + 'px) ' +
+      'translateY(' + (-gone * 40) + 'px) rotate(' + (gone * 18) + 'deg) scale(' + (1 - gone * 0.6) + ')';
+    ch.style.filter = gone > 0 && gone < 1 ? 'brightness(' + (1 + 1.6 * gone * (1 - gone)) + ')' : 'none';
+    bRemoved += (phClamped > 0.8) ? 1 : 0;
+  }
+  const tallyEl = $('stBtally');
+  if (tallyEl) {
+    const cyc = Math.floor((t - 20813) / B_CYCLE);
+    tallyEl.textContent = '已剥离 ' + Math.max(0, cyc * 3 + bRemoved) + ' 条推理链';
+  }
+  // 行逐条滑入 (v15): 到站后 8 行以 90ms 错峰从右滑入 —— 治"标本台像静态截图"。
+  // 变换挂在 .r 行上, 不碰行内 chip 自己的 transform (chips 是 .r 的子元素, 各管各)。
+  const stbRows = document.querySelectorAll('#stB .rows .r');
+  for (let i = 0; i < stbRows.length; i++) {
+    const p = easeOut(seg(t, 21094 + i * 90, 21444 + i * 90));
+    stbRows[i].style.transform = 'translateX(' + ((1 - p) * 46).toFixed(2) + 'px)';
+    stbRows[i].style.opacity = p;
+  }
+
+  // ══ 站点 C: 游标**单向**一遍扫完 + 实时读数 (飞行途中起, 到站时已在动) ══
+  // ⚠️ 别改回 ping-pong 往返: 旧版 6.5s 一个来回, 读数数到「第10轮 11,500B」后
+  //    **倒数**回「第2轮 1,755B」、扫描线折返约 5s —— 观众直接读成"视频在倒放"
+  //    (r04 实测 34–40s)。单向扫: 读数只升不降。
+  const cU = seg(t, 29300, 38600);           // 线性: 全程匀速, 退场前正好扫完
+  const cX = 90 + 1200 * Math.max(0, Math.min(1, cU));
+  const phEl = $('ph');
+  if (phEl) {
+    const show = seg(t, 28875, 29300);
+    phEl.style.opacity = show;
+    $('phRead').style.opacity = show;
+    if (show > 0 && D.mtOff && D.mtOn) {
+      const idx = Math.max(0, Math.min(9, (cX - 90) / (1200 / 9)));
+      const i0 = Math.floor(idx), i1 = Math.min(9, i0 + 1), f = idx - i0;
+      const lerp = (arr) => arr[i0] + (arr[i1] - arr[i0]) * f;
+      const yo = 480 - lerp(D.mtOff) / 12000 * 420, yn = 480 - lerp(D.mtOn) / 12000 * 420;
+      $('phOff').setAttribute('cx', cX); $('phOff').setAttribute('cy', yo);
+      $('phOn').setAttribute('cx', cX); $('phOn').setAttribute('cy', yn);
+      $('ph').querySelector('line').setAttribute('x1', cX);
+      $('ph').querySelector('line').setAttribute('x2', cX);
+      $('phRead').textContent = '第 ' + (Math.round(idx) + 1) + ' 轮 · 不剥离 ' +
+        Math.round(lerp(D.mtOff)).toLocaleString('en-US') + ' B · 剥离 ' +
+        Math.round(lerp(D.mtOn)).toLocaleString('en-US') + ' B';
+    }
+  }
+
+  // ══ 站点 D: 扫描点持续绕环运行 ══
+  // ⚠️ 轨道 r=196 (环外) —— 旧版 r=150 会从中心百分比数字上压过去 (43s 帧实测 "•56.1%")
+  const sc = $('scan');
+  if (sc) {
+    const show = seg(t, 41438, 41875);
+    sc.style.opacity = show * 0.95;
+    const a = ((t - 41438) / 2860) * Math.PI * 2;
+    sc.setAttribute('cx', 320 + 196 * Math.cos(a));
+    sc.setAttribute('cy', 200 + 196 * Math.sin(a));
+  }
+
+  // ══ 站点 E: 四大数字滚动 + 实时条持续流过 ══
+  // ⚠️ 计数窗必须与 stE 容器淡入 (50900–51750) 同步起 —— r04 版 52700 才起,
+  //    而容器在 51.4s 入画, 0.00亿/0.0% 呆了 1.3s 才跳数 (转场闪烁热点之一)。
+  const eP = easeOut(seg(t, 50900, 58500));
+  if (D.ev) {
+    const fmt = (v) => Math.round(v).toLocaleString('en-US');
+    $('ev0').textContent = (D.ev[0] * eP).toFixed(2) + '亿';
+    $('ev1').textContent = (D.ev[1] * eP).toFixed(1) + '%';
+    $('ev2').textContent = (D.ev[2] * eP).toFixed(1) + '%';
+    $('ev3').textContent = fmt(D.ev[3] * eP);
+  }
+  const tk = $('ticker');
+  if (tk && tk.__w) {
+    const off = ((t - 52500) / 1000) * 70;         // 70px/s 恒定滚动
+    tk.style.transform = 'translateX(' + (-(off % tk.__w)) + 'px)';
+  }
+
+  // ══ 真实面板: 驱动 Alpine 状态 → UI 自己算百分比/图表 (内容真在变) ══
+  drivePanel(t);
+
+  // ══ 流向层 (通道/客户端/卡片/闸门/碎屑): 站点开始前就整层淡出 ══
+  // 否则站在站 B 时, 左侧还会露出流向卡与闸门 (用户截图即此) —— 那不是"漏出来", 是没退场。
+  // ⚠️ 淡出窗别放宽回 20813: 摄影机 18750 起以 ~1141px/s 向右飞、卡片只有 420px/s,
+  //    卡片在画面上**净向左倒流**, 窗口越长越像"倒放" (r04 实测 18.75–20.8s)。
+  const flowGone = 1 - seg(t, 18750, 19900);
+  for (const id of ['conduit', 'client', 'blocks', 'gate', 'sparks']) {
+    const el = $(id);
+    if (el) el.style.opacity = flowGone;
+  }
+
+  // ══ 站体进出场 (容器整体淡变): 治转场"两站同框"重叠闪烁 ══
+  // r04 分块二阶差分: 51s (D→E) mean2=5.77 全片最重 (环形图没退场 + E 站 0.00亿 呆 1.3s),
+  // 其次 62s (E→面板) 3.4 / 40s (C→D) 3.0 / 27s (B→C) —— 全是飞行途中两站内容交叠。
+  // 口径 (v16 重算): **按"镜头何时把旧站送出画"与"新站何时入画"对齐**, 不是按航程首尾接。
+  // r12 教训 (51.3 探针): D 站 50900 淡没了, 但 easeInOut 慢起, 镜头 51656 才把它送出画 ——
+  // 中间 0.8s 左半纯黑。每段窗口都是这样反解出来的: cx 越过站体边缘的时刻 ±0.3s 缓冲,
+  // 新站窗提前到它的入画时刻。两站在对侧半屏各占一边 = 正常空间交叉淡化
+  // (与 r04 的"满亮度叠同处"不同 —— 那是事故, 这是转场)。
+  const stnFade = (id, tin0, tin1, tout0, tout1) => {
+    const el = $(id);
+    if (!el) return;
+    el.style.opacity = seg(t, tin0, tin1) * (1 - seg(t, tout0, tout1));
+    // 入场滑入 + 出场滑出 (v15 治"后半段像 PPT"): 摄影机向右飞 → 站体从右侧 +70px 滑入,
+    // 离场向左 -70px 滑出, 与镜头运动同向 —— 纯 transform, 不动 left/top (排版门禁坐标不变)。
+    const x = 70 * (1 - easeOut(seg(t, tin0, tin1))) - 70 * easeInOut(seg(t, tout0, tout1));
+    el.style.transform = 'translateX(' + x.toFixed(2) + 'px)';
+  };
+  stnFade('stB', 20400, 21094, 27100, 27750);
+  stnFade('stC', 27150, 27900, 39900, 40750);
+  stnFade('stD', 40150, 40850, 51100, 51800);
+  stnFade('stE', 50850, 51600, 62400, 63200);   // E 淡出尾与面板入画 (~62.6) 交叠 0.2s, 均为低透明度
+
+  // ── 标注: 各自时机出现, 贴在物体上 (窗口吸附 v9 网格) ──
+  // a-repost 在 client 出口 (世界 x=120), 镜头 9.8s 起向右漂 → 到点就淡出 (排版门禁把关)。
+  $('a-repost').style.opacity = easeOut(seg(t, 7500, 8438)) * (1 - seg(t, 9375, 9844));
+  // 闸门字幕/铭牌: 只在跟拍窗口 (13125–15937.5) 内 —— 几何反推过的可见期
+  $('a-gate').style.opacity = easeOut(seg(t, 13594, 14063)) * (1 - seg(t, 15938, 16406));
+  $('a-brand').style.opacity = easeOut(seg(t, 13594, 14688)) * (1 - seg(t, 15938, 16406));
+  // 量级标注: 闸门后全景停驻 (16875–18750) 内读完
+  const meas = easeOut(seg(t, 17344, 17813)) * (1 - seg(t, 18750, 19219));
+  $('dimA').style.opacity = meas; $('dimB').style.opacity = meas; $('a-cache').style.opacity = meas;
+  // body 对照字幕 (双行: 字节对照 + 必留清单) : 挂在站 B 标本台下沿, 只在站 B 停驻窗口
+  $('a-body').style.opacity = easeOut(seg(t, 21563, 22500)) * (1 - seg(t, 25781, 26719));
+
+  // ── 收尾三段 (bar40=75s 起): 遮罩 → 三步 → 字卡; 音乐 88.4 淡出 ──
+  // ⚠️ steps 必须在遮罩**完成前**就开始淡入 —— 旧版 container 75938 才起、step0 76406 才起,
+  //    中间 (75938–76406) 遮罩全黑 + 无内容 = 整帧纯黑 0.47s (终检 76.2s 帧实测)。
+  $('scrim').style.opacity = easeOut(seg(t, 74531, 75938));
+  const stepsEl = $('steps');
+  stepsEl.style.opacity = easeOut(seg(t, 75300, 76100)) * (1 - seg(t, 81563, 82500));
+  document.querySelectorAll('#steps .step').forEach((el, i) => {
+    const p = easeOut(seg(t, 75600 + i * 500, 76300 + i * 500)) * (1 - seg(t, 81563, 82500));
+    el.style.opacity = p;
+    // v15: 原地淡入 → 斜向滑入 (左 -90px + 上 26px), 数字点带一点过冲弹跳
+    el.style.transform = 'translate(' + ((1 - p) * -90).toFixed(2) + 'px,' + ((1 - p) * 26).toFixed(2) + 'px)';
+    const dot = el.querySelector('.dot');
+    if (dot) dot.style.transform = 'scale(' + (0.5 + 0.5 * p + 0.15 * Math.sin(Math.PI * p)).toFixed(3) + ')';
+  });
+  // endcard (v15): 容器整体早开, 内部三层错峰 —— logo 弹入 → 标语滑上 → 链接收尾。
+  // 过冲用 sin(π·p): 中途冲到 1.08 再落回 1.0 (纯函数, 可任意跳帧)。
+  const ec = easeOut(seg(t, 82969, 84375));
+  const ecEl = $('endcard');
+  ecEl.style.opacity = ec;
+  ecEl.style.transform = 'none';
+  const ecLogo = ecEl.querySelector('.logo');
+  const ecTag = ecEl.querySelector('.tagline');
+  const ecLink = ecEl.querySelector('.links');
+  if (ecLogo) {
+    const p = easeOut(seg(t, 82969, 83750));
+    ecLogo.style.opacity = p;
+    ecLogo.style.transform = 'scale(' + (0.72 + 0.28 * p + 0.08 * Math.sin(Math.PI * p)).toFixed(3) + ')';
+  }
+  if (ecTag) {
+    const p = easeOut(seg(t, 83400, 84150));
+    ecTag.style.opacity = p;
+    ecTag.style.transform = 'translateY(' + ((1 - p) * 30).toFixed(2) + 'px)';
+  }
+  if (ecLink) {
+    const p = easeOut(seg(t, 83800, 84375));
+    ecLink.style.opacity = p;
+    ecLink.style.transform = 'translateY(' + ((1 - p) * 20).toFixed(2) + 'px)';
+  }
+};
+window.seek(0);
+</script>
+</body>
+</html>
