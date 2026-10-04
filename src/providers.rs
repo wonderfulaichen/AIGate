@@ -83,6 +83,22 @@ pub struct ModelConfig {
     /// 模型级循环守卫开关：Some(false) 关闭该模型的死循环检测，None 回落全局配置。
     #[serde(default)]
     pub loop_guard: Option<bool>,
+    /// 该模型**实测支持**的思考档位（如 `["low","high","max"]`），空 = 未知/不支持。
+    ///
+    /// 来源：拉取模型时上游目录下发的 `reasoning.supportedEfforts`（buddy 实测；
+    /// 见 `presets.rs` / `fetch_buddy_models`）。OpenAI `/v1/models` 这类**不声明档位**的
+    /// 上游取不到 → 留空。
+    ///
+    /// 两个用途：
+    /// ① 随 `/v1/models` 的 `capabilities` 下发给客户端 —— 客户端据此渲染思考档位选择器，
+    ///    否则只能盲猜（DeepSeek 用 low/high/max，OpenAI 用 minimal/low/medium/high，
+    ///    Anthropic 用 budget_tokens，各家不同）；
+    /// ② 面板「模型表」的档位下拉据此**收窄候选**，防止选出上游会 400 的值。
+    ///
+    /// ⚠️ 与 `reasoning_effort`（**注入**用，单值）是两回事：后者是"发给上游的档位"，
+    /// 本字段是"上游允许哪些档位"（能力声明）。缺省省略，不写空数组。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_efforts: Option<Vec<String>>,
 }
 
 impl ModelConfig {
@@ -264,6 +280,71 @@ impl ModelConfig {
     }
 }
 
+/// 认证模式 (供应商账号化的声明段, 见 `ProviderConfig::auth`).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    /// 静态密钥: keys.json → 环境变量 → api_key_default (既有链, 默认).
+    #[default]
+    ApiKey,
+    /// 账号凭据: data/accounts.json 的 token + 静默续期 (如 CodeBuddy 系 OAuth).
+    Account,
+}
+
+/// 账号续期配置 (声明式: 端点 + 头模板 + 响应字段路径).
+///
+/// 实测形态 (2026-10-01, copilot.tencent.com): POST + `X-Refresh-Token` 头 (无 body),
+/// HTTP 200 `{code:0, data:{accessToken, refreshToken, expiresIn(秒), ...}}`.
+/// 通用化: 头值写 `{refresh_token}` 占位符; 响应按点分路径取值 (兼容 camel/snake 与嵌套).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RefreshConfig {
+    pub endpoint: String,
+    /// HTTP 方法, 缺省 POST.
+    #[serde(default = "refresh_method_default")]
+    pub method: String,
+    /// 请求头模板; 值中的 `{refresh_token}` 会被替换为当前账号的 refresh_token.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// 新 access_token 的点分路径 (如 "data.accessToken").
+    #[serde(default = "path_access_token_default")]
+    pub access_token_path: String,
+    /// 新 refresh_token 的点分路径; 响应里没有则沿用旧值 (不轮换).
+    #[serde(default = "path_refresh_token_default")]
+    pub refresh_token_path: String,
+    /// 有效期字段 (相对秒数) 的点分路径 → expires_at = now + 秒数.
+    #[serde(default = "path_expires_in_default")]
+    pub expires_in_path: String,
+}
+
+fn refresh_method_default() -> String {
+    "POST".to_string()
+}
+fn path_access_token_default() -> String {
+    "data.accessToken".to_string()
+}
+fn path_refresh_token_default() -> String {
+    "data.refreshToken".to_string()
+}
+fn path_expires_in_default() -> String {
+    "data.expiresIn".to_string()
+}
+fn auth_expiry_margin_default() -> u64 {
+    3600
+}
+
+/// 供应商认证声明: api_key (默认) 或 account.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub mode: AuthMode,
+    /// account 模式的续期配置 (缺省 = 不自动续期, 到期后回落密钥链).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<RefreshConfig>,
+    /// 到期前多少秒触发续期 (与 CodeArts 插件一致: 1 小时).
+    #[serde(default = "auth_expiry_margin_default")]
+    pub expiry_margin_secs: u64,
+}
+
 /// 单个供应商的配置.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderConfig {
@@ -335,6 +416,21 @@ pub struct ProviderConfig {
     /// 避免盲目打到上游被裸拒 (如 opencode.ai/zen/go 限制约 1MB). 默认不限制.
     #[serde(default)]
     pub max_request_body_bytes: Option<usize>,
+    /// 认证形式声明 (2026-10-01 账号化): 缺省 = api_key 静态密钥链;
+    /// `{"mode":"account", "refresh":{...}}` = 凭据存 data/accounts.json + 到期前静默续期.
+    /// 旧 providers.json 无此字段 → 解析为 None (行为不变).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthConfig>,
+    /// 内置预设来源标记 (如 "buddy"): 由面板「新增 → 内置预设」写入.
+    ///
+    /// 受保护语义 (面板层): 不可删除 —— `api_providers_save` 校验新旧预设集合,
+    /// 旧有新无即拒绝保存; 支持「恢复默认」(前端回填预设模板) 与「已修改」徽章.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// 停用 (true = 不注册该供应商的模型路由, 条目仍在面板可见, 可再启用).
+    /// 供内置预设「可停用不可删」语义; 缺省 = 启用 (行为不变).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
 }
 
 /// providers.json 的顶层结构.
@@ -375,11 +471,30 @@ impl ProviderRegistry {
 
     /// 从 JSON 字符串加载.
     pub fn from_str(json: &str) -> Result<Self, String> {
-        let file: ProvidersFile = serde_json::from_str(json)
+        let mut file: ProvidersFile = serde_json::from_str(json)
             .map_err(|e| format!("解析 providers.json 失败: {e}"))?;
+
+        // 内置预设标记兜底: name 命中预设 id 且未标记 → 自动补标 (存量条目迁移:
+        // 存量 buddy 是预设机制之前手工写入的, 无此标记 → 面板不显示「内置」徽章、
+        // 删除保护失效. 加载时补标 → 下次面板保存随条目落盘). 用户自建同名条目会被
+        // 一并标记 (预设 id 即 name, 罕见; 真要自定义可改名或删掉 preset 字段).
+        for provider in &mut file.providers {
+            if provider.preset.is_none()
+                && crate::presets::PRESETS.iter().any(|p| p.id == provider.name)
+            {
+                provider.preset = Some(provider.name.clone());
+            }
+        }
 
         let mut routes = HashMap::new();
         for provider in &file.providers {
+            // 停用的供应商: 条目保留在面板 (可启用), 但**不注册路由** —— 模型列表 /
+            // /v1/models / 转发查找都看不到它. 与"删除"的区别是数据不丢.
+            if provider.disabled == Some(true) {
+                info!("providers: '{}' disabled, {} models not registered",
+                      provider.name, provider.models.len());
+                continue;
+            }
             info!(
                 "providers: loaded '{}' -> {} ({} models, key_env={})",
                 provider.name,
@@ -417,9 +532,34 @@ impl ProviderRegistry {
 
     /// 获取供应商的 API key (Key 是 provider 的子资源, 按 provider.name 索引).
     ///
-    /// 优先级: 面板设置值 (keys.json[provider.name]) → 环境变量 (api_key_env)
-    /// → providers.json 内置默认值 (api_key_default).
-    pub async fn api_key(&self, provider: &ProviderConfig, key_store: &crate::keys::KeyStore) -> Result<String, String> {
+    /// 优先级 (2026-10-01 账号化):
+    /// - `auth.mode = "account"`: **账号凭据优先** (data/accounts.json; 临期自动续期,
+    ///   续期失败/账号缺失/作废 → 回落下面的密钥链作逃生舱);
+    /// - `auth` 缺省 (api_key 模式): 面板设置值 (keys.json) → 环境变量 → api_key_default.
+    pub async fn api_key(
+        &self,
+        provider: &ProviderConfig,
+        key_store: &crate::keys::KeyStore,
+        accounts: Option<&crate::accounts::AccountStore>,
+        client: &reqwest::Client,
+    ) -> Result<String, String> {
+        if let Some(auth) = &provider.auth {
+            if auth.mode == AuthMode::Account {
+                if let Some(store) = accounts {
+                    if let Some(tok) = crate::accounts::usable_token(
+                        store,
+                        &provider.name,
+                        auth.expiry_margin_secs,
+                        auth.refresh.as_ref(),
+                        client,
+                    )
+                    .await
+                    {
+                        return Ok(tok);
+                    }
+                }
+            }
+        }
         if let Some(k) = key_store.get_for_provider(&provider.name).await {
             return Ok(k);
         }
@@ -482,7 +622,15 @@ impl ProviderRegistry {
     ///   例: 文件里 `go-flash -> deepseek-v4-flash`, 上游返回的 `deepseek-v4-flash` 不再重复加入.
     ///
     /// 返回 `(新增数量, 跳过数量)`. 仅修改内存态, 调用方需自行 `to_json()` 写回文件并 `reload()`.
-    pub fn add_models(&mut self, name: &str, ids: &[String]) -> (usize, usize) {
+    ///
+    /// `capabilities`: 上游模型 ID → 能力（拉取时采集；档位/上下文/输出上限）。
+    /// 传入后写入模型配置的 `supported_efforts`，随表单保存持久化；空表则不下发。
+    pub fn add_models(
+        &mut self,
+        name: &str,
+        ids: &[String],
+        capabilities: &std::collections::HashMap<String, FetchedModelMeta>,
+    ) -> (usize, usize) {
         let mut added = 0usize;
         let mut skipped = 0usize;
         if let Some(provider) = self.providers.iter_mut().find(|p| p.name == name) {
@@ -494,6 +642,16 @@ impl ProviderRegistry {
                     .values()
                     .any(|m| m.upstream_model.as_deref() == Some(id.as_str()));
                 if already_exists {
+                    // 已存在的条目也可能缺能力字段 (旧配置拉过一次但当时没采集):
+                    // 补上, 否则档位永远拿不到。**只补空值**, 不覆盖用户手改过的声明。
+                    if let Some(mt) = capabilities.get(id) {
+                        let transit_id = transit_model_id(&prov_name, id);
+                        if let Some(m) = provider.models.get_mut(&transit_id) {
+                            if m.supported_efforts.is_none() {
+                                m.supported_efforts = mt.supported_efforts.clone();
+                            }
+                        }
+                    }
                     skipped += 1;
                     continue;
                 }
@@ -512,6 +670,10 @@ impl ProviderRegistry {
                         strip_toolcall_reasoning: None,
                         origin: Some("fetched".to_string()),
                         loop_guard: None,
+                        // 上游目录声明的思考档位 (buddy 有, OpenAI /models 没有 → None)
+                        supported_efforts: capabilities
+                            .get(id)
+                            .and_then(|m| m.supported_efforts.clone()),
                     },
                 );
                 added += 1;
@@ -796,6 +958,13 @@ pub async fn fetch_models_from_upstream(
     provider: &ProviderConfig,
     key: &str,
 ) -> Result<Vec<String>, String> {
+    // 内置 buddy 预设: 上游 **没有** /v1/models (实测 /v2/models、/v1/models、/v2/chat/models
+    // 全部 404 —— 面板「拉取模型」因此永远返回 "HTTP 404 拉取模型失败").
+    // 权威模型目录是 GET /v3/config 的 data.models[] (CodeBuddy IDE 本体与 harness 都取它,
+    // 见 probe_buddy_v3config.py)。新模型 (如 space-bunny) 只会先出现在这里。
+    if provider.preset.as_deref() == Some("buddy") {
+        return fetch_buddy_models(client, provider, key).await;
+    }
     // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
     // 若 endpoint 是裸 base URL (如 https://api.xxx.com/v1), 替换无命中时自动追加 /models.
     let ep = provider.endpoint.trim_end_matches('/');
@@ -831,6 +1000,142 @@ pub async fn fetch_models_from_upstream(
         .await
         .map_err(|e| format!("解析上游响应 JSON 失败: {e}"))?;
     extract_model_ids(&body)
+}
+
+/// CodeBuddy 模型目录: `GET /v3/config` (buddy 预设专属; 通用 `/models` 路径在该站 404).
+///
+/// 只收**对话模型** —— 判据 `supportsToolCall == true`：该站同一份目录里还挂着
+/// 补全/图像专用模型 (`codewise-completions` / `codewise-rewrite` / `codewise-jump` /
+/// `hunyuan-image-alpha` / `nes-gf`)，它们无一支持工具调用，混进路由表会被客户端
+/// 当对话模型选中而必失败。实测 21 个中 15 个满足。
+async fn fetch_buddy_models(
+    client: &Client,
+    provider: &ProviderConfig,
+    key: &str,
+) -> Result<Vec<String>, String> {
+    let mut req = client.get("https://copilot.tencent.com/v3/config");
+    if !key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+    if let Some(headers) = &provider.headers {
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+    }
+    let resp = req
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("拉取模型请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "上游 /v3/config 返回 HTTP {} 拉取模型失败",
+            resp.status().as_u16()
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析上游响应 JSON 失败: {e}"))?;
+    let arr = body
+        .pointer("/data/models")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "响应中未找到 data.models 数组".to_string())?;
+    let mut ids = Vec::new();
+    let mut meta: std::collections::HashMap<String, FetchedModelMeta> =
+        std::collections::HashMap::new();
+    for m in arr {
+        if m.get("supportsToolCall").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let Some(id) = m.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        // 带 supportsToolCall 但属补全/内嵌专用族的模型仍排除: 实测
+        // `codewise-default-model-v2` 标了 true, 却是补全默认模型 (maxOutput 32k),
+        // 混进对话路由会被客户端当对话模型选中。按前缀判定 (该族另有
+        // codewise-completions / -rewrite / -jump, 均无此标记)。
+        if id.starts_with("codewise-") || id.starts_with("nes-") || id.starts_with("hunyuan-image") {
+            continue;
+        }
+        // 能力随目录一起采集 (档位/上下文/输出上限): 这些字段**只在这里出现**,
+        // 通用 /v1/models 不声明 —— 丢了客户端就只能盲猜档位。
+        let mt = buddy_model_meta(m);
+        if mt.supported_efforts.is_some()
+            || mt.context_window.is_some()
+            || mt.max_output_tokens.is_some()
+        {
+            meta.insert(id.to_string(), mt);
+        }
+        ids.push(id.to_string());
+    }
+    if ids.is_empty() {
+        return Err("上游返回的对话模型列表为空".to_string());
+    }
+    FETCHED_META.lock().await.extend(meta);
+    Ok(ids)
+}
+
+/// 从上游目录提取的**模型能力**（拉取时采集，供面板展示与 `/v1/models` 下发）。
+///
+/// 目前只有 buddy 的 `/v3/config` 声明这些字段；OpenAI `/v1/models` 不声明（留空）。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct FetchedModelMeta {
+    /// 上游允许的思考档位（`reasoning.supportedEfforts`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_efforts: Option<Vec<String>>,
+    /// 是否可关闭思考（`reasoning.canDisableThinking`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_disable_thinking: Option<bool>,
+    /// 上游默认档位（`reasoning.defaultEffort`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// 上下文窗口（`maxInputTokens`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// 单次输出上限（`maxOutputTokens`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+}
+
+/// 最近一次拉取采集到的能力表（`上游模型ID → 能力`）。
+///
+/// 为什么用进程级静态缓存而不是改 `fetch_models_from_upstream` 的返回类型：
+/// 该函数被 `api_providers_fetch_models` 直接调用并按 `Vec<String>` 用（前端差异弹窗
+/// 也只要 id 列表）。能力是**附加信息**，走一条旁路回传可避免改动既有调用链与前端协议；
+/// 面板保存时（`api_providers_save`）再从该表按 upstream_model 回填到模型配置。
+/// LRU 语义不需要：每次拉取覆盖同名条目，表随进程存活，量级 = 供应商数 × 模型数。
+pub static FETCHED_META: std::sync::LazyLock<tokio::sync::Mutex<std::collections::HashMap<String, FetchedModelMeta>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// 读取采集到的能力（供保存链回填 / 前端展示）。
+pub async fn fetched_meta_snapshot() -> std::collections::HashMap<String, FetchedModelMeta> {
+    FETCHED_META.lock().await.clone()
+}
+
+/// buddy 目录项 → 能力（字段缺失一律 None，**不猜**）。
+fn buddy_model_meta(m: &serde_json::Value) -> FetchedModelMeta {
+    let efforts = m
+        .pointer("/reasoning/supportedEfforts")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty());
+    FetchedModelMeta {
+        supported_efforts: efforts,
+        can_disable_thinking: m
+            .pointer("/reasoning/canDisableThinking")
+            .and_then(|v| v.as_bool()),
+        default_effort: m
+            .pointer("/reasoning/defaultEffort")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        context_window: m.get("maxInputTokens").and_then(|v| v.as_u64()),
+        max_output_tokens: m.get("maxOutputTokens").and_then(|v| v.as_u64()),
+    }
 }
 
 /// 从上游 `/v1/models` 的 JSON 响应中提取模型 ID 列表.
@@ -906,6 +1211,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         };
         // 显式 free: true 优先
         assert!(base(Some("gpt-4o"), Some(true)).is_free("gpt-4o"));
@@ -929,6 +1235,64 @@ mod tests {
         assert!(reg.lookup("free-model").is_some());
         assert!(reg.lookup("pro-model").is_some());
         assert!(reg.lookup("unknown").is_none());
+    }
+
+    #[test]
+    fn buddy_config_extracts_only_chat_models() {
+        // 真实 /v3/config 结构 (2026-10-02 实测, 21 个模型): 只收 supportsToolCall=true,
+        // 补全/图像专用的 codewise-* / hunyuan-image-alpha / nes-gf 必须被排除.
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"data":{"models":[
+                {"id":"deepseek-v4-flash","supportsToolCall":true},
+                {"id":"space-bunny","supportsToolCall":true},
+                {"id":"codewise-completions","maxOutputTokens":256},
+                {"id":"codewise-default-model-v2","supportsToolCall":true},
+                {"id":"hunyuan-image-alpha","credits":"x5.00"},
+                {"id":"nes-gf"}
+            ]}}"#,
+        )
+        .unwrap();
+        let arr = body.pointer("/data/models").and_then(|v| v.as_array()).unwrap();
+        let ids: Vec<String> = arr
+            .iter()
+            .filter(|m| m.get("supportsToolCall").and_then(|v| v.as_bool()) == Some(true))
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+            .filter(|id| {
+                !id.starts_with("codewise-") && !id.starts_with("nes-")
+                    && !id.starts_with("hunyuan-image")
+            })
+            .map(String::from)
+            .collect();
+        assert_eq!(ids, vec!["deepseek-v4-flash", "space-bunny"]);
+    }
+
+    #[test]
+    fn preset_marker_auto_applied_by_name_match() {
+        // 存量 buddy 是预设机制之前手工写入的 (无 preset 字段) → 加载时自动补标,
+        // 否则面板无「内置」徽章且删除保护失效 (2026-10-01 用户实测报障).
+        let json = r#"{"providers":[
+            {"name":"buddy","endpoint":"https://x/v1/chat/completions",
+             "api_key_env":"K","models":{}},
+            {"name":"my-own","endpoint":"https://y/v1/chat/completions",
+             "api_key_env":"K","models":{}}
+        ]}"#;
+        let reg = ProviderRegistry::from_str(json).unwrap();
+        let providers = reg.providers();
+        let buddy = providers.iter().find(|p| p.name == "buddy").unwrap();
+        assert_eq!(buddy.preset.as_deref(), Some("buddy"));
+        let own = providers.iter().find(|p| p.name == "my-own").unwrap();
+        assert!(own.preset.is_none(), "非预设名不得误标");
+        // 已显式标记的不覆盖 (允许用户改成别的 preset 值)
+        let json2 = r#"{"providers":[
+            {"name":"buddy","endpoint":"https://x/v1/chat/completions",
+             "api_key_env":"K","preset":"keep-me","models":{}}
+        ]}"#;
+        let reg2 = ProviderRegistry::from_str(json2).unwrap();
+        assert_eq!(
+            reg2.providers()[0].preset.as_deref(),
+            Some("keep-me"),
+            "已有标记不得被自动补标覆盖"
+        );
     }
 
     #[test]
@@ -970,6 +1334,7 @@ mod tests {
                     strip_toolcall_reasoning: None,
                     origin: None,
                     loop_guard: None,
+                    supported_efforts: None,
                 },
             );
         }
@@ -978,7 +1343,7 @@ mod tests {
             "new-model-b".to_string(),
             "deepseek-v4-flash".to_string(), // 已有 upstream_model 覆盖, 应跳过
         ];
-        let (added, skipped) = reg.add_models("test-zen", &ids);
+        let (added, skipped) = reg.add_models("test-zen", &ids, &Default::default());
         assert_eq!(added, 2);
         assert_eq!(skipped, 1);
         // 新增的模型: 中转 ID = 供应商/上游ID, upstream_model 存原始上游 ID, reasoning_effort 留空
@@ -1039,8 +1404,8 @@ mod tests {
         "#;
         let mut reg = ProviderRegistry::from_str(json).unwrap();
         let up = vec!["deepseek/deepseek-v4-flash".to_string()];
-        reg.add_models("Openrouter", &up);
-        reg.add_models("commandcodeAI", &up);
+        reg.add_models("Openrouter", &up, &Default::default());
+        reg.add_models("commandcodeAI", &up, &Default::default());
 
         // add_models 只改 providers 列表, 路由表由 from_str 重建 —— 走真实保存/重载路径.
         let reloaded = ProviderRegistry::from_str(&reg.to_json().unwrap()).unwrap();
@@ -1086,7 +1451,7 @@ mod tests {
     #[test]
     fn add_models_unknown_provider_is_noop() {
         let mut reg = ProviderRegistry::from_str(SAMPLE_JSON).unwrap();
-        let (added, skipped) = reg.add_models("no-such-provider", &["x".to_string()]);
+        let (added, skipped) = reg.add_models("no-such-provider", &["x".to_string()], &Default::default());
         assert_eq!(added, 0);
         assert_eq!(skipped, 0);
     }
@@ -1110,7 +1475,7 @@ mod tests {
         "#;
         let mut reg = ProviderRegistry::from_str(json).unwrap();
         // 上游返回的 deepseek-v4-flash 已被 go-flash 的 upstream_model 覆盖, 应跳过 (不新增 key)
-        let (added, skipped) = reg.add_models("test-zen", &["deepseek-v4-flash".to_string()]);
+        let (added, skipped) = reg.add_models("test-zen", &["deepseek-v4-flash".to_string()], &Default::default());
         assert_eq!(added, 0);
         assert_eq!(skipped, 1);
         let provider = reg.providers.iter().find(|p| p.name == "test-zen").unwrap();
@@ -1207,6 +1572,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         }
     }
 
@@ -1391,6 +1757,9 @@ mod tests {
             endpoint: ep.into(),
             api_key_env: "K".into(),
             api_key_default: None,
+            auth: None,
+            preset: None,
+            disabled: None,
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,

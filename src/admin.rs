@@ -135,11 +135,33 @@ pub struct RequestLog {
     /// 旧日志无此字段, 默认 false (升级前的值确实多数来自上游上报).
     #[serde(default)]
     pub usage_estimated: bool,
+    /// 本条记录的唯一序号 (写入时分配, 单调递增).
+    ///
+    /// 为什么需要 (前端 bug): 记录表格的 `x-for :key` 原用**页内索引**, 同一秒内的多条记录
+    /// (编程工具并发请求很常见) 在 3s 轮询整体换数据后会被 Alpine 判为"同一行"而复用 DOM,
+    /// 行内容与展开态串位。timestamp 是秒级、会撞, 不能当 key —— 故由后端给唯一值。
+    /// 旧日志无此字段, 默认 0 (前端对 0 回退到"timestamp + 行内序"的兜底 key)。
+    #[serde(default)]
+    pub seq: u64,
+    /// 本次请求**实际生效**的思考强度 (在 body 改写完成后采集).
+    ///
+    /// 取值: "low"/"medium"/"high"/"max" (客户端档位或注入的配置档) /
+    ///       "off" (客户端显式关闭思考) / "on" (Anthropic 原生 thinking 开启但无档位) /
+    ///       Some("") = 本次无思考且无注入 / None = 旧记录或失败路径未采集。
+    /// 为何不能沿用面板配置档: 那是"模型级默认", 与本次请求无关 —— 用户实测在编程工具里
+    /// 调了档位, 详情里却显示面板配置 (留空则为 "—"), 看起来像"客户端档位没生效"
+    /// (实际转发是客户端优先, 只是记录没采集; 见 thinking.rs 优先级链)。
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[inline]
-fn is_log_error(log: &RequestLog) -> bool {
-    log.status >= 400 || log.error.is_some()
+pub(crate) fn is_log_error(log: &RequestLog) -> bool {
+    // 499 = 客户端主动断开 (nginx 约定): 模型与网关都没有失败 —— 编程工具的正常
+    // 取消行为 (autocomplete 反复发起-取消、Esc、换请求) 若计入错误, 成功率会被
+    // 打崩 (2026-10-01 实测近 200 条里 130 条 499, 看起来像大面积故障)。
+    // 状态码原样保留可辨识, 只是不算"错误"。
+    log.status != 499 && (log.status >= 400 || log.error.is_some())
 }
 
 /// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
@@ -221,15 +243,55 @@ impl LogBuffer {
     pub fn with_store(mut self, store: LogStore) -> Self {
         // 启动加载全量日志 (统计基于全量, 不受展示容量限制).
         let logs = store.load(usize::MAX);
+        // ── 今日计数的**启动恢复** (修用户实测: 重启后「今日」归零) ──
+        // 背景: today_* 是内存原子计数器 (刻意区别于会被 5000 行截断的窗口聚合),
+        // 代价是进程重启即从 0 开始 —— 于是"今日"标签在重启后显示的是"本轮",
+        // 与用户直觉不符 (用户实测 15 vs 全天 155, 差 10 倍).
+        // 修法: 启动时用**文件里当日的全量记录**补齐初值, 之后照旧由 push 累加 ——
+        // 既有文件的权威性 (不受 MAX_LINES 封顶影响, 因为读的是文件而非内存缓冲),
+        // 又不改热路径的原子累加设计。
+        // ⚠️ 恢复必须早于/独立于内存缓冲的截断: 此处遍历的是 `logs` (load(usize::MAX) 的全量),
+        //    不是截断后的 buf —— 否则长会话会把当日计数漏掉一部分。
+        let day_now = tz_day_index(now_ts());
+        let (mut d_req, mut d_ok, mut d_pt, mut d_ct, mut d_hit) = (0u64, 0u64, 0u64, 0u64, 0u64);
+        for log in &logs {
+            if tz_day_index(log.timestamp) != day_now {
+                continue;
+            }
+            d_req += 1;
+            if !is_log_error(log) {
+                d_ok += 1;
+            }
+            d_pt += log.prompt_tokens as u64;
+            d_ct += log.completion_tokens as u64;
+            d_hit += log.prompt_cache_hit_tokens as u64;
+        }
+        if d_req > 0 {
+            self.today_day.store(day_now, Ordering::Release);
+            self.today_requests.store(d_req, Ordering::Relaxed);
+            self.today_success.store(d_ok, Ordering::Relaxed);
+            self.today_prompt_tokens.store(d_pt, Ordering::Relaxed);
+            self.today_completion_tokens.store(d_ct, Ordering::Relaxed);
+            self.today_cache_hit_tokens.store(d_hit, Ordering::Relaxed);
+        }
         if !logs.is_empty() {
+            let n_loaded = logs.len();
             if let Ok(mut buf) = self.inner.try_lock() {
-                for log in logs {
+                for (i, mut log) in logs.into_iter().enumerate() {
+                    // 历史日志 (落盘早于 seq 字段) 的 seq 为 0: 就地补一个进程内唯一值,
+                    // 否则前端表格的 x-for :key 会把它们全当成同一行 (串位)。
+                    // seq 只作前端 DOM 标识, 不承载持久语义, 故跨重启重新编号是安全的。
+                    if log.seq == 0 {
+                        log.seq = i as u64 + 1;
+                    }
                     if buf.len() >= crate::store::MAX_LINES {
                         buf.pop_front();
                     }
                     buf.push_back(log);
                 }
             }
+            // 自增游标推到已加载的最大值之后, 保证新记录的 seq 不与历史冲突。
+            self.seq.store(n_loaded as u64, Ordering::Release);
         }
         self.store = Some(store);
         self
@@ -332,9 +394,11 @@ impl LogBuffer {
         if buf.len() >= crate::store::MAX_LINES {
             buf.pop_front();
         }
+        // 唯一序号: 取**自增前**的值作为本条 id (从 1 起), 与紧随其后的缓存失效序号同源,
+        // 保证同一次 push 内两者一致、且全局单调不重复 (前端 x-for :key 依赖它)。
+        let this_seq = self.seq.fetch_add(1, Ordering::Release) + 1;
+        log.seq = this_seq;
         buf.push_back(log.clone());
-        // 写入序列号递增 (缓存失效信号).
-        self.seq.fetch_add(1, Ordering::Release);
         // 本轮 (进程级) 累计计数: 独立于滚动窗口, 重启清零.
         self.session_requests.fetch_add(1, Ordering::Relaxed);
         if !is_log_error(&log) {
@@ -458,13 +522,14 @@ impl LogBuffer {
     }
 
     /// 取最近 N 条**错误**日志 (按"错误"维度独立留存, 不受 `recent` 请求窗口冲刷).
-    /// 错误判定: status>=400 或 error 字段非空. 内存 inner 保留全量(MAX_LINES),
-    /// 故错误数量与"最近 N 条请求"完全解耦——正常请求再多也不会挤掉错误展示.
+    /// 错误判定: [`is_log_error`] (status>=400 或 error 非空, **499 客户端取消除外**).
+    /// 内存 inner 保留全量(MAX_LINES), 故错误数量与"最近 N 条请求"完全解耦——
+    /// 正常请求再多也不会挤掉错误展示.
     pub async fn recent_errors(&self, n: usize) -> Vec<RequestLog> {
         let buf = self.inner.lock().await;
         buf.iter()
             .rev()
-            .filter(|l| l.status >= 400 || l.error.is_some())
+            .filter(|l| is_log_error(l))
             .take(n)
             .cloned()
             .collect()
@@ -538,6 +603,9 @@ pub async fn record_request(
         upstream_model: upstream_model.map(|s| s.to_string()),
         // 失败路径不解析 usage, 记的 0 是"未上报"而非"实测为 0".
         usage_estimated: true,
+        seq: 0,
+        // 失败/错误路径多在 body 改写前, 未采集本次思考强度 → None (展示回落面板配置档).
+        effort: None,
     };
     log_buffer.push(log).await;
 }
@@ -566,6 +634,7 @@ pub async fn record_request_with_tokens(
     first_token_ms: Option<u64>,
     error: Option<String>,
     usage_estimated: bool,
+    effort: Option<String>,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -589,6 +658,7 @@ pub async fn record_request_with_tokens(
         first_token_ms,
         error,
         usage_estimated,
+        effort,
     )
     .await;
 }
@@ -620,6 +690,7 @@ pub async fn record_request_with_tokens_status(
     first_token_ms: Option<u64>,
     error: Option<String>,
     usage_estimated: bool,
+    effort: Option<String>,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -650,6 +721,8 @@ pub async fn record_request_with_tokens_status(
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
         usage_estimated,
+        seq: 0,
+        effort,
     };
     log_buffer.push(log).await;
 }
@@ -779,12 +852,22 @@ fn request_logs_with_enrichment(
             let mut v = serde_json::to_value(&l).unwrap_or(serde_json::Value::Null);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("free".into(), serde_json::Value::Bool(free_ids.contains(&l.model)));
-                obj.insert(
-                    "reasoning_effort".into(),
-                    serde_json::Value::String(
-                        reasoning_map.get(&l.model).and_then(|r| r.clone()).unwrap_or_default(),
-                    ),
-                );
+                // 思考强度展示链: **本次实测 (l.effort) 优先**, 旧记录/失败路径未采集时
+                // 回落面板配置档 (保持升级前的显示行为)。
+                // 实测值语义: "off" = 客户端显式关思考; "on" = Anthropic 原生开启无档位;
+                // "" = 本次无思考且无注入 (显示 —, 此时配置档多半也为空, 否则会被注入)。
+                let effort_display = match l.effort.as_deref() {
+                    Some("off") => crate::i18n::pick(
+                        "已关闭（客户端显式关闭思考）",
+                        "Off (client explicitly disabled thinking)",
+                    )
+                    .to_string(),
+                    Some("on") => crate::i18n::pick("已开启（无档位）", "On (no level)").to_string(),
+                    Some(s) if !s.is_empty() => s.to_string(),
+                    Some(_) => String::new(),
+                    None => reasoning_map.get(&l.model).and_then(|r| r.clone()).unwrap_or_default(),
+                };
+                obj.insert("reasoning_effort".into(), serde_json::Value::String(effort_display));
                 // 单条费用与省量: 前端请求详情要展示"这次花了多少 / 省了多少",
                 // 不能让前端自己算 (价格表在后端, 且需与统计页同口径).
                 let cost = log_cost(&memo, &l);
@@ -1018,6 +1101,39 @@ pub async fn api_providers_save(
         Err(e) => return Json(serde_json::json!({ "error": e })),
     };
 
+    // 1.5) 内置预设删除保护: 按 **preset 标记值** (非 name) 比对新旧集合 ——
+    //     旧有新无 = 试图删掉内置预设条目 (面板对内置条目禁用了删除按钮, 这里是后端兜底;
+    //     重命名 name 不触发, 改名后账号索引错位会回落 key 链, 不炸).
+    {
+        let old_presets: std::collections::HashSet<String> = state
+            .registry
+            .read()
+            .await
+            .providers()
+            .iter()
+            .filter_map(|p| p.preset.clone())
+            .collect();
+        if !old_presets.is_empty() {
+            let new_presets: std::collections::HashSet<String> = serde_json::from_str::<serde_json::Value>(json_str)
+                .ok()
+                .and_then(|v| {
+                    v.get("providers")?.as_array().map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| p.get("preset").and_then(|s| s.as_str()).map(String::from))
+                            .collect()
+                    })
+                })
+                .unwrap_or_default();
+            let removed: Vec<_> = old_presets.difference(&new_presets).collect();
+            if !removed.is_empty() {
+                let list: Vec<&str> = removed.iter().map(|s| s.as_str()).collect();
+                return Json(serde_json::json!({
+                    "error": format!("内置预设不可删除: {} (可「停用」该供应商)", list.join(", "))
+                }));
+            }
+        }
+    }
+
     // 2) 备份当前文件 (覆盖写盘前保留上一版, 便于回滚).
     let _ = std::fs::copy("providers.json", "providers.json.bak");
 
@@ -1197,6 +1313,206 @@ pub struct KeyUpdate {
     pub value: String,
 }
 
+/// GET /admin/api/accounts — 账号形式供应商的凭据状态 (到期剩余/是否作废).
+/// **绝不返回 token 原文** (见 AccountStore::status_map); 无账号配置返回空表.
+pub async fn api_accounts_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "accounts": state.accounts.status_map().await }))
+}
+
+/// GET /admin/api/presets — 内置供应商预设目录 (面板「新增 → 内置」数据源).
+/// 纯常量下发 (presets.rs), 不落盘; 添加动作由前端组装条目走既有保存链.
+pub async fn api_presets_get() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "presets": crate::presets::presets_json() }))
+}
+
+/// POST /admin/api/accounts/login — 面板「登录」: 粘贴凭据写入 accounts.json.
+/// payload: `{name, access_token, refresh_token?, expires_in_secs?}`
+/// - `name` 必须是 auth.mode=account 的供应商 (防给普通 key 供应商写账号);
+/// - `expires_in_secs` 省略/0 = 不可知 (到期前不主动续期, 用到上游拒绝为止 —— 见 AccountEntry);
+/// - 写入即清 `dead` (重新登录就是解作废).
+pub async fn api_accounts_login(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 name" })),
+    };
+    let token = match payload.get("access_token").and_then(|v| v.as_str()) {
+        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 access_token" })),
+    };
+    let refresh_token = payload
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let expires_in = payload
+        .get("expires_in_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    // 必须是账号形式供应商 (短暂持锁读, 拿到即放).
+    let provider = {
+        let reg = state.registry.read().await;
+        reg.providers().into_iter().find(|p| p.name == name)
+    };
+    let is_account = provider
+        .as_ref()
+        .and_then(|p| p.auth.as_ref())
+        .map(|a| a.mode == crate::providers::AuthMode::Account)
+        .unwrap_or(false);
+    if !is_account {
+        return Json(serde_json::json!({ "error": "该供应商不是账号形式 (无 auth 配置)" }));
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = crate::accounts::AccountEntry {
+        access_token: token,
+        refresh_token,
+        expires_at: if expires_in > 0 { Some(now + expires_in) } else { None },
+        dead: false,
+        updated_at: Some(now),
+    };
+    state.accounts.set(&name, entry).await;
+    Json(serde_json::json!({
+        "message": crate::i18n::pick("登录成功", "Signed in"),
+        "accounts": state.accounts.status_map().await,
+    }))
+}
+
+/// POST /admin/api/accounts/logout — 登出: 删除该供应商的账号凭据 (落盘).
+/// 之后转发回落 api_key 链; 供应商条目本身不动.
+pub async fn api_accounts_logout(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 name" })),
+    };
+    state.accounts.remove(&name).await;
+    Json(serde_json::json!({
+        "message": crate::i18n::pick("已登出", "Signed out"),
+        "accounts": state.accounts.status_map().await,
+    }))
+}
+
+/// 校验 name 是账号形式供应商, 返回其配置 (登录两步共用).
+async fn find_account_provider(
+    state: &super::proxy::AppState,
+    name: &str,
+) -> Result<crate::providers::ProviderConfig, serde_json::Value> {
+    let provider = {
+        let reg = state.registry.read().await;
+        reg.providers().into_iter().find(|p| p.name == name)
+    };
+    let is_account = provider
+        .as_ref()
+        .and_then(|p| p.auth.as_ref())
+        .map(|a| a.mode == crate::providers::AuthMode::Account)
+        .unwrap_or(false);
+    if !is_account {
+        return Err(serde_json::json!({ "error": "该供应商不是账号形式 (无 auth 配置)" }));
+    }
+    provider.ok_or_else(|| serde_json::json!({ "error": crate::i18n::msg_provider_not_found(name) }))
+}
+
+/// POST /admin/api/accounts/login/start `{name}` — 浏览器一键登录第 1 步.
+/// 取官方 auth/state → 记会话 (pending) → 后台 spawn 轮询 token → 返回 `{auth_url}`
+/// 供前端打开 (用户在官方页登录完成后, 后台自动写 accounts.json, 会话转 ok).
+pub async fn api_accounts_login_start(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 name" })),
+    };
+    if let Err(e) = find_account_provider(&state, &name).await {
+        return Json(e);
+    }
+    match crate::accounts::buddy_login_start(&state.client, &state.login_sessions, &name).await {
+        Ok(auth_url) => {
+            tokio::spawn(crate::accounts::buddy_login_poll(
+                state.client.clone(),
+                state.login_sessions.clone(),
+                state.accounts.clone(),
+                name.clone(),
+            ));
+            Json(serde_json::json!({ "auth_url": auth_url, "name": name }))
+        }
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// POST /admin/api/accounts/login/status `{name}` — 浏览器登录进度
+/// (`none`=无会话 / `pending` / `ok` / `failed` + error). 前端轮询至 ok 关弹窗.
+pub async fn api_accounts_login_status(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let snap = state.login_sessions.read().await.get(&name).cloned();
+    match snap {
+        Some(s) => Json(serde_json::json!({
+            "status": s.status,
+            "error": s.error,
+            "auth_url": s.auth_url,
+            "started_at": s.started_at,
+        })),
+        None => Json(serde_json::json!({ "status": "none" })),
+    }
+}
+
+/// POST /admin/api/accounts/refresh — 立即续期指定账号 `{name}` (面板「立即刷新」/排障).
+/// margin 传 MAX/2 = **强制**绕过临期判断直接打续期 (串行闸仍保证不并发).
+pub async fn api_accounts_refresh(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 name" })),
+    };
+    // 取 auth 配置 (短暂持锁, 拿到即放 —— 不带着读锁打网络).
+    let provider = {
+        let reg = state.registry.read().await;
+        reg.providers().into_iter().find(|p| p.name == name)
+    };
+    let Some(provider) = provider else {
+        return Json(serde_json::json!({ "error": crate::i18n::msg_provider_not_found(&name) }));
+    };
+    let Some(auth) = provider.auth.as_ref() else {
+        return Json(serde_json::json!({ "error": "该供应商不是账号形式 (无 auth 配置)" }));
+    };
+    let Some(rc) = auth.refresh.as_ref() else {
+        return Json(serde_json::json!({ "error": "该供应商未配置 refresh 端点" }));
+    };
+    match crate::accounts::refresh_account(
+        &state.client,
+        rc,
+        &name,
+        &state.accounts,
+        u64::MAX / 2, // 强制: 永远"临期", 直接打续期 (串行闸内复查不会短路)
+    )
+    .await
+    {
+        Ok(entry) => Json(serde_json::json!({
+            "message": crate::i18n::pick("续期成功", "Refresh succeeded"),
+            "expires_at": entry.expires_at,
+        })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
 pub async fn api_keys_put(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<KeyUpdate>,
@@ -1289,7 +1605,10 @@ pub async fn api_providers_fetch_models(
             Some(p) => p,
             None => return Json(serde_json::json!({ "error": crate::i18n::msg_provider_not_found(&name) })),
         };
-        let key = match registry.api_key(&provider, &state.key_store).await {
+        let key = match registry
+            .api_key(&provider, &state.key_store, Some(&state.accounts), &state.client)
+            .await
+        {
             Ok(k) => k,
             Err(e) => return Json(serde_json::json!({ "error": e })),
         };
@@ -1350,7 +1669,10 @@ pub async fn api_providers_fetch_models(
             })
             .unwrap_or_default();
         let removed: Vec<String> = existing.drain(..).filter(|id| !ids.contains(id)).collect();
-        let (added, skipped) = registry.add_models(&name, &ids);
+        // 能力表 (档位/上下文/输出上限): 拉取时从上游目录采集, 随模型一并写入内存注册表,
+        // 之后随面板「保存配置」持久化, 并可由 /v1/models 下发给客户端。
+        let caps = crate::providers::fetched_meta_snapshot().await;
+        let (added, skipped) = registry.add_models(&name, &ids, &caps);
         (added, skipped, removed)
     };
 
@@ -1436,6 +1758,8 @@ pub async fn api_mock(
             audit_observed: false,
             price: None,
             usage_estimated: false,
+            seq: 0,
+            effort: None,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1475,6 +1799,8 @@ pub async fn api_mock(
             audit_observed: false,
             price: None,
             usage_estimated: false,
+            seq: 0,
+            effort: None,
             first_token_ms: None,
             upstream_model: None,
         });
@@ -1822,28 +2148,35 @@ pub async fn api_balance(
     let registry = state.registry.read().await;
     let providers = registry.providers();
     
-    // 构建供应商余额配置
+    // 构建供应商余额配置: 配了 balance_endpoint 的走通用查询;
+    // 内置 buddy 预设无 endpoint 也纳入 (CodeBuddy 积分端点, 凭据走账号).
     let mut provider_configs = std::collections::HashMap::new();
     for config in providers {
-        if let Some(balance_endpoint) = &config.balance_endpoint {
-            // 获取 API key (面板值 > 环境变量 > 默认值)
-            let api_key = state.key_store.get_for_provider(&config.name).await
-                .or_else(|| std::env::var(&config.api_key_env).ok().filter(|s| !s.is_empty()))
-                .or_else(|| config.api_key_default.clone())
-                .unwrap_or_default();
-            
-            provider_configs.insert(
-                config.name.clone(),
-                ProviderBalanceConfig {
-                    balance_endpoint: Some(balance_endpoint.clone()),
-                    api_key,
-                },
-            );
+        let is_buddy_preset = config.preset.as_deref() == Some("buddy");
+        if config.balance_endpoint.is_none() && !is_buddy_preset {
+            continue;
         }
+        // 获取 API key (面板值 > 环境变量 > 默认值; buddy 账号型由查询器走 accounts.json)
+        let api_key = state.key_store.get_for_provider(&config.name).await
+            .or_else(|| std::env::var(&config.api_key_env).ok().filter(|s| !s.is_empty()))
+            .or_else(|| config.api_key_default.clone())
+            .unwrap_or_default();
+
+        provider_configs.insert(
+            config.name.clone(),
+            ProviderBalanceConfig {
+                balance_endpoint: config.balance_endpoint.clone(),
+                api_key,
+                preset: config.preset.clone(),
+            },
+        );
     }
-    
-    // 查询余额
-    let balances = balance_manager.query_all_balances(&state.client, &provider_configs).await;
+    drop(registry);
+
+    // 查询余额 (buddy 需要 accounts.json 的账号 token 作凭据)
+    let balances = balance_manager
+        .query_all_balances(&state.client, &provider_configs, &state.accounts)
+        .await;
     
     Json(serde_json::json!({
         "balances": balances,
@@ -4370,9 +4703,26 @@ mod tests {
             audit_observed: false,
             price: None,
             usage_estimated: false,
+            seq: 0,
+            effort: None,
             first_token_ms: None,
             upstream_model: None,
         }
+    }
+
+    /// 499 客户端取消不算错误 (2026-10-01 用户报障: 模型正常工作却被标红成"错误",
+    /// 实测近 200 条里 130 条 499 全是工具正常取消). 同口径覆盖 stats/趋势/rollup.
+    #[test]
+    fn client_cancel_499_is_not_error() {
+        let mut log = mk("m", "p", 10, 0);
+        log.status = 499;
+        log.error = Some("客户端中断连接（…）".into());
+        assert!(!is_log_error(&log), "499 不算错误");
+        log.status = 500;
+        assert!(is_log_error(&log), "500 仍算错误");
+        log.status = 200;
+        log.error = Some("x".into());
+        assert!(is_log_error(&log), "200+error 仍算错误");
     }
 
     /// BUG 回归: 已知供应商但该模型**未配价格**时, 不得回退拿到别家同名模型的价格
