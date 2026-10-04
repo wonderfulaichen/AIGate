@@ -102,7 +102,9 @@ impl RollupEntry {
     /// 累加单条请求日志 (字段口径与 compute_stats 一一对应).
     fn add_log(&mut self, log: &RequestLog) {
         self.requests += 1;
-        if log.status >= 400 || log.error.is_some() {
+        // 与 admin::is_log_error 同口径: 499 客户端取消不算错误 (否则月度错误率
+        // 被工具的正常取消行为污染).
+        if crate::admin::is_log_error(log) {
             self.errors += 1;
         }
         self.latency_sum_ms += log.latency_ms;
@@ -411,6 +413,8 @@ mod tests {
             audit_observed: false,
             price: None,
             usage_estimated: false,
+            seq: 0,
+            effort: None,
             first_token_ms: None,
             upstream_model: Some(upstream.to_string()),
         }

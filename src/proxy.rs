@@ -43,6 +43,10 @@ pub struct AppState {
     pub stats_cache: Arc<tokio::sync::Mutex<Option<(u64, String, u64, crate::admin::UsageStats)>>>,
     /// API Key 存储.
     pub key_store: KeyStore,
+    /// 账号形式供应商的凭据存储 (data/accounts.json, 临期自动续期; 见 accounts.rs).
+    pub accounts: crate::accounts::AccountStore,
+    /// 浏览器登录会话表 (供应商名 → 登录进行状态; 见 accounts.rs 浏览器登录流).
+    pub login_sessions: crate::accounts::LoginSessions,
     /// 余额查询管理器 (常驻实例, 缓存跨请求复用, 避免每次刷新重新打上游导致限流).
     pub balance_manager: BalanceManager,
     /// 管理面板 API 鉴权令牌 (None 表示不鉴权).
@@ -198,9 +202,28 @@ pub async fn chat_completions(
     };
 
     // 2. 解析 model 字段
-    let model = parse_model(&bytes).ok_or_else(|| {
-        error_response(StatusCode::BAD_REQUEST, "missing or invalid model field")
-    })?;
+    //
+    // 解析失败也必须**落盘一条记录** (实测漏记路径): 此前直接 400 返回, 记录页/统计里
+    // 完全看不到这次请求 —— 客户端在报错, 面板却显示"什么都没发生", 排查时无从对账.
+    // 模型名占位 "-" (解析不出真实名), 状态 400, 附可读原因.
+    let model = match parse_model(&bytes) {
+        Some(m) => m,
+        None => {
+            crate::admin::record_request(
+                &state.log_buffer,
+                "-",
+                "-",
+                "-",
+                None,
+                400,
+                start,
+                bytes.len(),
+                Some("请求体非法: 无法解析 model 字段 (非合法 JSON 或缺 model)".to_string()),
+            )
+            .await;
+            return Err(error_response(StatusCode::BAD_REQUEST, "missing or invalid model field"));
+        }
+    };
 
     // 3. 查路由表 (RwLock 读锁)
     let route = match state.registry.read().await.lookup(&model) {
@@ -273,7 +296,7 @@ pub async fn chat_completions(
     );
 
     // 4. 获取 API key (通过 KeyStore)
-    let key = match state.registry.read().await.api_key(&provider, &state.key_store).await {
+    let key = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
         Ok(k) => k,
         Err(e) => {
             crate::admin::record_request(
@@ -293,7 +316,7 @@ pub async fn chat_completions(
         state.strip_toolcall_on_chat.load(Ordering::Relaxed),
         state.strip_toolcall_on_responses.load(Ordering::Relaxed),
     );
-    let (bytes, _injected, strip_saved, trim_saved, audit) = inject_model_params(
+    let (bytes, _injected, strip_saved, trim_saved, audit, effort) = inject_model_params(
         bytes,
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
@@ -747,7 +770,7 @@ pub async fn chat_completions(
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
-                        usage_missing(pt, ct),
+                        usage_missing(pt, ct), effort.clone(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -796,7 +819,7 @@ pub async fn chat_completions(
                     crate::admin::record_request_with_tokens(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
-                        usage_missing(pt, ct),
+                        usage_missing(pt, ct), effort.clone(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -846,6 +869,7 @@ pub async fn chat_completions(
         audit,
         cont_max,
         cont_ctx,
+        effort,
     );
     Ok(resp)
 }
@@ -1232,7 +1256,7 @@ async fn relay_native_passthrough(
     }
 
     // API key.
-    let key = match state.registry.read().await.api_key(&provider, &state.key_store).await {
+    let key = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
         Ok(k) => k,
         Err(e) => {
             crate::admin::record_request(
@@ -1414,6 +1438,12 @@ async fn relay_native_passthrough(
     let resp_headers = upstream.headers().clone();
     let status = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::OK);
 
+    // 本次生效的思考强度 (原生直通: 载体按协议不同, 见 effort_native).
+    // 从**改写后**的请求体采集 (配置档注入也算生效).
+    let effort = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| effort_native(&v, proto));
+
     if !is_stream {
         // 非流式: 原样回传 JSON, 按协议口径抽取 usage 记账.
         let text = match upstream.text().await {
@@ -1428,7 +1458,7 @@ async fn relay_native_passthrough(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
             false, hit, miss, creation, 0, 0, 0, None, None, None,
-            usage_missing(pt, ct),
+            usage_missing(pt, ct), effort,
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1446,6 +1476,7 @@ async fn relay_native_passthrough(
         model_cfg.upstream_model.clone(),
         start,
         strip_saved_tokens,
+        effort,
     );
     let mut resp = Response::builder()
         .status(status)
@@ -1526,6 +1557,8 @@ struct NativeTapStream {
     /// "答不完"显示成完全正常, 用户看着 200 + 完整 usage 却不知回答被砍了
     /// (实测长会话把输出额度挤到 8192 打满, 截图里就是这么发生的).
     truncated: bool,
+    /// 本次生效的思考强度 (见 [`effort_native`]), 流结束记账时写入日志.
+    effort: Option<String>,
 }
 
 impl NativeTapStream {
@@ -1539,6 +1572,7 @@ impl NativeTapStream {
         upstream_model: Option<String>,
         start: std::time::Instant,
         strip_saved_tokens: u32,
+        effort: Option<String>,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -1561,6 +1595,7 @@ impl NativeTapStream {
             logged: false,
             truncated: false,
             strip_saved_tokens,
+            effort,
         }
     }
 
@@ -1688,12 +1723,14 @@ impl Stream for NativeTapStream {
                     } else {
                         None
                     };
+                    // 档位需要在 spawn 前取成 owned 值 (self 不能跨线程借用).
+                    let effort_copy = self.effort.clone();
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
                             prompt, output, resp_len, false, hit, miss, creation, st, 0, 0, None, None,
                             trunc_note,
-                            usage_missing(prompt, output),
+                            usage_missing(prompt, output), effort_copy,
                         ).await;
                     });
                 }
@@ -2066,6 +2103,7 @@ fn stream_response_with_tokens(
     audit: TokenAudit,
     auto_continue_max: u32,
     cont_ctx: Option<ContinuationCtx>,
+    effort: Option<String>,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -2140,8 +2178,10 @@ fn stream_response_with_tokens(
             } else {
                 None
             },
+            tool_call_ids: std::collections::HashMap::new(),
             log_buffer: Some(TokenLogData {
                 log_buffer,
+                effort,
                 model,
                 provider,
                 endpoint,
@@ -2234,6 +2274,8 @@ async fn try_replay_cache(
         None,
         // 缓存回放未调用上游: 0 是真实口径 (行内另有"缓存"徽章), 不是"未上报".
         false,
+        // 缓存回放没有请求体上下文可采档位 (cached 是响应体) → None, 展示层回落面板配置.
+        None,
     )
     .await;
     Some(serve_cached(&cached))
@@ -2242,6 +2284,8 @@ async fn try_replay_cache(
 /// 用于记录 token 用量的日志数据.
 struct TokenLogData {
     log_buffer: LogBuffer,
+    /// 本次生效的思考强度 (令牌流结束/失败/断连三条路径落盘时写入日志).
+    effort: Option<String>,
     model: String,
     provider: String,
     endpoint: String,
@@ -2369,6 +2413,10 @@ struct TokenStream {
     /// 避免跨段窗口残留文本把上一段结尾+下一段开头误判成循环.
     loop_params: Option<(usize, usize, usize)>,
     log_buffer: Option<TokenLogData>,
+    /// tool_call id 按 index 缓存: 上游只在首个分片带真实 id, 后续分片只有 index
+    /// (实测 CodeBuddy: call_00_xxx 仅出现在首个 tool_calls 帧, 之后 12 帧 id=None),
+    /// 严格按 id 配对 tool/result 的客户端会跨轮错配 → 见 [`backfill_tool_call_ids`].
+    tool_call_ids: std::collections::HashMap<u64, String>,
 }
 
 impl TokenStream {
@@ -2530,7 +2578,7 @@ impl TokenStream {
             self.out_buf.extend_from_slice(b"data: [DONE]\n\n");
             return;
         }
-        let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        let Ok(mut val) = serde_json::from_str::<serde_json::Value>(json_str) else {
             // 调试日志: 记录网关无法解析的 SSE 行 (客户端严格 JSON.parse 会因此报错).
             // 经跨 chunk 行缓冲后, 此处仅剩真正畸形的 JSON (不再是 mid-object 分片).
             let head: String = json_str.chars().take(200).collect();
@@ -2540,6 +2588,11 @@ impl TokenStream {
             );
             return;
         };
+        // 上游 finish_reason 为空串时置位 → 借用结束后归一为 null (见下方诊断块).
+        // 背景: CodeBuddy 对**每个分片帧**都发 `finish_reason: ""` (实测 8050 次),
+        // 而 OpenAI 规范只有枚举值或 null —— 客户端把 Some("") 当"流已完成"信号,
+        // 每帧都触发 finalize, 正在累积的 tool_call 被切成碎片 → invalid JSON + 重试.
+        let mut finish_empty = false;
         // 检测上游以 SSE 错误事件形式返回的错误 (HTTP 200 + error 事件):
         // 翻译为中文并改写, 否则正常 JSON 数据继续走下方 usage / delta 解析.
         if let Some((msg, etype)) = translate_sse_error(&val) {
@@ -2655,25 +2708,57 @@ impl TokenStream {
                 // 诊断: 捕获非正常的 finish_reason (error/length/content_filter 等).
                 // 上游带 finish_reason="error" 时 AIGate 此前纯透传、无感知,
                 // 客户端据此报 "完成原因错误" (10004). warn 到 aigate.log 以便定位.
-                if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                    // 无论 finish_reason 取值, 只要上游发出了终止帧就标记干净结束.
-                    self.clean_finish = true;
-                    if !matches!(fr, "stop" | "tool_calls" | "function_call") {
-                        warn!(
-                            "proxy: upstream finish_reason={fr:?} (model={}, provider={}); client may report completion error (10004)",
-                            self.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
-                            self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
-                        );
-                        self.finish_reason = Some(fr.to_string());
+                if let Some(fr_val) = choice.get("finish_reason") {
+                    if let Some(fr) = fr_val.as_str() {
+                        if fr.is_empty() {
+                            // 非标空串 (实测 CodeBuddy 对**每个分片帧**都发 "", 8050 次):
+                            // OpenAI 规范只有枚举值或 null. 下游客户端把 Some("") 当
+                            // "流已完成" 信号 → 每个分片都触发 finalize, 正在累积的
+                            // tool_call 被切成 raw_len=0/1/2/7 碎片 → 「Arguments are
+                            // invalid JSON」+ 重试 (obt 实机 15:03:04 日志实锤).
+                            // 网关归一为 null (标准中间帧形态), 借用结束后写回.
+                            finish_empty = true;
+                        } else {
+                            // 非空取值 (含终止帧) 才视为上游发出了终止信号.
+                            self.clean_finish = true;
+                            if !matches!(fr, "stop" | "tool_calls" | "function_call") {
+                                warn!(
+                                "proxy: upstream finish_reason={fr:?} (model={}, provider={}); client may report completion error (10004)",
+                                self.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+                                self.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+                                );
+                                self.finish_reason = Some(fr.to_string());
+                            }
+                        }
                     }
                 }
             }
         }
+        if finish_empty {
+            if let Some(first) = val
+                .get_mut("choices")
+                .and_then(|c| c.as_array_mut())
+                .and_then(|a| a.first_mut())
+            {
+                first["finish_reason"] = serde_json::Value::Null;
+            }
+        }
+        // ── tool_call id 稳定化 (通用修复, 实测 CodeBuddy 触发) ──
+        // 上游只在首个分片带真实 id, 后续分片只有 index (实测 deepseek-v4-flash:
+        // 首帧 id=call_00_..., 之后 12 帧 id=None) —— 按 id 配对 tool/result 的
+        // 客户端会跨轮错配. 按 index 缓存首帧 id, 缺失即回填.
+        let patched = backfill_tool_call_ids(&mut val, &mut self.tool_call_ids) || finish_empty;
         // 归一化发射: 把解析到的 payload 以标准 "data: {json}" SSE 帧重新封装转发.
         // 每个成功解析的 payload 都转发 (无论是否含 choices), 保证客户端收到完整流;
         // 上游 (zen/opencode.ai) 的裸 JSON chunk 经此补上 data: 前缀, 客户端即可正常解析.
         self.out_buf.extend_from_slice(b"data: ");
-        self.out_buf.extend_from_slice(json_str.as_bytes());
+        if patched {
+            // 有字段被回填 → 用改写后的 val 序列化 (否则仍发原始 json_str).
+            self.out_buf
+                .extend_from_slice(val.to_string().as_bytes());
+        } else {
+            self.out_buf.extend_from_slice(json_str.as_bytes());
+        }
         self.out_buf.extend_from_slice(b"\n\n");
     }
 
@@ -2696,6 +2781,7 @@ impl TokenStream {
             .first_token_at
             .map(|t| t.duration_since(ld.start).as_millis() as u64);
         tokio::spawn(async move {
+            let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer,
                 &ld.model,
@@ -2717,7 +2803,7 @@ impl TokenStream {
                 Some(ld.audit),
                 first_token_ms,
                 Some(err),
-                usage_estimated,
+                usage_estimated, effort,
             )
             .await;
         });
@@ -3060,6 +3146,8 @@ impl Stream for TokenStream {
                             // finish_reason=length, 记 502 会让成功率把"答不完"算作失败 (口径失真).
                             // 截断仍写 error 文案 (记录页据此标红并可读原因), 只是 status 保持 200.
                             let status = if err_for_log.is_some() && !len_truncated { 502 } else { 200 };
+                            // 档位在 spawn 前取成 owned (self 不可跨线程借用).
+                            let effort = ld.effort.clone();
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3067,7 +3155,7 @@ impl Stream for TokenStream {
                                     hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                                     first_token_ms,
                                     err_for_log,
-                                    usage_estimated,
+                                    usage_estimated, effort,
                                 ).await;
                             });
                         }
@@ -3142,6 +3230,113 @@ fn append_continuation_messages(body: &mut serde_json::Value, accumulated: &str,
             true
         }
     }
+}
+
+/// 客户端中途断开 (关闭连接 / 按 Esc / 工具超时取消) 时的兜底落盘.
+///
+/// 为什么必须有这一段 (e2e_record_count ⑬ 实测):
+///   流式落盘只发生在 `poll_next` 走到 None 分支的收尾里。而客户端断连时, hyper 会
+///   **直接丢弃响应体流** —— `poll_next` 再也不会被调用, 那条请求就此人间蒸发:
+///   网关实际转发过、上游真实消耗过 token, 记录页却一条都没有。
+///   编程工具恰恰大量产生这种请求 (用户按 Esc、切换模型、工具超时重发), 于是呈现
+///   "明明请求好多次, 记录才 2~3 条"。
+///
+/// 判定依据: `log_buffer` 仍为 `Some` = 收尾路径从未执行 = 这条流没有落过盘。
+/// 正常收尾已把它 `take()` 走, 故不会重复记账 (不变式: 一条请求最多落一条记录)。
+///
+/// 状态码记 499 (nginx 约定: client closed request) —— 既非上游故障也不是成功,
+/// 记 200 会污染成功率, 记 502 会冤枉上游。
+impl Drop for TokenStream {
+    fn drop(&mut self) {
+        let Some(mut ld) = self.log_buffer.take() else {
+            return;      // 已正常收尾落盘, 不重复记
+        };
+        ld.response_body_len = self.response_bytes;
+        let (pt, ct) = (self.tokens_pt, self.tokens_ct);
+        let (hit, miss, creation) = (
+            self.tokens_cache_hit,
+            self.tokens_cache_miss,
+            self.tokens_cache_creation,
+        );
+        let first_token_ms = self
+            .first_token_at
+            .map(|t| t.duration_since(ld.start).as_millis() as u64);
+        // 已收到的正文量: 断开时上游仍在产出, 用已累计内容如实反映"取消前已生成多少"。
+        let usage_estimated = !self.usage_seen;
+        let err = format!(
+            "客户端中断连接（已输出 {} tok / 输入 {} tok，网关已停止转发并释放上游连接）",
+            ct, pt
+        );
+        // 档位在 spawn 前取成 owned (self 在 Drop 中不可跨线程借用).
+        let effort = ld.effort.clone();
+        tokio::spawn(async move {
+            crate::admin::record_request_with_tokens_status(
+                &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
+                499, ld.start, pt, ct, ld.response_body_len, false,
+                hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
+                first_token_ms,
+                Some(err),
+                usage_estimated, effort,
+            ).await;
+        });
+    }
+}
+
+/// 客户端断连时兜底记录的状态码 (见 [`TokenStream::drop`]).
+/// `clean_finish=true` → 200: 生成已完整, 客户端收完尾帧才关 (竞态, 非错误);
+/// `clean_finish=false` → 499: 真正的中途取消 (nginx 约定), 统计口径里也不算错误.
+fn drop_close_status(clean_finish: bool) -> u16 {
+    if clean_finish {
+        200
+    } else {
+        499
+    }
+}
+
+/// tool_call id 稳定化: 按 index 缓存首帧真实 id, 后续分片缺失时回填.
+///
+/// 背景 (实测 CodeBuddy / copilot.tencent.com, 2026-10-01): 上游只在首个
+/// tool_calls 分片带真实 id (`call_00_laeJV...`), 之后同 index 的分片 id=None ——
+/// OpenAI 规格要求每个分片都带 id, 按 id 配对 tool/result 的客户端
+/// (插件侧记录过: 每轮从 call_00 重新编号 → 跨轮把结果配到错误历史条目) 会错乱.
+///
+/// 返回是否有字段被回填 (决定发射时是否需要重新序列化).
+fn backfill_tool_call_ids(
+    val: &mut serde_json::Value,
+    cache: &mut std::collections::HashMap<u64, String>,
+) -> bool {
+    let Some(arr) = val
+        .pointer_mut("/choices/0/delta/tool_calls")
+        .and_then(|a| a.as_array_mut())
+    else {
+        return false;
+    };
+    let mut patched = false;
+    for tc in arr.iter_mut() {
+        let Some(idx) = tc.get("index").and_then(|i| i.as_u64()) else {
+            continue;
+        };
+        let has_id = tc
+            .get("id")
+            .and_then(|i| i.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if has_id {
+            if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                cache.insert(idx, id.to_string());
+            }
+        } else if let Some(id) = cache.get(&idx) {
+            let id = serde_json::Value::String(id.clone());
+            match tc.get_mut("id") {
+                Some(slot) => *slot = id,
+                None => {
+                    tc["id"] = id;
+                }
+            }
+            patched = true;
+        }
+    }
+    patched
 }
 
 /// 从请求 body 解析 model 字段.
@@ -3911,12 +4106,12 @@ fn inject_model_params(
     tool_output_max_bytes: usize,
     // 降级可回取 (可为 None = 不留存). 留存是旁路, 失败不影响转发.
     recall: Option<(&crate::recall::RecallStore, Option<&str>)>,
-) -> (bytes::Bytes, bool, usize, usize, TokenAudit) {
+) -> (bytes::Bytes, bool, usize, usize, TokenAudit, Option<String>) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         // 注: 此分支**正常不可达** —— 调用前 `parse_model` 已用同一个 `serde_json::from_slice`
         // 完整解析过 body, 失败会在入口直接返回 400 (见 chat_completions 步骤 2).
         // 保留它只为"入口若将来放宽校验"时能安全降级, 故不做埋点计数 (不可达的计数只会误导).
-        return (bytes, false, 0, 0, TokenAudit::default()); // 解析失败, 原样返回
+        return (bytes, false, 0, 0, TokenAudit::default(), None); // 解析失败, 原样返回
     };
     let had_effort = v.get("reasoning_effort").is_some();
 
@@ -4002,6 +4197,7 @@ fn inject_model_params(
             strip_saved,
             trim_saved,
             audit,
+            effort_from_value(&v, explicitly_disabled),
         );
     };
 
@@ -4047,7 +4243,61 @@ fn inject_model_params(
         strip_saved,
         trim_saved,
         audit,
+        effort_from_value(&v, explicitly_disabled),
     )
+}
+
+/// 从**改写完成**的 body 采集本次请求实际生效的思考强度 (供记录页展示, 见 `RequestLog::effort`).
+///
+/// 语义: 显式关闭 → `Some("off")`; body 带档位 → `Some(档位)`; 都无 → `None`
+/// (None 表示"本次无思考且未注入"或旧路径未采集 —— 展示层回落面板配置档)。
+/// 采集点必须在注入之后 (配置档被注入也算生效), 且在协议转换之前
+/// (Anthropic 会把 reasoning_effort 吃掉换成 thinking 对象)。
+fn effort_from_value(v: &serde_json::Value, explicitly_disabled: bool) -> Option<String> {
+    if explicitly_disabled {
+        return Some("off".to_string());
+    }
+    v.get("reasoning_effort")
+        .or_else(|| v.get("reasoningEffort"))
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// 从字节 body 采集 (缓存回放路径没有改写上下文, 直接解析 —— 缓存键本身也来自改写后 body).
+fn effort_from_bytes(b: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(b)
+        .ok()
+        .and_then(|v| effort_from_value(&v, false))
+}
+
+/// 原生直通路径: 协议保真, 档位载体不同 —— 按协议读生效值.
+/// Anthropic 的 thinking 只有开/关与 budget, 无档位, 故 "on"/"off";
+/// Responses 读 `reasoning.effort` (兼容顶层 reasoning_effort 的非标形态).
+fn effort_native(v: &serde_json::Value, proto: NativeProto) -> Option<String> {
+    match proto {
+        NativeProto::Anthropic => match v.get("thinking") {
+            Some(serde_json::Value::Object(t)) => {
+                match t.get("type").and_then(|x| x.as_str()) {
+                    Some("enabled") => Some("on".to_string()),
+                    Some("disabled") => Some("off".to_string()),
+                    // 其他 type (含未知扩展) 按开启算, 不谎报为关闭
+                    _ if v.get("thinking").is_some() => Some("on".to_string()),
+                    _ => None,
+                }
+            }
+            // thinking 存在但非对象 (客户端非标形态): 只要有字段就视为已表达
+            Some(_) => Some("on".to_string()),
+            None => None,
+        },
+        NativeProto::Responses => v
+            .get("reasoning")
+            .and_then(|r| r.get("effort"))
+            .and_then(|e| e.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| effort_from_value(v, false)),
+    }
 }
 
 /// 从上游错误体里解析 `messages.<N>.content` 形式的出错下标.
@@ -4388,6 +4638,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         }
     }
 
@@ -4403,6 +4654,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         }
     }
 
@@ -4415,7 +4667,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -4426,7 +4678,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -4436,7 +4688,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -4446,7 +4698,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -5499,6 +5751,9 @@ mod tests {
             endpoint: "https://opencode.ai/zen/go/v1/chat/completions".to_string(),
             api_key_env: "X".to_string(),
             api_key_default: None,
+            auth: None,
+            preset: None,
+            disabled: None,
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,
@@ -5518,6 +5773,9 @@ mod tests {
             endpoint: "https://api.deepseek.com/v1/chat/completions".to_string(),
             api_key_env: "X".to_string(),
             api_key_default: None,
+            auth: None,
+            preset: None,
+            disabled: None,
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,

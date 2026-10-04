@@ -86,6 +86,13 @@ pub fn pick(zh: &'static str, en: &'static str) -> &'static str {
 /// "上下文/附件太大"，于是被那句猜测引去排查协议与配置（本项目的真实投诉即是如此）。
 ///
 /// 阈值取 1MiB：低于它的失败与该问题无关，加提示只会变成噪声。
+///
+/// 2026-10-01 补充实测（同一会话字节级对照，aigate.log 发送日志 vs 记录）：会话连续
+/// 三次发送的**实际请求体仅差 35 字节**（每轮只新增一条"继续"），前两次 400 报
+/// `context length` 超限、第三次 200 且**上游自报 913,585 tokens（在模型上限之内）**。
+/// 即上游的输入预检与真实 tokenize 判定不一致（或中转多节点行为不一）——
+/// **同样的输入重试常可成功**，与砍不砍上下文无关。故文案把"先直接重试"提到
+/// "缩短会话"之前，避免把用户引去砍本来就没超的上下文。
 pub fn oversize_hint(req_bytes: usize) -> String {
     const MB: usize = 1024 * 1024;
     if req_bytes < MB {
@@ -96,15 +103,54 @@ pub fn oversize_hint(req_bytes: usize) -> String {
     let ktok = req_bytes as f64 / 4.0 / 1000.0;
     match current_lang() {
         Lang::Zh => format!(
-            "（本次请求体 {mb:.1} MB ≈ {ktok:.0}K tokens —— 超大请求常被上游笼统拒绝，\
-             多为上下文超长或附件过大：可缩短会话、减少附件，或改用上下文更大的模型）"
+            "（本次请求体 {mb:.1} MB ≈ {ktok:.0}K tokens —— 超大请求常被上游笼统拒绝。\
+             同样的输入先直接重试（上游判定可能不稳定，实测重试即成功）；\
+             只有持续失败才是真的超长 —— 那再缩短会话、减少附件，或改用上下文更大的模型）"
         ),
         Lang::En => format!(
             " (request body {mb:.1} MB ≈ {ktok:.0}K tokens - very large requests are often \
-             rejected generically, usually an over-long context or oversized attachment: \
-             shorten the session, drop attachments, or use a model with a larger context)"
+             rejected generically. First just retry the same input (upstream verdicts are \
+             unstable in practice; a retry often succeeds); only repeated failure means it is \
+             truly too long - then shorten the session, drop attachments, or use a model with \
+             a larger context)"
         ),
     }
+}
+
+/// OpenCode 免费层 403 (FreeTierError) 的可行动提示 —— 与 `oversize_hint` 同模式的追加文案.
+///
+/// 为什么要单独提示: 这条 403 与"额度用尽/权限不足"完全不同 —— 重试、升级、换 key 都无用。
+/// 事实依据 (2026-09 公开资料 + 多个第三方工具的下架公告): OpenCode 自 2026-09-17 起
+/// 限制免费层只准在其官方客户端内使用, 09-23 后改用私有签名强校验,
+/// **header 伪装/客户端仿冒均无法绕过** (连持 opencode 账号凭证的第三方工具也 403)。
+/// 故提示只能指向"换模型/换供应商", 不给绕过暗示 (网关也不该做绕过)。
+pub fn freetier_hint() -> &'static str {
+    match current_lang() {
+        Lang::Zh => "（提示: OpenCode 自 2026-09 起禁止第三方客户端调用其免费层模型，\
+                     且无法通过请求头伪装绕过 —— 该模型在任何非官方客户端中均不可用，\
+                     请改用非 free 模型或其他供应商）",
+        Lang::En => " (hint: since 2026-09 OpenCode blocks third-party clients from its free \
+                     tier and this cannot be bypassed by header spoofing - this model is \
+                     unusable outside the official client; use a non-free model or another \
+                     provider)",
+    }
+}
+
+/// 按**字符边界**截断到最多 `max` 字节 (日志/诊断用的防 panic 截断).
+///
+/// 为什么必须存在: `&s[..s.len().min(n)]` 在 n 落进多字节字符中间时**直接 panic** ——
+/// 实机事故 (2026-10-01, e2e_buddy_proxy ④ 抓出): 上游 400 错误体含中文 displayTips,
+/// 截 500 处切进「一」的中间, axum 任务当场崩溃, 客户端只见连接被重置/挂死。
+/// recall.rs 的 `floor_char_boundary` 是同一教训的前一次落地 (那里需要 index, 这里要 &str).
+pub fn snip(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut n = max;
+    while n > 0 && !s.is_char_boundary(n) {
+        n -= 1;
+    }
+    &s[..n]
 }
 
 /// 规范化键: 转小写并去除所有非字母数字字符.
@@ -226,6 +272,14 @@ pub fn error_type(t: &str) -> &'static str {
         | "freelimitexceeded" | "usagelimitexceeded" | "usagelimit" => pick(
             "免费额度超限（免费档已用尽，请稍后再试或升级套餐）",
             "Free usage limit exceeded (free tier exhausted; retry later or upgrade)",
+        ),
+        // ⚠️ 与上面的"额度用尽"是两回事: FreeTierError 是**访问被拒** (上游只放行官方客户端),
+        // 重试/升级都不解决 —— 2026-09-17 起 OpenCode 对免费层加客户端来源闸门, 09-23 后
+        // 用私有签名强校验, 第三方工具 (含持 opencode 账号凭证者) 实测一律 403, 无法绕过。
+        // 键 = norm_key("FreeTierError") = "freetier" + "error" (勿手滑写成 freetierterror)。
+        "freetiererror" => pick(
+            "上游拒绝：OpenCode 免费层仅限其官方客户端使用",
+            "Rejected: OpenCode free tier can only be used from within OpenCode",
         ),
         "servererror" | "internalservererror" | "internalerror" | "serviceerror" => pick(
             "服务器内部错误（供应商服务异常）",
@@ -486,6 +540,23 @@ mod tests {
     /// 所有 i18n 测试共享全局语言状态, 需串行执行以避免互相改写 `current_lang`
     /// 导致断言交错失败. 用进程级 Mutex 串行化 (cargo test 默认多线程并行).
     static I18N_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// snip 必须回退到字符边界 —— 复刻实机崩溃形状:
+    /// 498 字节 ASCII + 中文, max=500 落进「一」(498..501) 中间;
+    /// 旧写法 `&s[..s.len().min(500)]` 在此 panic, 网关任务直接暴毙.
+    #[test]
+    fn snip_walks_back_to_char_boundary() {
+        let s = format!("{}一", "a".repeat(498));
+        assert_eq!(s.len(), 501);
+        assert_eq!(snip(&s, 500).len(), 498, "应回退到 498, 不切断「一」");
+        assert!(s.is_char_boundary(498));
+        // 超长纯中文: max 落在第 4 个字的中间 (9..12) → 回退到 9
+        let s2 = "汉".repeat(100);
+        assert_eq!(s2.len(), 300);
+        assert_eq!(snip(&s2, 10).len(), 9);
+        // 未超限原样返回
+        assert_eq!(snip("短文本", 500), "短文本");
+    }
 
     #[test]
     fn error_type_normalizes_variants() {

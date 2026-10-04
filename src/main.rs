@@ -41,6 +41,7 @@ mod circuit_breaker;
 mod config;
 mod thinking;
 mod keys;
+mod accounts;
 mod providers;
 mod pricing;
 mod peak;
@@ -57,6 +58,7 @@ mod seen_version;
 mod model_meta;
 mod recall;
 mod provider_catalog;
+mod presets;
 
 use admin::compute_realtime_stats_sync;
 
@@ -615,6 +617,8 @@ fn main() {
         retry_max: Arc::new(std::sync::atomic::AtomicU32::new(config.retry_max)),
         retry_backoff_ms: Arc::new(std::sync::atomic::AtomicU64::new(config.retry_backoff_ms)),
         key_store: keys::KeyStore::new(&resolved_data_dir, &providers_snapshot),
+        accounts: crate::accounts::AccountStore::new(&resolved_data_dir),
+        login_sessions: Default::default(),
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
         ),
@@ -666,6 +670,13 @@ fn main() {
         .route("/admin/api/providers/test", post(admin::api_providers_test))
         .route("/admin/api/providers/:name/fetch-models", post(admin::api_providers_fetch_models))
         .route("/admin/api/keys", get(admin::api_keys_get).put(admin::api_keys_put))
+        .route("/admin/api/accounts", get(admin::api_accounts_get))
+        .route("/admin/api/accounts/refresh", post(admin::api_accounts_refresh))
+        .route("/admin/api/accounts/login", post(admin::api_accounts_login))
+        .route("/admin/api/accounts/login/start", post(admin::api_accounts_login_start))
+        .route("/admin/api/accounts/login/status", post(admin::api_accounts_login_status))
+        .route("/admin/api/accounts/logout", post(admin::api_accounts_logout))
+        .route("/admin/api/presets", get(admin::api_presets_get))
         .route("/admin/api/health", get(admin::api_health))
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
@@ -714,6 +725,32 @@ fn main() {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
+
+    // ── 账号静默续期调度 (2026-10-01 账号化): 启动 30s 后首查, 之后每 10 分钟 ──
+    // 只处理 auth.mode=account 且配置了 refresh 的供应商; 临期 (margin 内) 才真打续期.
+    // 请求路径 (usable_token) 也会按需续期, 两者经 AccountStore.refresh_gate 串行防重复 POST.
+    {
+        let sched = state.clone();
+        rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            loop {
+                let providers = sched.registry.read().await.providers();
+                for p in providers {
+                    let Some(auth) = p.auth.as_ref() else { continue };
+                    if auth.mode != crate::providers::AuthMode::Account { continue }
+                    let Some(rc) = auth.refresh.as_ref() else { continue };
+                    if sched.accounts.get(&p.name).await.is_none() { continue; }
+                    match crate::accounts::refresh_account(
+                        &sched.client, rc, &p.name, &sched.accounts, auth.expiry_margin_secs,
+                    ).await {
+                        Ok(_) => { /* 未到临期时为无操作; 续成则已写盘 */ }
+                        Err(e) => tracing::warn!("accounts: 后台续期 '{ }' 失败: {e}", p.name),
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            }
+        });
+    }
 
     // 退出时用于同步刷新日志到磁盘的 state 克隆 (事件循环闭包捕获).
     let state_for_shutdown = state;
@@ -889,16 +926,45 @@ fn main() {
 async fn handle_models(
     State(state): State<AppState>,
 ) -> axum::Json<serde_json::Value> {
+    // 能力表（拉取时从上游目录采集，如 buddy 的 reasoning.supportedEfforts）。
+    // 没有的供应商/模型一律**不下发该字段**，不做猜测 —— 客户端据此渲染档位选择器时，
+    // 缺失就退化成"自行输入"，而错报会让客户端渲染出上游会拒绝的档位。
+    let meta = crate::providers::fetched_meta_snapshot().await;
     let registry = state.registry.read().await;
     let data: Vec<serde_json::Value> = registry
         .model_ids()
         .into_iter()
         .map(|id| {
-            serde_json::json!({
+            // 中转 ID（供应商/上游ID）反查上游 ID 拿能力；模型级显式声明优先。
+            let entry = registry.lookup(id);
+            let upstream = entry
+                .as_ref()
+                .and_then(|e| e.model.upstream_model.clone())
+                .unwrap_or_else(|| id.to_string());
+            let m = entry.as_ref().and_then(|e| meta.get(&upstream));
+            let explicit = entry.as_ref().and_then(|e| e.model.supported_efforts.clone());
+            let mut obj = serde_json::json!({
                 "id": id,
                 "object": "model",
                 "owned_by": "AIGate",
-            })
+            });
+            if let Some(o) = obj.as_object_mut() {
+                // 档位: 模型级显式声明 > 上游目录采集值。都没有则不下发。
+                if let Some(efforts) = explicit.or_else(|| m.and_then(|x| x.supported_efforts.clone()))
+                {
+                    o.insert("supported_efforts".into(), serde_json::json!(efforts));
+                }
+                if let Some(v) = m.and_then(|x| x.context_window) {
+                    o.insert("context_window".into(), serde_json::json!(v));
+                }
+                if let Some(v) = m.and_then(|x| x.max_output_tokens) {
+                    o.insert("max_output_tokens".into(), serde_json::json!(v));
+                }
+                if let Some(v) = m.and_then(|x| x.can_disable_thinking) {
+                    o.insert("can_disable_thinking".into(), serde_json::json!(v));
+                }
+            }
+            obj
         })
         .collect();
     drop(registry);

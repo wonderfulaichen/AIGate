@@ -242,6 +242,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         }
     }
 
@@ -257,6 +258,7 @@ mod tests {
             strip_toolcall_reasoning: None,
             origin: None,
             loop_guard: None,
+            supported_efforts: None,
         }
     }
 

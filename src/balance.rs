@@ -30,6 +30,9 @@ pub struct BalanceInfo {
     pub source: String,
     /// 是否配置了余额查询 API.
     pub has_api: bool,
+    /// 已消耗量 (积分制供应商的服务端权威统计; 无消耗概念的供应商为 None).
+    #[serde(default)]
+    pub consumed: Option<f64>,
 }
 
 impl BalanceInfo {
@@ -43,6 +46,7 @@ impl BalanceInfo {
             error,
             source: "api".to_string(),
             has_api: true,
+            consumed: None,
         }
     }
 
@@ -56,6 +60,21 @@ impl BalanceInfo {
             error: None,
             source: "manual".to_string(),
             has_api: false,
+            consumed: None,
+        }
+    }
+
+    /// 创建积分制 (buddy) API 结果: 剩余 + 已消耗双值.
+    fn from_credits(provider: &str, balance: f64, consumed: f64, now: u64) -> Self {
+        Self {
+            provider: provider.to_string(),
+            balance: Some(balance),
+            currency: "credits".to_string(),
+            last_updated: now,
+            error: None,
+            source: "api".to_string(),
+            has_api: true,
+            consumed: Some(consumed),
         }
     }
 }
@@ -134,6 +153,7 @@ impl BalanceManager {
         &self,
         client: &reqwest::Client,
         provider_configs: &HashMap<String, ProviderBalanceConfig>,
+        accounts: &crate::accounts::AccountStore,
     ) -> Vec<BalanceInfo> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -179,6 +199,15 @@ impl BalanceManager {
                     endpoint: ep.clone(),
                     api_key: config.api_key.clone(),
                 }),
+                None if config.preset.as_deref() == Some("buddy") => {
+                    // 内置 buddy 预设: 走 CodeBuddy 积分端点 (POST + 账号 token),
+                    // 无需 balance_endpoint 配置 —— 预设自带账号形式.
+                    to_query.push(ToQuery {
+                        provider: provider_name.clone(),
+                        endpoint: BUDDY_CREDITS_SCHEME.to_string(),
+                        api_key: String::new(), // 凭据来自 accounts.json, 不参与去重键
+                    })
+                }
                 None => results.push(BalanceInfo::from_api(
                     provider_name,
                     None,
@@ -190,22 +219,41 @@ impl BalanceManager {
         }
 
         // 按 (endpoint, api_key) 去重, 同一上游只查询一次.
+        // ⚠️ buddy 积分**不参与去重**: 两个预设条目可绑不同账号 (accounts 按 name 索引),
+        // 合并共享结果会把 A 的积分显示到 B 头上 (e2e 实测撞出).
         let mut grouped: std::collections::BTreeMap<(String, String), Vec<String>> =
             std::collections::BTreeMap::new();
+        let mut buddy_only: Vec<String> = Vec::new();
         for q in &to_query {
-            grouped
-                .entry((q.endpoint.clone(), q.api_key.clone()))
-                .or_default()
-                .push(q.provider.clone());
+            if q.endpoint == BUDDY_CREDITS_SCHEME {
+                buddy_only.push(q.provider.clone());
+            } else {
+                grouped
+                    .entry((q.endpoint.clone(), q.api_key.clone()))
+                    .or_default()
+                    .push(q.provider.clone());
+            }
+        }
+
+        // buddy: 逐供应商查询 (各自账号) + 独立缓存.
+        for p in buddy_only {
+            let b = Self::query_buddy_credits(client, accounts, &p).await;
+            if b.error.is_none() {
+                let mut cache = self.api_cache.write().await;
+                cache.insert(p.clone(), b.clone());
+            }
+            results.push(b);
         }
 
         for ((endpoint, api_key), providers) in grouped {
+            // 通用 GET + Bearer (buddy 已在上面单独处理, 不会进入本分支).
             let cfg = ProviderBalanceConfig {
                 balance_endpoint: Some(endpoint),
                 api_key,
+                preset: None,
             };
-            // 仅以首个供应商名打日志; 结果会复制到同组所有供应商.
             let balance = self.query_provider_balance(client, &providers[0], &cfg).await;
+            // 仅以首个供应商名打日志; 结果会复制到同组所有供应商.
             for p in &providers {
                 let mut b = balance.clone();
                 b.provider = p.clone();
@@ -291,9 +339,10 @@ impl BalanceManager {
                             }
                         }
                     } else {
-                        // 非成功状态码: 读响应体用于诊断 (截断避免刷屏).
+                        // 非成功状态码: 读响应体用于诊断 (截断避免刷屏; 必须按字符边界,
+                        // 中文错误体在字节位截断会 panic —— 见 i18n::snip 的实机事故注释).
                         let body = resp.text().await.unwrap_or_default();
-                        let truncated = &body[..body.len().min(300)];
+                        let truncated = crate::i18n::snip(&body, 300);
                         warn!(target: "balance", "provider='{}' 余额查询 HTTP {}: {}", provider_name, status, truncated);
                         // 将技术性错误转换为用户友好的提示
                         let user_friendly_msg = match status.as_u16() {
@@ -351,6 +400,127 @@ pub struct ProviderBalanceConfig {
     pub balance_endpoint: Option<String>,
     /// API Key.
     pub api_key: String,
+    /// 内置预设标记 (如 "buddy") — 无 balance_endpoint 也可走预设专属余额实现.
+    #[serde(default)]
+    pub preset: Option<String>,
+}
+
+/// buddy 预设的积分查询在查询队列里的伪端点 (分派到 [`BalanceManager::query_buddy_credits`]).
+const BUDDY_CREDITS_SCHEME: &str = "buddy://credits";
+
+impl BalanceManager {
+    /// CodeBuddy 积分余额 (harness credits.ts 同款端点与头):
+    ///   POST /v2/billing/meter/get-user-resource  body {}
+    /// 响应 `data.Response.Data.Accounts[]` 每个资源包带
+    /// `CapacityRemain`(剩余) / `CapacityUsed`(已消耗) —— 服务端权威统计, 不做估算.
+    /// 凭据 = accounts.json 里该供应商的账号 token (登录/续期链见 accounts.rs).
+    async fn query_buddy_credits(
+        client: &reqwest::Client,
+        accounts: &crate::accounts::AccountStore,
+        provider: &str,
+    ) -> BalanceInfo {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let Some(token) = accounts.get(provider).await.map(|e| e.access_token) else {
+            return BalanceInfo::from_api(
+                provider,
+                None,
+                "credits".to_string(),
+                now,
+                Some("未登录账号（供应商卡片点「登录」）".to_string()),
+            );
+        };
+        let resp = client
+            .post("https://copilot.tencent.com/v2/billing/meter/get-user-resource")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header("X-Domain", "copilot.tencent.com")
+            .header("X-Product", "CodeBuddy")
+            .header("X-Product-Code", "codebuddy")
+            .header("User-Agent", "CodeBuddyIDE/1.106.1")
+            .body("{}")
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+                let body = r.text().await.unwrap_or_default();
+                if !status.is_success() {
+                    let friendly = match status.as_u16() {
+                        401 => "账号未登录或凭据失效（重新登录）".to_string(),
+                        429 => "请求过于频繁".to_string(),
+                        500..=599 => "服务端错误".to_string(),
+                        _ => format!("HTTP {status}"),
+                    };
+                    warn!(target: "balance", "buddy 积分查询 HTTP {status}: {}", crate::i18n::snip(&body, 200));
+                    return BalanceInfo::from_api(
+                        provider,
+                        None,
+                        "credits".to_string(),
+                        now,
+                        Some(friendly),
+                    );
+                }
+                let v: serde_json::Value = match serde_json::from_str(&body) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return BalanceInfo::from_api(
+                            provider,
+                            None,
+                            "credits".to_string(),
+                            now,
+                            Some(format!("解析响应失败: {e}")),
+                        )
+                    }
+                };
+                // data.Response.Data.Accounts[] (兼容 data 下直接是结构的变体)
+                let accounts_arr = v
+                    .pointer("/data/Response/Data/Accounts")
+                    .or_else(|| v.pointer("/data/Accounts"))
+                    .and_then(|a| a.as_array());
+                let Some(arr) = accounts_arr else {
+                    return BalanceInfo::from_api(
+                        provider,
+                        None,
+                        "credits".to_string(),
+                        now,
+                        Some("响应中未找到积分包字段".to_string()),
+                    );
+                };
+                let (mut remain, mut used) = (0f64, 0f64);
+                for pkg in arr {
+                    remain += pkg
+                        .get("CapacityRemain")
+                        .and_then(|x| x.as_f64())
+                        .unwrap_or(0.0);
+                    used += pkg
+                        .get("CapacityUsed")
+                        .and_then(|x| x.as_f64())
+                        .unwrap_or(0.0);
+                }
+                info!(target: "balance", "buddy 积分: 剩余 {remain} / 已消耗 {used} ({} 个资源包)", arr.len());
+                BalanceInfo::from_credits(provider, remain, used, now)
+            }
+            Err(e) => {
+                warn!(target: "balance", "buddy 积分查询网络错误: {e}");
+                BalanceInfo::from_api(
+                    provider,
+                    None,
+                    "credits".to_string(),
+                    now,
+                    Some(if e.is_timeout() {
+                        "请求超时".to_string()
+                    } else {
+                        format!("网络错误: {e}")
+                    }),
+                )
+            }
+        }
+    }
 }
 
 /// 从 JSON 响应中提取 (余额, 货币). 支持多种格式:
