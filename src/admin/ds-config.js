@@ -3,6 +3,14 @@
 // 主要成员: fetchTooltipConfig / saveCurrencyConfig / savePeakSchedule
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
+    // 刷新供应商表单: **会用文件覆盖当前表单**, 未保存草稿会丢 → 先确认。
+    // (与「拉取模型」共用同一确认; 见 ds-provsave.js)
+    async refreshProviders() {
+      if (this.isDirty) {
+        if (!(await confirmAsk(t('confirm_discard_draft'), { danger: true }))) return;
+      }
+      await this.loadProvidersForm();
+    },
     async fetchBalance() {
       this.balanceLoading = true;
       try {
@@ -71,6 +79,17 @@
     async fetchKeys() {
       try { const r=await fetch('/admin/api/keys', {headers:authHeaders()});
         if(r.ok){ const d=await r.json(); const m={}; for(const v of (d.providers||[])) m[v.provider]=v; this.keysByProvider=m; } } catch(e){}
+    },
+    // 账号形式凭据状态 (与 fetchKeys 同时机拉取; 失败静默 —— keyStatusText 对 null 走原逻辑).
+    async fetchAccounts() {
+      try { const r=await fetch('/admin/api/accounts', {headers:authHeaders()});
+        if(r.ok){ const d=await r.json(); this.accountsStatus=d.accounts||{}; } } catch(e){}
+    },
+    // 内置供应商预设 (静态常量, 拉一次即可).
+    async fetchPresets() {
+      if (this.presets) return;
+      try { const r=await fetch('/admin/api/presets', {headers:authHeaders()});
+        if(r.ok){ const d=await r.json(); this.presets=d.presets||[]; } } catch(e){}
     },
     // —— 费用显示币种 ——
     async fetchCurrencyConfig() {

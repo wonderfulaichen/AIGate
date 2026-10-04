@@ -109,6 +109,9 @@ function dashboard() {  return {
 
     // Settings
     keysByProvider: {}, keyMsg: '',
+    // 账号形式凭据状态 (name → {expires_in_secs, dead, …}); null = 未拉取.
+    // 数据源 GET /admin/api/accounts (脱敏视图, 无 token 原文).
+    accountsStatus: null,
     providersFormData: null, providersFormMsg: '', providersFormOk: false, isDirty: false, _saving: false,
     provSearch: '', provViewMode: 'card', drawerProv: null,
     // 抽屉「高级端点」折叠状态 (偏好存 localStorage, 跨次打开保留)
@@ -122,6 +125,14 @@ function dashboard() {  return {
     // 价格剪贴板: 复制后可在其他模型面板"粘贴", 或批量应用到勾选的模型.
     priceClipboard: null, priceClipboardSet: false, priceClipMsg: '',
     showAddProvider: false, addProvName: '', addProvEndpoint: '', addProvAnthropicEndpoint: '', addProvResponsesEndpoint: '', addProvBalanceEndpoint: '',
+    // 内置供应商预设 (GET /admin/api/presets); null = 未拉取.
+    presets: null,
+    // 账号登录弹窗 (账号型供应商): 目标条目名 + 表单 + 状态.
+    loginProv: '', loginTok: '', loginRt: '', loginExp: '', loginBusy: false, loginMsg: '',
+    // 浏览器登录轮询计时器 (非展示态; 关弹窗/结束时必须清).
+    loginPollTimer: null,
+    // 浏览器登录进行中 (true 时主按钮显示等待态).
+    loginBrowserPending: false,
     tooltipConfig: null, tooltipMsg: '',
 
     // 费用显示币种: 内部费用以 CNY 为基准, 仅展示层换算.

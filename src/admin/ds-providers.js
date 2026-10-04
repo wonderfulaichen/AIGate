@@ -121,7 +121,33 @@
         return this.provMatches(p);
       });
     },
+    // 凭据就绪判定 (列表 badge 颜色 / 抽屉 key 分节完成度共用):
+    // 账号形式供应商看账号状态 (有条目且未作废即算就绪 —— 过期由后端自动续期, 不算缺凭据),
+    // 其余看 API key.
+    // 凭据就绪判定 (列表 badge 颜色 / 抽屉 key 分节完成度共用):
+    // 账号形式供应商看账号状态 (有条目且未作废即算就绪 —— 过期由后端自动续期, 不算缺凭据),
+    // 其余看 API key.
+    hasCred(name){
+      const acc=this.accountsStatus&&this.accountsStatus[name];
+      if(acc) return !acc.dead;
+      const k=this.keysByProvider[name];
+      return !!(k&&k.configured);
+    },
     keyStatusText(name){
+      // 账号形式 (auth.mode=account): 显示账号状态, 不显示 API key 行.
+      const acc=this.accountsStatus&&this.accountsStatus[name];
+      if(acc){
+        if(acc.dead) return t('acc_dead');
+        if(acc.expires_in_secs!=null){
+          if(acc.expires_in_secs<=0) return t('acc_expired');
+          // 剩余时长: ≥1 天按天, ≥1 小时按小时, 否则分钟 (向上取整, 避免显示 0 分钟).
+          const s=acc.expires_in_secs;
+          if(s>=86400) return t('acc_active_d', Math.ceil(s/86400));
+          if(s>=3600) return t('acc_active_h', Math.ceil(s/3600));
+          return t('acc_active_m', Math.ceil(s/60));
+        }
+        return t('acc_noexp');
+      }
       const key=this.keysByProvider[name];
       if(!key || !key.configured) return t('key_unconfigured');
       return key.suffix ? t('key_configured_masked',key.suffix) : t('key_configured');
@@ -141,7 +167,7 @@
     drawerSecDone(k, p){
       if(!p) return false;
       if(k==='basic') return !!(String(p.name||'').trim() && String(p.endpoint||'').trim());
-      if(k==='key'){ const kb=this.keysByProvider[p.name]; return !!(kb && kb.configured); }
+      if(k==='key'){ return this.hasCred(p.name); }
       if(k==='models') return (p.models||[]).some(m=>!m._removed && m.upstream_model);
       return false;
     },

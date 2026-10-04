@@ -3,7 +3,7 @@
   <div><h1 class="pt" x-text="t('provider_config')"></h1><p class="ps" x-text="t('plaza_summary',(providersFormData?providersFormData.length:0),totalModelCount())"></p></div>
   <div style="display:flex;gap:8px;align-items:center">
     <template x-if="isDirty"><span class="dirty">● <span x-text="t('unsaved_changes')"></span></span></template>
-    <button class="btn btn-g" @click="loadProvidersForm()" x-text="t('refresh')"></button>
+    <button class="btn btn-g" @click="refreshProviders()" x-text="t('refresh')"></button>
     <button class="btn btn-p" :disabled="!isDirty||_saving||provLoading" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
     <button class="btn btn-p" :disabled="provLoading" @click="showAddProvider=true" x-text="t('add')"></button>
   </div>
@@ -34,7 +34,7 @@
 </tr></thead>
 <tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
   <td><div style="width:28px;height:28px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
-  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
+  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><template x-if="prov.preset"><span class="bdg bdg-p" style="font-size:var(--fs-9)" x-text="t('preset_badge')"></span></template><template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('preset_modified')"></span></template><template x-if="prov.disabled"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('prov_disabled_badge')"></span></template><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
   <td>
     <!-- P2: 状态色统一走 bcls(tone) 语义表 (原为各处手写三元链, 同一状态在不同页取不同色) -->
     <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).status_level==='ok'?'ok':'err')" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
@@ -54,7 +54,7 @@
   </td>
   <td class="txs tm mono"><template x-if="health.find(h => h.provider === prov.name)"><span x-text="fmtMs(health.find(h => h.provider === prov.name).latency_ms)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span x-text="fmtMs(prov._testResult.latency_ms||0)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span x-text="t('health_na')"></span></template></td>
   <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).circuit==='closed'?'ok':health.find(h=>h.provider===prov.name).circuit==='half-open'?'warn':'err')" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
-  <td><span class="bdg" :class="bcls(keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'ok':'warn')" x-text="keyStatusText(prov.name)"></span></td>
+  <td><span class="bdg" :class="bcls(hasCred(prov.name)?'ok':'warn')" x-text="keyStatusText(prov.name)"></span></td>
   <td>
     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
       <span class="mono txsm" x-text="(prov.models||[]).length"></span>
@@ -70,7 +70,10 @@
     <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
     <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
     <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))" :title="t('delete')" :aria-label="t('delete')">✕</button>
+    <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
+    <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>
+    <template x-if="prov.preset && presetDirty(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" :title="t('preset_reset')" @click="presetReset(prov)">⟲</button></template>
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err)" :disabled="!!prov.preset" @click="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
   </div></td>
 </tr></template></tbody></table>
 </div></div></template>
@@ -86,7 +89,10 @@
       </div>
       <!-- 健康/密钥状态放在标题右侧, 与名称同排 —— 一眼看到"这家能不能用" -->
       <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
-      <span class="bdg" :class="keysByProvider[prov.name]&&keysByProvider[prov.name].configured?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
+      <span class="bdg" :class="hasCred(prov.name)?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
+      <template x-if="prov.preset"><span class="bdg bdg-p" x-text="t('preset_badge')"></span></template>
+      <template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" x-text="t('preset_modified')"></span></template>
+      <template x-if="prov.disabled"><span class="bdg bdg-w" x-text="t('prov_disabled_badge')"></span></template>
     </div>
     <div class="plaza-ft">
       <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):(prov._testResult?fmtMs(prov._testResult.latency_ms||0):t('health_na'))"></span>
@@ -102,8 +108,11 @@
       <button class="btn btn-g icon-btn" :title="t('test_connection')" :aria-label="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
       <button class="btn btn-g icon-btn" :title="t('fetch_models')" :aria-label="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
       <button class="btn btn-g icon-btn" style="color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" :title="t('reset_circuit')" :aria-label="t('reset_circuit')" @click="resetCircuit(prov.name)">⟲</button>
+      <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
+      <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>
+      <template x-if="prov.preset && presetDirty(prov)"><button class="btn btn-g icon-btn" :title="t('preset_reset')" :aria-label="t('preset_reset')" @click="presetReset(prov)">⟲</button></template>
       <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;margin-left:auto" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-      <button class="btn btn-g icon-btn" style="color:var(--err)" @click="deleteProvider(providersFormData.indexOf(prov))" :title="t('delete')" :aria-label="t('delete')">✕</button>
+      <button class="btn btn-g icon-btn" style="color:var(--err)" :disabled="!!prov.preset" @click="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
     </div>
     <template x-if="prov._testResult && !prov._testResult.success">
       <div style="margin-top:6px">

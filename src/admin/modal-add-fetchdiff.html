@@ -1,4 +1,51 @@
-<div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body"><div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
+<div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body">
+<!-- 内置预设: 一键添加 (端点/账号登录形态已配好), 添加后走既有保存链 -->
+<div class="txs tm" style="margin-bottom:6px" x-text="t('presets_title')"></div>
+<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+  <template x-for="pt in (presets||[])" :key="pt.id">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="fw6" x-text="pt.display_name"></span>
+          <span class="bdg bdg-p" x-text="t('preset_badge')"></span>
+          <span class="bdg bdg-g" x-show="pt.account" x-text="t('login')"></span>
+        </div>
+        <div class="txs tm" style="margin-top:2px" x-text="pt.desc"></div>
+      </div>
+      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;flex:none" :disabled="presetAdded(pt)" @click="addFromPreset(pt)" x-text="presetAdded(pt)?t('preset_added'):t('add')"></button>
+    </div>
+  </template>
+</div>
+<div class="txs tm" style="margin-bottom:4px" x-text="t('addprov_custom_title')"></div>
+<div><label class="txs tm" x-text="t('addprov.name')"></label><input type="text" class="inp" style="width:100%;margin-top:4px" x-model="addProvName" :placeholder="t('addprov.ph_name')"></div><div><label class="txs tm" x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%;margin-top:4px" x-model="addProvEndpoint" :placeholder="t('addprov.ph_endpoint')"></div><p class="txs tm" x-text="t('addprov.keyhint')"></p></div><div class="modal-foot"><button class="btn btn-g" @click="showAddProvider=false" x-text="t('cancel')"></button><button class="btn btn-p" :disabled="!addProvName||!addProvEndpoint" @click="confirmAddProvider()" x-text="t('add')"></button></div></div></div>
+<!-- 账号登录: 浏览器一键登录 (推荐) + 手动粘贴兜底 (x-data 内, §5.5 红线) -->
+<div x-show="loginProv" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="stopLoginPoll();loginProv=''" @keydown.escape.window="loginProv&&(stopLoginPoll(),loginProv='')"><div class="modal-card modal-card-add" style="max-width:520px">
+  <div class="modal-head"><div><div class="modal-title" x-text="t('login_title')+' · '+loginProv"></div><div class="txs tm" style="margin-top:2px" x-text="t('login_browser_hint')"></div></div></div>
+  <div class="modal-body">
+    <!-- 浏览器一键登录: 开官方页, 登录完成后台自动写凭据 (无需回调, 见 accounts.rs) -->
+    <template x-if="isAccountProv({auth:presetOf(loginProv)&&presetOf(loginProv).auth})">
+    <button class="btn btn-p" style="width:100%" :disabled="loginBusy||loginBrowserPending" @click="browserLogin()">
+      <span class="spin" x-show="loginBrowserPending"></span>
+    <span x-text="loginBrowserPending?t('login_browser_wait'):t('login_browser')"></span>
+  </button>
+  </template>
+  <template x-if="!isAccountProv({auth:presetOf(loginProv)&&presetOf(loginProv).auth})">
+    <div class="txs tm" style="margin-bottom:10px" x-text="t('login_statickey_hint')"></div>
+  </template>
+      <span class="spin" x-show="loginBrowserPending"></span>
+      <span x-text="loginBrowserPending?t('login_browser_wait'):t('login_browser')"></span>
+    </button>
+    <div class="txs tm" style="margin-top:10px;text-align:center" x-text="t('login_manual_divider')"></div>
+    <div style="margin-top:8px"><label class="txs tm" x-text="t('login_tok')"></label><textarea class="inp mono" rows="3" style="width:100%;margin-top:4px;resize:vertical" x-model="loginTok" placeholder="eyJ..."></textarea></div>
+    <div style="margin-top:8px"><label class="txs tm" x-text="t('login_rt')"></label><textarea class="inp mono" rows="2" style="width:100%;margin-top:4px;resize:vertical" x-model="loginRt" placeholder="eyJ..."></textarea></div>
+    <div style="margin-top:8px"><label class="txs tm" x-text="t('login_exp')"></label><input type="number" min="0" class="inp" style="width:100%;margin-top:4px" x-model="loginExp" :placeholder="t('login_exp_ph')"></div>
+    <p class="txs tm" style="margin-top:8px;word-break:break-all" x-show="loginMsg" x-text="loginMsg"></p>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-g" style="color:var(--err);margin-right:auto" x-show="accountsStatus&&accountsStatus[loginProv]" @click="stopLoginPoll();logoutProv(loginProv);loginProv=''" x-text="t('logout')"></button>
+    <button class="btn btn-g" @click="stopLoginPoll();loginProv=''" x-text="t('cancel')"></button><button class="btn btn-o" :disabled="!loginTok.trim()||loginBusy" @click="submitLogin()" x-text="t('login_submit')"></button>
+  </div>
+</div></div>
 <!-- 拉取模型差异结果: 新增(可勾选)/已存在/下架 三 Tab + 前缀分组全选 + 选择汇总 -->
 <div x-show="showFetchDiff && fetchDiff" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @keydown.escape.window="showFetchDiff&&(showFetchDiff=false)"><div class="modal-card modal-card-add" style="max-width:660px">
   <div class="modal-head"><div><div class="modal-title" x-text="t('fd_title')"></div><div class="txs tm" style="margin-top:2px" x-text="fetchDiff?fetchDiff.message:''"></div></div></div>

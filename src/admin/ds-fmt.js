@@ -10,6 +10,20 @@
       const sym = this.moneySymbol(this.currencyConfig.currency);
       return sym + this.convertCny(v).toFixed(2);
     },
+    // 余额行显示: 金额走 fmtMoney; 积分制 (currency='credits', 如 buddy) 显示
+    // 「剩余 N 积分 · 已用 M」—— consumed 是积分包的服务端权威统计, 不做估算.
+    fmtBalanceRow(row) {
+      if (!row.hasBalance) return t('balance_none');
+      if (row.currency === 'credits') {
+        const fmt = n => Number(n).toLocaleString('en-US');
+        let s = fmt(row.balance) + ' ' + t('unit_credits');
+        if (row.consumed !== null && row.consumed !== undefined) {
+          s += ' · ' + t('balance_consumed', fmt(row.consumed));
+        }
+        return s;
+      }
+      return this.fmtMoney(row.balance);
+    },
     // 极小金额友好显示: 换算后不足最小分位时给出 "<¥0.01", 而不是 0.00.
     // 省量费用常远小于 1 分 (单请求 1009 tok × 2元/1M ≈ 0.002), 一律 ¥0.00 会让人误以为没生效.
     fmtMoneyTiny(v) {

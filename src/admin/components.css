@@ -382,7 +382,7 @@ tr:hover td.th-sticky{background:var(--card)}
 .btn-p{background:var(--primary);color:var(--primary-fg);box-shadow:var(--elev-1)}.btn-p:hover{background:var(--primary-h);box-shadow:var(--glow-primary)}
 .btn-g{background:transparent;color:var(--muted)}.btn-g:hover{background:var(--fill-5);color:var(--fg)}
 .btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:var(--fill-5);border-color:var(--primary-bd)}
-.btn[disabled]{opacity:.55;cursor:not-allowed}
+.btn[disabled]{opacity:.45;cursor:not-allowed;filter:saturate(.3)}
 @keyframes aispin{to{transform:rotate(360deg)}}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--track);border-top-color:currentColor;border-radius:50%;animation:aispin .6s linear infinite;flex:0 0 auto}
 /* ── new-api input ── */

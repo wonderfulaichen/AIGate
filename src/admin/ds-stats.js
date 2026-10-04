@@ -53,7 +53,10 @@
       else this.loading = false;
     },
     retryFetchStats() { this.statsError=false; this.loading=true; this.skelReady=true; this._skelShownAt=Date.now(); this.fetchStats(); },
-    isLogError(log) { return Number(log&&log.status)>=400 || !!(log&&log.error); },
+    // 错误判定与后端 is_log_error 同口径: **499 客户端取消不算错误** —— 编程工具的
+    // 正常取消 (autocomplete 反复发-取消 / Esc) 若标红, 记录页看起来像大面积故障
+    // (2026-10-01 实测近 200 条里 130 条 499)。499 徽章走 warn 色, 仍可辨识。
+    isLogError(log) { const s = Number(log && log.status); if (s === 499) return false; return s >= 400 || !!(log && log.error); },
     get analysisWindowMinutes() {
       return Math.max(1, Number(this.stats&&this.stats.window_minutes||1));
     },

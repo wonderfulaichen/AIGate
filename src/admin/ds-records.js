@@ -140,7 +140,8 @@
     get paginatedLogs() { return this.filteredLogs.slice(this.logPage*this.pageSize,(this.logPage+1)*this.pageSize); },
 
     // 独立错误列表: 直接来自 /admin/api/errors (已按时间倒序 + 仅错误), 与请求窗口解耦.
-    get recordErrorCount() { return this.logs.filter(l=>Number(l.status)>=400 || !!l.error).length; },
+    // 与 isLogError 同口径 (499 不算错误) —— 不要再写一份 status>=400 的内联判据.
+    get recordErrorCount() { return this.logs.filter(l=>this.isLogError(l)).length; },
     get recordSuccessRate() { return this.logs.length ? (this.logs.length-this.recordErrorCount)/this.logs.length*100 : 0; },
     // 成功率(文本): 走小数补间 —— 切页签/刷新时与其它 KPI 一起从 0 滚起.
     get recordSuccessRateText() {

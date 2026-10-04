@@ -5,7 +5,13 @@
 
      // 拉取模型: 后端仅写入内存注册表 (即时生效) 并返回模型列表; 这里合并进表单,
     // 待用户点"保存配置"才持久化 —— 避免直接写盘冲掉表单里其它未保存改动.
+    //
+    // ⚠️ 拉取前确认: 刷新/拉取都会用文件覆盖当前表单, 若用户有未保存草稿
+    // (改名/改端点/改档位) 会被**静默丢弃**。故未保存时先二次确认。
     async fetchProviderModels(pi) {
+      if (this.isDirty) {
+        if (!(await confirmAsk(t('confirm_discard_draft'), { danger: true }))) return;
+      }
       const prov = this.providersFormData[pi];
       prov._fetching = true;
       try {
@@ -85,10 +91,16 @@
             this.showFetchDiff = true;
           }
         } else {
+          // 失败必须置 Ok=false 并 toast: 否则点了"获取"毫无反馈 (用户实测报的正是这个现象)。
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
+          toast(this.providersFormMsg, 'error', 'fetch_fail');
         }
-      } catch(e) { this.providersFormMsg = t('network_error'); }
+      } catch(e) {
+        this.providersFormOk = false;
+        this.providersFormMsg = t('network_error');
+        toast(this.providersFormMsg, 'error', 'net_err');
+      }
       prov._fetching = false;
       if (this.providersFormMsg) setTimeout(() => { this.providersFormMsg = ''; }, 4000);
     },
@@ -146,6 +158,12 @@
               endpoint_responses: p.endpoint_responses||undefined,
               api_key_env: p.api_key_env,
               api_key_default: p.api_key_default||undefined,
+              // 账号形式凭据 (auth.mode=account): 透传保存. 不带 auth 的供应商本字段为
+              // undefined → JSON.stringify 自动省略, 不会给存量配置塞空字段.
+              auth: p.auth||undefined,
+              // 内置预设标记与停用态: 同样只在有值时落盘 (preset 受保护, 见 api_providers_save).
+              preset: p.preset||undefined,
+              disabled: p.disabled||undefined,
               balance_endpoint: p.balance_endpoint||undefined,
               api_format: p.api_format||undefined,
               prompt_cache: p.prompt_cache,
@@ -245,3 +263,126 @@
        this.markDirty();
        setTimeout(()=>this.providersFormMsg='',3000);
      },
+
+    // ── 内置预设 (2026-10-01): 添加 / 受保护语义 / 停用 ──
+    // 预设只是模板: 添加 = 组装条目进表单 (带 preset 标记), 走既有保存链落盘;
+    // 之后由 presetDirty/presetReset 维护「已修改 / 恢复默认」, 删除被后端兜底拒绝.
+    presetOf(p){ return (this.presets||[]).find(x=>x.id===p.preset) || null; },
+    presetDirty(p){
+      const t=this.presetOf(p); if(!t) return false;
+      if((p.endpoint||'')!==t.endpoint) return true;
+      if((p.api_key_env||'')!==t.api_key_env) return true;
+      if(JSON.stringify(p.auth||null)!==JSON.stringify(t.auth||null)) return true;
+      return false;
+    },
+    presetReset(p){
+      const t=this.presetOf(p); if(!t) return;
+      // name 不回改 (账号按 name 索引, 改名会错位); models 保留 (拉取结果非手改).
+      p.endpoint=t.endpoint; p.api_key_env=t.api_key_env; p.auth=t.auth||null;
+      this.markDirty();
+      this.providersFormOk=true; this.providersFormMsg=t('preset_reset_done');
+      setTimeout(()=>this.providersFormMsg='',3000);
+    },
+    presetAdded(t){ return (this.providersFormData||[]).some(p=>p.preset===t.id); },
+    addFromPreset(t){
+      if (this.presetAdded(t)) return;
+      this.providersFormData.push({
+        name: t.name, _origName: t.name,
+        endpoint: t.endpoint,
+        api_key_env: t.api_key_env,
+        api_key_default: null,
+        auth: t.auth || null,
+        preset: t.id,
+        balance_endpoint: null,
+        headers: null,
+        _expanded: true, _testing: false, _testResult: null,
+        _filter: '', _selected: {},
+        models: [],
+      });
+      this.showAddProvider = false;
+      this.markDirty();
+      this.providersFormOk = true;
+      this.providersFormMsg = t('preset_added_hint');
+      setTimeout(()=>this.providersFormMsg='',3000);
+    },
+    toggleProvDisabled(p){
+      p.disabled = !p.disabled;
+      this.markDirty();
+      this.providersFormOk = true;
+      this.providersFormMsg = p.disabled ? t('prov_disabled_badge') : t('prov_enable');
+      setTimeout(()=>this.providersFormMsg='',3000);
+    },
+
+    // ── 账号登录 (账号型供应商: 粘贴凭据 → accounts.json) ──
+    openLogin(name){
+      this.stopLoginPoll();
+      this.loginProv=name; this.loginTok=''; this.loginRt=''; this.loginExp='';
+      this.loginMsg=''; this.loginBrowserPending=false;
+    },
+    stopLoginPoll(){
+      if(this.loginPollTimer){ clearInterval(this.loginPollTimer); this.loginPollTimer=null; }
+      this.loginBrowserPending=false;
+    },
+    // 浏览器一键登录 (推荐): 开官方登录页 → 后台轮询会话 → 成功自动写凭据并刷新状态.
+    // 官方流是轮询式的 (auth/state → 浏览器登录 → auth/token), 无本地回调, 见 accounts.rs.
+    async browserLogin(){
+      if(!this.loginProv || this.loginBrowserPending) return;
+      this.loginMsg=''; this.loginBusy=true;
+      try{
+        const r=await fetch('/admin/api/accounts/login/start',{method:'POST',headers:authHeaders(),
+          body:JSON.stringify({name:this.loginProv})});
+        const d=await r.json();
+        if(d.error){ this.loginMsg=d.error; return; }
+        const opened = window.open(d.auth_url, '_blank');
+        if(!opened){
+          this.loginMsg=t('login_browser_blocked')+' '+d.auth_url;
+        }
+        this.loginBrowserPending=true;
+        const started=Date.now();
+        this.loginPollTimer=setInterval(async ()=>{
+          if(Date.now()-started > 330000){ this.stopLoginPoll(); this.loginMsg=t('login_browser_timeout'); return; }
+          try{
+            const s=await fetch('/admin/api/accounts/login/status',{method:'POST',headers:authHeaders(),
+              body:JSON.stringify({name:this.loginProv})});
+            const sd=await s.json();
+            if(sd.status==='ok'){
+              this.stopLoginPoll();
+              await this.fetchAccounts();
+              this.loginProv=''; this.loginTok=''; this.loginRt=''; this.loginExp='';
+              this.loginMsg=t('login_success');
+              setTimeout(()=>{ this.loginMsg=''; },3000);
+            }else if(sd.status==='failed'){
+              this.stopLoginPoll();
+              this.loginMsg=sd.error||t('login_browser_failed');
+            }
+          }catch(e){}
+        }, 2000);
+      }catch(e){ this.loginMsg=t('network_error'); }
+      finally{ this.loginBusy=false; }
+    },
+    async submitLogin(){
+      if(!this.loginProv || !this.loginTok.trim()) return;
+      this.loginBusy=true; this.loginMsg='';
+      try{
+        const body={ name:this.loginProv, access_token:this.loginTok.trim() };
+        if(this.loginRt.trim()) body.refresh_token=this.loginRt.trim();
+        const days=Number(this.loginExp);
+        if(days>0) body.expires_in_secs=Math.floor(days*86400);
+        const r=await fetch('/admin/api/accounts/login',{method:'POST',headers:authHeaders(),body:JSON.stringify(body)});
+        const d=await r.json();
+        if(d.error){ this.loginMsg=d.error; return; }
+        this.accountsStatus=d.accounts||this.accountsStatus;
+        this.loginProv=''; this.loginTok=''; this.loginRt=''; this.loginExp='';
+        this.loginMsg=t('login_success');
+        setTimeout(()=>{ this.loginMsg=''; },3000);
+      }catch(e){ this.loginMsg=t('network_error'); }
+      finally{ this.loginBusy=false; }
+    },
+    async logoutProv(name){
+      try{
+        const r=await fetch('/admin/api/accounts/logout',{method:'POST',headers:authHeaders(),body:JSON.stringify({name})});
+        const d=await r.json();
+        if(!d.error){ this.accountsStatus=d.accounts||{}; this.keyMsg=t('logout'); setTimeout(()=>{ this.keyMsg=''; },3000); }
+      }catch(e){}
+    },
+    isAccountProv(p){ return !!(p.auth && p.auth.mode==='account'); },

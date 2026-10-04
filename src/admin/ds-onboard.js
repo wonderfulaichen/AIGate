@@ -34,6 +34,7 @@
         rows.push({
           provider: b.provider,
           balance: b.balance, currency: b.currency, source: b.source, error: b.error,
+          consumed: b.consumed,
           hasBalance: b.balance !== null && b.balance !== undefined,
           today_cost: c.today_cost, total_cost: c.total_cost,
           today_opt_saved_tokens: c.today_opt_saved_tokens,

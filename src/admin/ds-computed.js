@@ -66,7 +66,8 @@
       return 'var(--ok)';
     },
     get balanceTakeaway() {
-      const rows = (this.providerRows || []).filter(r => r.hasBalance);
+      // 积分制行不参与: currency='credits' 与今日费用(金额)量纲不同, 混算「还能撑几天」是错的.
+      const rows = (this.providerRows || []).filter(r => r.hasBalance && r.currency !== 'credits');
       if (!rows.length) return '';
       // 最少余额的那家 = 最可能先断供的, 优先提示它; 平手时取今日消耗更高的那家.
       let low = rows[0];
