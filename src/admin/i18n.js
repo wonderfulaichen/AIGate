@@ -22,7 +22,8 @@ const I18N = {
     
     
     'balance_none': '未配置余额查询', 'balance_refresh': '刷新余额',
-    'unit_credits': '积分', 'balance_consumed': '已用 {0}',
+    'unit_credits': '积分', 'balance_consumed': '已用 {0}', 'balance_remain': '剩余 {0} 积分',
+    'credits_expiring_in': '最近 {0} 天后过期 {1} 积分', 'credits_expired_now': '{0} 积分已过期',
     
     
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
@@ -268,7 +269,8 @@ const I18N = {
     
     
     'balance_none': 'Balance query not configured', 'balance_refresh': 'Refresh Balance',
-    'unit_credits': 'credits', 'balance_consumed': 'used {0}',
+    'unit_credits': 'credits', 'balance_consumed': 'used {0}', 'balance_remain': '{0} credits left',
+    'credits_expiring_in': '{1} credits expire in {0} day(s)', 'credits_expired_now': '{0} credits expired',
     
     
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',

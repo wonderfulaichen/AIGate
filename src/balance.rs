@@ -33,6 +33,16 @@ pub struct BalanceInfo {
     /// 已消耗量 (积分制供应商的服务端权威统计; 无消耗概念的供应商为 None).
     #[serde(default)]
     pub consumed: Option<f64>,
+    /// **最近会过期**的那批积分的到期时刻 (Unix 秒; 仅积分制供应商).
+    ///
+    /// 取「仍有剩余 (CapacityRemain > 0) 的资源包里 `DeductionEndTime` 最小者」——
+    /// 已用完的包不该占据这个位置 (它不会造成损失), 而用户真正关心的是
+    /// "我手上有多少分快到期了". 无过期概念 (永久积分/金额制) 时为 None.
+    #[serde(default)]
+    pub expiring_at: Option<u64>,
+    /// 与 [`Self::expiring_at`] 同一批积分的**剩余数量** (过期即损失这么多).
+    #[serde(default)]
+    pub expiring_amount: Option<f64>,
 }
 
 impl BalanceInfo {
@@ -47,6 +57,8 @@ impl BalanceInfo {
             source: "api".to_string(),
             has_api: true,
             consumed: None,
+            expiring_at: None,
+            expiring_amount: None,
         }
     }
 
@@ -61,11 +73,19 @@ impl BalanceInfo {
             source: "manual".to_string(),
             has_api: false,
             consumed: None,
+            expiring_at: None,
+            expiring_amount: None,
         }
     }
 
-    /// 创建积分制 (buddy) API 结果: 剩余 + 已消耗双值.
-    fn from_credits(provider: &str, balance: f64, consumed: f64, now: u64) -> Self {
+    /// 创建积分制 (buddy) API 结果: 剩余 + 已消耗 + (可选) 最近过期时间与余量.
+    fn from_credits(
+        provider: &str,
+        balance: f64,
+        consumed: f64,
+        expiring: Option<(u64, f64)>,
+        now: u64,
+    ) -> Self {
         Self {
             provider: provider.to_string(),
             balance: Some(balance),
@@ -75,6 +95,8 @@ impl BalanceInfo {
             source: "api".to_string(),
             has_api: true,
             consumed: Some(consumed),
+            expiring_at: expiring.map(|(t, _)| t),
+            expiring_amount: expiring.map(|(_, a)| a),
         }
     }
 }
@@ -94,6 +116,40 @@ pub struct BalanceManager {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ManualBalanceFile {
     balances: HashMap<String, f64>,
+}
+
+/// 聚合 buddy 的积分资源包: `(剩余总量, 已消耗总量, 最近过期)`.
+///
+/// `最近过期` 只统计**仍有剩余**的包 (已用完的包不会造成损失, 不该占据"最快到期"位),
+/// 取 `DeductionEndTime` 最小者; 上游给的是**毫秒**时间戳 (实测 2049883762000) → 转秒.
+/// 无有效到期时间 (永久积分 / 字段缺失 / 为 0) → `None`, 前端不显示过期行.
+fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>) {
+    let (mut remain, mut used) = (0f64, 0f64);
+    let mut expiring: Option<(u64, f64)> = None;
+    for pkg in arr {
+        let rem = pkg
+            .get("CapacityRemain")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        remain += rem;
+        used += pkg
+            .get("CapacityUsed")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        if rem > 0.0 {
+            if let Some(ms) = pkg
+                .get("DeductionEndTime")
+                .and_then(|x| x.as_i64())
+                .filter(|v| *v > 0)
+            {
+                let secs = (ms / 1000) as u64;
+                if expiring.map(|(t, _)| secs < t).unwrap_or(true) {
+                    expiring = Some((secs, rem));
+                }
+            }
+        }
+    }
+    (remain, used, expiring)
 }
 
 impl BalanceManager {
@@ -491,19 +547,14 @@ impl BalanceManager {
                         Some("响应中未找到积分包字段".to_string()),
                     );
                 };
-                let (mut remain, mut used) = (0f64, 0f64);
-                for pkg in arr {
-                    remain += pkg
-                        .get("CapacityRemain")
-                        .and_then(|x| x.as_f64())
-                        .unwrap_or(0.0);
-                    used += pkg
-                        .get("CapacityUsed")
-                        .and_then(|x| x.as_f64())
-                        .unwrap_or(0.0);
-                }
-                info!(target: "balance", "buddy 积分: 剩余 {remain} / 已消耗 {used} ({} 个资源包)", arr.len());
-                BalanceInfo::from_credits(provider, remain, used, now)
+                // 聚合: 剩余总量 / 已消耗 / 最近过期批次 (纯函数, 见 aggregate_credits).
+                let (remain, used, expiring) = aggregate_credits(arr);
+                info!(
+                    target: "balance",
+                    "buddy 积分: 剩余 {remain} / 已消耗 {used} ({} 个资源包), 最近过期={:?}",
+                    arr.len(), expiring
+                );
+                BalanceInfo::from_credits(provider, remain, used, expiring, now)
             }
             Err(e) => {
                 warn!(target: "balance", "buddy 积分查询网络错误: {e}");
@@ -604,6 +655,39 @@ fn normalize_currency(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// buddy 积分包聚合: 只认**仍有剩余**的包的到期时间 (已用完的包不该占据
+    /// "最近过期"位 —— 它不会造成损失). 响应形态取自 2026-10-01 实测.
+    #[test]
+    fn credits_aggregate_picks_soonest_expiry_with_remainder() {
+        let arr = serde_json::json!([
+            // 已用完 + 最早过期 → **不该**被选中
+            {"CapacityRemain": 0, "CapacityUsed": 500, "DeductionEndTime": 1_700_000_000_000i64},
+            // 有剩余, 2035 年过期
+            {"CapacityRemain": 300, "CapacityUsed": 200, "DeductionEndTime": 2_049_883_762_000i64},
+            // 有剩余且更早 (2030) → 选中这个
+            {"CapacityRemain": 120, "CapacityUsed": 30, "DeductionEndTime": 1_900_000_000_000i64},
+        ]);
+        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        assert_eq!(remain, 420.0);
+        assert_eq!(used, 730.0);
+        let (at, amt) = expiring.expect("应有最近过期项");
+        assert_eq!(at, 1_900_000_000); // 毫秒 → 秒
+        assert_eq!(amt, 120.0);
+    }
+
+    /// 全部包都无到期时间 (永久积分) → expiring 为 None, 前端不显示过期行.
+    #[test]
+    fn credits_aggregate_without_expiry_returns_none() {
+        let arr = serde_json::json!([
+            {"CapacityRemain": 100, "CapacityUsed": 0},
+            {"CapacityRemain": 50, "CapacityUsed": 0, "DeductionEndTime": 0},
+        ]);
+        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        assert_eq!(remain, 150.0);
+        assert_eq!(used, 0.0);
+        assert!(expiring.is_none(), "0/缺失的到期时间不得当作有效期限");
+    }
 
     #[test]
     fn test_deepseek_balance_infos() {

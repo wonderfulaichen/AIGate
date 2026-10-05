@@ -16,13 +16,25 @@
       if (!row.hasBalance) return t('balance_none');
       if (row.currency === 'credits') {
         const fmt = n => Number(n).toLocaleString('en-US');
-        let s = fmt(row.balance) + ' ' + t('unit_credits');
+        // 积分制不说"余额"(会与金额混淆): 明确写「剩余 N 积分」.
+        let s = t('balance_remain', fmt(row.balance));
         if (row.consumed !== null && row.consumed !== undefined) {
           s += ' · ' + t('balance_consumed', fmt(row.consumed));
         }
         return s;
       }
       return this.fmtMoney(row.balance);
+    },
+    // 积分过期提醒 (仅积分制且上游给了到期时间): 「最近 M 天后过期 N 积分」.
+    // 过期即损失, 故与剩余/已用分开成一行, 用 warn 色突出.
+    fmtCreditsExpiry(row) {
+      if (!row || row.currency !== 'credits') return '';
+      if (row.expiring_at === null || row.expiring_at === undefined) return '';
+      const now = Math.floor(Date.now() / 1000);
+      const days = Math.ceil((Number(row.expiring_at) - now) / 86400);
+      const amt = Number(row.expiring_amount || 0).toLocaleString('en-US');
+      if (days <= 0) return t('credits_expired_now', amt);
+      return t('credits_expiring_in', String(days), amt);
     },
     // 极小金额友好显示: 换算后不足最小分位时给出 "<¥0.01", 而不是 0.00.
     // 省量费用常远小于 1 分 (单请求 1009 tok × 2元/1M ≈ 0.002), 一律 ¥0.00 会让人误以为没生效.
