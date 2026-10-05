@@ -992,6 +992,14 @@ CodeBuddy IDE 直连正常（自家客户端容忍空串）；我方 python 复�
   2. **不要用 shell 的 `-replace` 脚本块改源码**（`{ ... }` 会被当字面量注入）；批量改代码用 Python + 显式字符串，或直接 Edit。
 - **恢复后验证**：`cargo test --release` **全绿** · `e2e_finish_norm` 5/5 · `e2e_record_count` 13 形态全过 · `e2e_today_survives_restart` PASS · `e2e_presets` 17/17 · `e2e_accounts` 13/13 · `probe_presets_ui` 13/13 · 门禁（parts/i18n 623/主题）全绿。
 
+**补遗九 — Responses 省量「无效」定案（2026-10-04，用户实测开启过仍无效）**：
+
+- **先排除三件事**：① 开关本身工作正常（`strip_responses_reasoning_items` 只剥 `input[].type=="reasoning"` 的 item，实测 body 1681→352 字节、reasoning 消失、`function_call`↔`function_call_output` 配对完整）；② 无模型级 override 压过协议开关（`providers.json` 里 `strip_toolcall_reasoning` 零声明）；③ 用户线上开关当时是 `responses:false`（他后来打开过）。
+- **真 bug**：**原生直通「非流式」路径的记录漏传省量** —— [proxy.rs] `record_request_with_tokens` 的省量三参数硬编码 `0, 0, 0`（流式路径经 `NativeTapStream.strip_saved_tokens` 正常传递）。⇒ **token 真省了，但面板/统计恒显 0**，观感就是"开关无效"。已修（传 `strip_saved_tokens`），实测记账 0 → 169 token。
+- **口径澄清**：Responses 默认**不开**该开关（`config.rs` 注释：结构可剥但「上游是否校验 item 序列未经实测」，由用户按自己上游试开）。本次修的是「开了之后不记账」，**不含**改默认值。
+- **新增回归**：`tools/e2e_responses_strip.py` 9 断言（mock 上游真收到剥离体 / 关闭开关对照 / 记账 > 0 / 网关日志 stripped 痕迹），防回归。
+- **教训**：面板数字是判断功能是否生效的**主要证据来源**，看到"无效"先查记账链路再怀疑实现 —— 本次实现完全正常，坏的是记账。
+
 ### 09-30 换标 + 演示稿 Apple 化 + 根目录清理轮
 
 **三件事，全部只改前端/资源，未动网关逻辑**（`build.rs` 只改了图标生成）：

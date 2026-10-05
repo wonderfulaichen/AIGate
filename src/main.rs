@@ -941,7 +941,7 @@ async fn handle_models(
                 .as_ref()
                 .and_then(|e| e.model.upstream_model.clone())
                 .unwrap_or_else(|| id.to_string());
-            let m = entry.as_ref().and_then(|e| meta.get(&upstream));
+            let m = meta.get(&upstream);
             let explicit = entry.as_ref().and_then(|e| e.model.supported_efforts.clone());
             let mut obj = serde_json::json!({
                 "id": id,

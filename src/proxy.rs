@@ -1457,7 +1457,8 @@ async fn relay_native_passthrough(
         crate::admin::record_request_with_tokens(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
-            false, hit, miss, creation, 0, 0, 0, None, None, None,
+            false, hit, miss, creation,
+            strip_saved_tokens, 0, 0, None, None, None,
             usage_missing(pt, ct), effort,
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
@@ -3261,21 +3262,30 @@ impl Drop for TokenStream {
         let first_token_ms = self
             .first_token_at
             .map(|t| t.duration_since(ld.start).as_millis() as u64);
-        // 已收到的正文量: 断开时上游仍在产出, 用已累计内容如实反映"取消前已生成多少"。
+        // 是否"未上报 usage" (断连时上游多半没给 usage, 展示层据此标估算).
         let usage_estimated = !self.usage_seen;
-        let err = format!(
-            "客户端中断连接（已输出 {} tok / 输入 {} tok，网关已停止转发并释放上游连接）",
-            ct, pt
-        );
         // 档位在 spawn 前取成 owned (self 在 Drop 中不可跨线程借用).
         let effort = ld.effort.clone();
+        // 断连定性 (丢失接线, 2026-10-04 补回): 生成已完整收尾 (客户端收完尾帧才关) 是竞态,
+        // 记 200; 真正的中途取消才记 499 —— 否则工具正常取消会被统计成失败 (实测近 200 条里
+        // 130 条 499, 成功率被打崩). 判据见 drop_close_status.
+        let close_status = drop_close_status(self.clean_finish);
+        let err = if self.clean_finish {
+            // 已正常收尾: 不带错误文案 (否则记录页会标红一条实际成功的请求).
+            String::new()
+        } else {
+            format!(
+                "客户端中断连接（已输出 {} tok / 输入 {} tok，网关已停止转发并释放上游连接）",
+                ct, pt
+            )
+        };
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                499, ld.start, pt, ct, ld.response_body_len, false,
+                close_status, ld.start, pt, ct, ld.response_body_len, false,
                 hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                 first_token_ms,
-                Some(err),
+                if err.is_empty() { None } else { Some(err) },
                 usage_estimated, effort,
             ).await;
         });
@@ -3650,7 +3660,13 @@ fn strip_history_reasoning_messages(
         if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
             continue;
         }
-        // 保留带工具调用的 assistant 消息推理链.
+        // ⚠️ 两层是**独立**的 (最易记反, 见 HANDOFF §5.4):
+        // - 本函数剥的是**所有** assistant 消息的推理链, 其中「不含 tool_calls」那部分
+        //   由调用方的 `strip_history_reasoning` 总开关控制 (它决定是否进入本函数);
+        // - 「含 tool_calls」那部分由参数 `strip_with_tool_calls` 单独控制
+        //   (= 协议级 `STRIP_TOOLCALL_ON_CHAT` / 模型级 override, 见 resolve_strip_toolcall),
+        //   **两者默认都开** → 默认行为是两层都剥, 不是"只剥浅层".
+        // 下面这行为 false 时保留工具轮次 (省量大头) —— 只在用户显式关掉该协议开关时走到.
         let has_tool_calls = m
             .get("tool_calls")
             .and_then(|t| t.as_array())
@@ -4264,13 +4280,6 @@ fn effort_from_value(v: &serde_json::Value, explicitly_disabled: bool) -> Option
         .map(|s| s.to_string())
 }
 
-/// 从字节 body 采集 (缓存回放路径没有改写上下文, 直接解析 —— 缓存键本身也来自改写后 body).
-fn effort_from_bytes(b: &[u8]) -> Option<String> {
-    serde_json::from_slice::<serde_json::Value>(b)
-        .ok()
-        .and_then(|v| effort_from_value(&v, false))
-}
-
 /// 原生直通路径: 协议保真, 档位载体不同 —— 按协议读生效值.
 /// Anthropic 的 thinking 只有开/关与 budget, 无档位, 故 "on"/"off";
 /// Responses 读 `reasoning.effort` (兼容顶层 reasoning_effort 的非标形态).
@@ -4530,6 +4539,31 @@ fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_
 /// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
 ///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
 fn format_upstream_error(status: u16, err_body: &str) -> String {
+    let base = format_upstream_error_base(status, err_body);
+    // FreeTierError (OpenCode 免费层的客户端来源限制) 追加可行动提示 ——
+    // 该 403 与"额度用尽/权限不足"完全不同: 重试/升级/换 key 均无效, 只能换模型/供应商.
+    // 不追加的话用户会照着"API 密钥无效"的方向白排查 (实测报障即如此).
+    // 判据用原文包含 (上游把它塞在 message 里, 且大小写/位置不一).
+    let lower = err_body.to_ascii_lowercase();
+    if lower.contains("freetier") || lower.contains("free tier") {
+        return format!("{base}{}", crate::i18n::freetier_hint());
+    }
+    base
+}
+
+/// [`format_upstream_error`] 的主体 (解析 + 中文说明), 不含 FreeTierError 等追加提示.
+///
+/// 优先级: error.type 中文 > HTTP 状态码中文 > 原始信息.
+/// 这样即使上游返回纯文本 (如 `request timeout (HTTP Status: 408)`) 也能给中文说明.
+///
+/// 兼容性 (方案 B): 除标准 `{error:{message,type,code}}` 外, 也识别顶层
+/// `{message:...}` / `{detail:...}` 这类非标准结构 (硅基流动 / FastAPI 网关),
+/// 至少给出原始信息而非丢弃.
+///
+/// 输入: upstream_status (如 400/408), err_body (原始响应体).
+/// 输出: "400 请求参数错误 [invalid_request_error]: Error from provider..."
+///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
+fn format_upstream_error_base(status: u16, err_body: &str) -> String {
     // 兜底: 状态码中文说明 (即使纯文本响应体也生效)
     let status_expl = crate::i18n::http_status(status);
 
@@ -5457,6 +5491,7 @@ mod tests {
             responses_mode: false,
             loop_params: None,
             log_buffer: None,
+            tool_call_ids: std::collections::HashMap::new(),
         };
         // SSE 外层 usage
         ts.parse_sse_chunk(
@@ -5513,6 +5548,7 @@ mod tests {
             usage_seen: false, emitted_tool_calls: false, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
+            tool_call_ids: std::collections::HashMap::new(),
         };
 
         // 场景 A: 纯思考无可见正文 → 按**推理文本**估算, 不得记 0, 也不得按响应字节放大.
@@ -5642,6 +5678,7 @@ mod tests {
             responses_mode: false,
             loop_params: None,
             log_buffer: None,
+            tool_call_ids: std::collections::HashMap::new(),
         };
         // message_start 帧: 输入 1000 + 缓存读 5000 → prompt 6000
         ts.parse_sse_chunk(
@@ -5731,6 +5768,7 @@ mod tests {
             responses_mode: false,
             loop_params: None,
             log_buffer: None,
+            tool_call_ids: std::collections::HashMap::new(),
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
         let first = futures::executor::block_on(ts.next()).unwrap().unwrap();
