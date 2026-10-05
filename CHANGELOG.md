@@ -34,6 +34,14 @@
 - 修复中文错误体按字节截断可能 panic：统一按字符边界截取
 - 修复客户端中途断连的记账口径：完整收尾记 200、真取消记 499 且不计入错误率
 
+### 修复推理链剥离的协议安全漏洞
+
+- **推理字段是消息唯一内容时，剥完会留下违反 OpenAI 协议的空 assistant（上游必然 400）**：部分上游（opencode 系）把全部输出放在 `reasoning` / `reasoning_details` 而 `content` 为 `null` —— 直接剥完就是 `{"role":"assistant","content":null}`，既不满足「content 非空」也不满足「带 tool_calls」。修法与响应转换侧一致：**唯一内容被剥后补 `content: ""`**（空串满足协议、null 不满足；`src/responses.rs` 有同款实测记录）。带 `tool_calls` 或本就有正文的消息不受影响。
+- 新增两个行为级探针（判据均为「上游实际收到的 body」，不读代码）：
+  - `tools/probe_strip_edge.py`（8 断言）：空内容兜底 / 空串 content / 仅 tool_calls / 多模态数组 / 顶层 `reasoning` 不误删 / system·user·tool 消息内的同名字段不误删 / `tool_call_id` 配对完整。
+  - `tools/probe_trim_pairing.py`（5 断言）：历史裁剪不得拆散 `tool_calls` ↔ tool 结果配对、`system` 必留、首条非 system 不得是孤立 tool 结果。
+- 新增单测 `strip_keeps_assistant_protocol_valid_when_reasoning_is_only_payload` 锁死该规则（含两个反例：有 tool_calls 时不得改 content、本有正文不得被清空）。
+
 ### 修复 Responses 协议省量「无效」
 
 - **省量记账在原生直通的非流式路径上被丢弃**：`record_request_with_tokens` 的省量三参数硬编码 `0, 0, 0`，而流式路径经 `NativeTapStream` 正常传递 —— 结果是 **token 真的省了（实测请求体 1681→352 字节），面板与统计却恒显示 0**，看着像开关没生效。现已补齐传递（实测记账 0 → 169 token）。

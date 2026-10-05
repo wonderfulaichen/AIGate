@@ -3619,14 +3619,43 @@ fn reasoning_chars(m: &serde_json::Map<String, serde_json::Value>) -> usize {
 }
 
 /// 移除一条消息里全部推理字段, 返回其序列化文本长度之和.
+///
+/// ⚠️ **协议安全**: 剥完后该消息必须仍带 `content` 或 `tool_calls`, 否则成了**违反
+/// OpenAI 协议的空 assistant** (content=null 且无 tool_calls), 上游直接 400。
+/// 真实触发形态: 部分上游 (opencode 系) 把全部输出放在 `reasoning` /
+/// `reasoning_details` 里而 `content` 为 null —— 一剥就炸。
+/// 处置: 若推理字段是**唯一内容**, 把 `content` 置为**空字符串** (与 responses.rs
+/// 的转换侧同一手法: 空串满足协议, 空 null 不满足), 而不是留下 null。
 fn remove_reasoning_fields(m: &mut serde_json::Map<String, serde_json::Value>) -> usize {
     let mut n = 0usize;
+    let mut stripped_any = false;
     for k in REASONING_FIELDS {
         if let Some(v) = m.remove(k) {
             n += serde_json::to_string(&v).map(|s| s.len()).unwrap_or(0);
+            stripped_any = true;
         }
     }
+    if stripped_any && !has_payload_after_strip(m) {
+        m.insert("content".to_string(), serde_json::Value::String(String::new()));
+    }
     n
+}
+
+/// 该消息在剥离推理字段后是否仍有可投递的内容 (`content` 非空, 或带 `tool_calls`).
+fn has_payload_after_strip(m: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let content_ok = match m.get("content") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(serde_json::Value::Array(a)) => !a.is_empty(),
+        Some(_) => true,
+    };
+    if content_ok {
+        return true;
+    }
+    m.get("tool_calls")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
 }
 
 /// 转发上游前瘦身历史: 移除不含 tool_calls 的 assistant 消息中的推理链.
@@ -4735,6 +4764,49 @@ mod tests {
         let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
+    }
+
+    /// ⚠️ 协议安全: 推理字段是**唯一内容**时, 剥完必须补 `content: ""`.
+    ///
+    /// 真实触发形态 (2026-10-04 审查发现): 部分上游 (opencode 系) 把全部输出放在
+    /// `reasoning` / `reasoning_details` 而 `content` 为 null —— 直接剥就留下
+    /// **违反 OpenAI 协议的空 assistant**, 上游 400 (responses.rs:708 有同款实测记录).
+    /// 修法与转换侧一致: 补空串而非留 null.
+    #[test]
+    fn strip_keeps_assistant_protocol_valid_when_reasoning_is_only_payload() {
+        // 形态 1: content=null, 内容全在 reasoning_details
+        let mut b = serde_json::json!({
+            "messages": [ { "role": "assistant", "content": null,
+                            "reasoning_details": [{"type":"reasoning.text","text":"only"}] } ]
+        });
+        strip_history_reasoning_messages(&mut b, false, None);
+        let m = &b["messages"][0];
+        assert!(m.get("reasoning_details").is_none(), "推理字段应被剥离");
+        assert_eq!(m.get("content").and_then(|v| v.as_str()), Some(""),
+                   "唯一内容被剥后必须补 content 空串, 否则违反协议 (上游 400)");
+
+        // 形态 2: content=null, 内容全在 reasoning
+        let mut b2 = serde_json::json!({
+            "messages": [ { "role": "assistant", "content": null, "reasoning": "only" } ]
+        });
+        strip_history_reasoning_messages(&mut b2, false, None);
+        assert_eq!(b2["messages"][0].get("content").and_then(|v| v.as_str()), Some(""));
+
+        // 反例: 带 tool_calls 时**不得**改 content (tool_calls 本身就是合法载荷)
+        let mut b3 = serde_json::json!({
+            "messages": [ { "role": "assistant", "content": null,
+                            "tool_calls": [{"id":"1"}], "reasoning_content": "x" } ]
+        });
+        strip_history_reasoning_messages(&mut b3, true, None);
+        assert!(b3["messages"][0]["content"].is_null(),
+                "有 tool_calls 时 content 应保持原样 (null 合法)");
+
+        // 反例: 本来就有正文 → 不得被改成空串
+        let mut b4 = serde_json::json!({
+            "messages": [ { "role": "assistant", "content": "正文", "reasoning_content": "x" } ]
+        });
+        strip_history_reasoning_messages(&mut b4, false, None);
+        assert_eq!(b4["messages"][0]["content"], "正文");
     }
 
     /// strip_history_reasoning: 不含 tool_calls 的 assistant 消息推理链被剥离.
