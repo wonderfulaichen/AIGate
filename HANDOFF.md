@@ -51,7 +51,13 @@
 > 对外表述**只谈 token，不谈金额**（用户明确要求：价格会变，token 不会）。
 > 演示稿已按此清理完毕 —— 正文**零**"金额/费用/价格/成本"字样，别再写回去。
 
-版本 **0.7.0**。仓库 `github.com/wonderfulaichen/AIGate`。
+版本 **0.7.1**。仓库 `github.com/wonderfulaichen/AIGate`。
+
+> 🔖 **0.7.1 已发布（2026-10-04）**：`Cargo.toml` / `site/index.html` / `README` / CHANGELOG 四处已同步。
+> 0.7.0 节点现为**纯前端重做**（54 小节）；0.7.1 收录 09-28 之后的全部工作（7 小节：内置预设 / CodeBuddy 反代 /
+> 剥离协议安全 / Responses 省量记账 / 记录与统计 / 错误可行动化 / 品牌标母版）。
+> ⚠️ 改版本号要**四处同改**（`Cargo.toml` 是 `build.rs` 的 exe 版本资源来源；`site/index.html` 两处徽章；`README` 版本行），
+> 且改完 `CHANGELOG.md` 必须**重建**（`include_str!` 烤入，且「更新亮点」弹窗按首节点版本判定）。
 
 ---
 
