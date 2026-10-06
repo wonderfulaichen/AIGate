@@ -23,18 +23,19 @@
   <div class="modal-head"><div><div class="modal-title" x-text="t('login_title')+' · '+loginProv"></div><div class="txs tm" style="margin-top:2px" x-text="t('login_browser_hint')"></div></div></div>
   <div class="modal-body">
     <!-- 浏览器一键登录: 开官方页, 登录完成后台自动写凭据 (无需回调, 见 accounts.rs) -->
-    <template x-if="isAccountProv({auth:presetOf(loginProv)&&presetOf(loginProv).auth})">
+    <!-- 判定: 优先表单里的供应商条目 (prov.auth 由预设保存链写入), 回落预设目录 (登录入口可能是预设卡);
+         两边都找不到 = 静态型提示. providersFormData 加载前是 null, 必须兜空 (否则 pageerror).
+         原写法 presetOf(loginProv) 传的是字符串名, 而 presetOf 期待带 .preset 的条目 → 恒 null,
+         于是账号型 buddy 被判成静态型, 登录按钮永不渲染 (2026-10-04 实测 bug) -->
+    <template x-if="isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
     <button class="btn btn-p" style="width:100%" :disabled="loginBusy||loginBrowserPending" @click="browserLogin()">
-      <span class="spin" x-show="loginBrowserPending"></span>
-    <span x-text="loginBrowserPending?t('login_browser_wait'):t('login_browser')"></span>
-  </button>
-  </template>
-  <template x-if="!isAccountProv({auth:presetOf(loginProv)&&presetOf(loginProv).auth})">
-    <div class="txs tm" style="margin-bottom:10px" x-text="t('login_statickey_hint')"></div>
-  </template>
       <span class="spin" x-show="loginBrowserPending"></span>
       <span x-text="loginBrowserPending?t('login_browser_wait'):t('login_browser')"></span>
     </button>
+    </template>
+    <template x-if="!isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
+      <div class="txs tm" style="margin-bottom:10px" x-text="t('login_statickey_hint')"></div>
+    </template>
     <div class="txs tm" style="margin-top:10px;text-align:center" x-text="t('login_manual_divider')"></div>
     <div style="margin-top:8px"><label class="txs tm" x-text="t('login_tok')"></label><textarea class="inp mono" rows="3" style="width:100%;margin-top:4px;resize:vertical" x-model="loginTok" placeholder="eyJ..."></textarea></div>
     <div style="margin-top:8px"><label class="txs tm" x-text="t('login_rt')"></label><textarea class="inp mono" rows="2" style="width:100%;margin-top:4px;resize:vertical" x-model="loginRt" placeholder="eyJ..."></textarea></div>

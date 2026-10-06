@@ -148,11 +148,20 @@ const { chromium } = require('playwright');
     const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
       .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
     if (!m) return { open: false };
+    // 一键登录按钮必须渲染 (buddy 是账号型); 静态 Key 提示不得出现.
+    // 另查"游离文本": 早前模板破损时 span 落在 template 外, 裸渲染"浏览器登录"文字却没有按钮.
+    const browserBtn = Array.from(m.querySelectorAll('button'))
+      .find(x => (x.textContent || '').includes('浏览器登录'));
+    const bodyTxt = (m.querySelector('.modal-body') || {}).innerText || '';
+    const strayText = bodyTxt.includes('浏览器登录') && !browserBtn;
     return {
       open: true,
       has_tok: !!m.querySelector('textarea'),
       field_count: m.querySelectorAll('textarea,input').length,
-      has_submit: Array.from(m.querySelectorAll('button')).some(x => (x.textContent || '').includes('登录')),
+      has_submit: Array.from(m.querySelectorAll('button')).some(x => (x.textContent || '').trim() === '登录'),
+      has_browser_btn: !!browserBtn,
+      static_hint: bodyTxt.includes('静态 API Key'),
+      stray_text: strayText,
     };
   });
   await p.evaluate(() => {
@@ -229,6 +238,9 @@ try:
     ck("ui_card_disable_btn", cd.get("has_disable_btn"), cd)
     ck("ui_del_disabled", cd.get("del_disabled") is True and "停用" in (cd.get("del_title") or ""), cd)
     ck("ui_login_modal", out.get("loginOpened") and out.get("loginModal", {}).get("open"), out.get("loginModal"))
+    ck("ui_login_browser_btn", out.get("loginModal", {}).get("has_browser_btn") is True, out.get("loginModal"))
+    ck("ui_login_no_static_hint", out.get("loginModal", {}).get("static_hint") is False, out.get("loginModal"))
+    ck("ui_login_no_stray_text", out.get("loginModal", {}).get("stray_text") is False, out.get("loginModal"))
     ck("ui_login_fields", out.get("loginModal", {}).get("field_count", 0) >= 3, out.get("loginModal"))
     ck("ui_login_submit_relogin", out.get("afterLogin", {}).get("has_relogin"), out.get("afterLogin"))
     ck("ui_no_pageerror", not out.get("errs"), out.get("errs"))
