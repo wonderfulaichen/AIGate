@@ -95,6 +95,18 @@ impl LoopDetector {
         (self.min_repeat + 6).max(12)
     }
 
+    /// 单元是否**全为空白**（空格/制表/换行）。这类重复**绝不算**退化循环。
+    ///
+    /// 依据（实机 2026-10-05~10-07，17 条误报样本全部命中此形态）：模型写代码块时
+    /// 常用成串空格做行内注释对齐，输出末尾因此留下 13~41 个连续空格 —— 旧实现
+    /// 「末尾 12 个相同字符即判循环」把它当死循环，于是网关主动发
+    /// `finish_reason:length` + `[DONE]` 收尾；客户端看到的是"正常结束"（该轮没有
+    /// tool_calls）→ **IDE 里表现为"跑一会就突然停下"**，任务其实没做完。
+    /// 空白重复没有任何"内容退化"含义，直接从判据里排除。
+    fn is_blank_unit(unit: &[char]) -> bool {
+        unit.iter().all(|c| c.is_whitespace())
+    }
+
     /// 在窗口尾部检测子串连续重复。
     fn detect(&self) -> bool {
         let chars: Vec<char> = self.buf.chars().collect();
@@ -103,11 +115,19 @@ impl LoopDetector {
         if win == 0 {
             return false;
         }
+        // 整窗全空白 = 真正的退化输出 (模型只吐空白, 没有任何内容) → 判循环.
+        // ⚠️ 必须要求**缓冲区已满一个窗口**: 否则开头几个字符若是空白, `win=min(window,n)`
+        // 会让"窗口"只有一个空格 → 立刻误判 (实机回归样本正是以空格开头, 首字符即被误杀).
+        if n >= self.window && chars[n - win..].iter().all(|c| c.is_whitespace()) {
+            return true;
+        }
         // 单字符极端重复（如 "。。。。。。。。") 单独用更高阈值保护，
         // 避免正常省略号（"...")被误判。
+        // ⚠️ 空白字符**排除在判据之外**: 末尾一串空格是代码块对齐填充, 不是循环
+        // (实机 17/17 误报都是这个形态, 详见 `is_blank_unit`).
         if win >= 12 {
             let tail = &chars[n - 12..];
-            if tail.iter().all(|&c| c == tail[0]) {
+            if tail.iter().all(|&c| c == tail[0]) && !tail[0].is_whitespace() {
                 return true;
             }
         }
@@ -122,6 +142,11 @@ impl LoopDetector {
                 continue;
             }
             let unit = &chars[n - l..];
+            // 纯空白单元直接跳过: 对齐填充/缩进/空行天然成串重复, 与"内容退化"无关
+            // (实机误报的主因, 见 `is_blank_unit`).
+            if Self::is_blank_unit(unit) {
+                continue;
+            }
             // 纯噪声单元（全为空白/标点/表格线，不含字母/数字/汉字）用更宽松阈值，
             // 避免代码块/Markdown 表格的合法重复被误杀；含语义字符按原阈值判真循环。
             let is_noise = !unit.iter().any(|&c| Self::has_meaningful(c));
@@ -154,6 +179,66 @@ impl LoopDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归: 真实日志里的 17 条误报样本 (tools/loop_samples.txt, 2026-10-05~10-07 实机)
+    /// **全部不得**被判为循环.
+    ///
+    /// 症状: 用户在 IDE 里"跑一会就突然停下" —— 网关误判后发 `finish_reason:length` + `[DONE]`
+    /// 主动收尾, 客户端以为正常结束 (这轮没有 tool_calls) → 任务中断。
+    /// 共同特征: 样本末尾都是 **代码块对齐用的成串空格** (13~41 个)。
+    #[test]
+    fn real_logged_samples_are_not_false_positives() {
+        let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/loop_samples.txt"));
+        let mut bad = Vec::new();
+        // 覆盖两套配置: 测试默认 (384/6) 与**部署实际值** (config.rs 默认 512/8).
+        for (window, min_repeat) in [(384usize, 6usize), (512, 8)] {
+            for (i, s) in raw.split("\n=====LOOP_SAMPLE=====\n").enumerate() {
+                if s.is_empty() {
+                    continue;
+                }
+                let mut d = LoopDetector::new(window, min_repeat, 8192);
+                // 按 SSE 增量的粒度喂入 (逐字符也走一遍最坏情况).
+                let mut hit = false;
+                for ch in s.chars() {
+                    if d.feed(&ch.to_string()) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if hit {
+                    let tail: String = s.chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+                    bad.push(format!("w={window} r={min_repeat} #{i} 末尾={:?}", tail));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "以下真实样本被误判为循环 (会截断客户端任务): {bad:#?}");
+    }
+
+    /// 反向: 真循环仍必须识别 (修复空白误报时不得把检测能力一起关掉).
+    #[test]
+    fn genuine_loops_still_detected_after_blank_exclusion() {
+        // 含换行分隔的正文重复 (最常见形态).
+        let mut d = LoopDetector::new(512, 8, 8192);
+        let mut hit = false;
+        for _ in 0..9 {
+            if d.feed("正在重新分析这个问题\n") {
+                hit = true;
+                break;
+            }
+        }
+        assert!(hit, "换行分隔的重复正文应判为循环");
+
+        // 整窗纯空白 (模型只吐空白) 仍应判循环.
+        let mut d2 = LoopDetector::new(512, 8, 8192);
+        let mut hit2 = false;
+        for _ in 0..2000 {
+            if d2.feed(" ") {
+                hit2 = true;
+                break;
+            }
+        }
+        assert!(hit2, "整窗纯空白应判为循环");
+    }
 
     #[test]
     fn detects_multi_char_repeat() {

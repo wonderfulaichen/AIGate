@@ -1,0 +1,211 @@
+**精确定位了。** 归因非常干净：
+
+```
+overflowAt 总数 = 64
+  无出流=0  越界=0  已在海=0
+  ★ outletExit 失败 = 54   ← 84% 的溢口在这里丢掉
+  n<=0 = 0
+```
+
+**54/64 的溢流出口在 `outletExit()` 里返回 -1** —— 这是"溢口→下泄"断裂的**唯一**原因。
+
+看 `outletExit` 为什么失败：
+
+```java
+int cur = outlet;
+for (int n = 0; n < 4096; n++) {
+    if (sea != null && sea[cur]) return -1;      // ① 走到海 → 返回 -1
+    if (lake == null || !lake[cur]) return cur;  // ② 走到非湖 → 成功
+    int nxt = parent[cur];
+    if (nxt < 0) return -1;                     
+=====LOOP_SAMPLE=====
+**决定性结果：54/54 可达**，且**距离全是 1** —— 每个湖内键**旁边就是非湖格**。
+
+这彻底定位了 bug。
+
+## 精确根因
+
+```
+键(472,47)  lake=true parent=-1 level=203.03     ← 湖内格
+  → 最近非湖格(473,47) 距离=1 bed=204.44 level=204.44
+```
+
+**出口就在旁边一格，但代码找不到它**，因为：
+
+```java
+int p = parent[c];
+if (p < 0) { result = c; break; }             
+=====LOOP_SAMPLE=====
+**找到了0.85 的具体问题**，数据非常明确：
+
+```
+momentum=0.85 的抹开块：
+抹开格 平均坡度 = 0.9957   vs 条状格 0.6975   ← 抹开在【更陡】处
+  ★ 抹开格 未决(!resolved) 占比 = 72.7%          ← 绝大多数是【未决格】
+  B 传播涂宽 = 2042 (18.9%)                    
+=====LOOP_SAMPLE=====
+nerateMountainPathsForRegion$3` 的容差是 `abs(d) < 4`、`$4` 是 `abs(d) < 1`（`HydrologyManager.txt:5185-5211`）⇒ **山地河只在地形查询的 ±4块容差内做决策**。而平原主河**完全不查地形**。
+
+### 2.2 ★ 几何雕刻的依赖（用户点名核查项）
+
+`getRiverCarve(double x, double z, double y)`（`HydrologyManager.txt:3805-3964`，160 行字节码）—— **纯函数、零地形依赖**：
+
+```java
+L3807-3818: regionX = (int)floor(x/640.0); regionZ = (int)floor(z/640.0);   // 3×3 邻域 = 9 region
+L3854-3866: d2 = path.intersectDistanceSq(x,z);
+           if (d2 > (path.width+15)^2) continue;                            
+=====LOOP_SAMPLE=====
+lineEndToEndProbe.java:19` 的 javadoc 明确写了判据 ④ 是"**守恒**：水量平衡账本闭合（降水−蒸发−溢流−储量）"，**但该探针的实现里根本没有这一条**（只实现了水位收敛 `criterion1` 和流量收敛 `criterion3`，见 `:66-73`；`criterion2` 湖泊一致性连代码都没有）。
+
+### 4.2 也就是说**"六阶段全周期"这个用户目标，在水量守恒这个维度上是完全未被验证的。** 现有的水量守恒证明全部属于另一条 PDE 数值模型线，与 `model/` 管线不是同一套算法。
+
+### 4.3 建议
+
+在 `HydrologyPipeline.Result` 上加一个显式的账本并作为门禁：
+
+```
+Σ_all_cells (precipitation × runoffCoeff × cellArea)          // 总降水径流
+  == Σ_lakeBasins evaporationOut // 湖面蒸发 + Σ_basins outflow                                         
+=====LOOP_SAMPLE=====
+何混合**。
+
+---
+
+## Q2：水流方向从哪来？`storeFlowDirection` 如何决定每格流向？有"脊线方向 + 向心项"吗？系数是多少？
+
+**结论一句话：YES —— 方向 = 河段脊线单位向量 `ds = (dx,dz)/|·|` + 一个**很受抑制**的向心项 `inward × turnWeight`，`turnWeight = normalizedDist × 0.35 × lakeDampening`。你说的 ×0.35 就是这里。**
+
+证据（`storeFlowDirection` 全部逻辑）：
+- `common/.../cell/rivermap/river/UpliftRiverCarver.java:200-253`，关键摘录：
+
+```java
+// 1. Pure downstream unit vector along the river spine      —— 主项
+float dsX = dx / segmentLength;
+float dsZ = dz / segmentLength;                               
+=====LOOP_SAMPLE=====
+h[-1])
+        source_raw = float(nodes[source_id].height)
+        outlet_raw = float(nodes[outlet_id].height)
+        outlet_height = float(getattr(nodes[outlet_id], "river_height", outlet_raw))
+        raw_span = source_raw - outlet_raw
+
+        if raw_span <= RIVER_MIN_DROP:
+            source_height = outlet_height          # ← 完全平坦的河：源头=出口，全河同高
+        else:
+            source_height = source_raw - drop      # ← 源头硬性下调 0.005
+            if source_height < outlet_height + RIVER_MIN_DROP:
+               
+=====LOOP_SAMPLE=====
+ 月删掉 flooding（priority-flood）的理由就是 README 原话的 "buggyness and slowness"**。
+
+### 证据
+
+**1) 粒子模拟，容器就叫 `Drop`**
+
+`README.md:1-2`：
+
+> C++ implementation of a **particle based** procedural hydrology system for terrain generation. This extends simple particle based hydraulic erosion to capture streams and pools.
+
+`water.h:12-39` —— `struct Drop` 含 `pos / speed / volume / sediment / age`：
+
+```cpp
+struct Drop {
+  int age = 0;
+  glm::vec2 pos;
+  glm::vec2 speed = glm::vec2(0.0);
+  float volume = 1.0;                  
+=====LOOP_SAMPLE=====
+用户的直觉被证据完全证实了。先给结论，再实测验证。
+
+## 诊断：我们的 model 链**不是骨架式的**，是蒙特卡洛
+
+决定性证据（`ContinuousRiverNetwork.build`）：
+
+```java
+for (int s = 0; s < samples; s++) {          // 撒 50,000 条随机起点流线
+    double x = unit(state) * (nx - 2) + 1.0;  // 随机起点
+    trace(...);                              
+=====LOOP_SAMPLE=====
+用户的直觉完全正确。先给诊断，再用实测确认。
+
+## 诊断：我们的 model 链**不是骨架连接**，是蒙特卡洛
+
+决定性证据在 [ContinuousRiverNetwork.java:212](forge-1.20.1-47.4.10-mdk/src/main/java/com/geogenesis/worldgen/hydrology/model/ContinuousRiverNetwork.java#L212)：
+
+```java
+for (int s = 0; s < samples; s++) {           // 撒 50,000 条【随机起点】流线
+    double x = unit(state) * (nx - 2) + 1.0;   // 随机起点
+    trace(...);                               
+=====LOOP_SAMPLE=====
+找到了**第二处、更关键的串行化**：`columnsFor` 的调用序列是
+
+```java
+RegionData rd = regionFor(中心);           // ← 阻塞等待本 region
+schedulePreheat(...);                      
+=====LOOP_SAMPLE=====
+141 秒疑点拆开了——**大头不在水文**。时间线：
+
+```
+19:00:47  Starting integrated server
+19:00:47~19:03:01  【134 秒】远处 erosion tile 生成（-3792,-4224 / 3120,2688…，
+                   
+=====LOOP_SAMPLE=====
+ 秒疑点拆解完成。先给你结论，游戏现在**已经开着可以直接看**。
+
+## 分析结果
+
+**1. 我的修复生效了（出生点水文对比）**：
+
+| 出生点预加载 | 修复前（串行）| 修复后（并行）|
+|---|---|---|
+| 第 1 块 | hydro=**21303ms** | hydro=**9036ms** |
+| 第 2 块 | hydro=**18140ms** | hydro=**539ms** |
+| 第 3 块 | hydro=**9595ms** | hydro=**3146ms** |
+| 后续 | 20490ms（还有）| **49~54ms** |
+| **合计** | **≈70 秒** | **≈12.8 秒** |
+
+日志里 region 求解时间线已**重叠**（19:03:08 / 11 / 12 / 17 / 18 / 21…多线程并发），证实并行生效。
+
+**2. 但 141 秒大头不在水文**——时间线拆开：
+
+```
+19:00:47  世界服务器启动
+19:01~19:03:01  【134 秒】远处 erosion tile 冷生成
+             
+=====LOOP_SAMPLE=====
+机制完全确认。`SegmentIndex` 的几何是**连续精确的**（`x0 = originX + (c/ n)*step`、`h0 = r.width*0.5` block 单位），逐块 `nearest` 也精确。
+
+**关键缺陷**：`columnsFor` 里河道判定**只在 `!p.lake()[k]` 之后才做**，且 `k` 用的是 **`Math.round` 到 4 块网格**的索引。而 `p.channel()[k]`（粗网格布尔）**根本没被使用**——真正的问题是：
+
+```java
+int gi = round((blockX - originX) / 4.0);   // ← 4 块网格索引
+...
+if (p.lake()[k]) { ... }                    
+=====LOOP_SAMPLE=====
+诊断推翻了我的假设：
+
+```
+粗格布尔命中(coarseLake)=3632      ← 模型原始给的
+逐块精算命中(isLakeBlock)=3976     ← 我改后的（反而多了）
+粗格真但精算否=130                
+=====LOOP_SAMPLE=====
+**找到了底图不同的原因，这是我的第三个工具错误**：
+
+```java
+// CanonicalViewProbe（正典）第 97 行：
+double bandBlocks = Math.max(4.0, (hMax - hMin) / 24.0);   // ← 按【本图自身】高程范围自适应
+...
+ViewSpec.contour(r.bed(), n, i, j, hMin, bandBlocks)        // ← 用自适应档距
+
+// 我的产探针：
+ViewSpec.contourFixed(bed, n, i, j)                        
+=====LOOP_SAMPLE=====
+**找到第三个工具错误了** —— 这就是"底图看起来不一样"的原因：
+
+```java
+// CanonicalViewProbe（出你那张图的探针）第 97 行：
+double bandBlocks = Math.max(4.0, (hMax - hMin) / 24.0);  // ← 按【本图自身】高程范围自适应
+ViewSpec.contour(r.bed(), n, i, j, hMin, bandBlocks);      // ← 自适应档距
+
+// 我的生产探针：
+ViewSpec.contourFixed(bed, n, i, j);                      

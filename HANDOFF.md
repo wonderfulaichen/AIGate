@@ -53,6 +53,17 @@
 
 版本 **0.7.1**。仓库 `github.com/wonderfulaichen/AIGate`。
 
+> 🩺 **排障入口（2026-10-07 新增）：IDE 里「跑一会就突然停下」先查循环检测误报**
+> ```
+> # 在网关目录里找这类行 —— 有就说明是网关主动截断的流, 不是客户端问题
+> Select-String -Path aigate.log -Pattern 'loop detected, truncating stream'
+> ```
+> 判据链：网关发了 `finish_reason:"length"` + `[DONE]` 收尾 → 客户端看到的是**正常结束**
+> （该轮无 tool_calls）→ 任务中断。误报根因是「末尾 12 个相同字符即判循环」把**代码块对齐用的
+> 成串空格**当成了死循环（实机 17/17 条样本末尾都是 13~41 个空格）。已修：纯空白不参与判据
+> （满窗纯空白仍判）。样本固化为 `tools/loop_samples.txt` + 单测回归（两套配置）。
+> 另注意：截断时记录页显示的是 **200 + 无 usage**（`in=0 out=0`），别读成"正常请求"。
+
 > 🔖 **0.7.1 已发布（2026-10-04）**：`Cargo.toml` / `site/index.html` / `README` / CHANGELOG 四处已同步。
 > 0.7.0 节点现为**纯前端重做**（54 小节）；0.7.1 收录 09-28 之后的全部工作（7 小节：内置预设 / CodeBuddy 反代 /
 > 剥离协议安全 / Responses 省量记账 / 记录与统计 / 错误可行动化 / 品牌标母版）。
