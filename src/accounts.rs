@@ -200,35 +200,6 @@ impl AccountStore {
         effective_id
     }
 
-    /// 覆盖式写入某供应商的全部账号 (内部用: 续期/冷却更新).
-    async fn set_all(&self, provider: &str, list: Vec<AccountEntry>) {
-        let mut m = self.map.write().await;
-        if list.is_empty() {
-            m.remove(provider);
-        } else {
-            m.insert(provider.to_string(), list);
-        }
-        let snapshot = m.clone();
-        drop(m);
-        Self::write_atomic(&self.path, &snapshot);
-    }
-
-    /// 旧接口: 覆盖写单条 (只影响优先级最高的那条; 无则新建). 供既有调用点平滑迁移.
-    pub async fn set(&self, provider: &str, entry: AccountEntry) {
-        let mut list = self.entries(provider).await;
-        match list.first_mut() {
-            Some(first) => {
-                let keep = first.id.clone();
-                *first = entry;
-                if first.id.is_empty() {
-                    first.id = keep;
-                }
-            }
-            None => list.push(entry),
-        }
-        self.set_all(provider, list).await;
-    }
-
     /// 按 id 原地更新一个账号 (续期/冷却标记).
     pub async fn update_by_id<F: FnOnce(&mut AccountEntry)>(&self, provider: &str, id: &str, f: F) {
         let mut m = self.map.write().await;
@@ -524,7 +495,19 @@ pub async fn refresh_account(
 //   3. GET  /v2/plugin/auth/token?state=... 轮询 (code 11217=未就绪继续, 5 分钟超时)
 //      → accessToken / refreshToken / expiresIn(相对秒) → 写 accounts.json
 
-const BUDDY_ENDPOINT: &str = "https://copilot.tencent.com";
+/// 浏览器一键登录的官方端点.
+///
+/// 可用 `AIGATE_BUDDY_ENDPOINT` 覆盖 —— 这**不是给用户用的配置**, 而是给端到端测试留的接缝:
+/// 该路径原先端点写死, 导致「浏览器登录第二个账号会不会覆盖第一个」这类回归**无法被测到**
+/// (2026-10-07 正是如此漏掉一个真 bug: 再登录一个号后列表仍是 1 个). 有了它, 探针可以把
+/// state/token 指向 mock, 完整跑一遍 登录→轮询→落盘→账号数, 并用上游实收请求做判据.
+fn buddy_endpoint() -> String {
+    std::env::var("AIGATE_BUDDY_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://copilot.tencent.com".to_string())
+}
+
 const BUDDY_UA: &str = "CodeBuddyIDE/1.106.1";
 const AUTH_STATE_PATH: &str = "/v2/plugin/auth/state";
 const AUTH_TOKEN_PATH: &str = "/v2/plugin/auth/token";
@@ -562,7 +545,7 @@ pub async fn buddy_login_start(
     sessions: &LoginSessions,
     provider: &str,
 ) -> Result<String, String> {
-    let url = format!("{BUDDY_ENDPOINT}{AUTH_STATE_PATH}?platform=ide");
+    let url = format!("{}{AUTH_STATE_PATH}?platform=ide", buddy_endpoint());
     let resp = client
         .post(&url)
         .header("X-Domain", "copilot.tencent.com")
@@ -611,7 +594,7 @@ pub async fn buddy_login_poll(
         Some(s) => s.state.clone(),
         None => return,
     };
-    let url = format!("{BUDDY_ENDPOINT}{AUTH_TOKEN_PATH}?state={}", urlencode(&state));
+    let url = format!("{}{AUTH_TOKEN_PATH}?state={}", buddy_endpoint(), urlencode(&state));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(LOGIN_TIMEOUT_SECS);
     loop {
         if std::time::Instant::now() >= deadline {
@@ -641,7 +624,11 @@ pub async fn buddy_login_poll(
                 }
                 match parse_login_token(data) {
                     Some(entry) => {
-                        store.set(&provider, entry).await;
+                        // ⚠️ 必须用 add (追加), 不能用覆盖式写入 —— 多账号下"再登录一个号"
+                        // 会静默把已有账号冲掉 (2026-10-07 实测 bug: 浏览器登录第二个号后
+                        // 面板仍只显示 1 个). 覆盖式 set() 已整个删除, 就是为了让这类错误
+                        // 无法再编译通过.
+                        store.add(&provider, entry).await;
                         if let Some(s) = sessions.write().await.get_mut(&provider) {
                             s.status = "ok".to_string();
                             s.error = None;
@@ -890,7 +877,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = AccountStore::new(dir.to_str().unwrap());
         store
-            .set(
+            .add(
                 "buddy",
                 AccountEntry {
                     id: String::new(),
