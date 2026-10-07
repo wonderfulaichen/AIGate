@@ -295,8 +295,8 @@ pub async fn chat_completions(
         bytes.len()
     );
 
-    // 4. 获取 API key (通过 KeyStore)
-    let key = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
+    // 4. 获取 API key (通过 KeyStore); 账号型供应商同时带回**账号 id** 供换号重试.
+    let (key, mut account_id) = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
         Ok(k) => k,
         Err(e) => {
             crate::admin::record_request(
@@ -586,6 +586,8 @@ pub async fn chat_completions(
     let mut upstream: Option<reqwest::Response> = None;
     let mut send_err: Option<String> = None;
     let mut attempt = 0u32;
+    // 已经用过的账号 id (换号重试时排除, 避免来回打同一个被拒的号).
+    let mut tried_accounts: Vec<String> = Vec::new();
     loop {
         attempt += 1;
         // 每次重试前复检熔断状态. 必须用**非消费式**的 breaker_allows_retry: 入口已认领
@@ -611,6 +613,27 @@ pub async fn chat_completions(
         {
             Ok(resp) => {
                 let status = resp.status().as_u16();
+                // 账号换号重试 (多账号): 401/403 = 这个号被拒 (凭据/权限/额度/策略拦截).
+                // 客户端对 Auth/Permission 类错误不重试 → 网关内换号是唯一能无感接管的地方.
+                if matches!(status, 401 | 403) {
+                    if let Some(cur) = account_id.clone() {
+                        let mut tried = tried_accounts.clone();
+                        tried.push(cur.clone());
+                        if let Some((tok, id)) = failover_to_next_account(
+                            &state, &provider, &provider_name, &cur, &tried,
+                        )
+                        .await
+                        {
+                            if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {tok}")) {
+                                req_headers
+                                    .insert(HeaderName::from_static("authorization"), hv);
+                                tried_accounts.push(cur);
+                                account_id = Some(id);
+                                continue; // 用新账号重发
+                            }
+                        }
+                    }
+                }
                 if status >= 500 {
                     // 5xx 可重试 (服务端瞬态故障); 不重试 4xx (含 429).
                     if attempt < total_attempts {
@@ -1255,8 +1278,8 @@ async fn relay_native_passthrough(
         return Err(proto.circuit_open_response(&state, &provider_name));
     }
 
-    // API key.
-    let key = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
+    // API key (+ 账号 id, 供换号重试).
+    let (key, mut account_id) = match state.registry.read().await.api_key(&provider, &state.key_store, Some(&state.accounts), &state.client).await {
         Ok(k) => k,
         Err(e) => {
             crate::admin::record_request(
@@ -1350,6 +1373,8 @@ async fn relay_native_passthrough(
     let mut upstream: Option<reqwest::Response> = None;
     let mut send_err: Option<String> = None;
     let mut attempt = 0u32;
+    // 已经用过的账号 id (换号重试时排除, 避免来回打同一个被拒的号).
+    let mut tried_accounts: Vec<String> = Vec::new();
     loop {
         attempt += 1;
         // 非消费式复检 (入口已认领 HalfOpen 探测名额, 不能再调 check_breaker).
@@ -1373,6 +1398,26 @@ async fn relay_native_passthrough(
         {
             Ok(resp) => {
                 let status = resp.status().as_u16();
+                // 账号换号重试 (多账号): 见 chat 路径同款说明.
+                if matches!(status, 401 | 403) {
+                    if let Some(cur) = account_id.clone() {
+                        let mut tried = tried_accounts.clone();
+                        tried.push(cur.clone());
+                        if let Some((tok, id)) = failover_to_next_account(
+                            &state, &provider, &provider_name, &cur, &tried,
+                        )
+                        .await
+                        {
+                            if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {tok}")) {
+                                req_headers
+                                    .insert(HeaderName::from_static("authorization"), hv);
+                                tried_accounts.push(cur);
+                                account_id = Some(id);
+                                continue; // 用新账号重发
+                            }
+                        }
+                    }
+                }
                 if status >= 500 && attempt < total_attempts {
                     warn!("{tag}: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
                     retry_backoff(attempt, backoff_base).await;
@@ -4139,6 +4184,47 @@ fn resolve_strip_toolcall(
     } else {
         chat_enabled
     })
+}
+
+/// 多账号换号: 当前账号被上游拒 (401/403) 时, 标记它冷却并取出下一个健康账号.
+///
+/// 为什么在网关做: 401/403 对客户端属**终态**错误 (Auth/Permission 不重试), 只有网关
+/// 能在换号后重发. 安全性: 该状态发生在上游**尚未生成内容**时, 重发不重复计费、不会
+/// 产生重复输出. 无其他可用账号时返回 None (照原样把 401/403 交给客户端).
+async fn failover_to_next_account(
+    state: &AppState,
+    provider: &crate::providers::ProviderConfig,
+    provider_name: &str,
+    failed_id: &str,
+    tried: &[String],
+) -> Option<(String, String)> {
+    let auth = provider.auth.as_ref()?;
+    if auth.mode != crate::providers::AuthMode::Account {
+        return None;
+    }
+    /// 单个账号被拒后的冷却时长: 冷却期内不参与选号 (到期自动恢复).
+    /// 与 `dead` 的区别: dead = 凭据作废需重登, cooldown = 暂时别用这个号.
+    const ACCOUNT_COOLDOWN_SECS: u64 = 1800; // 30 分钟
+    let next = crate::accounts::failover_account(
+        &state.accounts,
+        provider_name,
+        failed_id,
+        ACCOUNT_COOLDOWN_SECS,
+        auth.expiry_margin_secs,
+        auth.refresh.as_ref(),
+        &state.client,
+        tried,
+    )
+    .await;
+    match &next {
+        Some((_, id)) => warn!(
+            "proxy: provider={provider_name} 账号 {failed_id} 被上游拒绝 → 冷却 {ACCOUNT_COOLDOWN_SECS}s, 换用账号 {id} 重试"
+        ),
+        None => warn!(
+            "proxy: provider={provider_name} 账号 {failed_id} 被上游拒绝, 且无其他可用账号 → 原样返回"
+        ),
+    }
+    next
 }
 
 fn inject_model_params(

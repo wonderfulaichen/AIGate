@@ -1371,21 +1371,28 @@ pub async fn api_accounts_login(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let entry = crate::accounts::AccountEntry {
+        // 面板传 label 时用它; 否则留空 (前端按序号显示).
+        id: String::new(), // 由 store.add 生成
+        label: payload.get("label").and_then(|v| v.as_str()).map(|s| s.to_string()),
         access_token: token,
         refresh_token,
         expires_at: if expires_in > 0 { Some(now + expires_in) } else { None },
         dead: false,
+        cooldown_until: None,
         updated_at: Some(now),
     };
-    state.accounts.set(&name, entry).await;
+    // **追加**而不是覆盖: 多账号场景下同一个供应商可以登录多个号 (token 相同则原地更新).
+    state.accounts.add(&name, entry).await;
     Json(serde_json::json!({
         "message": crate::i18n::pick("登录成功", "Signed in"),
         "accounts": state.accounts.status_map().await,
     }))
 }
 
-/// POST /admin/api/accounts/logout — 登出: 删除该供应商的账号凭据 (落盘).
-/// 之后转发回落 api_key 链; 供应商条目本身不动.
+/// POST /admin/api/accounts/logout — 登出.
+///
+/// 带 `id` → 只登出该账号 (多账号场景的常态); 不带 → 清空该供应商全部账号.
+/// 登出后转发回落 api_key 链; 供应商条目本身不动.
 pub async fn api_accounts_logout(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<serde_json::Value>,
@@ -1394,9 +1401,22 @@ pub async fn api_accounts_logout(
         Some(n) if !n.is_empty() => n.to_string(),
         _ => return Json(serde_json::json!({ "error": "缺少 name" })),
     };
-    state.accounts.remove(&name).await;
+    let id = payload.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    let msg = match id {
+        Some(id) => {
+            if state.accounts.remove_by_id(&name, id).await {
+                crate::i18n::pick("已登出该账号", "Signed out")
+            } else {
+                crate::i18n::pick("未找到该账号", "Account not found")
+            }
+        }
+        None => {
+            state.accounts.remove(&name).await;
+            crate::i18n::pick("已登出全部账号", "Signed out all accounts")
+        }
+    };
     Json(serde_json::json!({
-        "message": crate::i18n::pick("已登出", "Signed out"),
+        "message": msg,
         "accounts": state.accounts.status_map().await,
     }))
 }
@@ -1496,21 +1516,46 @@ pub async fn api_accounts_refresh(
     let Some(rc) = auth.refresh.as_ref() else {
         return Json(serde_json::json!({ "error": "该供应商未配置 refresh 端点" }));
     };
-    match crate::accounts::refresh_account(
-        &state.client,
-        rc,
-        &name,
-        &state.accounts,
-        u64::MAX / 2, // 强制: 永远"临期", 直接打续期 (串行闸内复查不会短路)
-    )
-    .await
-    {
-        Ok(entry) => Json(serde_json::json!({
-            "message": crate::i18n::pick("续期成功", "Refresh succeeded"),
-            "expires_at": entry.expires_at,
-        })),
-        Err(e) => Json(serde_json::json!({ "error": e })),
+    // 强制续期该供应商的**全部账号** (margin=MAX/2 → 永远"临期", 串行闸内复查不会短路).
+    let list = state.accounts.entries(&name).await;
+    if list.is_empty() {
+        return Json(serde_json::json!({ "error": "该供应商还没有账号, 请先登录" }));
     }
+    let mut ok = 0usize;
+    let mut errs: Vec<String> = Vec::new();
+    for e in &list {
+        match crate::accounts::refresh_account(
+            &state.client,
+            rc,
+            &name,
+            &e.id,
+            &state.accounts,
+            u64::MAX / 2,
+        )
+        .await
+        {
+            Ok(_) => ok += 1,
+            Err(err) => errs.push(format!("{}: {err}", short_acct(&e.id))),
+        }
+    }
+    let ok_msg: String = format!("{} {}", crate::i18n::pick("已续期", "Refreshed"), format!("{ok} {}", crate::i18n::pick("个账号", "account(s)")));
+    let fail_msg: String = format!("{ok} {} / {} {}", crate::i18n::pick("个成功", "ok"), errs.len(), crate::i18n::pick("个失败", "failed"));
+    match (ok, errs.is_empty()) {
+        (_, true) => Json(serde_json::json!({
+            "message": ok_msg,
+            "accounts": state.accounts.status_map().await,
+        })),
+        _ => Json(serde_json::json!({
+            "error": errs.join("; "),
+            "message": fail_msg,
+            "accounts": state.accounts.status_map().await,
+        })),
+    }
+}
+
+/// 账号 id 短显示 (面板/日志里不必看全串).
+fn short_acct(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 pub async fn api_keys_put(
@@ -1605,7 +1650,7 @@ pub async fn api_providers_fetch_models(
             Some(p) => p,
             None => return Json(serde_json::json!({ "error": crate::i18n::msg_provider_not_found(&name) })),
         };
-        let key = match registry
+        let (key, _account_id) = match registry
             .api_key(&provider, &state.key_store, Some(&state.accounts), &state.client)
             .await
         {

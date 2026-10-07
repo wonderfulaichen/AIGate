@@ -532,21 +532,23 @@ impl ProviderRegistry {
 
     /// 获取供应商的 API key (Key 是 provider 的子资源, 按 provider.name 索引).
     ///
-    /// 优先级 (2026-10-01 账号化):
-    /// - `auth.mode = "account"`: **账号凭据优先** (data/accounts.json; 临期自动续期,
-    ///   续期失败/账号缺失/作废 → 回落下面的密钥链作逃生舱);
+    /// 优先级 (2026-10-01 账号化 / 2026-10-07 多账号):
+    /// - `auth.mode = "account"`: **账号凭据优先** (data/accounts.json; 多账号按优先级选号,
+    ///   临期自动续期, 续期失败/账号缺失/作废 → 回落下面的密钥链作逃生舱);
     /// - `auth` 缺省 (api_key 模式): 面板设置值 (keys.json) → 环境变量 → api_key_default.
+    ///
+    /// 返回 `(key, 账号 id)` —— 账号 id 供转发层在 401/403 时定位是哪个号被拒并换号重试.
     pub async fn api_key(
         &self,
         provider: &ProviderConfig,
         key_store: &crate::keys::KeyStore,
         accounts: Option<&crate::accounts::AccountStore>,
         client: &reqwest::Client,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Option<String>), String> {
         if let Some(auth) = &provider.auth {
             if auth.mode == AuthMode::Account {
                 if let Some(store) = accounts {
-                    if let Some(tok) = crate::accounts::usable_token(
+                    if let Some((tok, id)) = crate::accounts::usable_token(
                         store,
                         &provider.name,
                         auth.expiry_margin_secs,
@@ -555,21 +557,21 @@ impl ProviderRegistry {
                     )
                     .await
                     {
-                        return Ok(tok);
+                        return Ok((tok, Some(id)));
                     }
                 }
             }
         }
         if let Some(k) = key_store.get_for_provider(&provider.name).await {
-            return Ok(k);
+            return Ok((k, None));
         }
         if let Ok(v) = std::env::var(&provider.api_key_env) {
             if !v.is_empty() {
-                return Ok(v);
+                return Ok((v, None));
             }
         }
         if let Some(default) = &provider.api_key_default {
-            Ok(default.clone())
+            Ok((default.clone(), None))
         } else {
             Err(format!(
                 "API key not set: provider '{}' has no panel key, env {} is empty, and no default",

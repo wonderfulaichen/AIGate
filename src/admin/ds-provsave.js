@@ -378,11 +378,17 @@
       }catch(e){ this.loginMsg=t('network_error'); }
       finally{ this.loginBusy=false; }
     },
-    async logoutProv(name){
+    // 登出: 传 id 只登出该账号 (多账号常态); 不传则清空该供应商全部账号.
+    async logoutProv(name, id){
       try{
-        const r=await fetch('/admin/api/accounts/logout',{method:'POST',headers:authHeaders(),body:JSON.stringify({name})});
+        const body = id ? {name, id} : {name};
+        const r=await fetch('/admin/api/accounts/logout',{method:'POST',headers:authHeaders(),body:JSON.stringify(body)});
         const d=await r.json();
-        if(!d.error){ this.accountsStatus=d.accounts||{}; this.keyMsg=t('logout'); setTimeout(()=>{ this.keyMsg=''; },3000); }
+        if(!d.error){
+          this.accountsStatus=d.accounts||{};
+          this.keyMsg=d.message||t('logout');
+          setTimeout(()=>{ this.keyMsg=''; },3000);
+        }
       }catch(e){}
     },
     isAccountProv(p){ return !!(p.auth && p.auth.mode==='account'); },

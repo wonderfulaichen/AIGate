@@ -36,6 +36,13 @@ fn now_secs() -> u64 {
 /// 一条账号凭据.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AccountEntry {
+    /// 稳定标识 (本地生成, 与 token 无关) —— 面板按它登出/切换/排序单个账号.
+    /// 旧文件 (单账号、无 id) 加载时自动补, 不影响凭据本身.
+    #[serde(default)]
+    pub id: String,
+    /// 展示名 (可选, 用户自定义; 空则由面板按序号显示).
+    #[serde(default)]
+    pub label: Option<String>,
     pub access_token: String,
     /// 续期令牌 (可能被上游轮换; 响应里没有新值则沿用).
     #[serde(default)]
@@ -46,6 +53,11 @@ pub struct AccountEntry {
     /// 续期被 4xx 级拒绝 → 凭据作废, 停止自动续期, 待重新登录.
     #[serde(default)]
     pub dead: bool,
+    /// 上游拒绝 (401/403, 如策略拦截/额度用尽) 后的**冷却截止** (Unix 秒).
+    /// 冷却期内不参与选号, 到期自动恢复 —— 与 `dead` 的区别: dead 是凭据本身作废
+    /// (只能重新登录), cooldown 是"暂时别用这个号" (会自动恢复).
+    #[serde(default)]
+    pub cooldown_until: Option<u64>,
     #[serde(default)]
     pub updated_at: Option<u64>,
 }
@@ -60,13 +72,37 @@ impl AccountEntry {
     pub fn is_expiring(&self, now: u64, margin_secs: u64) -> bool {
         self.expires_at.is_some_and(|t| now + margin_secs >= t)
     }
+
+    /// 当前是否可用于选号 (未作废、不在冷却期).
+    pub fn is_available(&self, now: u64) -> bool {
+        !self.dead && self.cooldown_until.map_or(true, |t| now >= t)
+    }
 }
 
-/// 账号凭据存储. `data/accounts.json`, 按 `provider.name` 索引.
+/// 生成账号 id (本地唯一即可, 与凭据无关).
+///
+/// 不用 uuid 依赖: 纳秒时间戳 + 进程内自增计数, 单机唯一性足够.
+fn new_account_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("a{:x}{:x}", nanos, SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
+/// 账号凭据存储. `data/accounts.json`, 按 `provider.name` 索引, **每个供应商可存多个账号**.
+///
+/// 数组顺序 = **选号优先级** (面板可调整): 优先用靠前的健康账号, 失效自动跳到下一个.
+/// 为什么按优先级而不是轮询均摊: 上游 KV 缓存按账号隔离, 轮询会让同一会话的缓存命中
+/// 分裂到两个账号上; 优先级序既保住缓存亲和, 又能在号失效时自动接管.
+///
+/// 兼容旧文件: 旧版是 `{"buddy": {单账号对象}}`, 加载时自动升级成单元素数组 (并补 id).
 #[derive(Clone)]
 pub struct AccountStore {
     path: PathBuf,
-    map: Arc<RwLock<HashMap<String, AccountEntry>>>,
+    map: Arc<RwLock<HashMap<String, Vec<AccountEntry>>>>,
     /// 续期串行闸: 后台调度与请求路径可能同时判定"临期", 串行化并复查,
     /// 避免对上游并发 POST 同一个 refresh_token (若上游严格轮换, 后到者 4xx 会把
     /// 刚续好的健康账号误标 dead). 刷新是低频操作, 全局一把锁足够.
@@ -75,14 +111,43 @@ pub struct AccountStore {
 
 impl AccountStore {
     /// 从 data 目录加载 (文件不存在 = 空账号池, 不是错误).
+    /// 旧格式 (单账号对象) 自动升级为数组并补 id, 升级结果立即落盘.
     pub fn new(data_dir: &str) -> Self {
         let dir = PathBuf::from(data_dir);
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("accounts.json");
-        let map: HashMap<String, AccountEntry> = std::fs::read_to_string(&path)
+        let raw: HashMap<String, serde_json::Value> = std::fs::read_to_string(&path)
             .ok()
             .and_then(|c| serde_json::from_str(&c).ok())
             .unwrap_or_default();
+        let mut map: HashMap<String, Vec<AccountEntry>> = HashMap::with_capacity(raw.len());
+        let mut upgraded = false;
+        for (prov, v) in raw {
+            let mut list: Vec<AccountEntry> = match v {
+                // 新格式: 账号数组.
+                serde_json::Value::Array(_) => serde_json::from_value(v).unwrap_or_default(),
+                // 旧格式: 单个账号对象 → 升级为一元素数组.
+                other => match serde_json::from_value::<AccountEntry>(other) {
+                    Ok(e) => {
+                        upgraded = true;
+                        vec![e]
+                    }
+                    Err(_) => Vec::new(),
+                },
+            };
+            for e in list.iter_mut() {
+                if e.id.is_empty() {
+                    e.id = new_account_id();
+                    upgraded = true;
+                }
+            }
+            if !list.is_empty() {
+                map.insert(prov, list);
+            }
+        }
+        if upgraded {
+            Self::write_atomic(&path, &map);
+        }
         Self {
             path,
             map: Arc::new(RwLock::new(map)),
@@ -90,20 +155,110 @@ impl AccountStore {
         }
     }
 
-    pub async fn get(&self, provider: &str) -> Option<AccountEntry> {
-        self.map.read().await.get(provider).cloned()
+    /// 该供应商的全部账号 (副本, 按优先级顺序).
+    pub async fn entries(&self, provider: &str) -> Vec<AccountEntry> {
+        self.map.read().await.get(provider).cloned().unwrap_or_default()
     }
 
-    /// 写入单条 (并原子落盘).
-    pub async fn set(&self, provider: &str, entry: AccountEntry) {
+    /// 按 id 取单个账号.
+    pub async fn get_by_id(&self, provider: &str, id: &str) -> Option<AccountEntry> {
+        self.map
+            .read()
+            .await
+            .get(provider)?
+            .iter()
+            .find(|e| e.id == id)
+            .cloned()
+    }
+
+    /// 新增一个账号 (登录成功后调用). 返回新建账号的 id.
+    ///
+    /// 去重口径: **access_token 相同视为同一个账号** → 原地更新 (重新登录同一个号
+    /// 不该在列表里堆两条), 否则追加到末尾 (优先级最低, 前面用坏了才轮到它).
+    pub async fn add(&self, provider: &str, mut entry: AccountEntry) -> String {
+        if entry.id.is_empty() {
+            entry.id = new_account_id();
+        }
         let mut m = self.map.write().await;
-        m.insert(provider.to_string(), entry);
+        let list = m.entry(provider.to_string()).or_default();
+        let effective_id = match list.iter_mut().find(|e| e.access_token == entry.access_token) {
+            Some(existing) => {
+                let keep_id = existing.id.clone();
+                *existing = entry;
+                existing.id = keep_id.clone(); // 同一凭据保持原 id (面板选中态不跳)
+                keep_id
+            }
+            None => {
+                let id = entry.id.clone();
+                list.push(entry);
+                id
+            }
+        };
+        let snapshot = m.clone();
+        drop(m);
+        Self::write_atomic(&self.path, &snapshot);
+        effective_id
+    }
+
+    /// 覆盖式写入某供应商的全部账号 (内部用: 续期/冷却更新).
+    async fn set_all(&self, provider: &str, list: Vec<AccountEntry>) {
+        let mut m = self.map.write().await;
+        if list.is_empty() {
+            m.remove(provider);
+        } else {
+            m.insert(provider.to_string(), list);
+        }
         let snapshot = m.clone();
         drop(m);
         Self::write_atomic(&self.path, &snapshot);
     }
 
-    /// 删除单条 (登出: 清凭据, 并原子落盘). 不存在则无事.
+    /// 旧接口: 覆盖写单条 (只影响优先级最高的那条; 无则新建). 供既有调用点平滑迁移.
+    pub async fn set(&self, provider: &str, entry: AccountEntry) {
+        let mut list = self.entries(provider).await;
+        match list.first_mut() {
+            Some(first) => {
+                let keep = first.id.clone();
+                *first = entry;
+                if first.id.is_empty() {
+                    first.id = keep;
+                }
+            }
+            None => list.push(entry),
+        }
+        self.set_all(provider, list).await;
+    }
+
+    /// 按 id 原地更新一个账号 (续期/冷却标记).
+    pub async fn update_by_id<F: FnOnce(&mut AccountEntry)>(&self, provider: &str, id: &str, f: F) {
+        let mut m = self.map.write().await;
+        let Some(list) = m.get_mut(provider) else { return };
+        let Some(e) = list.iter_mut().find(|e| e.id == id) else { return };
+        f(e);
+        let snapshot = m.clone();
+        drop(m);
+        Self::write_atomic(&self.path, &snapshot);
+    }
+
+    /// 删除单个账号 (按 id). 返回是否删掉.
+    pub async fn remove_by_id(&self, provider: &str, id: &str) -> bool {
+        let mut m = self.map.write().await;
+        let Some(list) = m.get_mut(provider) else { return false };
+        let before = list.len();
+        list.retain(|e| e.id != id);
+        let removed = list.len() != before;
+        if list.is_empty() {
+            m.remove(provider);
+        }
+        if removed {
+            let snapshot = m.clone();
+            drop(m);
+            Self::write_atomic(&self.path, &snapshot);
+        }
+        removed
+    }
+
+    /// 删除某供应商的全部账号 (退出登录/清空).
     pub async fn remove(&self, provider: &str) {
         let mut m = self.map.write().await;
         if m.remove(provider).is_some() {
@@ -113,29 +268,50 @@ impl AccountStore {
         }
     }
 
-    /// 面板状态视图: 到期剩余秒数 / 是否作废 (永不返回 token 原文).
+    /// 标记某账号冷却 N 秒 (上游 401/403 拒了它): 冷却期内不参与选号.
+    pub async fn cooldown(&self, provider: &str, id: &str, secs: u64) {
+        let until = now_secs() + secs;
+        self.update_by_id(provider, id, |e| e.cooldown_until = Some(until)).await;
+    }
+
+    /// 面板状态视图: 每个供应商一组账号状态 (永不返回 token 原文).
+    ///
+    /// 值为**数组**, 顺序即优先级; 每项含 `active` = 当前会被选中的那个
+    /// (第一个可用账号), 面板据此高亮.
     pub async fn status_map(&self) -> HashMap<String, serde_json::Value> {
         let now = now_secs();
         self.map
             .read()
             .await
             .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    serde_json::json!({
-                        "expires_at": v.expires_at,
-                        "expires_in_secs": v.expires_at.map(|t| t.saturating_sub(now) as i64),
-                        "dead": v.dead,
-                        "has_refresh_token": v.refresh_token.is_some(),
-                        "updated_at": v.updated_at,
-                    }),
-                )
+            .map(|(k, list)| {
+                let active_id = list
+                    .iter()
+                    .find(|e| e.is_available(now))
+                    .map(|e| e.id.clone());
+                let arr: Vec<serde_json::Value> = list
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "id": v.id,
+                            "label": v.label,
+                            "expires_at": v.expires_at,
+                            "expires_in_secs": v.expires_at.map(|t| t.saturating_sub(now) as i64),
+                            "dead": v.dead,
+                            "cooldown_until": v.cooldown_until,
+                            "cooling": v.cooldown_until.map_or(false, |t| now < t),
+                            "has_refresh_token": v.refresh_token.is_some(),
+                            "updated_at": v.updated_at,
+                            "active": active_id.as_deref() == Some(v.id.as_str()),
+                        })
+                    })
+                    .collect();
+                (k.clone(), serde_json::Value::Array(arr))
             })
             .collect()
     }
 
-    fn write_atomic(path: &std::path::Path, map: &HashMap<String, AccountEntry>) {
+    fn write_atomic(path: &std::path::Path, map: &HashMap<String, Vec<AccountEntry>>) {
         let json = serde_json::to_string_pretty(map).unwrap_or_default();
         let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, &json).is_ok() {
@@ -144,43 +320,98 @@ impl AccountStore {
     }
 }
 
-/// 取可用 token: 账号缺失/已作废/已过期且无法续期 → None (调用方回落 api_key 链).
+/// 取可用 token (含账号 id): 账号缺失/全部作废/全部冷却 → None (调用方回落 api_key 链).
 ///
-/// 续期策略: 临期(margin 内) 尝试续期、失败仍用旧值 (还没过期);
-/// 硬过期则必须续期成功, 否则 None —— 拿过期 token 打上游只会换来必败的 401.
+/// 选号规则 (**按优先级顺序**, 面板里的顺序即优先级):
+/// 1. 从前往后找第一个"可用"账号 (`is_available`: 未作废、不在冷却期);
+/// 2. 该号过期 → 必须先续期成功才用 (拿过期 token 打上游只会换来必败的 401);
+///    临期 → 尝试续期, 失败仍用旧值 (还没过期);
+/// 3. 该号在续期时被判作废 (dead) → **自动跳到下一个**可用账号.
+///
+/// 上游 KV 缓存按账号隔离, 故不做轮询均摊 (轮询会把同一会话的缓存命中分裂到多个账号);
+/// 优先级序既能保住缓存亲和, 又能在号失效时自动接管.
 pub async fn usable_token(
     store: &AccountStore,
     provider: &str,
     margin_secs: u64,
     refresh: Option<&RefreshConfig>,
     client: &reqwest::Client,
-) -> Option<String> {
-    let mut entry = store.get(provider).await?;
-    if entry.dead {
-        return None;
-    }
-    let now = now_secs();
-    if entry.is_expired(now) {
-        let rc = refresh?;
-        match refresh_account(client, rc, provider, store, margin_secs).await {
-            Ok(new) => entry = new,
-            Err(e) => {
-                tracing::warn!("accounts: '{provider}' 过期续期失败: {e} -> 回落 api_key 链");
-                return None;
-            }
-        }
-    } else if entry.is_expiring(now, margin_secs) {
-        if let Some(rc) = refresh {
-            // 临期续期失败不致命: 旧 token 尚未过期, 继续使用, 下周期重试.
-            if let Ok(new) = refresh_account(client, rc, provider, store, margin_secs).await {
-                entry = new;
-            }
-        }
-    }
-    Some(entry.access_token)
+) -> Option<(String, String)> {
+    pick_account(store, provider, margin_secs, refresh, client, &[]).await
 }
 
-/// 执行一次续期.
+/// 选出一个可用账号, 排除 `exclude` 里的 id (换号重试用).
+///
+/// 返回 `(access_token, account_id)`.
+pub async fn pick_account(
+    store: &AccountStore,
+    provider: &str,
+    margin_secs: u64,
+    refresh: Option<&RefreshConfig>,
+    client: &reqwest::Client,
+    exclude: &[String],
+) -> Option<(String, String)> {
+    let list = store.entries(provider).await;
+    let now = now_secs();
+    for cand in list.iter().filter(|e| !exclude.contains(&e.id)) {
+        if !cand.is_available(now) {
+            continue;
+        }
+        let mut entry = cand.clone();
+        if entry.is_expired(now) {
+            let rc = refresh?;
+            match refresh_account(client, rc, provider, &entry.id, store, margin_secs).await {
+                Ok(new) => entry = new,
+                Err(e) => {
+                    // 硬过期又续不成 → 该号不可用, 试下一个 (换号接管).
+                    tracing::warn!(
+                        "accounts: '{provider}' 账号 {} 过期续期失败: {e} -> 试下一个账号/回落 api_key 链",
+                        entry.id
+                    );
+                    continue;
+                }
+            }
+        } else if entry.is_expiring(now, margin_secs) {
+            if let Some(rc) = refresh {
+                // 临期续期失败不致命: 旧 token 尚未过期, 继续使用, 下周期重试.
+                if let Ok(new) = refresh_account(client, rc, provider, &entry.id, store, margin_secs).await {
+                    entry = new;
+                }
+            }
+        }
+        return Some((entry.access_token, entry.id));
+    }
+    None
+}
+
+/// 标记某账号被上游拒绝 (401/403) → 冷却, 并在还有别的健康号时取出一个顶上.
+///
+/// 为什么换号重试是安全的: 401/403 发生在上游**尚未生成内容**时, 重发不重复计费、
+/// 不会产生重复输出; 而客户端对这类错误通常不重试 (Auth/Permission 属终态) ——
+/// 网关内换号是唯一能把它变成"无感"的地方.
+///
+/// ⚠️ **没有可换的号时不冷却**: 单账号供应商被判 401 多半就是凭据/配置真的不对,
+/// 冷却它只会让后续请求悄悄回落到密钥链、把真实错误盖掉 (用户看到的是另一个错)。
+/// 此时原样把 401 交给客户端才诚实。
+pub async fn failover_account(
+    store: &AccountStore,
+    provider: &str,
+    failed_id: &str,
+    cooldown_secs: u64,
+    margin_secs: u64,
+    refresh: Option<&RefreshConfig>,
+    client: &reqwest::Client,
+    tried: &[String],
+) -> Option<(String, String)> {
+    // 先找接班人: 找不到就不冷却 (见上).
+    let next = pick_account(store, provider, margin_secs, refresh, client, tried).await;
+    if next.is_some() {
+        store.cooldown(provider, failed_id, cooldown_secs).await;
+    }
+    next
+}
+
+/// 执行一次续期 (按账号 id).
 ///
 /// 判定 (实测 + 插件文档):
 /// - HTTP 非 2xx 或业务码非 0 (腾讯系 `{code:0}` 才是成功) → 失败;
@@ -190,6 +421,7 @@ pub async fn refresh_account(
     client: &reqwest::Client,
     rc: &RefreshConfig,
     provider: &str,
+    account_id: &str,
     store: &AccountStore,
     margin_secs: u64,
 ) -> Result<AccountEntry, String> {
@@ -197,9 +429,9 @@ pub async fn refresh_account(
     // 不重复 POST (与调用方判断"需要续期"的口径保持一致: 过期 或 临期 margin 内).
     let _gate = store.refresh_gate.lock().await;
     let entry = store
-        .get(provider)
+        .get_by_id(provider, account_id)
         .await
-        .ok_or_else(|| format!("账号不存在: {provider}"))?;
+        .ok_or_else(|| format!("账号不存在: {provider}/{account_id}"))?;
     if entry.dead {
         return Err("凭据已失效 (dead), 需重新登录".to_string());
     }
@@ -233,10 +465,12 @@ pub async fn refresh_account(
     if !code_ok {
         let dead = matches!(status, 400 | 401 | 403);
         if dead {
-            let mut e = entry;
-            e.dead = true;
-            e.updated_at = Some(now_secs());
-            store.set(provider, e).await;
+            store
+                .update_by_id(provider, account_id, |e| {
+                    e.dead = true;
+                    e.updated_at = Some(now_secs());
+                })
+                .await;
         }
         return Err(format!(
             "续期被拒 HTTP {status}{}: {}",
@@ -263,15 +497,21 @@ pub async fn refresh_account(
     let new_rt = pick(&rc.refresh_token_path); // 未轮换 = 沿用旧值
     let expires_in = pick(&rc.expires_in_path).and_then(|s| s.parse::<u64>().ok());
     let now = now_secs();
-    let entry = AccountEntry {
+    let updated = AccountEntry {
+        // id / label 保持不变 (续期只换凭据, 不换身份).
+        id: entry.id.clone(),
+        label: entry.label.clone(),
         access_token,
         refresh_token: new_rt.or(entry.refresh_token),
         expires_at: expires_in.map(|s| now + s),
         dead: false,
+        cooldown_until: None, // 续期成功 = 凭据是好的, 顺手解冷却
         updated_at: Some(now),
     };
-    store.set(provider, entry.clone()).await;
-    Ok(entry)
+    store
+        .update_by_id(provider, &entry.id, |e| *e = updated.clone())
+        .await;
+    Ok(updated)
 }
 
 // ── 浏览器一键登录 (2026-10-01, harness buddy-oauth.ts 同款流程) ──
@@ -457,10 +697,13 @@ fn parse_login_token(data: &serde_json::Value) -> Option<AccountEntry> {
             .map(|secs| now + secs),
     };
     Some(AccountEntry {
+        id: new_account_id(),
+        label: None,
         access_token: access.to_string(),
         refresh_token: refresh,
         expires_at,
         dead: false,
+        cooldown_until: None,
         updated_at: Some(now),
     })
 }
@@ -532,10 +775,13 @@ mod tests {
     #[test]
     fn expiry_semantics() {
         let e = AccountEntry {
+            id: "a1".into(),
+            label: None,
             access_token: "t".into(),
             refresh_token: Some("r".into()),
             expires_at: Some(1_000_000),
             dead: false,
+            cooldown_until: None,
             updated_at: None,
         };
         assert!(!e.is_expired(999_999));
@@ -547,6 +793,94 @@ mod tests {
             ..e.clone()
         };
         assert!(!e2.is_expired(2_000_000), "无到期信息不主动判过期");
+        // 可用性: 作废 / 冷却期内都不可选, 冷却到期自动恢复.
+        assert!(e.is_available(0), "正常账号可选");
+        let dead = AccountEntry { dead: true, ..e.clone() };
+        assert!(!dead.is_available(0), "作废账号不可选");
+        let cooling = AccountEntry { cooldown_until: Some(500), ..e.clone() };
+        assert!(!cooling.is_available(499), "冷却期内不可选");
+        assert!(cooling.is_available(500), "冷却到期自动恢复");
+    }
+
+    /// 多账号: 同一供应商可存多个号, 顺序即优先级; 同 token 视为同一个号 (原地更新).
+    #[tokio::test]
+    async fn store_holds_multiple_accounts_in_priority_order() {
+        let dir = std::env::temp_dir().join(format!("aigate_multi_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = AccountStore::new(dir.to_str().unwrap());
+        let mk = |tok: &str, exp: Option<u64>| AccountEntry {
+            id: String::new(),
+            label: None,
+            access_token: tok.into(),
+            refresh_token: None,
+            expires_at: exp,
+            dead: false,
+            cooldown_until: None,
+            updated_at: None,
+        };
+        let id1 = store.add("buddy", mk("T1", None)).await;
+        let id2 = store.add("buddy", mk("T2", None)).await;
+        assert_ne!(id1, id2, "两个号应有不同 id");
+        let list = store.entries("buddy").await;
+        assert_eq!(list.len(), 2, "应存下两个账号");
+        assert_eq!(list[0].access_token, "T1", "顺序 = 优先级 (先加的在前)");
+        // 同 token 再登录 → 原地更新, 不新增条目
+        let id1b = store.add("buddy", mk("T1", Some(123))).await;
+        assert_eq!(id1b, id1, "同凭据应保持原 id");
+        let list = store.entries("buddy").await;
+        assert_eq!(list.len(), 2, "同 token 不得堆出第三条");
+        assert_eq!(list[0].expires_at, Some(123), "同 token 应是更新而非新增");
+        // 重载 (落盘 → 读回) 保持多账号
+        let store2 = AccountStore::new(dir.to_str().unwrap());
+        assert_eq!(store2.entries("buddy").await.len(), 2);
+        // 按 id 删除只影响那一个
+        assert!(store2.remove_by_id("buddy", &id2).await);
+        assert_eq!(store2.entries("buddy").await.len(), 1);
+        assert!(!store2.remove_by_id("buddy", "nonexistent").await);
+        // 状态视图: 每供应商一组, active 指第一个可用号; 且绝不泄 token
+        let st = store2.status_map().await;
+        let arr = st["buddy"].as_array().expect("状态应为数组");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["active"], true);
+        let s = serde_json::to_string(&st).unwrap();
+        assert!(!s.contains("\"T1\""), "状态 API 不得含 token 原文: {s}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 旧文件 (单账号对象) 必须能升级: 加载成单元素数组并补 id, 且回写后仍是数组.
+    #[tokio::test]
+    async fn legacy_single_account_file_is_upgraded() {
+        let dir = std::env::temp_dir().join(format!("aigate_legacy_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 旧格式: 值是单个对象, 无 id 字段 (0.7.1 及以前)
+        std::fs::write(
+            dir.join("accounts.json"),
+            r#"{"buddy":{"access_token":"OLD_AT","refresh_token":"OLD_RT","expires_at":1700000000,"dead":false}}"#,
+        )
+        .unwrap();
+        let store = AccountStore::new(dir.to_str().unwrap());
+        let list = store.entries("buddy").await;
+        assert_eq!(list.len(), 1, "旧单账号文件应升级为一元素数组");
+        assert_eq!(list[0].access_token, "OLD_AT", "凭据不得丢");
+        assert_eq!(list[0].refresh_token.as_deref(), Some("OLD_RT"));
+        assert!(!list[0].id.is_empty(), "旧条目应自动补 id");
+        // 回写后文件应是数组形态 (后续 add 才能正常追加)
+        let raw = std::fs::read_to_string(dir.join("accounts.json")).unwrap();
+        assert!(raw.trim_start().starts_with('{'), "仍是按供应商索引的对象");
+        assert!(raw.contains('['), "值应已升级为数组: {raw}");
+        let store2 = AccountStore::new(dir.to_str().unwrap());
+        let id2 = store2
+            .add("buddy", AccountEntry {
+                id: String::new(), label: None, access_token: "NEW_AT".into(),
+                refresh_token: None, expires_at: None, dead: false,
+                cooldown_until: None, updated_at: None,
+            })
+            .await;
+        assert!(!id2.is_empty());
+        assert_eq!(store2.entries("buddy").await.len(), 2, "升级后应能继续追加账号");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
@@ -559,10 +893,13 @@ mod tests {
             .set(
                 "buddy",
                 AccountEntry {
+                    id: String::new(),
+                    label: None,
                     access_token: "SECRET_AT".into(),
                     refresh_token: Some("SECRET_RT".into()),
                     expires_at: Some(1_700_000_000),
                     dead: false,
+                    cooldown_until: None,
                     updated_at: Some(1),
                 },
             )
@@ -571,14 +908,19 @@ mod tests {
         let raw = std::fs::read_to_string(dir.join("accounts.json")).unwrap();
         assert!(raw.contains("SECRET_AT"), "文件应含凭据 (本地数据目录)");
         let store2 = AccountStore::new(dir.to_str().unwrap());
-        let e = store2.get("buddy").await.unwrap();
+        let list2 = store2.entries("buddy").await;
+        assert_eq!(list2.len(), 1);
+        let e = list2.first().unwrap();
         assert_eq!(e.access_token, "SECRET_AT");
-        // 状态视图绝不能泄 token
+        // 状态视图绝不能泄 token (多账号后值为**数组**, 顺序即优先级)
         let st = store2.status_map().await;
         let s = serde_json::to_string(&st).unwrap();
         assert!(!s.contains("SECRET"), "状态 API 视图不得包含 token 原文: {s}");
-        assert_eq!(st["buddy"]["dead"], false);
-        assert_eq!(st["buddy"]["expires_at"], 1_700_000_000);
+        let arr = st["buddy"].as_array().expect("每个供应商的状态是一组账号");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["dead"], false);
+        assert_eq!(arr[0]["expires_at"], 1_700_000_000);
+        assert_eq!(arr[0]["active"], true, "唯一的可用号即当前选中的");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

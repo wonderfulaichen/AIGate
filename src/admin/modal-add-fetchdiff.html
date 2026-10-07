@@ -28,10 +28,27 @@
          原写法 presetOf(loginProv) 传的是字符串名, 而 presetOf 期待带 .preset 的条目 → 恒 null,
          于是账号型 buddy 被判成静态型, 登录按钮永不渲染 (2026-10-04 实测 bug) -->
     <template x-if="isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
+    <div>
+    <!-- 已有账号列表 (多账号): 顺序即优先级 —— 靠前的先用, 失效自动跳到下一个 -->
+    <template x-if="acctCount(loginProv)>0">
+      <div style="margin-bottom:10px">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('acc_list_hint')"></div>
+        <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--fill-4);border-radius:8px;margin-bottom:4px">
+            <span class="txs mono tm" x-text="'#'+(i+1)"></span>
+            <span class="txs" :style="a.active?'color:var(--accent);font-weight:600':'color:var(--muted)'"
+                  x-text="a.active?t('acc_active_tag'):(a.dead?t('acc_dead'):(a.cooling?t('acc_cooling'):t('acc_idle_tag')))"></span>
+            <span class="txs tm" style="margin-left:auto" x-text="acctExpiryText(a)"></span>
+            <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px;color:var(--err)" @click="logoutProv(loginProv, a.id)" x-text="t('logout')"></button>
+          </div>
+        </template>
+      </div>
+    </template>
     <button class="btn btn-p" style="width:100%" :disabled="loginBusy||loginBrowserPending" @click="browserLogin()">
       <span class="spin" x-show="loginBrowserPending"></span>
-      <span x-text="loginBrowserPending?t('login_browser_wait'):t('login_browser')"></span>
+      <span x-text="loginBrowserPending?t('login_browser_wait'):(acctCount(loginProv)>0?t('acc_add_more'):t('login_browser'))"></span>
     </button>
+    </div>
     </template>
     <template x-if="!isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
       <div class="txs tm" style="margin-bottom:10px" x-text="t('login_statickey_hint')"></div>

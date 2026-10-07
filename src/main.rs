@@ -739,12 +739,14 @@ fn main() {
                     let Some(auth) = p.auth.as_ref() else { continue };
                     if auth.mode != crate::providers::AuthMode::Account { continue }
                     let Some(rc) = auth.refresh.as_ref() else { continue };
-                    if sched.accounts.get(&p.name).await.is_none() { continue; }
-                    match crate::accounts::refresh_account(
-                        &sched.client, rc, &p.name, &sched.accounts, auth.expiry_margin_secs,
-                    ).await {
-                        Ok(_) => { /* 未到临期时为无操作; 续成则已写盘 */ }
-                        Err(e) => tracing::warn!("accounts: 后台续期 '{ }' 失败: {e}", p.name),
+                    // 多账号: 逐个账号续期 (任一失效不影响其他号; 临期才真打续期).
+                    for acct in sched.accounts.entries(&p.name).await {
+                        match crate::accounts::refresh_account(
+                            &sched.client, rc, &p.name, &acct.id, &sched.accounts, auth.expiry_margin_secs,
+                        ).await {
+                            Ok(_) => { /* 未到临期时为无操作; 续成则已写盘 */ }
+                            Err(e) => tracing::warn!("accounts: 后台续期 '{}' 账号 {} 失败: {e}", p.name, acct.id),
+                        }
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;

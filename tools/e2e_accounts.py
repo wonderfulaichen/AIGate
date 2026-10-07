@@ -158,9 +158,11 @@ try:
     ck("refresh_api_ok", st == 200 and "error" not in txt, txt[:200])
     ck("refresh_hit_mock", any(h[1] == RT1 for h in REFRESH_HITS), REFRESH_HITS)
     fj = json.load(io.open(os.path.join(ISO, "data", "accounts.json"), encoding="utf-8"))
-    ck("refresh_persisted", fj["acct"]["access_token"] == NEW_TOK
-       and fj["acct"]["refresh_token"] == RT2, fj["acct"].get("access_token"))
-    ck("refresh_expiry_advanced", (fj["acct"].get("expires_at") or 0) > int(time.time()) + 3000)
+    # 多账号 (2026-10-07): 每个供应商的值是**账号数组** (旧文件加载时自动升级).
+    acc0 = fj["acct"][0]
+    ck("refresh_persisted", acc0["access_token"] == NEW_TOK
+       and acc0["refresh_token"] == RT2, acc0.get("access_token"))
+    ck("refresh_expiry_advanced", (acc0.get("expires_at") or 0) > int(time.time()) + 3000)
 
     # ③ 转发: 账号 token 优先于 api_key_default
     CHAT_AUTH.clear()

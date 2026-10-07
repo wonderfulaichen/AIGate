@@ -479,7 +479,10 @@ impl BalanceManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let Some(token) = accounts.get(provider).await.map(|e| e.access_token) else {
+        // 多账号 (2026-10-07): **逐号查询后累加** —— 每个账号的积分包独立,
+        // 面板的"剩余/已用"应是全部账号之和; 最近过期取所有账号里最早的那个批次.
+        let list = accounts.entries(provider).await;
+        if list.is_empty() {
             return BalanceInfo::from_api(
                 provider,
                 None,
@@ -487,7 +490,64 @@ impl BalanceManager {
                 now,
                 Some("未登录账号（供应商卡片点「登录」）".to_string()),
             );
-        };
+        }
+        let (mut remain_total, mut used_total) = (0f64, 0f64);
+        let mut packages = 0usize;
+        let mut expiring: Option<(u64, f64)> = None;
+        let mut first_err: Option<String> = None;
+        let mut ok_accounts = 0usize;
+        for acct in &list {
+            match Self::query_one_buddy_credits(client, &acct.access_token).await {
+                Ok((remain, used, exp, n)) => {
+                    ok_accounts += 1;
+                    remain_total += remain;
+                    used_total += used;
+                    packages += n;
+                    if let Some((t, a)) = exp {
+                        if expiring.map_or(true, |(et, _)| t < et) {
+                            expiring = Some((t, a));
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(target: "balance", "buddy 积分查询失败 (账号 {}): {e}", crate::i18n::snip(&acct.id, 12));
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        if ok_accounts == 0 {
+            // 全部账号都失败 → 报第一个错误 (与单账号时代行为一致).
+            return BalanceInfo::from_api(
+                provider,
+                None,
+                "credits".to_string(),
+                now,
+                first_err.or_else(|| Some("积分查询失败".to_string())),
+            );
+        }
+        info!(
+            target: "balance",
+            "buddy 积分: 剩余 {remain_total} / 已消耗 {used_total} ({ok_accounts}/{} 个账号共 {packages} 个资源包), 最近过期={:?}",
+            list.len(), expiring
+        );
+        let mut info = BalanceInfo::from_credits(provider, remain_total, used_total, expiring, now);
+        // 部分账号失败时保留提示 (总额仍可用, 但用户该知道有号没算进来).
+        if let Some(e) = first_err {
+            info.error = Some(format!(
+                "{}: {e}",
+                crate::i18n::pick("部分账号查询失败", "some accounts failed")
+            ));
+        }
+        info
+    }
+
+    /// 单个账号的积分查询: 返回 `(剩余, 已消耗, 最近过期批次, 资源包数)`.
+    async fn query_one_buddy_credits(
+        client: &reqwest::Client,
+        token: &str,
+    ) -> Result<(f64, f64, Option<(u64, f64)>, usize), String> {
         let resp = client
             .post("https://copilot.tencent.com/v2/billing/meter/get-user-resource")
             .header("Authorization", format!("Bearer {token}"))
@@ -500,77 +560,37 @@ impl BalanceManager {
             .body("{}")
             .timeout(std::time::Duration::from_secs(10))
             .send()
-            .await;
-        match resp {
-            Ok(r) => {
-                let status = r.status();
-                let body = r.text().await.unwrap_or_default();
-                if !status.is_success() {
-                    let friendly = match status.as_u16() {
-                        401 => "账号未登录或凭据失效（重新登录）".to_string(),
-                        429 => "请求过于频繁".to_string(),
-                        500..=599 => "服务端错误".to_string(),
-                        _ => format!("HTTP {status}"),
-                    };
-                    warn!(target: "balance", "buddy 积分查询 HTTP {status}: {}", crate::i18n::snip(&body, 200));
-                    return BalanceInfo::from_api(
-                        provider,
-                        None,
-                        "credits".to_string(),
-                        now,
-                        Some(friendly),
-                    );
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    "请求超时".to_string()
+                } else {
+                    format!("网络错误: {e}")
                 }
-                let v: serde_json::Value = match serde_json::from_str(&body) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return BalanceInfo::from_api(
-                            provider,
-                            None,
-                            "credits".to_string(),
-                            now,
-                            Some(format!("解析响应失败: {e}")),
-                        )
-                    }
-                };
-                // data.Response.Data.Accounts[] (兼容 data 下直接是结构的变体)
-                let accounts_arr = v
-                    .pointer("/data/Response/Data/Accounts")
-                    .or_else(|| v.pointer("/data/Accounts"))
-                    .and_then(|a| a.as_array());
-                let Some(arr) = accounts_arr else {
-                    return BalanceInfo::from_api(
-                        provider,
-                        None,
-                        "credits".to_string(),
-                        now,
-                        Some("响应中未找到积分包字段".to_string()),
-                    );
-                };
-                // 聚合: 剩余总量 / 已消耗 / 最近过期批次 (纯函数, 见 aggregate_credits).
-                let (remain, used, expiring) = aggregate_credits(arr);
-                info!(
-                    target: "balance",
-                    "buddy 积分: 剩余 {remain} / 已消耗 {used} ({} 个资源包), 最近过期={:?}",
-                    arr.len(), expiring
-                );
-                BalanceInfo::from_credits(provider, remain, used, expiring, now)
-            }
-            Err(e) => {
-                warn!(target: "balance", "buddy 积分查询网络错误: {e}");
-                BalanceInfo::from_api(
-                    provider,
-                    None,
-                    "credits".to_string(),
-                    now,
-                    Some(if e.is_timeout() {
-                        "请求超时".to_string()
-                    } else {
-                        format!("网络错误: {e}")
-                    }),
-                )
-            }
+            })?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let friendly = match status.as_u16() {
+                401 => "账号未登录或凭据失效（重新登录）".to_string(),
+                429 => "请求过于频繁".to_string(),
+                500..=599 => "服务端错误".to_string(),
+                _ => format!("HTTP {status}"),
+            };
+            warn!(target: "balance", "buddy 积分查询 HTTP {status}: {}", crate::i18n::snip(&body, 200));
+            return Err(friendly);
         }
+        let v: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("解析响应失败: {e}"))?;
+        // data.Response.Data.Accounts[] (兼容 data 下直接是结构的变体)
+        let arr = v
+            .pointer("/data/Response/Data/Accounts")
+            .or_else(|| v.pointer("/data/Accounts"))
+            .and_then(|a| a.as_array())
+            .ok_or_else(|| "响应中未找到积分包字段".to_string())?;
+        // 聚合: 剩余总量 / 已消耗 / 最近过期批次 (纯函数, 见 aggregate_credits).
+        let (remain, used, expiring) = aggregate_credits(arr);
+        Ok((remain, used, expiring, arr.len()))
     }
 }
 

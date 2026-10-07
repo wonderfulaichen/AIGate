@@ -190,7 +190,29 @@ const { chromium } = require('playwright');
     return { has_relogin: txt.includes('重新登录') };
   });
 
-  console.log(JSON.stringify({ addModal, clickedAdd, modalClosed, card, loginOpened, loginModal, afterLogin, errs }, null, 2));
+  // 多账号 UI: 重新打开登录弹窗 → 应列出已登录账号 (使用中) 且主按钮变「再添加一个账号」
+  await p.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(x => (x.textContent || '').trim() === '重新登录');
+    if (btn) btn.click();
+  });
+  await p.waitForTimeout(600);
+  const acctUI = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (!m) return { open: false };
+    const txt = m.innerText || '';
+    return {
+      open: true,
+      has_list: txt.includes('已登录账号'),
+      has_active_tag: txt.includes('使用中'),
+      has_add_more: txt.includes('再添加一个账号'),
+      rows: Array.from(m.querySelectorAll('button'))
+        .filter(x => (x.textContent || '').trim() === '登出').length,
+    };
+  });
+
+  console.log(JSON.stringify({ addModal, clickedAdd, modalClosed, card, loginOpened, loginModal, afterLogin, acctUI, errs }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1); });
 """ % {"pg": PG}
@@ -243,6 +265,11 @@ try:
     ck("ui_login_no_stray_text", out.get("loginModal", {}).get("stray_text") is False, out.get("loginModal"))
     ck("ui_login_fields", out.get("loginModal", {}).get("field_count", 0) >= 3, out.get("loginModal"))
     ck("ui_login_submit_relogin", out.get("afterLogin", {}).get("has_relogin"), out.get("afterLogin"))
+    au = out.get("acctUI", {})
+    ck("ui_acct_list_rendered", au.get("open") and au.get("has_list"), au)
+    ck("ui_acct_active_tag", au.get("has_active_tag") is True, au)
+    ck("ui_acct_add_more_btn", au.get("has_add_more") is True, au)
+    ck("ui_acct_row_logout_btn", (au.get("rows") or 0) >= 1, au)
     ck("ui_no_pageerror", not out.get("errs"), out.get("errs"))
 finally:
     proc.terminate()

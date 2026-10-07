@@ -156,8 +156,10 @@ try:
     ck("login_api", st == 200 and "error" not in txt, txt[:200])
     ck("login_redacted", "TOK_E2E_1" not in txt and "RT_E2E_1" not in txt, txt[:300])
     fj = json.load(io.open(os.path.join(ISO, "data", "accounts.json"), encoding="utf-8"))
-    ck("login_persisted", fj.get("buddyx", {}).get("access_token") == "TOK_E2E_1"
-       and fj.get("buddyx", {}).get("refresh_token") == "RT_E2E_1", list(fj.keys()))
+    # 多账号 (2026-10-07): 值为账号数组
+    b0 = (fj.get("buddyx") or [{}])[0]
+    ck("login_persisted", b0.get("access_token") == "TOK_E2E_1"
+       and b0.get("refresh_token") == "RT_E2E_1", list(fj.keys()))
     st, txt = req("/admin/api/accounts")
     ck("login_status_visible", '"buddyx"' in txt and '"dead":false' in txt.replace(" ", ""), txt[:200])
 

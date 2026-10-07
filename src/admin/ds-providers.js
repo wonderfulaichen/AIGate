@@ -127,26 +127,54 @@
     // 凭据就绪判定 (列表 badge 颜色 / 抽屉 key 分节完成度共用):
     // 账号形式供应商看账号状态 (有条目且未作废即算就绪 —— 过期由后端自动续期, 不算缺凭据),
     // 其余看 API key.
+    // 账号状态是**数组** (多账号, 2026-10-07): 取本次会真正被选中的那个 (active) 代表该行.
+    // 全部不可用 (都 dead/冷却) 时退回第一个, 让用户看到"为什么不可用".
+    _acct(name){
+      const a=this.accountsStatus&&this.accountsStatus[name];
+      if(!a || !a.length) return null;
+      return a.find(x=>x.active) || a[0];
+    },
+    acctCount(name){
+      const a=this.accountsStatus&&this.accountsStatus[name];
+      return a ? a.length : 0;
+    },
+    // 单个账号的到期文案 (登录弹窗列表用): 天/时/分, 过期与无期限各有说法.
+    acctExpiryText(a){
+      if(!a) return '';
+      if(a.expires_in_secs==null) return t('acc_noexp');
+      if(a.expires_in_secs<=0) return t('acc_expired');
+      const s=a.expires_in_secs;
+      if(s>=86400) return t('acc_active_d', Math.ceil(s/86400));
+      if(s>=3600) return t('acc_active_h', Math.ceil(s/3600));
+      return t('acc_active_m', Math.ceil(s/60));
+    },
     hasCred(name){
-      const acc=this.accountsStatus&&this.accountsStatus[name];
-      if(acc) return !acc.dead;
+      const acc=this._acct(name);
+      if(acc) return !acc.dead && !acc.cooling;
       const k=this.keysByProvider[name];
       return !!(k&&k.configured);
     },
     keyStatusText(name){
       // 账号形式 (auth.mode=account): 显示账号状态, 不显示 API key 行.
-      const acc=this.accountsStatus&&this.accountsStatus[name];
+      // 多账号: 「2 个账号 · 剩余 30 天」(active 那个的到期) —— 账号数在卡片徽章里另显.
+      const list=this.accountsStatus&&this.accountsStatus[name];
+      const acc=this._acct(name);
       if(acc){
-        if(acc.dead) return t('acc_dead');
-        if(acc.expires_in_secs!=null){
-          if(acc.expires_in_secs<=0) return t('acc_expired');
-          // 剩余时长: ≥1 天按天, ≥1 小时按小时, 否则分钟 (向上取整, 避免显示 0 分钟).
-          const s=acc.expires_in_secs;
-          if(s>=86400) return t('acc_active_d', Math.ceil(s/86400));
-          if(s>=3600) return t('acc_active_h', Math.ceil(s/3600));
-          return t('acc_active_m', Math.ceil(s/60));
-        }
-        return t('acc_noexp');
+        const one=(x)=>{
+          if(x.dead) return t('acc_dead');
+          if(x.cooling) return t('acc_cooling');
+          if(x.expires_in_secs!=null){
+            if(x.expires_in_secs<=0) return t('acc_expired');
+            // 剩余时长: ≥1 天按天, ≥1 小时按小时, 否则分钟 (向上取整, 避免显示 0 分钟).
+            const s=x.expires_in_secs;
+            if(s>=86400) return t('acc_active_d', Math.ceil(s/86400));
+            if(s>=3600) return t('acc_active_h', Math.ceil(s/3600));
+            return t('acc_active_m', Math.ceil(s/60));
+          }
+          return t('acc_noexp');
+        };
+        if(list && list.length>1) return t('acc_n_of', list.length, one(acc));
+        return one(acc);
       }
       const key=this.keysByProvider[name];
       if(!key || !key.configured) return t('key_unconfigured');
