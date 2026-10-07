@@ -40,7 +40,13 @@
                style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--fill-4);border-radius:8px;margin-bottom:4px">
             <span class="acct-grip tm" :title="t('acc_drag_hint')" style="cursor:grab">⠿</span>
             <span class="txs mono tm" x-text="'#'+(i+1)"></span>
-            <span class="txs mono tm" x-show="a.identity" x-text="a.identity" :title="t('acc_identity_hint')"></span>
+            <!-- 主标签 = 人可读账号名 (昵称/登录名); 指纹与登录名放 tooltip, 用于区分同名账号 -->
+            <span class="txs fw6" style="max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                  :title="acctTitle(a)"
+                  x-text="a.label||a.name||t('acc_unnamed')"></span>
+            <span class="txs tm" x-show="a.username&&a.username!==(a.label||a.name)"
+                  style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                  x-text="a.username"></span>
             <span class="txs" :style="a.active?'color:var(--accent);font-weight:600':'color:var(--muted)'"
                   x-text="a.active?t('acc_active_tag'):(a.dead?t('acc_dead'):(a.cooling?t('acc_cooling'):t('acc_idle_tag')))"></span>
             <span class="txs tm" style="margin-left:auto" x-text="acctExpiryText(a)"></span>

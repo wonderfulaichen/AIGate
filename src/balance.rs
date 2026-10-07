@@ -43,6 +43,21 @@ pub struct BalanceInfo {
     /// 与 [`Self::expiring_at`] 同一批积分的**剩余数量** (过期即损失这么多).
     #[serde(default)]
     pub expiring_amount: Option<f64>,
+    /// **当前使用账号**的显示名 (多账号; 昵称/登录名).
+    ///
+    /// 为什么余额行要带账号名与"每个号各自多少分": `balance`/`consumed` 取的是**当前账号**
+    /// 自己的数值 (不是合计) —— 否则切换账号后数字不变, 用户会以为切换是假的
+    /// (2026-10-07 反馈). 合计另放 `total_*`.
+    #[serde(default)]
+    pub account_label: Option<String>,
+    /// 该供应商已登录的账号数 (>1 时面板才显示合计).
+    #[serde(default)]
+    pub account_count: Option<usize>,
+    /// 全部账号的合计剩余 / 合计已消耗 (仅多账号时有意义).
+    #[serde(default)]
+    pub total_balance: Option<f64>,
+    #[serde(default)]
+    pub total_consumed: Option<f64>,
 }
 
 impl BalanceInfo {
@@ -59,6 +74,10 @@ impl BalanceInfo {
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
+            account_label: None,
+            account_count: None,
+            total_balance: None,
+            total_consumed: None,
         }
     }
 
@@ -75,6 +94,10 @@ impl BalanceInfo {
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
+            account_label: None,
+            account_count: None,
+            total_balance: None,
+            total_consumed: None,
         }
     }
 
@@ -97,6 +120,10 @@ impl BalanceInfo {
             consumed: Some(consumed),
             expiring_at: expiring.map(|(t, _)| t),
             expiring_amount: expiring.map(|(_, a)| a),
+            account_label: None,
+            account_count: None,
+            total_balance: None,
+            total_consumed: None,
         }
     }
 }
@@ -496,6 +523,8 @@ impl BalanceManager {
         let mut expiring: Option<(u64, f64)> = None;
         let mut first_err: Option<String> = None;
         let mut ok_accounts = 0usize;
+        // 每个账号各自的 (剩余, 已消耗) —— 主值要取"当前使用账号"的那一份.
+        let mut per_account: HashMap<String, (f64, f64)> = HashMap::new();
         for acct in &list {
             match Self::query_one_buddy_credits(client, &acct.access_token).await {
                 Ok((remain, used, exp, n)) => {
@@ -503,6 +532,7 @@ impl BalanceManager {
                     remain_total += remain;
                     used_total += used;
                     packages += n;
+                    per_account.insert(acct.id.clone(), (remain, used));
                     if let Some((t, a)) = exp {
                         if expiring.map_or(true, |(et, _)| t < et) {
                             expiring = Some((t, a));
@@ -527,12 +557,30 @@ impl BalanceManager {
                 first_err.or_else(|| Some("积分查询失败".to_string())),
             );
         }
+        // **主值取"当前使用账号"自己的数值** (不是合计): 切换账号后余额行必须跟着变,
+        // 否则用户会以为切换是假的 (2026-10-07 反馈). 合计另放 total_*.
+        let active_id = list
+            .iter()
+            .find(|e| e.is_available(now))
+            .map(|e| e.id.clone())
+            .or_else(|| list.first().map(|e| e.id.clone()));
         info!(
             target: "balance",
-            "buddy 积分: 剩余 {remain_total} / 已消耗 {used_total} ({ok_accounts}/{} 个账号共 {packages} 个资源包), 最近过期={:?}",
+            "buddy 积分: 合计剩余 {remain_total} / 已消耗 {used_total} ({ok_accounts}/{} 个账号共 {packages} 个资源包), 最近过期={:?}",
             list.len(), expiring
         );
         let mut info = BalanceInfo::from_credits(provider, remain_total, used_total, expiring, now);
+        info.account_count = Some(list.len());
+        info.total_balance = Some(remain_total);
+        info.total_consumed = Some(used_total);
+        if let Some(acct) = list.iter().find(|e| Some(&e.id) == active_id.as_ref()) {
+            if let Some((r, u)) = per_account.get(&acct.id) {
+                info.balance = Some(*r);
+                info.consumed = Some(*u);
+            }
+            info.account_label = crate::accounts::account_display_name(&acct.access_token)
+                .or_else(|| acct.label.clone());
+        }
         // 部分账号失败时保留提示 (总额仍可用, 但用户该知道有号没算进来).
         if let Some(e) = first_err {
             info.error = Some(format!(

@@ -24,14 +24,19 @@ ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_buddy_login")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG, PM = 8989, 8990
 
-def jwt(sub, iat=1):
-    """造一个 JWT 形状的 token (载荷带 sub) —— 官方凭据就是 JWT, sub 即账号身份."""
+def jwt(sub, iat=1, nickname=None, username=None):
+    """造一个 JWT 形状的 token (载荷带 sub/nickname/preferred_username) —— 官方凭据就是 JWT."""
     def b64(o):
         return base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
-    return b64({"alg": "none", "typ": "JWT"}) + "." + b64({"sub": sub, "iat": iat}) + ".sig"
+    claims = {"sub": sub, "iat": iat}
+    if nickname: claims["nickname"] = nickname
+    if username: claims["preferred_username"] = username
+    return b64({"alg": "none", "typ": "JWT"}) + "." + b64(claims) + ".sig"
 
 # state -> 该次登录返回的 token (按账号身份区分: A/B 是两个号)
-TOKENS = {"S1": jwt("acct-A", 1), "S2": jwt("acct-B", 1), "S3": jwt("acct-A", 2)}
+TOKENS = {"S1": jwt("acct-A", 1, "甲账号", "13800000001"),
+          "S2": jwt("acct-B", 1, "乙账号", "13800000002"),
+          "S3": jwt("acct-A", 2, "甲账号", "13800000001")}
 
 STATE = {"n": 0}
 POLLED = {}   # state -> 已轮询次数 (首次返回 data:null, 模拟"用户还没点完")
@@ -133,6 +138,9 @@ try:
     ck("① 浏览器登录第 1 个号 → 账号数 1", len(a1) == 1, [(x.get("id","")[:6]) for x in a1])
     ck("①b start 返回官方登录链接 (来自 mock)", "state=" in url1, url1)
     ck("①c 状态里带账号身份指纹", bool(a1 and a1[0].get("identity")), a1[0].get("identity") if a1 else None)
+    ck("①d **状态里带人可读账号名** (昵称/登录名, 不只指纹)",
+       bool(a1 and a1[0].get("name") == "甲账号" and a1[0].get("username") == "13800000001"),
+       {k: a1[0].get(k) for k in ("name", "username", "identity")} if a1 else None)
 
     browser_login_once()   # S2 = 另一个账号 (sub 不同)
     a2 = accounts()

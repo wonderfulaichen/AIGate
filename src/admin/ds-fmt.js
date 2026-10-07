@@ -11,15 +11,21 @@
       return sym + this.convertCny(v).toFixed(2);
     },
     // 余额行显示: 金额走 fmtMoney; 积分制 (currency='credits', 如 buddy) 显示
-    // 「剩余 N 积分 · 已用 M」—— consumed 是积分包的服务端权威统计, 不做估算.
+    // 「账号名 · 剩余 N 积分 · 已用 M」—— 数值是**当前使用账号**自己的 (不是合计),
+    // 这样切换账号后数字会跟着变; 多账号时另附合计.
     fmtBalanceRow(row) {
       if (!row.hasBalance) return t('balance_none');
       if (row.currency === 'credits') {
         const fmt = n => Number(n).toLocaleString('en-US');
-        // 积分制不说"余额"(会与金额混淆): 明确写「剩余 N 积分」.
-        let s = t('balance_remain', fmt(row.balance));
+        let s = '';
+        if (row.account_label) s += row.account_label + ' · ';
+        s += t('balance_remain', fmt(row.balance));
         if (row.consumed !== null && row.consumed !== undefined) {
           s += ' · ' + t('balance_consumed', fmt(row.consumed));
+        }
+        // 多账号: 附"合计"(主值是当前账号的, 两者不同时用户才不会误读).
+        if ((row.account_count || 0) > 1 && row.total_balance !== null && row.total_balance !== undefined) {
+          s += ' · ' + t('balance_total_n', row.account_count, fmt(row.total_balance));
         }
         return s;
       }

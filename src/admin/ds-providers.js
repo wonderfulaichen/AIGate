@@ -138,6 +138,15 @@
       const a=this.accountsStatus&&this.accountsStatus[name];
       return a ? a.length : 0;
     },
+    // 账号行的 tooltip: 昵称 + 登录名 + 身份指纹 (分辨同名账号要靠后两者).
+    acctTitle(a){
+      if(!a) return '';
+      const parts=[];
+      if(a.name) parts.push(t('acc_name')+': '+a.name);
+      if(a.username) parts.push(t('acc_username')+': '+a.username);
+      if(a.identity) parts.push(t('acc_identity_hint')+': '+a.identity);
+      return parts.join(' · ');
+    },
     // 单个账号的到期文案 (登录弹窗列表用): 天/时/分, 过期与无期限各有说法.
     acctExpiryText(a){
       if(!a) return '';

@@ -36,6 +36,8 @@
           balance: b.balance, currency: b.currency, source: b.source, error: b.error,
           consumed: b.consumed,
           expiring_at: b.expiring_at, expiring_amount: b.expiring_amount,
+          account_label: b.account_label, account_count: b.account_count,
+          total_balance: b.total_balance, total_consumed: b.total_consumed,
           hasBalance: b.balance !== null && b.balance !== undefined,
           today_cost: c.today_cost, total_cost: c.total_cost,
           today_opt_saved_tokens: c.today_opt_saved_tokens,

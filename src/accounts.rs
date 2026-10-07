@@ -119,15 +119,52 @@ fn b64url_decode(s: &str) -> Option<Vec<u8>> {
 /// `sub` 不变, 故它是"是不是同一个账号"的正确判据. 非 JWT / 解析不出 `sub` → `None`
 /// (调用方退回按 token 字符串比较, 行为与旧版一致).
 pub fn account_identity(access_token: &str) -> Option<String> {
-    let payload = access_token.split('.').nth(1)?;
-    let bytes = b64url_decode(payload)?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let v = jwt_claims(access_token)?;
     let sub = v.get("sub")?.as_str()?;
     if sub.is_empty() {
         return None;
     }
     // 只留短指纹: 面板够区分即可, 不必把完整标识放进状态接口/文件.
     Some(sub.chars().take(8).collect())
+}
+
+/// 从访问令牌里取**人可读的账号名** (面板显示用, 不可用于去重).
+///
+/// 优先级: `nickname` (用户昵称) → `preferred_username` (登录名/手机号) → `name` / `email`.
+/// 为什么必须显示名字: 光看 id/指纹用户认不出这是哪个号 (2026-10-07 反馈:
+/// "只显示 id 号分不清, 一般都是看账号名称的"). 这些声明都在凭据里, 无需额外请求.
+pub fn account_display_name(access_token: &str) -> Option<String> {
+    let v = jwt_claims(access_token)?;
+    for k in ["nickname", "preferred_username", "name", "email"] {
+        if let Some(s) = v.get(k).and_then(|x| x.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 登录名 / 手机号等次要标识 (面板 tooltip 用, 便于区分同名账号).
+pub fn account_username(access_token: &str) -> Option<String> {
+    let v = jwt_claims(access_token)?;
+    for k in ["preferred_username", "email"] {
+        if let Some(s) = v.get(k).and_then(|x| x.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() && Some(s.to_string()) != account_display_name(access_token) {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 解出 JWT 载荷 (非 JWT / 解析失败 → None).
+fn jwt_claims(access_token: &str) -> Option<serde_json::Value> {
+    let payload = access_token.split('.').nth(1)?;
+    let bytes = b64url_decode(payload)?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// 生成账号 id (本地唯一即可, 与凭据无关).
@@ -379,6 +416,9 @@ impl AccountStore {
                             "id": v.id,
                             "label": v.label,
                             "identity": v.identity,
+                            // 人可读账号名 (昵称/登录名) —— 列表主标签, 取自凭据自身, 无需额外请求.
+                            "name": account_display_name(&v.access_token),
+                            "username": account_username(&v.access_token),
                             "expires_at": v.expires_at,
                             "expires_in_secs": v.expires_at.map(|t| t.saturating_sub(now) as i64),
                             "dead": v.dead,

@@ -391,20 +391,32 @@
     },
     // ── 切换当前使用的账号 / 调整优先级 (数组顺序即优先级) ──
     // 「设为当前账号」与拖拽排序都走同一个后端原语 (ids 即新顺序), 不做两套逻辑.
-    async acctReorder(name, ids){
+    async acctReorder(name, ids, promotedId){
       try{
         const r=await fetch('/admin/api/accounts/reorder',{method:'POST',headers:authHeaders(),
           body:JSON.stringify({name, ids})});
         const d=await r.json();
-        if(d.error) this.loginMsg=d.error;
-        else { this.accountsStatus=d.accounts||{}; this.loginMsg=d.message||''; setTimeout(()=>{ this.loginMsg=''; },3000); }
+        if(d.error){ this.loginMsg=d.error; return; }
+        this.accountsStatus=d.accounts||{};
+        // 切换"看起来没生效"的唯一真实情形: 置顶的号当前**不可用** (冷却中/已作废),
+        // 选号会自动跳过它、用下一个可用的. 此时必须说清楚, 否则用户以为切换是假的.
+        const list=this.accountsStatus[name]||[];
+        const target=promotedId && list.find(a=>a.id===promotedId);
+        if(target && !target.active){
+          this.loginMsg = target.dead ? t('acc_promote_dead')
+                        : target.cooling ? t('acc_promote_cooling')
+                        : t('acc_promote_skipped');
+          return; // 不自动消失: 这是需要用户处理的状态
+        }
+        this.loginMsg=d.message||'';
+        setTimeout(()=>{ this.loginMsg=''; },3000);
       }catch(e){ this.loginMsg=String(e); }
     },
     // 把某个账号放到最前 = 切换当前使用的账号 (第一个可用账号即当前用的).
     acctPromote(name, id){
       const list=(this.accountsStatus&&this.accountsStatus[name]||[]).map(a=>a.id);
       const ids=[id].concat(list.filter(x=>x!==id));
-      if(ids.length) this.acctReorder(name, ids);
+      if(ids.length) this.acctReorder(name, ids, id);
     },
     // 拖拽排序: 把第 from 行落到第 to 行的位置.
     acctDrop(name, to){
@@ -415,7 +427,7 @@
       if(from>=ids.length || to>=ids.length) return;
       const [moved]=ids.splice(from,1);
       ids.splice(to,0,moved);
-      this.acctReorder(name, ids);
+      this.acctReorder(name, ids, moved);
     },
     // 登出: 传 id 只登出该账号 (多账号常态); 不传则清空该供应商全部账号.
     async logoutProv(name, id){

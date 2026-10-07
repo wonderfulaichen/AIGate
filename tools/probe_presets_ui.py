@@ -171,8 +171,10 @@ const { chromium } = require('playwright');
       const ta = m.querySelectorAll('textarea')[0];
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
       // JWT 形状 (载荷带 sub) —— 面板据此显示账号身份指纹
-      const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
-      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub:'aaaa1111-1111'}) + '.sig');
+      // btoa 只吃 Latin1 → 先 UTF-8 编码 (昵称可能含中文)
+      const b64 = o => btoa(String.fromCharCode.apply(null, new TextEncoder().encode(JSON.stringify(o))))
+        .replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub:'aaaa1111-1111', nickname:'甲甲甲'}) + '.sig');
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }
   });
@@ -206,7 +208,7 @@ const { chromium } = require('playwright');
     const txt = m.innerText || '';
     const rows = Array.from(m.querySelectorAll('.acct-row')).map(r => {
       const t = r.innerText || '';
-      return { identity: (t.match(/(aaaa1111|bbbb2222)/) || [])[0] || '',
+      return { identity: (t.match(/(甲甲甲|乙乙乙)/) || [])[0] || '',
                active: t.includes('使用中'), has_promote: t.includes('设为当前账号') };
     });
     return {
@@ -215,7 +217,7 @@ const { chromium } = require('playwright');
       has_list: txt.includes('已登录账号'),
       has_active_tag: txt.includes('使用中'),
       has_add_more: txt.includes('再添加一个账号'),
-      has_identity: txt.includes('aaaa1111'),
+      has_identity: (m.innerText||'').includes('甲甲甲') && ((m.querySelector('[title*=aaaa1111]')||{}).title||'').includes('aaaa1111'),
       rows: Array.from(m.querySelectorAll('button'))
         .filter(x => (x.textContent || '').trim() === '登出').length,
     };
@@ -229,8 +231,10 @@ const { chromium } = require('playwright');
       if (!m) return;
       const ta = m.querySelectorAll('textarea')[0];
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-      const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
-      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub}) + '.sig');
+      // btoa 只吃 Latin1 → 先 UTF-8 编码 (昵称可能含中文)
+      const b64 = o => btoa(String.fromCharCode.apply(null, new TextEncoder().encode(JSON.stringify(o))))
+        .replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub, nickname: sub==='aaaa1111-1111' ? '甲甲甲' : '乙乙乙'}) + '.sig');
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }, sub);
     await p.waitForTimeout(200);
@@ -275,7 +279,7 @@ const { chromium } = require('playwright');
     if (!m) return { open: false };
     return { open: true, rows: Array.from(m.querySelectorAll('.acct-row')).map(r => {
       const t = r.innerText || '';
-      return { identity: (t.match(/(aaaa1111|bbbb2222)/) || [])[0] || '', active: t.includes('使用中') };
+      return { identity: (t.match(/(甲甲甲|乙乙乙)/) || [])[0] || '', active: t.includes('使用中') };
     }) };
   });
 
@@ -342,7 +346,7 @@ try:
        out.get("afterSecond"))
     sw = out.get("afterSwitch", {})
     rows = sw.get("rows") or []
-    ck("ui_acct_switch_btn_works", len(rows) == 2 and rows[0].get("identity") == "bbbb2222"
+    ck("ui_acct_switch_btn_works", len(rows) == 2 and rows[0].get("identity") == "乙乙乙"
        and rows[0].get("active") is True and rows[1].get("active") is False, rows)
     ck("ui_no_pageerror", not out.get("errs"), out.get("errs"))
 finally:
