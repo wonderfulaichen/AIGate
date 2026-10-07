@@ -15,7 +15,7 @@ ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_multi_acct")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG, PM = 8993, 8994
 SEEN = []          # 上游收到的 Authorization 序列
-REJECT = {"T1"}    # 这些 token 被上游拒 (401)
+REJECT = set()     # 这些 token 被上游拒 (401); 到"换号重试"相位才加入 T1
 
 class Mock(BaseHTTPRequestHandler):
     def _json(self, code, obj):
@@ -112,11 +112,38 @@ try:
     ck("③ 同 token 重复登录不堆条目 (仍是 2 个)", len(accts()) == 2, len(accts()))
 
     # ④ 优先用第一个账号 (T1)
+    ids = [x["id"] for x in accts()]
     SEEN.clear()
     st = chat()
     ck("④ 优先用优先级最高的账号 (上游收到 T1)", SEEN[:1] == ["T1"], f"seen={SEEN} status={st}")
 
-    # ⑤ T1 被 401 拒 → 网关换号重试 → 客户端仍 200, 且上游收到 T2
+    # ④b **切换当前使用的账号** (两个号都健康时测, 判据 = 上游实收的 Authorization)
+    st, d = api("/admin/api/accounts/reorder", {"name": "buddyx", "ids": [ids[1], ids[0]]})
+    ck("④b reorder 接口成功", "error" not in d, d.get("error"))
+    a = accts()
+    ck("④c 顺序已翻转, 第二个成为 active", a[0]["id"] == ids[1] and a[0]["active"] is True,
+       [(x["id"][:6], x["active"]) for x in a])
+    SEEN.clear()
+    st = chat()
+    ck("④d **切换后上游收到 T2** (切换真的生效)", SEEN[:1] == ["T2"], f"seen={SEEN}")
+    # ④e 非法重排必须整体拒绝且不改动数据 (宁可失败, 也不做部分应用)
+    before = [x["id"] for x in accts()]
+    st, d = api("/admin/api/accounts/reorder", {"name": "buddyx", "ids": [ids[1]]})
+    ck("④e 数量不匹配的重排被拒绝且不改数据",
+       "error" in d and [x["id"] for x in accts()] == before, d.get("error"))
+    st, d = api("/admin/api/accounts/reorder", {"name": "buddyx", "ids": ["nope", ids[1]]})
+    ck("④f 未知 id 的重排被拒绝且不改数据",
+       "error" in d and [x["id"] for x in accts()] == before, d.get("error"))
+    # ④g 置顶回 T1 = 「设为当前账号」
+    api("/admin/api/accounts/reorder", {"name": "buddyx", "ids": [ids[0], ids[1]]})
+    SEEN.clear()
+    chat()
+    ck("④g 置顶后上游又收到 T1", SEEN[:1] == ["T1"], f"seen={SEEN}")
+
+    # ⑤ 换号重试相位: 从此 T1 被上游拒 → 网关应换 T2 重发, 客户端无感
+    REJECT.add("T1")
+    SEEN.clear()
+    st = chat()
     ck("⑤ 401 时网关换号重试 (上游第二次收到 T2)", len(SEEN) >= 2 and SEEN[1] == "T2", f"seen={SEEN}")
     ck("⑤b 客户端最终拿到 200 (换号对客户端无感)", st == 200, st)
 
@@ -126,6 +153,14 @@ try:
     ck("⑥ 被拒账号进入冷却 → 后续直接用 T2", SEEN == ["T2"], f"seen={SEEN} status={st2}")
     a = accts()
     ck("⑥b 状态里该账号标为冷却", any(x.get("cooling") for x in a), [(x.get("id","")[:6], x.get("cooling")) for x in a])
+    # ⑥c 冷却是"不可用"而非"低优先级": 即使把它排到最前, 也不会被选中 (自动跳过)
+    api("/admin/api/accounts/reorder", {"name": "buddyx", "ids": [ids[0], ids[1]]})
+    a = accts()
+    SEEN.clear()
+    st2 = chat()
+    ck("⑥c 冷却中的号排到最前也不会被用 (自动跳过, active 落到下一个)",
+       a[0]["id"] == ids[0] and a[0]["active"] is False and a[1]["active"] is True and SEEN == ["T2"],
+       f"order={[(x['id'][:6], x['active'], x['cooling']) for x in a]} seen={SEEN}")
 
     # ⑦ 按 id 登出只删该账号
     ids = [x["id"] for x in accts()]

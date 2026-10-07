@@ -172,7 +172,7 @@ const { chromium } = require('playwright');
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
       // JWT 形状 (载荷带 sub) —— 面板据此显示账号身份指纹
       const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
-      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub:'e2eacct-1234'}) + '.sig');
+      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub:'aaaa1111-1111'}) + '.sig');
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }
   });
@@ -204,18 +204,82 @@ const { chromium } = require('playwright');
       .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
     if (!m) return { open: false };
     const txt = m.innerText || '';
+    const rows = Array.from(m.querySelectorAll('.acct-row')).map(r => {
+      const t = r.innerText || '';
+      return { identity: (t.match(/(aaaa1111|bbbb2222)/) || [])[0] || '',
+               active: t.includes('使用中'), has_promote: t.includes('设为当前账号') };
+    });
     return {
       open: true,
+      rows_info: rows,
       has_list: txt.includes('已登录账号'),
       has_active_tag: txt.includes('使用中'),
       has_add_more: txt.includes('再添加一个账号'),
-      has_identity: txt.includes('e2eacct'),
+      has_identity: txt.includes('aaaa1111'),
       rows: Array.from(m.querySelectorAll('button'))
         .filter(x => (x.textContent || '').trim() === '登出').length,
     };
   });
 
-  console.log(JSON.stringify({ addModal, clickedAdd, modalClosed, card, loginOpened, loginModal, afterLogin, acctUI, errs }, null, 2));
+  // ── 第二个账号 (不同 sub) + 切换当前账号 ──
+  const fillAndSubmit = async (sub) => {
+    await p.evaluate((sub) => {
+      const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+        .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+      if (!m) return;
+      const ta = m.querySelectorAll('textarea')[0];
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub}) + '.sig');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }, sub);
+    await p.waitForTimeout(200);
+    await p.evaluate(() => {
+      const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+        .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+      if (!m) return;
+      const btn = Array.from(m.querySelectorAll('button'))
+        .find(x => (x.textContent || '').trim() === '登录' && !x.disabled);
+      if (btn) btn.click();
+    });
+    await p.waitForTimeout(700);
+  };
+  await fillAndSubmit('bbbb2222-2222');
+  // 提交成功后弹窗会关闭 → 重新打开 (卡片上的「重新登录」) 才能看到列表并切换
+  await p.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('button'))
+      .find(x => (x.textContent || '').trim() === '重新登录');
+    if (btn) btn.click();
+  });
+  await p.waitForTimeout(600);
+  const afterSecond = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (!m) return { open: false };
+    return { open: true, rows: Array.from(m.querySelectorAll('.acct-row')).map(r => r.innerText || '') };
+  });
+  // 点第一行的「设为当前账号」? 这里点**第二行**的 (把 #2 切成当前)
+  await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (!m) return;
+    const rows = Array.from(m.querySelectorAll('.acct-row'));
+    const r = rows[1];
+    const btn = r && Array.from(r.querySelectorAll('button')).find(b => (b.textContent || '').includes('设为当前账号'));
+    if (btn) btn.click();
+  });
+  await p.waitForTimeout(700);
+  const afterSwitch = await p.evaluate(() => {
+    const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
+      .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
+    if (!m) return { open: false };
+    return { open: true, rows: Array.from(m.querySelectorAll('.acct-row')).map(r => {
+      const t = r.innerText || '';
+      return { identity: (t.match(/(aaaa1111|bbbb2222)/) || [])[0] || '', active: t.includes('使用中') };
+    }) };
+  });
+
+  console.log(JSON.stringify({ addModal, clickedAdd, modalClosed, card, loginOpened, loginModal, afterLogin, acctUI, afterSecond, afterSwitch, errs }, null, 2));
   await b.close();
 })().catch(e => { console.error(e); process.exit(1); });
 """ % {"pg": PG}
@@ -274,6 +338,12 @@ try:
     ck("ui_acct_active_tag", au.get("has_active_tag") is True, au)
     ck("ui_acct_add_more_btn", au.get("has_add_more") is True, au)
     ck("ui_acct_row_logout_btn", (au.get("rows") or 0) >= 1, au)
+    ck("ui_acct_second_login_added", len(out.get("afterSecond", {}).get("rows") or []) == 2,
+       out.get("afterSecond"))
+    sw = out.get("afterSwitch", {})
+    rows = sw.get("rows") or []
+    ck("ui_acct_switch_btn_works", len(rows) == 2 and rows[0].get("identity") == "bbbb2222"
+       and rows[0].get("active") is True and rows[1].get("active") is False, rows)
     ck("ui_no_pageerror", not out.get("errs"), out.get("errs"))
 finally:
     proc.terminate()

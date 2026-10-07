@@ -271,6 +271,47 @@ impl AccountStore {
         effective_id
     }
 
+    /// **切换当前使用的账号 / 调整优先级**: 按 `ids` 给出的顺序重排 (数组顺序即优先级).
+    ///
+    /// 面板的「设为当前账号」与拖拽排序共用这一个原语 (前者就是"把该 id 放到最前")。
+    /// 校验: `ids` 必须**恰好覆盖**现有账号集合 (不重不漏) —— 不然一次失手的前端调用就会
+    /// 悄悄丢账号或漏排某个号 (宁可整个操作失败, 也不做部分应用)。返回 Err(说明) 时不改动任何数据。
+    pub async fn reorder(&self, provider: &str, ids: &[String]) -> Result<(), String> {
+        let mut m = self.map.write().await;
+        let Some(list) = m.get_mut(provider) else {
+            return Err(format!("供应商 {provider} 没有账号"));
+        };
+        if ids.len() != list.len() {
+            return Err(format!("账号数量不匹配 (收到 {} 个, 实际 {} 个)", ids.len(), list.len()));
+        }
+        let mut map: HashMap<&str, &AccountEntry> = list.iter().map(|e| (e.id.as_str(), e)).collect();
+        let mut reordered: Vec<AccountEntry> = Vec::with_capacity(list.len());
+        for id in ids {
+            match map.remove(id.as_str()) {
+                Some(e) => reordered.push(e.clone()),
+                None => return Err(format!("未知或重复的账号 id: {id}")),
+            }
+        }
+        if !map.is_empty() {
+            return Err("存在未出现在排序里的账号".to_string());
+        }
+        // 第一个可用账号 = 新选中的"当前账号"; 记日志便于事后核对切换是否生效.
+        let now = now_secs();
+        if let Some(head) = reordered.iter().find(|e| e.is_available(now)) {
+            tracing::info!(
+                "accounts: '{provider}' 切换当前账号 → {} (身份 {}), 顺序 {}",
+                head.id,
+                head.identity.clone().unwrap_or_else(|| "无指纹".into()),
+                ids.len()
+            );
+        }
+        *list = reordered;
+        let snapshot = m.clone();
+        drop(m);
+        Self::write_atomic(&self.path, &snapshot);
+        Ok(())
+    }
+
     /// 按 id 原地更新一个账号 (续期/冷却标记).
     pub async fn update_by_id<F: FnOnce(&mut AccountEntry)>(&self, provider: &str, id: &str, f: F) {
         let mut m = self.map.write().await;

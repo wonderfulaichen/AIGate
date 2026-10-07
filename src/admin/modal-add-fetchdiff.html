@@ -32,14 +32,20 @@
     <!-- 已有账号列表 (多账号): 顺序即优先级 —— 靠前的先用, 失效自动跳到下一个 -->
     <template x-if="acctCount(loginProv)>0">
       <div style="margin-bottom:10px">
-        <div class="txs tm" style="margin-bottom:6px" x-text="t('acc_list_hint')"></div>
-        <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
-          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--fill-4);border-radius:8px;margin-bottom:4px">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('acc_list_hint')"></div>        <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
+          <div class="acct-row" draggable="true"
+               @dragstart="acctDragFrom=i" @dragover.prevent
+               @drop="acctDrop(loginProv, i)"
+               :style="acctDragFrom===i?'opacity:.5':''"
+               style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--fill-4);border-radius:8px;margin-bottom:4px">
+            <span class="acct-grip tm" :title="t('acc_drag_hint')" style="cursor:grab">⠿</span>
             <span class="txs mono tm" x-text="'#'+(i+1)"></span>
             <span class="txs mono tm" x-show="a.identity" x-text="a.identity" :title="t('acc_identity_hint')"></span>
             <span class="txs" :style="a.active?'color:var(--accent);font-weight:600':'color:var(--muted)'"
                   x-text="a.active?t('acc_active_tag'):(a.dead?t('acc_dead'):(a.cooling?t('acc_cooling'):t('acc_idle_tag')))"></span>
             <span class="txs tm" style="margin-left:auto" x-text="acctExpiryText(a)"></span>
+            <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px" x-show="!a.active"
+                    @click="acctPromote(loginProv, a.id)" x-text="t('acc_set_active')"></button>
             <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px;color:var(--err)" @click="logoutProv(loginProv, a.id)" x-text="t('logout')"></button>
           </div>
         </template>

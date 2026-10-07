@@ -1560,6 +1560,35 @@ fn short_acct(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
+/// POST /admin/api/accounts/reorder — **切换当前使用的账号 / 调整优先级**.
+///
+/// body: `{name, ids: [按新优先级排列的账号 id]}` —— 「设为当前账号」= 把该 id 放最前;
+/// 拖拽排序 = 整体重排. 两者共用这个接口 (数组顺序即优先级: 第一个可用账号就是当前用的).
+/// ids 必须恰好覆盖现有账号集合, 否则整体拒绝 (宁可不改, 也不做部分应用).
+pub async fn api_accounts_reorder(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 name" })),
+    };
+    let ids: Vec<String> = match payload.get("ids").and_then(|v| v.as_array()) {
+        Some(a) => a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(),
+        None => return Json(serde_json::json!({ "error": "缺少 ids" })),
+    };
+    match state.accounts.reorder(&name, &ids).await {
+        Ok(()) => Json(serde_json::json!({
+            "message": crate::i18n::pick("已切换当前账号", "Active account switched"),
+            "accounts": state.accounts.status_map().await,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "error": e,
+            "accounts": state.accounts.status_map().await,
+        })),
+    }
+}
+
 pub async fn api_keys_put(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<KeyUpdate>,

@@ -389,6 +389,34 @@
       }catch(e){ this.loginMsg=t('network_error'); }
       finally{ this.loginBusy=false; }
     },
+    // ── 切换当前使用的账号 / 调整优先级 (数组顺序即优先级) ──
+    // 「设为当前账号」与拖拽排序都走同一个后端原语 (ids 即新顺序), 不做两套逻辑.
+    async acctReorder(name, ids){
+      try{
+        const r=await fetch('/admin/api/accounts/reorder',{method:'POST',headers:authHeaders(),
+          body:JSON.stringify({name, ids})});
+        const d=await r.json();
+        if(d.error) this.loginMsg=d.error;
+        else { this.accountsStatus=d.accounts||{}; this.loginMsg=d.message||''; setTimeout(()=>{ this.loginMsg=''; },3000); }
+      }catch(e){ this.loginMsg=String(e); }
+    },
+    // 把某个账号放到最前 = 切换当前使用的账号 (第一个可用账号即当前用的).
+    acctPromote(name, id){
+      const list=(this.accountsStatus&&this.accountsStatus[name]||[]).map(a=>a.id);
+      const ids=[id].concat(list.filter(x=>x!==id));
+      if(ids.length) this.acctReorder(name, ids);
+    },
+    // 拖拽排序: 把第 from 行落到第 to 行的位置.
+    acctDrop(name, to){
+      const from=this.acctDragFrom;
+      this.acctDragFrom=-1;
+      if(from<0 || from===to) return;
+      const ids=(this.accountsStatus&&this.accountsStatus[name]||[]).map(a=>a.id);
+      if(from>=ids.length || to>=ids.length) return;
+      const [moved]=ids.splice(from,1);
+      ids.splice(to,0,moved);
+      this.acctReorder(name, ids);
+    },
     // 登出: 传 id 只登出该账号 (多账号常态); 不传则清空该供应商全部账号.
     async logoutProv(name, id){
       try{

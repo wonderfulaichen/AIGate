@@ -129,6 +129,8 @@ function dashboard() {  return {
     presets: null,
     // 账号登录弹窗 (账号型供应商): 目标条目名 + 表单 + 状态.
     loginProv: '', loginTok: '', loginRt: '', loginExp: '', loginBusy: false, loginMsg: '',
+    // 拖拽排序的源行号 (账号列表; -1 = 无拖拽进行中).
+    acctDragFrom: -1,
     // 浏览器登录轮询计时器 (非展示态; 关弹窗/结束时必须清).
     loginPollTimer: null,
     // 浏览器登录进行中 (true 时主按钮显示等待态).
