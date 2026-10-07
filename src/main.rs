@@ -677,6 +677,7 @@ fn main() {
         .route("/admin/api/accounts/login/status", post(admin::api_accounts_login_status))
         .route("/admin/api/accounts/logout", post(admin::api_accounts_logout))
         .route("/admin/api/accounts/reorder", post(admin::api_accounts_reorder))
+        .route("/admin/api/accounts/picking", get(admin::api_accounts_picking_get).post(admin::api_accounts_picking_set))
         .route("/admin/api/presets", get(admin::api_presets_get))
         .route("/admin/api/health", get(admin::api_health))
         .route("/admin/api/circuit/reset", post(admin::api_circuit_reset))

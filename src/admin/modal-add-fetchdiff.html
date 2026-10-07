@@ -32,7 +32,19 @@
     <!-- 已有账号列表 (多账号): 顺序即优先级 —— 靠前的先用, 失效自动跳到下一个 -->
     <template x-if="acctCount(loginProv)>0">
       <div style="margin-bottom:10px">
-        <div class="txs tm" style="margin-bottom:6px" x-text="t('acc_list_hint')"></div>        <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
+        <div class="txs tm" style="margin-bottom:6px" x-text="t('acc_list_hint')"></div>
+        <!-- 选号策略: order = 严格按列表顺序; pace = 优先消耗"快重置且剩余多"的号.
+             必须可见 —— 否则面板显示的"当前账号"可能与实际选择不符. -->
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <span class="txs tm" x-text="t('acc_picking')"></span>
+          <button class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px"
+                  :style="acctPicking==='order'?'border-color:var(--accent);color:var(--accent)':''"
+                  @click="setAcctPicking('order')" x-text="t('acc_picking_order')"></button>
+          <button class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px"
+                  :style="acctPicking==='pace'?'border-color:var(--accent);color:var(--accent)':''"
+                  @click="setAcctPicking('pace')" x-text="t('acc_picking_pace')"></button>
+        </div>
+        <div class="txs tm" style="margin-bottom:6px" x-show="acctPicking==='pace'" x-text="t('acc_picking_pace_hint')"></div>        <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
           <div class="acct-row" draggable="true"
                @dragstart="acctDragFrom=i" @dragover.prevent
                @drop="acctDrop(loginProv, i)"

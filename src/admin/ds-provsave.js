@@ -314,6 +314,26 @@
     },
 
     // ── 账号登录 (账号型供应商: 粘贴凭据 → accounts.json) ──
+    // ── 选号策略 (order / pace) ──
+    async fetchAcctPicking(){
+      try{
+        const r=await fetch('/admin/api/accounts/picking',{headers:authHeaders()});
+        if(r.ok){ const d=await r.json(); this.acctPicking=d.picking||'order'; }
+      }catch(e){}
+    },
+    async setAcctPicking(m){
+      try{
+        const r=await fetch('/admin/api/accounts/picking',{method:'POST',headers:authHeaders(),
+          body:JSON.stringify({picking:m})});
+        const d=await r.json();
+        if(d.error){ this.loginMsg=d.error; return; }
+        this.acctPicking=m;
+        if(d.accounts) this.accountsStatus=d.accounts;
+        // 策略变了当前账号可能变 → 余额行同步刷新.
+        try { await this.fetchBalance(); } catch(e) {}
+        this.loginMsg=d.message||''; setTimeout(()=>{ this.loginMsg=''; },3000);
+      }catch(e){ this.loginMsg=String(e); }
+    },
     openLogin(name){
       this.stopLoginPoll();
       this.loginProv=name; this.loginTok=''; this.loginRt=''; this.loginExp='';

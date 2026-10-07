@@ -35,12 +35,14 @@ pub struct BalanceInfo {
     pub consumed: Option<f64>,
     /// **最近会过期**的那批积分的到期时刻 (Unix 秒; 仅积分制供应商).
     ///
-    /// 取「仍有剩余 (CapacityRemain > 0) 的资源包里 `DeductionEndTime` 最小者」——
-    /// 已用完的包不该占据这个位置 (它不会造成损失), 而用户真正关心的是
-    /// "我手上有多少分快到期了". 无过期概念 (永久积分/金额制) 时为 None.
+    /// **最近会重置的配额窗口**的结束时刻 (Unix 秒; 仅积分制供应商).
+    ///
+    /// 取「窗口内仍有剩余 (`CycleCapacityRemain > 0`) 的包里 `CycleEndTime` 最早者」——
+    /// 已耗尽的窗口不会造成损失, 不该占据这个位置.
+    /// ⚠️ **不是 `DeductionEndTime`** (那是扣费有效期, 实测 2034/2035 年, 与配额重置无关).
     #[serde(default)]
     pub expiring_at: Option<u64>,
-    /// 与 [`Self::expiring_at`] 同一批积分的**剩余数量** (过期即损失这么多).
+    /// 与 [`Self::expiring_at`] 同一窗口内**还剩多少**额度 (到窗口结束即作废这么多).
     #[serde(default)]
     pub expiring_amount: Option<f64>,
     /// **当前使用账号**的显示名 (多账号; 昵称/登录名).
@@ -145,12 +147,16 @@ struct ManualBalanceFile {
     balances: HashMap<String, f64>,
 }
 
-/// 聚合 buddy 的积分资源包: `(剩余总量, 已消耗总量, 最近过期)`.
+/// 聚合 buddy 的积分资源包.
 ///
-/// `最近过期` 只统计**仍有剩余**的包 (已用完的包不会造成损失, 不该占据"最快到期"位),
-/// 取 `DeductionEndTime` 最小者; 上游给的是**毫秒**时间戳 (实测 2049883762000) → 转秒.
-/// 无有效到期时间 (永久积分 / 字段缺失 / 为 0) → `None`, 前端不显示过期行.
-fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>) {
+/// ⚠️ **"最近会重置"取 `CycleEndTime`, 不是 `DeductionEndTime`** (2026-10-08 实测更正):
+/// 后者是"扣费有效期"(实测 2034/2035 年), 与配额何时重置无关, 取它会得出
+/// "十几年后到期"这种无用且误导的数字. `CycleEndTime` 才是窗口结束时刻
+/// (`CapacityType=4` 为自然月末 "2026-10-31 23:59:59"; `CapacityType=1` 为各自周期末).
+///
+/// 返回 `(总剩余, 总已消耗, 最近会重置的窗口 (时刻, 该窗口剩余))`.
+/// 只统计**窗口内仍有剩余**的包: 已耗尽的窗口不会造成损失, 不该占据这个位置.
+pub fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>) {
     let (mut remain, mut used) = (0f64, 0f64);
     let mut expiring: Option<(u64, f64)> = None;
     for pkg in arr {
@@ -163,20 +169,125 @@ fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>
             .get("CapacityUsed")
             .and_then(|x| x.as_f64())
             .unwrap_or(0.0);
-        if rem > 0.0 {
-            if let Some(ms) = pkg
-                .get("DeductionEndTime")
-                .and_then(|x| x.as_i64())
-                .filter(|v| *v > 0)
+        // 窗口内剩余: 优先 Cycle* (CapacityRemain 是跨周期累计, 不能判断"这窗口还剩多少").
+        let cycle_rem = pkg
+            .get("CycleCapacityRemain")
+            .or_else(|| pkg.get("CapacityRemain"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        if cycle_rem > 0.0 {
+            // CycleEndTime 是字符串 "YYYY-MM-DD HH:MM:SS" (不是时间戳).
+            if let Some(secs) = pkg
+                .get("CycleEndTime")
+                .and_then(|x| x.as_str())
+                .and_then(parse_datetime)
             {
-                let secs = (ms / 1000) as u64;
                 if expiring.map(|(t, _)| secs < t).unwrap_or(true) {
-                    expiring = Some((secs, rem));
+                    expiring = Some((secs, cycle_rem));
                 }
             }
         }
     }
     (remain, used, expiring)
+}
+
+/// 解析上游的 `"YYYY-MM-DD HH:MM:SS"` (本机时区, 与面板显示口径一致).
+///
+/// 上游给的是**字符串**且是本地时间 —— 直接按本机时区解析。失败返回 None
+/// (该包不参与"最近重置"判定, 不影响总额)。
+pub fn parse_datetime(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (date, time) = s.split_once(' ')?;
+    if !time.contains(':') {
+        return None;
+    }
+    let mut dp = date.split('-');
+    let y = dp.next()?.parse::<i32>().ok()?;
+    let m = dp.next()?.parse::<u32>().ok()?;
+    let d = dp.next()?.parse::<u32>().ok()?;
+    let mut tp = time.split(':');
+    let hh = tp.next()?.parse::<u32>().ok()?;
+    let mm = tp.next()?.parse::<u32>().ok()?;
+    let ss = tp.next()?.parse::<u32>().ok()?;
+    if hh > 23 || mm > 59 || ss > 59 || m < 1 || m > 12 || d < 1 || d > 31 {
+        return None;
+    }
+    // chrono 旧版无 with_ymd_and_hms, 走 NaiveDate/NaiveTime + 本地时区.
+    use chrono::TimeZone;
+    let nd = chrono::NaiveDate::from_ymd_opt(y, m, d)?;
+    let nt = chrono::NaiveTime::from_hms_opt(hh, mm, ss)?;
+    let local = chrono::Local
+        .from_local_datetime(&chrono::NaiveDateTime::new(nd, nt))
+        .single()?;
+    Some(local.timestamp().max(0) as u64)
+}
+
+/// 一个账号的配额快照 (选号决策用; 由余额查询写入, 选号读取).
+#[derive(Debug, Clone)]
+pub struct QuotaSnapshot {
+    /// 账号 id (多账号下唯一的匹配键).
+    pub account_id: String,
+    /// token 前缀 (id 缺失时的兜底匹配; 不存完整 token).
+    pub token_prefix: String,
+    /// 该账号的剩余总额度.
+    pub remain: f64,
+    /// 最近会重置的窗口结束时刻.
+    pub cycle_end: Option<u64>,
+    pub updated_at: u64,
+}
+
+static QUOTA_SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<Vec<QuotaSnapshot>>> =
+    std::sync::OnceLock::new();
+
+fn quota_slots() -> &'static std::sync::Mutex<Vec<QuotaSnapshot>> {
+    QUOTA_SNAPSHOTS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// 记录某账号的配额 (余额查询成功后调用).
+pub fn record_quota(account_id: &str, token: &str, remain: f64, cycle_end: Option<u64>, now: u64) {
+    let prefix: String = token.chars().take(24).collect();
+    let mut v = quota_slots().lock().unwrap_or_else(|e| e.into_inner());
+    match v
+        .iter_mut()
+        .find(|q| !account_id.is_empty() && q.account_id == account_id)
+    {
+        Some(q) => {
+            q.remain = remain;
+            q.cycle_end = cycle_end;
+            q.updated_at = now;
+            q.token_prefix = prefix;
+        }
+        None => v.push(QuotaSnapshot {
+            account_id: account_id.to_string(),
+            token_prefix: prefix,
+            remain,
+            cycle_end,
+            updated_at: now,
+        }),
+    }
+}
+
+/// 选号用: 读取全部账号的配额快照 (不打上游 —— 选号在请求关键路径上).
+pub fn quota_cache_snapshot() -> Vec<QuotaSnapshot> {
+    quota_slots().lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// **选号用**: 读某账号的配额视图 `(剩余总额, 最近窗口重置时刻)`.
+///
+/// 只走快照, 不打上游。数据缺失或超过 1 小时 → None (调用方回落 `order` 策略)。
+pub fn cached_quota_view(token: &str, account_id: &str, now: u64) -> Option<(f64, u64)> {
+    let snap = quota_cache_snapshot();
+    let hit = snap
+        .iter()
+        .find(|q| !account_id.is_empty() && q.account_id == account_id)
+        .or_else(|| {
+            snap.iter()
+                .find(|q| q.token_prefix.len() >= 12 && token.starts_with(&q.token_prefix))
+        })?;
+    if now.saturating_sub(hit.updated_at) > 3600 {
+        return None;
+    }
+    hit.cycle_end.map(|end| (hit.remain, end))
 }
 
 impl BalanceManager {
@@ -307,9 +418,21 @@ impl BalanceManager {
         let mut grouped: std::collections::BTreeMap<(String, String), Vec<String>> =
             std::collections::BTreeMap::new();
         let mut buddy_only: Vec<String> = Vec::new();
+        // **账号型**供应商 (配了 balance_endpoint 但在 accounts.json 里有账号) 也要逐账号查:
+        // 按 (endpoint, api_key) 去重时它们共用同一把静态 key, 只会被查一次 ——
+        // 于是配额快照只记下一个账号, 选号策略 (pace) 因数据不齐静默回落 order
+        // (2026-10-08 实测撞出). 逐账号查才能给每个候选都记上额度与重置窗口.
+        let account_based: std::collections::HashSet<String> = accounts
+            .providers_with_accounts()
+            .await
+            .into_iter()
+            .collect();
+        let mut account_query: Vec<String> = Vec::new();
         for q in &to_query {
             if q.endpoint == BUDDY_CREDITS_SCHEME {
                 buddy_only.push(q.provider.clone());
+            } else if account_based.contains(&q.provider) {
+                account_query.push(q.provider.clone());
             } else {
                 grouped
                     .entry((q.endpoint.clone(), q.api_key.clone()))
@@ -321,6 +444,20 @@ impl BalanceManager {
         // buddy: 逐供应商查询 (各自账号) + 独立缓存.
         for p in buddy_only {
             let b = Self::query_buddy_credits(client, accounts, &p).await;
+            if b.error.is_none() {
+                let mut cache = self.api_cache.write().await;
+                cache.insert(p.clone(), b.clone());
+            }
+            results.push(b);
+        }
+
+        // 账号型 + 通用余额端点: 逐账号用各自的 token 查询 (记配额快照, 供选号策略).
+        for p in account_query {
+            let Some(cfg) = provider_configs.get(&p) else { continue };
+            let Some(ep) = cfg.balance_endpoint.clone() else { continue };
+            let b = self
+                .query_account_quotas(client, accounts, &p, &ep)
+                .await;
             if b.error.is_none() {
                 let mut cache = self.api_cache.write().await;
                 cache.insert(p.clone(), b.clone());
@@ -533,6 +670,8 @@ impl BalanceManager {
                     used_total += used;
                     packages += n;
                     per_account.insert(acct.id.clone(), (remain, used));
+                    // 供选号策略 (pace) 使用: 记下该账号的额度与最近重置窗口.
+                    record_quota(&acct.id, &acct.access_token, remain, exp.map(|(t, _)| t), now);
                     if let Some((t, a)) = exp {
                         if expiring.map_or(true, |(et, _)| t < et) {
                             expiring = Some((t, a));
@@ -589,6 +728,137 @@ impl BalanceManager {
             ));
         }
         info
+    }
+
+    /// **账号型 + 通用余额端点**: 逐账号用各自 token 查询, 并记配额快照.
+    ///
+    /// 为什么必须逐账号查: 去重逻辑按 (endpoint, 静态 key) 合并, 而多账号共用同一把
+    /// 静态 key → 只查一次 → 配额快照只覆盖一个账号 → 选号策略 (pace) 因数据不齐
+    /// 静默回落 order (2026-10-08 实测撞出).
+    ///
+    /// 主值取**当前使用账号**的数值 (切换后必须跟着变), 合计另放 total_*.
+    async fn query_account_quotas(
+        &self,
+        client: &reqwest::Client,
+        accounts: &crate::accounts::AccountStore,
+        provider: &str,
+        endpoint: &str,
+    ) -> BalanceInfo {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let list = accounts.entries(provider).await;
+        if list.is_empty() {
+            return BalanceInfo::from_api(
+                provider,
+                None,
+                "CNY".to_string(),
+                now,
+                Some("未登录账号（供应商卡片点「登录」）".to_string()),
+            );
+        }
+        let mut remain_total = 0f64;
+        let mut per: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        let mut expiring: Option<(u64, f64)> = None;
+        let mut first_err: Option<String> = None;
+        let mut ok = 0usize;
+        for acct in &list {
+            // 用该账号自己的 token 查询 (这才是"这个号还剩多少"的正确凭据).
+            match self
+                .query_generic_balance_with_token(client, endpoint, &acct.access_token)
+                .await
+            {
+                Ok((remain, exp)) => {
+                    ok += 1;
+                    remain_total += remain;
+                    per.insert(acct.id.clone(), remain);
+                    record_quota(&acct.id, &acct.access_token, remain, exp.map(|(t, _)| t), now);
+                    if let Some((t, a)) = exp {
+                        if expiring.map_or(true, |(et, _)| t < et) {
+                            expiring = Some((t, a));
+                        }
+                    }
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        if ok == 0 {
+            return BalanceInfo::from_api(
+                provider,
+                None,
+                "CNY".to_string(),
+                now,
+                first_err.or_else(|| Some("余额查询失败".to_string())),
+            );
+        }
+        // 当前账号 = 第一个可用账号 (与选号口径一致).
+        let active = list.iter().find(|e| e.is_available(now)).or_else(|| list.first());
+        let mut info =
+            BalanceInfo::from_api(provider, Some(remain_total), "CNY".to_string(), now, None);
+        info.account_count = Some(list.len());
+        info.total_balance = Some(remain_total);
+        if let Some(a) = active {
+            if let Some(r) = per.get(&a.id) {
+                info.balance = Some(*r);
+            }
+            info.account_label = crate::accounts::account_display_name(&a.access_token)
+                .or_else(|| a.label.clone());
+        }
+        info.expiring_at = expiring.map(|(t, _)| t);
+        info.expiring_amount = expiring.map(|(_, a)| a);
+        if let Some(e) = first_err {
+            info.error = Some(e);
+        }
+        info
+    }
+
+    /// 通用余额端点查询 (GET + Bearer), 返回 `(剩余额度, 最近重置窗口)`.
+    async fn query_generic_balance_with_token(
+        &self,
+        client: &reqwest::Client,
+        endpoint: &str,
+        token: &str,
+    ) -> Result<(f64, Option<(u64, f64)>), String> {
+        let resp = client
+            .get(endpoint)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    "请求超时".to_string()
+                } else {
+                    format!("网络错误: {e}")
+                }
+            })?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}", resp.status().as_u16()));
+        }
+        let json = resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("响应非 JSON: {e}"))?;
+        // 优先按资源包聚合 (能拿到配额窗口); 退化到扁平余额字段时没有窗口信息.
+        let accs = json
+            .pointer("/data/Response/Data/Accounts")
+            .or_else(|| json.pointer("/data/Accounts"))
+            .and_then(|a| a.as_array());
+        if let Some(arr) = accs {
+            let (remain, _used, exp) = aggregate_credits(arr);
+            return Ok((remain, exp));
+        }
+        let (balance, _) = extract_balance_from_json(&json);
+        match balance {
+            Some(b) => Ok((b, None)),
+            None => Err("响应中未找到余额字段".to_string()),
+        }
     }
 
     /// 单个账号的积分查询: 返回 `(剩余, 已消耗, 最近过期批次, 资源包数)`.
@@ -724,37 +994,76 @@ fn normalize_currency(raw: &str) -> String {
 mod tests {
     use super::*;
 
-    /// buddy 积分包聚合: 只认**仍有剩余**的包的到期时间 (已用完的包不该占据
-    /// "最近过期"位 —— 它不会造成损失). 响应形态取自 2026-10-01 实测.
+    /// buddy 积分包聚合: 只认**窗口内仍有剩余**的包的最早重置时刻 (窗口已耗尽的
+    /// 包不该占据"最近会重置"位 —— 它不会造成损失). 响应形态取自 2026-10-08 实测.
     #[test]
-    fn credits_aggregate_picks_soonest_expiry_with_remainder() {
+    fn credits_aggregate_picks_soonest_cycle_end_with_remainder() {
         let arr = serde_json::json!([
-            // 已用完 + 最早过期 → **不该**被选中
-            {"CapacityRemain": 0, "CapacityUsed": 500, "DeductionEndTime": 1_700_000_000_000i64},
-            // 有剩余, 2035 年过期
-            {"CapacityRemain": 300, "CapacityUsed": 200, "DeductionEndTime": 2_049_883_762_000i64},
-            // 有剩余且更早 (2030) → 选中这个
-            {"CapacityRemain": 120, "CapacityUsed": 30, "DeductionEndTime": 1_900_000_000_000i64},
+            // 窗口已耗尽 + 最早重置 → **不该**被选中
+            {"CycleCapacityRemain": 0, "CapacityRemain": 0, "CapacityUsed": 500,
+             "CycleEndTime": "2026-10-16 20:09:24"},
+            // 有剩余, 月末重置
+            {"CycleCapacityRemain": 300, "CapacityRemain": 300, "CapacityUsed": 200,
+             "CycleEndTime": "2026-10-31 23:59:59"},
+            // 有剩余且更早 → 选中这个
+            {"CycleCapacityRemain": 120, "CapacityRemain": 120, "CapacityUsed": 30,
+             "CycleEndTime": "2026-10-20 07:00:18"},
         ]);
         let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
         assert_eq!(remain, 420.0);
         assert_eq!(used, 730.0);
-        let (at, amt) = expiring.expect("应有最近过期项");
-        assert_eq!(at, 1_900_000_000); // 毫秒 → 秒
+        let (at, amt) = expiring.expect("应有最近重置的窗口");
+        let expect = parse_datetime("2026-10-20 07:00:18").unwrap();
+        assert_eq!(at, expect);
         assert_eq!(amt, 120.0);
     }
 
-    /// 全部包都无到期时间 (永久积分) → expiring 为 None, 前端不显示过期行.
+    /// 全部包都无窗口信息 → expiring 为 None, 前端不显示该行.
     #[test]
-    fn credits_aggregate_without_expiry_returns_none() {
+    fn credits_aggregate_without_cycle_returns_none() {
         let arr = serde_json::json!([
             {"CapacityRemain": 100, "CapacityUsed": 0},
-            {"CapacityRemain": 50, "CapacityUsed": 0, "DeductionEndTime": 0},
+            {"CapacityRemain": 50, "CapacityUsed": 0, "CycleEndTime": ""},
         ]);
         let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
         assert_eq!(remain, 150.0);
         assert_eq!(used, 0.0);
-        assert!(expiring.is_none(), "0/缺失的到期时间不得当作有效期限");
+        assert!(expiring.is_none(), "空/缺失的窗口时间不得当作有效期限");
+    }
+
+    /// 回归: **配额窗口取 `CycleEndTime`, 不是 `DeductionEndTime`** (2026-10-08 实测更正).
+    ///
+    /// 老实现取 DeductionEndTime (实测 2034/2035 年, 是"扣费有效期") 当"最近过期",
+    /// 于是面板会显示"十几年后到期"这种无用且误导的数字.
+    #[test]
+    fn credits_window_uses_cycle_end_time_not_deduction() {
+        // 真实形态 (脱敏): 自然月包 + 30 天滚动包; DeductionEndTime 都是遥远未来.
+        let arr = serde_json::json!([
+            {"CapacityType": 4, "CapacityRemain": 500, "CapacityUsed": 0,
+             "CycleCapacityRemain": 500, "CycleStartTime": "2026-10-01 00:00:00",
+             "CycleEndTime": "2026-10-31 23:59:59", "DeductionEndTime": 2049883762000i64},
+            {"CapacityType": 1, "CapacityRemain": 120, "CapacityUsed": 30,
+             "CycleCapacityRemain": 120, "CycleStartTime": "2026-09-16 20:09:25",
+             "CycleEndTime": "2026-10-16 20:09:24", "DeductionEndTime": 1792152564000i64},
+        ]);
+        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        assert_eq!(remain, 620.0);
+        assert_eq!(used, 30.0);
+        let (at, amt) = expiring.expect("应有最近重置的窗口");
+        // 最近的是 10-16 那个滚动包 (早于 10-31 月末)
+        let expect = parse_datetime("2026-10-16 20:09:24").unwrap();
+        assert_eq!(at, expect, "取 CycleEndTime, 不得取 DeductionEndTime");
+        assert_eq!(amt, 120.0, "窗口内剩余应看 CycleCapacityRemain");
+    }
+
+    /// parse_datetime 的边界: 非法/缺字段返回 None (不参与判定, 不影响总额).
+    #[test]
+    fn parse_datetime_rejects_malformed() {
+        assert!(parse_datetime("2026-10-31 23:59:59").is_some());
+        assert!(parse_datetime("2026-10-31").is_none(), "缺时间部分");
+        assert!(parse_datetime("not a date").is_none());
+        assert!(parse_datetime("2026-13-01 00:00:00").is_none(), "月份越界");
+        assert!(parse_datetime("2026-10-31 25:00:00").is_none(), "小时越界");
     }
 
     #[test]

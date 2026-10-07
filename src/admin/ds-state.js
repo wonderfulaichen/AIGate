@@ -131,6 +131,8 @@ function dashboard() {  return {
     loginProv: '', loginTok: '', loginRt: '', loginExp: '', loginBusy: false, loginMsg: '',
     // 拖拽排序的源行号 (账号列表; -1 = 无拖拽进行中).
     acctDragFrom: -1,
+    // 选号策略: 'order' | 'pace' (GET/POST /admin/api/accounts/picking).
+    acctPicking: 'order',
     // 浏览器登录轮询计时器 (非展示态; 关弹窗/结束时必须清).
     loginPollTimer: null,
     // 浏览器登录进行中 (true 时主按钮显示等待态).

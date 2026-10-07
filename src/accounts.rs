@@ -349,6 +349,17 @@ impl AccountStore {
         Ok(())
     }
 
+    /// 列出**有账号**的供应商名 (余额侧据此决定"是否按供应商单独查询")。
+    pub async fn providers_with_accounts(&self) -> Vec<String> {
+        self.map
+            .read()
+            .await
+            .iter()
+            .filter(|(_, list)| !list.is_empty())
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
     /// 按 id 原地更新一个账号 (续期/冷却标记).
     pub async fn update_by_id<F: FnOnce(&mut AccountEntry)>(&self, provider: &str, id: &str, f: F) {
         let mut m = self.map.write().await;
@@ -444,6 +455,82 @@ impl AccountStore {
     }
 }
 
+// ── 选号策略 (2026-10-08) ──
+//
+// 依据: 每个账号的额度有**独立的重置窗口** (buddy 实测: CapacityType=4 是自然月,
+// CapacityType=1 多为 30 天滚动)。用哪个号会直接影响月底总量 —— 若总用额度还剩
+// 最多的那个号, 而另一个号窗口快到了却没用, 重置时那部分就白丢了。
+// 参考 magpie 的 smart/pace 思路, 按我们已有的数据实现:
+//
+// - `order` (默认/既有行为): 严格按列表顺序, 第一个可用即可 —— 保住 KV 缓存亲和,
+//   语义最可预测 ("我设了谁就用谁"), 面板显示与实际也一致。
+// - `pace`: 只在**多个账号都能用**且配额窗口信息可用时, 优先用「剩余额度 ÷ 距窗口
+//   重置的时间」比值最小的号 —— 即"最该被消耗的那个":
+//   剩得多且快重置 = 不用就浪费 (比值大, 该先用); 剩得少 = 该留着 (比值小, 后用)。
+//
+// ⚠️ 只在配额数据齐备时生效: 拿不到窗口信息时静默回落到 order —— 宁可不优化,
+//   也不要在未知数据上做出用户无法预测的切换 (那会破坏"我设了谁就用谁"的信任)。
+
+/// 选号策略.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountPicking {
+    /// 按列表顺序, 第一个可用即可 (默认; 保住缓存亲和, 行为可预测).
+    #[default]
+    Order,
+    /// 优先消耗"快重置且剩余多"的账号, 减少窗口重置时的浪费.
+    Pace,
+}
+
+/// 一个账号的配额快照 (选号决策用; 数据缺失则为 None).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QuotaView {
+    /// 全部资源包的总剩余额度.
+    pub remain: Option<f64>,
+    /// **最近会重置**的窗口结束时刻 (Unix 秒).
+    pub cycle_end: Option<u64>,
+}
+
+/// `pace` 打分: 越小越该被优先消耗.
+///
+/// 算式: `剩余额度 / 距窗口重置的剩余天数` —— 单位是"每天有多少额度会作废"。
+/// 该值**大** = 剩余多且快到期 = 不用就浪费 → 应该**先**用 (故取负数, 让大者排前)。
+/// 分母下限 0.5 天, 避免窗口将至时比值爆炸把单个号锁死。
+fn pace_score(q: QuotaView, now: u64) -> Option<f64> {
+    let remain = q.remain?;
+    let end = q.cycle_end?;
+    if remain <= 0.0 || end <= now {
+        // 窗口已过或额度为 0: 无"浪费"风险, 不该因此被优先选中.
+        return Some(0.0);
+    }
+    let days = ((end - now) as f64 / 86400.0).max(0.5);
+    Some(-(remain / days))
+}
+
+/// 选号模式: 进程级 **可写** (默认 `order`; 环境变量 `AIGATE_ACCOUNT_PICKING=pace` 可改,
+/// 将来面板切换也走这里)。用 RwLock 而非 OnceLock —— 后者只能设一次, 测试与运行时
+/// 都无法再切换 (实测撞出: 单测里第二次设定静默无效)。
+static PICKING: std::sync::OnceLock<std::sync::RwLock<AccountPicking>> = std::sync::OnceLock::new();
+
+fn picking_slot() -> &'static std::sync::RwLock<AccountPicking> {
+    PICKING.get_or_init(|| {
+        let init = match std::env::var("AIGATE_ACCOUNT_PICKING").ok().as_deref() {
+            Some("pace") => AccountPicking::Pace,
+            _ => AccountPicking::Order,
+        };
+        std::sync::RwLock::new(init)
+    })
+}
+
+pub fn account_picking() -> AccountPicking {
+    *picking_slot().read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 设定选号策略 (测试用; 将来面板切换也走这个函数).
+pub fn set_account_picking(m: AccountPicking) {
+    *picking_slot().write().unwrap_or_else(|e| e.into_inner()) = m;
+}
+
 /// 取可用 token (含账号 id): 账号缺失/全部作废/全部冷却 → None (调用方回落 api_key 链).
 ///
 /// 选号规则 (**按优先级顺序**, 面板里的顺序即优先级):
@@ -467,6 +554,9 @@ pub async fn usable_token(
 /// 选出一个可用账号, 排除 `exclude` 里的 id (换号重试用).
 ///
 /// 返回 `(access_token, account_id)`.
+///
+/// **顺序**: `order` 模式按列表顺序; `pace` 模式按"最该被消耗的号"重排 ——
+/// 但仅在**首个可用账号之后仍有候选**且配额数据齐备时才调整 (见 [`AccountPicking`])。
 pub async fn pick_account(
     store: &AccountStore,
     provider: &str,
@@ -477,10 +567,59 @@ pub async fn pick_account(
 ) -> Option<(String, String)> {
     let list = store.entries(provider).await;
     let now = now_secs();
-    for cand in list.iter().filter(|e| !exclude.contains(&e.id)) {
-        if !cand.is_available(now) {
-            continue;
+
+    // 候选 = 可用且未排除的账号 (保持列表顺序).
+    let mut cands: Vec<&AccountEntry> = list
+        .iter()
+        .filter(|e| !exclude.contains(&e.id) && e.is_available(now))
+        .collect();
+    if cands.is_empty() {
+        return None;
+    }
+
+    if account_picking() == AccountPicking::Pace && cands.len() > 1 {
+        // 只在配额信息齐备时重排; 有任一候选拿不到数据就整体回落 order
+        // (避免在未知数据上做出用户无法预测的切换).
+        let quotas: Vec<Option<QuotaView>> = cands
+            .iter()
+            .map(|e| {
+                crate::balance::cached_quota_view(&e.access_token, &e.id, now)
+                    .map(|(remain, cycle_end)| QuotaView {
+                        remain: Some(remain),
+                        cycle_end: Some(cycle_end),
+                    })
+            })
+            .collect();
+        if quotas.iter().all(|q| q.is_some()) {
+            let scores: Vec<f64> = quotas
+                .iter()
+                .map(|q| pace_score(q.unwrap(), now).unwrap_or(0.0))
+                .collect();
+            // 稳定排序: 分数相同(=都无浪费风险)时保持面板里的顺序.
+            let mut order: Vec<usize> = (0..cands.len()).collect();
+            order.sort_by(|&a, &b| {
+                scores[a]
+                    .partial_cmp(&scores[b])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let old_head = cands[0];
+            cands = order.into_iter().map(|i| cands[i]).collect();
+            if cands[0].id != old_head.id {
+                tracing::info!(
+                    "accounts: '{provider}' pace 选号 → {} (额度 {} / 窗口重置还剩 {} 天), 优先于面板首位的 {}",
+                    cands[0].id,
+                    quotas[0].map(|q| q.remain.unwrap_or(0.0)).unwrap_or(0.0),
+                    quotas[0]
+                        .and_then(|q| q.cycle_end)
+                        .map(|end| (end.saturating_sub(now)) / 86400)
+                        .unwrap_or(0),
+                    old_head.id
+                );
+            }
         }
+    }
+
+    for cand in cands {
         let mut entry = cand.clone();
         if entry.is_expired(now) {
             let rc = refresh?;
@@ -818,8 +957,7 @@ pub async fn buddy_login_poll(
 /// 从 `auth/token` 的 data 解析凭据 (harness parseTokenData 同口径):
 /// `expiresAt` 绝对值优先 (兼容毫秒/秒), 否则 `expiresIn` 相对秒;
 /// 都拿不到 → expires_at=None (不主动续期, 到期回落 key 链; refresh_token 仍可续).
-fn parse_login_token(data: &serde_json::Value) -> Option<AccountEntry> {
-    let access = data
+fn parse_login_token(data: &serde_json::Value) -> Option<AccountEntry> {    let access = data
         .get("accessToken")
         .and_then(|t| t.as_str())
         .filter(|s| !s.is_empty())?;
@@ -884,6 +1022,58 @@ mod tests {
             "headers": {"X-Refresh-Token": "{refresh_token}"}
         }))
         .unwrap()
+    }
+
+    /// pace 打分: "每天会作废多少额度" —— 剩得多且快重置 = 不用就浪费, 应先用.
+    #[test]
+    fn pace_score_prefers_soon_reset_with_many_credits() {
+        let now = 1_700_000_000u64;
+        let day = 86400u64;
+        // A: 1000 额度, 1 天后重置 → 每天作废 1000 (最该先用)
+        let a = pace_score(
+            QuotaView { remain: Some(1000.0), cycle_end: Some(now + day) },
+            now,
+        )
+        .unwrap();
+        // B: 同额度, 30 天后重置 → 每天作废约 33 (不急)
+        let b = pace_score(
+            QuotaView { remain: Some(1000.0), cycle_end: Some(now + 30 * day) },
+            now,
+        )
+        .unwrap();
+        // C: 10 额度, 1 天后重置 → 每天作废 10 (剩得少, 后用)
+        let c = pace_score(
+            QuotaView { remain: Some(10.0), cycle_end: Some(now + day) },
+            now,
+        )
+        .unwrap();
+        assert!(a < b, "同额度下快重置的应更优先 (分数更小): {a} vs {b}");
+        assert!(a < c, "同窗口下剩得多的应更优先: {a} vs {c}");
+
+        // 窗口已过 / 额度为 0 → 无浪费风险, 不该因此被优先 (0 分).
+        let past = pace_score(
+            QuotaView { remain: Some(500.0), cycle_end: Some(now - day) },
+            now,
+        )
+        .unwrap();
+        let empty = pace_score(QuotaView { remain: Some(0.0), cycle_end: Some(now + day) }, now).unwrap();
+        assert_eq!(past, 0.0);
+        assert_eq!(empty, 0.0);
+
+        // 数据缺失 → None (调用方据此回落 order).
+        assert!(pace_score(QuotaView { remain: None, cycle_end: Some(now + day) }, now).is_none());
+        assert!(pace_score(QuotaView { remain: Some(100.0), cycle_end: None }, now).is_none());
+    }
+
+    /// 默认策略是 order (行为可预测, 保住缓存亲和) —— 未经显式配置不得改变.
+    #[test]
+    fn default_picking_is_order() {
+        assert_eq!(AccountPicking::default(), AccountPicking::Order);
+        set_account_picking(AccountPicking::Order);
+        assert_eq!(account_picking(), AccountPicking::Order);
+        set_account_picking(AccountPicking::Pace);
+        assert_eq!(account_picking(), AccountPicking::Pace);
+        set_account_picking(AccountPicking::Order); // 还原, 避免影响其它用例
     }
 
     #[test]

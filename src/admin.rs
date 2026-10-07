@@ -1564,6 +1564,50 @@ fn short_acct(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
+/// GET /admin/api/accounts/picking — 读当前选号策略 (order / pace).
+///
+/// 策略影响"用哪个账号", 用户必须看得见 —— 否则面板显示的"当前账号"与实际不符
+/// (本项目反复出现的 bug 类型: 面板显示与后端行为不一致).
+pub async fn api_accounts_picking_get(
+    State(_state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let m = crate::accounts::account_picking();
+    Json(serde_json::json!({
+        "picking": match m {
+            crate::accounts::AccountPicking::Order => "order",
+            crate::accounts::AccountPicking::Pace => "pace",
+        },
+        // 面板据此解释语义: order = 严格按列表顺序; pace = 优先消耗"快重置且剩余多"的号.
+        "hint_key": "acc_picking_hint",
+    }))
+}
+
+/// POST /admin/api/accounts/picking — 切换选号策略 `{picking: "order"|"pace"}`.
+pub async fn api_accounts_picking_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let m = match payload.get("picking").and_then(|v| v.as_str()) {
+        Some("pace") => crate::accounts::AccountPicking::Pace,
+        Some("order") => crate::accounts::AccountPicking::Order,
+        other => {
+            return Json(serde_json::json!({
+                "error": format!("未知的选号策略: {:?} (可选 order / pace)", other)
+            }))
+        }
+    };
+    crate::accounts::set_account_picking(m);
+    tracing::info!("accounts: 选号策略切换为 {:?}", m);
+    // 策略变了 → 当前账号可能随之变化 (pace 下不一定还是列表首位): 清余额缓存并回报状态.
+    for p in state.accounts.providers_with_accounts().await {
+        state.balance_manager.clear_cache(&p).await;
+    }
+    Json(serde_json::json!({
+        "message": crate::i18n::pick("选号策略已更新", "Picking strategy updated"),
+        "accounts": state.accounts.status_map().await,
+    }))
+}
+
 /// POST /admin/api/accounts/reorder — **切换当前使用的账号 / 调整优先级**.
 ///
 /// body: `{name, ids: [按新优先级排列的账号 id]}` —— 「设为当前账号」= 把该 id 放最前;
