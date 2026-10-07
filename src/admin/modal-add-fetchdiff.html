@@ -36,6 +36,7 @@
         <template x-for="(a,i) in (accountsStatus&&accountsStatus[loginProv]||[])" :key="a.id">
           <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--fill-4);border-radius:8px;margin-bottom:4px">
             <span class="txs mono tm" x-text="'#'+(i+1)"></span>
+            <span class="txs mono tm" x-show="a.identity" x-text="a.identity" :title="t('acc_identity_hint')"></span>
             <span class="txs" :style="a.active?'color:var(--accent);font-weight:600':'color:var(--muted)'"
                   x-text="a.active?t('acc_active_tag'):(a.dead?t('acc_dead'):(a.cooling?t('acc_cooling'):t('acc_idle_tag')))"></span>
             <span class="txs tm" style="margin-left:auto" x-text="acctExpiryText(a)"></span>

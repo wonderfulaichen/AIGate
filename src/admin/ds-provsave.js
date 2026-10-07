@@ -328,6 +328,10 @@
     async browserLogin(){
       if(!this.loginProv || this.loginBrowserPending) return;
       this.loginMsg=''; this.loginBusy=true;
+      // 记录登录前的账号指纹集合: 登录成功后据此判断"是新增了账号"还是"又是同一个账号"
+      // (在浏览器里没退出当前账号时, 登录页会直接把同一个号的凭据再发回来 ——
+      //  2026-10-07 用户报障"再登录一个还是 1 个"就是这个原因, 必须给出可操作提示).
+      const before=(this.accountsStatus&&this.accountsStatus[this.loginProv]||[]).map(a=>a.id).join(',');
       try{
         const r=await fetch('/admin/api/accounts/login/start',{method:'POST',headers:authHeaders(),
           body:JSON.stringify({name:this.loginProv})});
@@ -347,10 +351,17 @@
             const sd=await s.json();
             if(sd.status==='ok'){
               this.stopLoginPoll();
+              const prov=this.loginProv;
               await this.fetchAccounts();
+              const after=(this.accountsStatus&&this.accountsStatus[prov]||[]).map(a=>a.id).join(',');
               this.loginProv=''; this.loginTok=''; this.loginRt=''; this.loginExp='';
-              this.loginMsg=t('login_success');
-              setTimeout(()=>{ this.loginMsg=''; },3000);
+              if(after===before){
+                // 账号没变 → 同一个号重登: 不是"加上了", 得说清楚 + 给出怎么做
+                this.loginMsg=t('acc_same_updated');
+              }else{
+                this.loginMsg=t('login_success');
+                setTimeout(()=>{ this.loginMsg=''; },3000);
+              }
             }else if(sd.status==='failed'){
               this.stopLoginPoll();
               this.loginMsg=sd.error||t('login_browser_failed');

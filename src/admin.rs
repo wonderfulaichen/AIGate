@@ -1374,6 +1374,8 @@ pub async fn api_accounts_login(
         // 面板传 label 时用它; 否则留空 (前端按序号显示).
         id: String::new(), // 由 store.add 生成
         label: payload.get("label").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        // 身份指纹从凭据推出 (JWT 的 sub) —— 同一账号重复登录据此去重.
+        identity: crate::accounts::account_identity(&token),
         access_token: token,
         refresh_token,
         expires_at: if expires_in > 0 { Some(now + expires_in) } else { None },

@@ -15,7 +15,7 @@ mock 扮演官方端点:
   ③ 顺序 = 优先级 (先登录的在前), 且第一个 active
   ④ 落盘 accounts.json 是数组且两个 token 都在 (凭据不丢)
 """
-import io, json, os, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
+import base64, io, json, os, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -23,6 +23,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_buddy_login")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG, PM = 8989, 8990
+
+def jwt(sub, iat=1):
+    """造一个 JWT 形状的 token (载荷带 sub) —— 官方凭据就是 JWT, sub 即账号身份."""
+    def b64(o):
+        return base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+    return b64({"alg": "none", "typ": "JWT"}) + "." + b64({"sub": sub, "iat": iat}) + ".sig"
+
+# state -> 该次登录返回的 token (按账号身份区分: A/B 是两个号)
+TOKENS = {"S1": jwt("acct-A", 1), "S2": jwt("acct-B", 1), "S3": jwt("acct-A", 2)}
 
 STATE = {"n": 0}
 POLLED = {}   # state -> 已轮询次数 (首次返回 data:null, 模拟"用户还没点完")
@@ -54,8 +63,8 @@ class Mock(BaseHTTPRequestHandler):
         POLLED[sid] += 1
         if POLLED[sid] < 2:
             return self._json({"code": 0, "data": None})   # 先"未就绪"
-        n = sid[1:]
-        return self._json({"code": 0, "data": {"accessToken": "BT" + n, "refreshToken": "BR" + n,
+        tok = TOKENS.get(sid) or jwt("acct-X", 9)
+        return self._json({"code": 0, "data": {"accessToken": tok, "refreshToken": tok + ".rt",
                                                "expiresIn": 4752000}})
     def log_message(self, *a): pass
 
@@ -91,6 +100,10 @@ def api(path, data=None):
     with urllib.request.urlopen(r, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8", "replace") or "{}")
 
+def tokens_on_disk():
+    fj = json.load(io.open(os.path.join(ISO, "data", "accounts.json"), encoding="utf-8"))
+    return [x.get("access_token") for x in (fj.get("buddyz") or [])]
+
 def accounts():
     return api("/admin/api/accounts").get("accounts", {}).get("buddyz", [])
 
@@ -119,19 +132,28 @@ try:
     a1 = accounts()
     ck("① 浏览器登录第 1 个号 → 账号数 1", len(a1) == 1, [(x.get("id","")[:6]) for x in a1])
     ck("①b start 返回官方登录链接 (来自 mock)", "state=" in url1, url1)
+    ck("①c 状态里带账号身份指纹", bool(a1 and a1[0].get("identity")), a1[0].get("identity") if a1 else None)
 
-    browser_login_once()
+    browser_login_once()   # S2 = 另一个账号 (sub 不同)
     a2 = accounts()
-    ck("② **再登录一个号 → 账号数 2** (回归: 覆盖式写入会停在 1)", len(a2) == 2,
-       [(x.get("id","")[:6], x.get("dead")) for x in a2])
+    ck("② **登录另一个账号 → 账号数 2** (回归: 覆盖式写入会停在 1)", len(a2) == 2,
+       [(x.get("id","")[:6], x.get("identity")) for x in a2])
     ck("③ 顺序 = 优先级 (先登录的在前且 active)",
        len(a2) == 2 and a2[0].get("active") is True and a2[1].get("active") is False,
        [x.get("active") for x in a2])
 
+    # ④ 同一个账号再登录 (token 变了但 sub 相同) → 仍是一条, 只更新凭据
+    tok1_before = tokens_on_disk()[0]
+    browser_login_once()   # S3 = acct-A 的新 token
+    a3 = accounts()
+    ck("④ 同一账号重登 (新 token/同 sub) → 仍是 2 条, 不重复堆", len(a3) == 2,
+       [(x.get("id","")[:6], x.get("identity")) for x in a3])
+    ck("④b 该账号凭据被更新为新 token (确实是重登)",
+       tokens_on_disk()[0] != tok1_before, [t[:12] for t in tokens_on_disk()])
+
     fj = json.load(io.open(os.path.join(ISO, "data", "accounts.json"), encoding="utf-8"))
     arr = fj.get("buddyz") or []
-    toks = [x.get("access_token") for x in arr]
-    ck("④ 落盘是数组且两个凭据都在", len(arr) == 2 and toks == ["BT1", "BT2"], toks)
+    ck("⑤ 落盘是数组且两条都在", len(arr) == 2, [x.get("identity") for x in arr])
 finally:
     proc.terminate()
     try: proc.wait(timeout=5)

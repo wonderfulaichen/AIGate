@@ -43,6 +43,16 @@ pub struct AccountEntry {
     /// 展示名 (可选, 用户自定义; 空则由面板按序号显示).
     #[serde(default)]
     pub label: Option<String>,
+    /// **账号身份指纹** (从凭据里推出, 如 buddy JWT 的 `sub` 前 8 位).
+    ///
+    /// 用途有二:
+    /// 1. **去重**: 同一个账号再次登录会拿到**新的 token 但相同的身份** —— 按身份判同一账号,
+    ///    才不会把同一个号在列表里堆成两条 (若按 token 字符串比, 换了 token 就会被当新账号);
+    /// 2. **可辨识**: 面板里两个 buddy 账号看起来一模一样, 有指纹用户才能确认"加进去的是不是
+    ///    另一个号" (2026-10-07 实测: 用户在浏览器里没退出当前账号, 登录页直接把同一个号的
+    ///    token 又发回来了, 界面因此"看起来没变化", 无法分辨).
+    #[serde(default)]
+    pub identity: Option<String>,
     pub access_token: String,
     /// 续期令牌 (可能被上游轮换; 响应里没有新值则沿用).
     #[serde(default)]
@@ -77,6 +87,47 @@ impl AccountEntry {
     pub fn is_available(&self, now: u64) -> bool {
         !self.dead && self.cooldown_until.map_or(true, |t| now >= t)
     }
+}
+
+/// 极简 base64url 解码 (只为读 JWT 载荷, 不做严格 padding/字符集校验).
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut buf, mut bits) = (0u32, 0u8);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            b'=' => break,
+            _ => return None,
+        } as u32;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// 从访问令牌推出**稳定的账号身份** (面板展示 + 同账号去重).
+///
+/// buddy 的 token 是 JWT, 载荷里的 `sub` 就是账号 id —— 同一个号重新登录, 即便 token 变了,
+/// `sub` 不变, 故它是"是不是同一个账号"的正确判据. 非 JWT / 解析不出 `sub` → `None`
+/// (调用方退回按 token 字符串比较, 行为与旧版一致).
+pub fn account_identity(access_token: &str) -> Option<String> {
+    let payload = access_token.split('.').nth(1)?;
+    let bytes = b64url_decode(payload)?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let sub = v.get("sub")?.as_str()?;
+    if sub.is_empty() {
+        return None;
+    }
+    // 只留短指纹: 面板够区分即可, 不必把完整标识放进状态接口/文件.
+    Some(sub.chars().take(8).collect())
 }
 
 /// 生成账号 id (本地唯一即可, 与凭据无关).
@@ -171,32 +222,52 @@ impl AccountStore {
             .cloned()
     }
 
-    /// 新增一个账号 (登录成功后调用). 返回新建账号的 id.
+    /// 新增一个账号 (登录成功后调用). 返回新建/命中的账号 id.
     ///
-    /// 去重口径: **access_token 相同视为同一个账号** → 原地更新 (重新登录同一个号
-    /// 不该在列表里堆两条), 否则追加到末尾 (优先级最低, 前面用坏了才轮到它).
+    /// 去重口径: **同一个账号视为同一条** —— 优先按身份指纹 (`identity`) 比, 缺指纹时退回
+    /// 按 access_token 比. 命中则原地更新 (重新登录同一个号不该在列表里堆两条), 否则追加到末尾
+    /// (优先级最低, 前面用坏了才轮到它).
     pub async fn add(&self, provider: &str, mut entry: AccountEntry) -> String {
         if entry.id.is_empty() {
             entry.id = new_account_id();
         }
+        if entry.identity.is_none() {
+            entry.identity = account_identity(&entry.access_token);
+        }
         let mut m = self.map.write().await;
         let list = m.entry(provider.to_string()).or_default();
-        let effective_id = match list.iter_mut().find(|e| e.access_token == entry.access_token) {
-            Some(existing) => {
-                let keep_id = existing.id.clone();
-                *existing = entry;
-                existing.id = keep_id.clone(); // 同一凭据保持原 id (面板选中态不跳)
-                keep_id
+        let same_acc = |e: &AccountEntry| match (&entry.identity, &e.identity) {
+            (Some(a), Some(b)) => a == b,
+            _ => e.access_token == entry.access_token,
+        };
+        let hit = list.iter().position(same_acc);
+        let fp = entry.identity.clone().unwrap_or_else(|| "无指纹".into());
+        let (effective_id, is_new) = match hit {
+            Some(i) => {
+                let keep_id = list[i].id.clone();
+                list[i] = entry;
+                list[i].id = keep_id.clone(); // 同一账号保持原 id (面板选中态不跳)
+                (keep_id, false)
             }
             None => {
                 let id = entry.id.clone();
                 list.push(entry);
-                id
+                (id, true)
             }
         };
+        let n = list.len();
         let snapshot = m.clone();
         drop(m);
         Self::write_atomic(&self.path, &snapshot);
+        // 记账可查: 用户报障"再登录一个号还是 1 个"时, 这条日志直接说明是新增还是命中同一账号.
+        if is_new {
+            tracing::info!("accounts: '{provider}' 新增账号 {effective_id} (身份 {fp}), 现有 {n} 个");
+        } else {
+            tracing::info!(
+                "accounts: '{provider}' 账号 {effective_id} 已存在 (身份 {fp} 是同一账号, 仅更新凭据), \
+                 现有 {n} 个; 若本想添加**另一个**账号, 请先在浏览器退出当前账号再登录"
+            );
+        }
         effective_id
     }
 
@@ -266,6 +337,7 @@ impl AccountStore {
                         serde_json::json!({
                             "id": v.id,
                             "label": v.label,
+                            "identity": v.identity,
                             "expires_at": v.expires_at,
                             "expires_in_secs": v.expires_at.map(|t| t.saturating_sub(now) as i64),
                             "dead": v.dead,
@@ -469,9 +541,10 @@ pub async fn refresh_account(
     let expires_in = pick(&rc.expires_in_path).and_then(|s| s.parse::<u64>().ok());
     let now = now_secs();
     let updated = AccountEntry {
-        // id / label 保持不变 (续期只换凭据, 不换身份).
+        // id / label / identity 保持不变 (续期只换凭据, 不换身份).
         id: entry.id.clone(),
         label: entry.label.clone(),
+        identity: entry.identity.clone(),
         access_token,
         refresh_token: new_rt.or(entry.refresh_token),
         expires_at: expires_in.map(|s| now + s),
@@ -686,6 +759,7 @@ fn parse_login_token(data: &serde_json::Value) -> Option<AccountEntry> {
     Some(AccountEntry {
         id: new_account_id(),
         label: None,
+        identity: account_identity(access),
         access_token: access.to_string(),
         refresh_token: refresh,
         expires_at,
@@ -764,6 +838,7 @@ mod tests {
         let e = AccountEntry {
             id: "a1".into(),
             label: None,
+            identity: None,
             access_token: "t".into(),
             refresh_token: Some("r".into()),
             expires_at: Some(1_000_000),
@@ -799,6 +874,7 @@ mod tests {
         let mk = |tok: &str, exp: Option<u64>| AccountEntry {
             id: String::new(),
             label: None,
+            identity: None,
             access_token: tok.into(),
             refresh_token: None,
             expires_at: exp,
@@ -860,7 +936,7 @@ mod tests {
         let store2 = AccountStore::new(dir.to_str().unwrap());
         let id2 = store2
             .add("buddy", AccountEntry {
-                id: String::new(), label: None, access_token: "NEW_AT".into(),
+                id: String::new(), label: None, identity: None, access_token: "NEW_AT".into(),
                 refresh_token: None, expires_at: None, dead: false,
                 cooldown_until: None, updated_at: None,
             })
@@ -882,6 +958,7 @@ mod tests {
                 AccountEntry {
                     id: String::new(),
                     label: None,
+                    identity: None,
                     access_token: "SECRET_AT".into(),
                     refresh_token: Some("SECRET_RT".into()),
                     expires_at: Some(1_700_000_000),

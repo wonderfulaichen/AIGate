@@ -170,7 +170,9 @@ const { chromium } = require('playwright');
     if (m) {
       const ta = m.querySelectorAll('textarea')[0];
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-      setter.call(ta, 'E2E_UI_TOKEN_1');
+      // JWT 形状 (载荷带 sub) —— 面板据此显示账号身份指纹
+      const b64 = o => btoa(JSON.stringify(o)).replace(/=+$/,'').replace(/\+/g,'-').replace(/\//g,'_');
+      setter.call(ta, b64({alg:'none'}) + '.' + b64({sub:'e2eacct-1234'}) + '.sig');
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }
   });
@@ -207,6 +209,7 @@ const { chromium } = require('playwright');
       has_list: txt.includes('已登录账号'),
       has_active_tag: txt.includes('使用中'),
       has_add_more: txt.includes('再添加一个账号'),
+      has_identity: txt.includes('e2eacct'),
       rows: Array.from(m.querySelectorAll('button'))
         .filter(x => (x.textContent || '').trim() === '登出').length,
     };
@@ -266,6 +269,7 @@ try:
     ck("ui_login_fields", out.get("loginModal", {}).get("field_count", 0) >= 3, out.get("loginModal"))
     ck("ui_login_submit_relogin", out.get("afterLogin", {}).get("has_relogin"), out.get("afterLogin"))
     au = out.get("acctUI", {})
+    ck("ui_acct_identity_shown", au.get("has_identity") is True, au)
     ck("ui_acct_list_rendered", au.get("open") and au.get("has_list"), au)
     ck("ui_acct_active_tag", au.get("has_active_tag") is True, au)
     ck("ui_acct_add_more_btn", au.get("has_add_more") is True, au)
