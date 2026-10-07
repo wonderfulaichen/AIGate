@@ -1385,6 +1385,8 @@ pub async fn api_accounts_login(
     };
     // **追加**而不是覆盖: 多账号场景下同一个供应商可以登录多个号 (token 相同则原地更新).
     state.accounts.add(&name, entry).await;
+    // 账号数/凭据变了 → 余额(聚合值)随之变化, 清缓存避免继续显示旧值.
+    state.balance_manager.clear_cache(&name).await;
     Json(serde_json::json!({
         "message": crate::i18n::pick("登录成功", "Signed in"),
         "accounts": state.accounts.status_map().await,
@@ -1404,6 +1406,8 @@ pub async fn api_accounts_logout(
         _ => return Json(serde_json::json!({ "error": "缺少 name" })),
     };
     let id = payload.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+    // 账号集合变了 → 余额(聚合值/当前账号值)随之变化, 清缓存避免继续显示旧值.
+    state.balance_manager.clear_cache(&name).await;
     let msg = match id {
         Some(id) => {
             if state.accounts.remove_by_id(&name, id).await {
@@ -1578,10 +1582,16 @@ pub async fn api_accounts_reorder(
         None => return Json(serde_json::json!({ "error": "缺少 ids" })),
     };
     match state.accounts.reorder(&name, &ids).await {
-        Ok(()) => Json(serde_json::json!({
-            "message": crate::i18n::pick("已切换当前账号", "Active account switched"),
-            "accounts": state.accounts.status_map().await,
-        })),
+        Ok(()) => {
+            // 切换账号后**必须让余额缓存失效**: 缓存按供应商名存 1 小时, 里面的
+            // 「剩余/已用」是上一个账号算出来的 —— 不清就直接继续显示旧号的数字,
+            // 用户会认为"切换是假的" (2026-10-07 实测报障).
+            state.balance_manager.clear_cache(&name).await;
+            Json(serde_json::json!({
+                "message": crate::i18n::pick("已切换当前账号", "Active account switched"),
+                "accounts": state.accounts.status_map().await,
+            }))
+        }
         Err(e) => Json(serde_json::json!({
             "error": e,
             "accounts": state.accounts.status_map().await,

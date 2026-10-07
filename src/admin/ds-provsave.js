@@ -353,6 +353,8 @@
               this.stopLoginPoll();
               const prov=this.loginProv;
               await this.fetchAccounts();
+              // 新增/更新账号后余额会变 → 概览行同步刷新 (后端已清缓存).
+              try { await this.fetchBalance(); } catch(e) {}
               const after=(this.accountsStatus&&this.accountsStatus[prov]||[]).map(a=>a.id).join(',');
               this.loginProv=''; this.loginTok=''; this.loginRt=''; this.loginExp='';
               if(after===before){
@@ -398,6 +400,9 @@
         const d=await r.json();
         if(d.error){ this.loginMsg=d.error; return; }
         this.accountsStatus=d.accounts||{};
+        // 切换/增删账号后概览的余额行必须跟着更新 —— 后端已清掉该供应商的余额缓存,
+        // 这里主动拉一次; 否则用户看到的还是切换前的数字 (会以为切换没生效).
+        try { await this.fetchBalance(); } catch(e) {}
         // 切换"看起来没生效"的唯一真实情形: 置顶的号当前**不可用** (冷却中/已作废),
         // 选号会自动跳过它、用下一个可用的. 此时必须说清楚, 否则用户以为切换是假的.
         const list=this.accountsStatus[name]||[];
@@ -437,6 +442,8 @@
         const d=await r.json();
         if(!d.error){
           this.accountsStatus=d.accounts||{};
+          // 登出后余额(聚合值/当前账号值)会变 → 主动刷新概览行.
+          try { await this.fetchBalance(); } catch(e) {}
           this.keyMsg=d.message||t('logout');
           setTimeout(()=>{ this.keyMsg=''; },3000);
         }

@@ -15,6 +15,7 @@ ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_multi_acct")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG, PM = 8993, 8994
 SEEN = []          # 上游收到的 Authorization 序列
+BAL = {"calls": 0}  # 余额端点被调用次数 (验证缓存是否真的清掉)
 REJECT = set()     # 这些 token 被上游拒 (401); 到"换号重试"相位才加入 T1
 
 class Mock(BaseHTTPRequestHandler):
@@ -35,6 +36,14 @@ class Mock(BaseHTTPRequestHandler):
         return self._json(200, {"choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
                                              "finish_reason": "stop"}],
                                 "usage": {"prompt_tokens": 3, "completion_tokens": 1}})
+    def do_GET(self):
+        # 余额端点: 每次被调用都换个值, 用它判断"是否真的重新查了" (而不是命中缓存)
+        if self.path.startswith("/balance"):
+            BAL["calls"] += 1
+            import time as _t
+            BAL.setdefault("paths", []).append((self.path, (self.headers.get("authorization") or "")[:22], round(_t.time()%1000,2)))
+            return self._json(200, {"balance": 100 * BAL["calls"]})
+        return self._json(404, {})
     def log_message(self, *a): pass
 
 srv = ThreadingHTTPServer(("127.0.0.1", PM), Mock)
@@ -51,7 +60,11 @@ shutil.copy(EXE, os.path.join(ISO, "AIGate.exe"))
 json.dump({"providers": [{"name": "buddyx", "endpoint": f"http://127.0.0.1:{PM}/v1/chat/completions",
                           "api_key_env": "K", "api_key_default": "FALLBACK_KEY", "preset": "buddy",
                           "auth": {"mode": "account"},
-                          "models": {"buddyx/m": {"upstream_model": "m"}}}]},
+                          "models": {"buddyx/m": {"upstream_model": "m"}}},
+    {"name": "baltest", "endpoint": "http://127.0.0.1:%d/v1/chat/completions" % PM,
+     "api_key_env": "K", "api_key_default": "d",
+     "balance_endpoint": "http://127.0.0.1:%d/balance" % PM,
+     "auth": {"mode": "account"}, "models": {}}]},
           open(os.path.join(ISO, "providers.json"), "w", encoding="utf-8"))
 # 空账号池起步 (全部经由 API 登录写入, 顺带验证"追加"语义)
 open(os.path.join(ISO, "data", "accounts.json"), "w", encoding="utf-8").write("{}")
@@ -161,6 +174,28 @@ try:
     ck("⑥c 冷却中的号排到最前也不会被用 (自动跳过, active 落到下一个)",
        a[0]["id"] == ids[0] and a[0]["active"] is False and a[1]["active"] is True and SEEN == ["T2"],
        f"order={[(x['id'][:6], x['active'], x['cooling']) for x in a]} seen={SEEN}")
+
+    # ⑧ 切换账号必须让余额缓存失效 —— 判据用**返回的数值** (用户实际看到的东西),
+    #    不用"上游被调用几次": 实例自带的 WebView 面板会轮询 /admin/api/balance,
+    #    调用计数会被它干扰 (实测撞出过误判). mock 每次被查都返回更大的值, 所以
+    #    "数值变了" ⇔ "真的重新查了上游" ⇔ 缓存确实被清掉.
+    api("/admin/api/accounts/login", {"name": "baltest", "access_token": "B1", "expires_in_secs": 86400})
+    api("/admin/api/accounts/login", {"name": "baltest", "access_token": "B2", "expires_in_secs": 86400})
+
+    def bal():
+        _, d = api("/admin/api/balance")
+        row = next((x for x in d.get("balances", []) if x.get("provider") == "baltest"), {})
+        return row.get("balance")
+
+    v1 = bal()
+    ck("⑧a 余额查询拿到上游数值", isinstance(v1, (int, float)) and v1 > 0, v1)
+    v2 = bal()
+    ck("⑧b 未切换时命中缓存 (数值不变)", v2 == v1, (v1, v2))
+    _, ad = api("/admin/api/accounts")
+    bids = [x["id"] for x in ad.get("accounts", {}).get("baltest", [])]
+    api("/admin/api/accounts/reorder", {"name": "baltest", "ids": [bids[1], bids[0]]})
+    v3 = bal()
+    ck("⑧c **切换后缓存已失效 → 数值跟着变** (概览积分行不再是旧号的数字)", v3 != v1, (v1, v3))
 
     # ⑦ 按 id 登出只删该账号
     ids = [x["id"] for x in accts()]
