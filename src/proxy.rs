@@ -575,6 +575,11 @@ pub async fn chat_completions(
             }
         }
     }
+    // OpenCode 系 (zen/go) 身份头: filter_headers 只放行 user-agent, 这里把客户端
+    // 自带的 x-opencode-* 原样补回 (上游按 session 计配额, 缺头会被当"无会话").
+    if is_opencode_gateway(&provider) {
+        passthrough_opencode_headers(&mut req_headers, &headers);
+    }
     inject_opencode_session(&mut req_headers, &headers, &provider, &state.instance_session);
 
     // 8. 发送请求 (带瞬态重试) — 仅对连接/超时错误与流式开始前返回的 5xx 重试,
@@ -1363,6 +1368,11 @@ async fn relay_native_passthrough(
                 req_headers.insert(name, hv);
             }
         }
+    }
+    // OpenCode 系 (zen/go) 身份头: filter_headers 只放行 user-agent, 这里把客户端
+    // 自带的 x-opencode-* 原样补回 (上游按 session 计配额, 缺头会被当"无会话").
+    if is_opencode_gateway(&provider) {
+        passthrough_opencode_headers(&mut req_headers, &headers);
     }
     inject_opencode_session(&mut req_headers, &headers, &provider, &state.instance_session);
 
@@ -4524,7 +4534,7 @@ fn inject_opencode_session(
     provider: &crate::providers::ProviderConfig,
     instance_session: &str,
 ) {
-    if !is_opencode_go(provider) {
+    if !is_opencode_gateway(provider) {
         return;
     }
     // axum::http::HeaderName::from_static 是 infallible (编译期校验);
@@ -4548,28 +4558,61 @@ fn inject_opencode_session(
     req_headers.insert(name, val);
 }
 
-/// 判定供应商是否是 OpenCode Go (zen-go) 上游.
+/// 需要**原样透传**的 OpenCode 身份头.
 ///
-/// 双锚点识别:
-///   1) `provider.name == "go"` — 用户配置稳定约定, 自定义 endpoint 也覆盖
-///   2) endpoint (或 anthropic/responses 子端点) 路径含 `opencode.ai/zen/go`
+/// 为什么必须透传而不是丢: 上游 zen/go 免费车道按 **session** 计配额, 且实测
+/// 「六身份头缺一不可」(dsh-zen-proxy / zen-gate 的实测结论):
+///   `user-agent: opencode/>=1.18.0`(缺 → 403 FreeTierError)、`authorization: Bearer public`、
+///   `x-opencode-client` / `x-opencode-project` / `x-opencode-session` / `x-opencode-request`。
+/// 而 `filter_headers` 只放行 user-agent → 这些头会被整体丢掉, 上游于是把每个请求
+/// 都当成"无会话"(2026-10-08 实测: zen 侧甚至完全不透传)。
 ///
-/// 两条都 OR: 真实用户配置中 name="go" 几乎恒成立, 即便用户改 endpoint
-/// 自建反代也能兜底; 同时允许 mock/测试用任意 endpoint 配 name="go"。
-fn is_opencode_go(provider: &crate::providers::ProviderConfig) -> bool {
-    if provider.name == "go" {
+/// ⚠️ 我们**只做透传, 不做伪装** —— 不伪造 `opencode/<version>` UA、不造 `ses_`/`msg_` 格式,
+/// 客户端带什么就转发什么。这是"尊重客户端", 不是"冒充官方客户端"(HANDOFF §7 红线)。
+const OPENCODE_PASSTHROUGH: [&str; 4] = [
+    "x-opencode-session",
+    "x-opencode-client",
+    "x-opencode-project",
+    "x-opencode-request",
+];
+
+/// 把客户端原始请求里的 OpenCode 身份头补回转发头 (filter_headers 会把它们丢掉).
+///
+/// 触发条件: 上游是 OpenCode 系的网关 (zen 或 go) —— 两者用同一套身份头体系。
+/// 客户端没带的不补 (不伪造), 带了的一律原样透传 (不覆盖、不改造)。
+fn passthrough_opencode_headers(req_headers: &mut HeaderMap, client_headers: &HeaderMap) {
+    for k in OPENCODE_PASSTHROUGH {
+        let name = HeaderName::from_static(k);
+        if req_headers.contains_key(&name) {
+            continue; // 供应商额外头已显式配置 → 以其为准
+        }
+        if let Some(v) = client_headers.get(&name) {
+            req_headers.insert(name, v.clone());
+        }
+    }
+}
+
+/// 判定供应商是否是 OpenCode 系网关 (**zen 与 go 都算**).
+///
+/// 为什么要认 zen: 两者用同一套身份头体系 (都按 session 计配额), 而旧实现只认 go ——
+/// 于是 zen 的 `x-opencode-session` 既不透传也不兜底注入 (2026-10-08 实测撞出)。
+///
+/// 双锚点: ① `provider.name` 是 "zen" / "go" ② endpoint 含 `opencode.ai/zen`。
+fn is_opencode_gateway(provider: &crate::providers::ProviderConfig) -> bool {
+    if provider.name == "go" || provider.name == "zen" {
         return true;
     }
-    if provider.endpoint.contains("opencode.ai/zen/go") {
+    let hit = |ep: &str| ep.contains("opencode.ai/zen");
+    if hit(&provider.endpoint) {
         return true;
     }
     if let Some(ep) = &provider.endpoint_anthropic {
-        if ep.contains("opencode.ai/zen/go") {
+        if hit(ep) {
             return true;
         }
     }
     if let Some(ep) = &provider.endpoint_responses {
-        if ep.contains("opencode.ai/zen/go") {
+        if hit(ep) {
             return true;
         }
     }
@@ -4858,6 +4901,67 @@ mod tests {
     /// `reasoning` / `reasoning_details` 而 `content` 为 null —— 直接剥就留下
     /// **违反 OpenAI 协议的空 assistant**, 上游 400 (responses.rs:708 有同款实测记录).
     /// 修法与转换侧一致: 补空串而非留 null.
+    /// OpenCode 身份头透传 (2026-10-08 实测): `filter_headers` 只放行 user-agent,
+    /// 于是 zen/go 的 `x-opencode-*` 全被丢 → 上游按 session 计配额时把每个请求当"无会话".
+    /// 本用例锁死: 客户端带的原样透传, 没带的不伪造.
+    #[test]
+    fn opencode_identity_headers_passthrough() {
+        let mut client = HeaderMap::new();
+        client.insert(
+            HeaderName::from_static("x-opencode-session"),
+            HeaderValue::from_static("ses_abc"),
+        );
+        client.insert(
+            HeaderName::from_static("x-opencode-client"),
+            HeaderValue::from_static("desktop"),
+        );
+        // filter_headers 之后只剩 user-agent —— 模拟真实处境
+        let mut req = HeaderMap::new();
+        assert!(!req.contains_key("x-opencode-session"));
+
+        passthrough_opencode_headers(&mut req, &client);
+        assert_eq!(req.get("x-opencode-session").unwrap(), "ses_abc", "客户端自带必须透传");
+        assert_eq!(req.get("x-opencode-client").unwrap(), "desktop");
+        // 客户端没带的**不伪造** (我们不冒充官方客户端 —— HANDOFF §7 红线)
+        assert!(req.get("x-opencode-request").is_none(), "缺的头不得凭空造");
+        assert!(req.get("x-opencode-project").is_none());
+
+        // 供应商额外头已显式配置时以其为准, 不被客户端覆盖
+        let mut req2 = HeaderMap::new();
+        req2.insert(
+            HeaderName::from_static("x-opencode-session"),
+            HeaderValue::from_static("configured"),
+        );
+        passthrough_opencode_headers(&mut req2, &client);
+        assert_eq!(req2.get("x-opencode-session").unwrap(), "configured", "显式配置优先");
+    }
+
+    /// zen 与 go 同属 OpenCode 网关 (同一套身份头) —— 判据必须认 zen,
+    /// 否则 zen 侧的 session 既不透传也不兜底注入 (实测撞出的 bug).
+    #[test]
+    fn opencode_gateway_recognition_covers_zen_and_go() {
+        let mk = |name: &str, ep: &str| -> crate::providers::ProviderConfig {
+            serde_json::from_value(serde_json::json!({
+                "name": name,
+                "endpoint": ep,
+                "api_key_env": "K",
+                "models": {}
+            }))
+            .unwrap()
+        };
+        assert!(is_opencode_gateway(&mk("zen", "https://x/v1/chat/completions")), "按名字认 zen");
+        assert!(is_opencode_gateway(&mk("go", "https://x/v1/chat/completions")), "按名字认 go");
+        assert!(
+            is_opencode_gateway(&mk("custom", "https://opencode.ai/zen/v1/chat/completions")),
+            "按 endpoint 认 zen"
+        );
+        assert!(
+            is_opencode_gateway(&mk("custom", "https://opencode.ai/zen/go/v1/chat/completions")),
+            "按 endpoint 认 go"
+        );
+        assert!(!is_opencode_gateway(&mk("deepseek", "https://api.deepseek.com/v1/chat/completions")));
+    }
+
     #[test]
     fn strip_keeps_assistant_protocol_valid_when_reasoning_is_only_payload() {
         // 形态 1: content=null, 内容全在 reasoning_details
