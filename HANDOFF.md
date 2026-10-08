@@ -684,6 +684,36 @@ seek 是准的（seek 到 300ms → opacity 0.9525，seek 到 550ms → 1.0，�
 空小节同样渲染成空白。由单测 `changelog_only_uses_parseable_markup` 强制把关。
 （本轮我自己又犯了三次：5 个 `####`、3 个表格、5 个纯段落小节，全靠这道门禁抓出。）
 
+### 🧹 空间清理（2026-10-08，16.98 GB → 1.84 GB，释放 **15.14 GB**）
+
+用户报「空间占用很大」。按 §5.7 三分法逐项判定，**清理前先测量、清理后必验证**。
+
+| 目标 | 释放 | 判定依据 |
+|---|---|---|
+| `target/debug` | 10.35 GB | **纯产物**：停在 8-30（一个多月未动），我们一直用 `--release`；`cargo build` 即重建 |
+| `参考源码/OpenBitFun-main/target` | 2.63 GB | **别人项目的构建产物**（我们从不构建它）；源码本身不动 |
+| `.openbitfun/tmp/iso_*`（46 个） | 964 MB | **一过性**：每个探针跑前 `shutil.rmtree(ISO)` 自建（已验证：删后重跑 5 个探针正常重建） |
+| `pv/` 旧版视频 r3~r12 + 静音版 | ~470 MB | **过程稿**：r13 是最终版 |
+| `pv/` 旧版音乐 v5~v14 + music.wav | ~150 MB | **中间物**：v15 是最终配乐（`make_pv_music.py` 注释：用户认可 v14 底子，v15 加卡点），且已编入 `r13.mp4` |
+| `pv/frames` + `r06_open` + 6 个中间目录 | ~485 MB | 帧序列 / 单次排查产物 |
+| `pv/` 散装调试图与脚本（124 个） | 18.8 MB | 当时排查 PV 的一过性取证 |
+| `logo_check/edgeprofile` | 57.6 MB | 无头浏览器临时配置，每次重建 |
+| `verify/AIGate.exe.WebView2` | 37.7 MB | WebView2 缓存，每次启动重建 |
+
+**刻意的保留**（别下次又删）：
+- `target/release`（1.2 GB）—— 刚构建的部署候选，删了要重编
+- `参考源码/*/src`（190 MB）—— **许可核对**与反代要件取证的依据（§7 核对纪律要求能回查）
+- `.openbitfun/tmp/video/ref/`（55 MB）—— **用户自己的参考素材**（`user_ref.wav` 等），不是我们的产物
+- `.openbitfun/tmp/vidtools/node_modules`（61 MB, playwright）—— 重录介绍片的依赖（§4.6）
+- `pv/` 的最终三件：`aigate-pv-r13.mp4` / `-silent-r13.mp4` / `music_v15-90s.wav`
+- `_trash/`（归档区，等整目录确认无用再手动删）
+
+**清理后验证**（不是只报数字）：`git status` 干净 · `cargo build --release` Finished ·
+门禁全过（verify_parts / check_i18n 650 键 / test_brands 47 断言 / balance）·
+5 个 e2e 探针重跑全绿且**自动重建了隔离实例** · `target/release/AIGate.exe` 仍在。
+
+⚠️ **踩坑**：`Get-ChildItem .openbitfun\tmp\video -File` 当时返回 0 个文件，因为那些文件其实在**子目录 `pv/`** 里 —— 我一度以为文件消失了。**列目录前先确认层级**，别把子目录当空。
+
 ### 5.7 仓库根目录清理口径（2026-09-30 定）
 
 根目录会自己"长垃圾"（日志、探测快照、空目录、设备名文件）。每次清理都按**三分法**走，不凭印象删：
