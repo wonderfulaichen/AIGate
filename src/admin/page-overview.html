@@ -92,6 +92,14 @@
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="avgLatencyText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('generation_speed')"></div><div class="ov-health-value" x-text="genSpeedText"></div><div class="txs tm" x-show="stats.gen_samples" x-text="t('sample_count',stats.gen_samples)"></div></div>
+          <!-- 转发中断: 把"只存在于日志里"的断流/掐断/上游错误搬到面板 ——
+               用户两次报障"任务突然停下", 证据一直都只在日志里, 只能来问.
+               0 时不标色 (正常), 有值时标黄并给出"该去哪看"的指引. -->
+          <div class="ov-health-item" :title="t('health_breakdown', (stats.health&&stats.health.upstream_cut)||0, (stats.health&&stats.health.loop_truncated)||0, (stats.health&&stats.health.client_aborted)||0)">
+            <div class="ov-health-label" x-text="t('health_interrupt')"></div>
+            <div class="ov-health-value" :style="healthInterrupts?'color:var(--warn)':'color:var(--muted)'" x-text="String(healthInterrupts)"></div>
+            <div class="txs tm" x-show="healthInterrupts" x-text="t('health_see_records')"></div>
+          </div>
         </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'var(--ok)':m.errors<m.requests/5?'var(--warn)':'var(--err)')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div><div class="panel-takeaway" x-show="healthTakeaway" x-text="healthTakeaway"></div></div></div>
       </div>
       <div class="ov-side stagger">

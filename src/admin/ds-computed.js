@@ -223,6 +223,15 @@
       // 保留一位小数, 与原来 `gen_speed.toFixed(1)+' tok/s'` 的终值一致.
       return this._numTweenRaw('genSpeed', n).toFixed(1) + ' tok/s';
     },
+    // 转发中断次数 (需关注的那几类之和): 上游中途断流 + 上游 4xx/5xx + 循环掐断
+    // + "没出内容就断". 刻意**不含**纯客户端主动取消 —— 那是正常行为 (按 Esc / 工具超时).
+    // 用户两次报障"任务跑到一半突然停下", 而证据一直只在日志里 → 搬到面板上.
+    get healthInterrupts() {
+      const h = (this.stats || {}).health;
+      if (!h) return 0;
+      return (h.upstream_cut || 0) + (h.upstream_error || 0) + (h.upstream_4xx || 0)
+           + (h.loop_truncated || 0) + (h.aborted_no_output || 0);
+    },
     get donutSvg() {
       if(!this.stats||!this.stats.per_model.length) return '';
       const total=this.stats.total_requests||1;

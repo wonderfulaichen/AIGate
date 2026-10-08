@@ -2159,6 +2159,49 @@ mod changelog_tests {
     /// `####` 子标题、Markdown 表格、以及纯段落都会在关于页与「更新亮点」弹窗里凭空消失。
     /// 实测本轮曾写出 5 个 `####` 子标题、3 个表格、5 个只有段落的小节 ——
     /// 弹窗里对应标题与数据全没了, 而**没有任何报错**。此测试把这三类问题钉住。
+    /// 转发健康度分类 (2026-10-08): 用户两次报障"任务跑到一半突然停下", 而证据
+    /// 一直只在日志里 → 现在聚合到面板. 分类**取真实 error 文案**, 不靠猜.
+    #[test]
+    fn health_summary_classifies_by_real_error_text() {
+        let mk = |status: u16, err: Option<&str>, out_tok: u32| RequestLog {
+            timestamp: 0, model: "m".into(), provider: "p".into(), endpoint: "e".into(),
+            status, latency_ms: 0, body_len: 0, error: err.map(|s| s.to_string()),
+            prompt_tokens: 0, completion_tokens: out_tok, cached: false,
+            prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
+            prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
+            strip_saved_tokens: 0, trim_saved_tokens: 0, resp_cache_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0, audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0, strip_toolcall_saved_tokens: 0, audit_observed: false,
+            price: None, usage_estimated: false, seq: 0, effort: None,
+        };
+        let logs = vec![
+            // 正常请求
+            mk(200, None, 100),
+            // 客户端主动取消 (有输出 → 用户看到一半按的 Esc, 属正常)
+            mk(499, Some("客户端中断连接（已输出 500 tok / 输入 1000 tok，网关已停止转发并释放上游连接）"), 500),
+            // 客户端断但**没出内容** → 更可疑, 单独计
+            mk(499, Some("客户端中断连接（已输出 0 tok / 输入 0 tok，网关已停止转发并释放上游连接）"), 0),
+            // **上游中途断流** —— 用户感受到的"突然停下", 网关明确标注非自己截断
+            mk(200, Some("上游在生成中途断流（非网关截断；已输出 0 tok / 输入 844620 tok，客户端已收到 length 终止帧）"), 0),
+            // 网关主动掐断死循环
+            mk(200, Some("模型死循环，已截断（输出重复达阈值）"), 800),
+            // 上游拒绝 / 故障
+            mk(429, Some("429 请求频率超限"), 0),
+            mk(502, Some("502 服务器内部错误"), 0),
+        ];
+        let h = HealthSummary::from_logs(&logs);
+        assert_eq!(h.total, 7);
+        assert_eq!(h.client_aborted, 2, "两条 499");
+        assert_eq!(h.aborted_no_output, 1, "只有那条输出为 0 的算可疑");
+        assert_eq!(h.upstream_cut, 1, "上游中途断流");
+        assert_eq!(h.loop_truncated, 1, "循环掐断");
+        assert_eq!(h.upstream_4xx, 1, "429");
+        assert_eq!(h.upstream_error, 1, "502");
+        // 有输出的客户端取消**不算**中断 (否则会把正常行为报警成故障 —— 旧的 499 教训)
+        let only_normal = vec![mk(499, Some("客户端中断连接（已输出 500 tok）"), 500)];
+        assert_eq!(HealthSummary::from_logs(&only_normal).upstream_cut, 0);
+    }
+
     #[test]
     fn changelog_only_uses_parseable_markup() {
         let mut problems: Vec<String> = Vec::new();
@@ -3088,6 +3131,75 @@ pub struct OutputAudit {
     pub loop_truncated: u64,
 }
 
+/// 当前统计窗口的**转发健康度**汇总 (只读, 与 [`AuditSummary`] 同一套路).
+///
+/// 为什么要有它 (2026-10-08 用户两次报障的教训): 「任务跑到一半突然停下」的根因
+/// (循环检测误报、客户端断连记账、上游断流) 全都**只存在于日志里** —— 用户看不到,
+/// 只能来问. 把这类事件聚合到面板上, 用户自己就能第一时间判断"是不是网关这边的事".
+///
+/// 各项语义严格分开, 不混为一谈 (混了就会像旧的 499 一样把正常收尾也当失败):
+/// - `client_aborted`: 客户端主动断开 (按 Esc / 工具超时 / 切走). **不是错误** —— 后台任务
+///   常这样, 只要不是生成中途断的就不代表有问题;
+/// - `loop_truncated`: 死循环检测掐断. 这部分输出是纯浪费;
+/// - `upstream_error`: 5xx / 连接层失败 (网关自己判的失败);
+/// - `upstream_4xx`: 上游拒绝 (鉴权/额度/参数);
+/// - `cleaned_finish`: 生成已完整收尾、客户端才关连接的竞态 (记 200) —— 与真取消区分
+///   (这正是 `drop_close_status` 修的那条).
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct HealthSummary {
+    /// 客户单主动断开 (499).
+    pub client_aborted: u64,
+    /// 生成中途断开且**未产出任何内容**的条数 —— 这一档最可疑 (多半是上游/网络问题,
+    /// 而不是用户主动取消).
+    pub aborted_no_output: u64,
+    /// 死循环检测掐断次数.
+    pub loop_truncated: u64,
+    /// **上游在生成中途断流**的次数 (网关明确标注"非网关截断") —— 客户端表现为
+    /// "任务跑到一半停了". 这不是网关的问题, 但用户需要知道去哪找原因.
+    pub upstream_cut: u64,
+    /// 上游 5xx / 连接失败.
+    pub upstream_error: u64,
+    /// 上游 4xx (含 429).
+    pub upstream_4xx: u64,
+    /// 总请求数 (分母, 便于前端直接算占比).
+    pub total: u64,
+}
+
+impl HealthSummary {
+    /// 从记录聚合 (纯函数, 便于单测).
+    ///
+    /// 分类依据**取真实日志里的文案** (2026-10-08 实测 `error` 字段), 不靠猜:
+    /// - `客户端中断连接（已输出 N tok …）` → 用户/工具主动断开;
+    /// - `上游在生成中途断流（非网关截断…）` → **上游自己断了**, 最常见且最像"任务突然停下";
+    /// - `模型死循环` → 网关主动掐断 (这部分输出是浪费).
+    pub fn from_logs(logs: &[RequestLog]) -> Self {
+        let mut h = HealthSummary { total: logs.len() as u64, ..Default::default() };
+        for l in logs {
+            match l.status {
+                // 499 = 客户端断开. 输出为 0 的单独计数: 那是"还没来得及出内容就断了",
+                // 与"用户看到一半按 Esc"性质不同, 更值得关注.
+                499 => {
+                    h.client_aborted += 1;
+                    if l.completion_tokens == 0 {
+                        h.aborted_no_output += 1;
+                    }
+                }
+                s if (500..600).contains(&s) => h.upstream_error += 1,
+                s if (400..500).contains(&s) => h.upstream_4xx += 1,
+                _ => {}
+            }
+            let e = l.error.as_deref().unwrap_or("");
+            if e.contains("上游在生成中途断流") {
+                h.upstream_cut += 1;
+            }
+            if e.contains("死循环") || e.contains("循环检测") {
+                h.loop_truncated += 1;
+            }
+        }
+        h
+    }
+}
+
 /// 长输出判定阈值 (token). 约等于一次 8K 输出的上限.
 pub const LONG_OUTPUT_TOKENS: u32 = 8192;
 
@@ -3157,6 +3269,9 @@ pub struct UsageStats {
     pub opt_saved_since: String,
     /// 省量审计汇总 (只读, 见 [`AuditSummary`]).
     pub audit: AuditSummary,
+    /// 转发健康度汇总 (只读, 见 [`HealthSummary`]) —— 把"只存在于日志里"的
+    /// 断流/掐断/上游错误聚合到面板, 用户自己能判断是不是网关的事.
+    pub health: HealthSummary,
     /// 是否有任意模型配置了价格 (providers.json 的 model.price).
     /// 前端据此决定是否显示费用相关卡片/列, 避免无价格时显示 ¥0.00 误导.
     pub has_price_config: bool,
@@ -3650,6 +3765,10 @@ fn compute_stats(
     let total_resp_cache_saved_tokens: u64 = logs.iter().map(|l| l.resp_cache_saved_tokens as u64).sum();
     // 累计优化省量 = 剥离推理链 + 历史裁剪 + 响应缓存命中 (三者均来自日志, 跨重启累计).
     let total_opt_saved_tokens: u64 = total_strip_saved_tokens + total_trim_saved_tokens + total_resp_cache_saved_tokens;
+    // 转发健康度: 与 audit 同一套路 —— 只读聚合, 不改动任何转发内容.
+    // 把"只存在于日志里"的断流/掐断/上游错误搬到面板上 (用户 2026-10-08 两次
+    // 因"任务突然停下"来问, 而证据一直只在日志里).
+    let health = HealthSummary::from_logs(logs);
     // 省量审计: 只读汇总, 不改动任何转发内容.
     let audit = AuditSummary {
         exempt_reasoning_tokens: logs.iter().map(|l| l.audit_exempt_reasoning_tokens as u64).sum(),
@@ -4048,6 +4167,7 @@ fn compute_stats(
         total_trim_saved_tokens,
         total_resp_cache_saved_tokens,
         audit,
+        health,
         month_opt_saved_tokens,
         month_opt_saved_fee,
         opt_saved_series,
