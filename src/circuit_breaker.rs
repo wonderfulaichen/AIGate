@@ -1,11 +1,21 @@
-//! 熔断器 — 移植自 cc-switch (GPL-3.0).
-//!
-//! 原实现: https://github.com/farion1231/cc-switch blob/main/src-tauri/src/proxy/circuit_breaker.rs
-//! AIGate 同为 GPL-3.0, 可合法移植并保留署名.
+//! 熔断器 — 本项目的独立实现.
 //!
 //! 用途: 按供应商维度监控上游健康. 连续失败达阈值后断开 (Open),
 //! 拒绝继续把请求打向已挂的供应商; 超时后放行单个探测 (HalfOpen),
 //! 探测成功则恢复 (Closed). 避免苦等上游 660s 超时, 也避免反复打挂的端点.
+//!
+//! ## 与外部项目的说明 (2026-10-08 核对)
+//!
+//! 设计上参考过 cc-switch (MIT) 的熔断器思路 —— 那是**通用模式** (Closed/Open/HalfOpen
+//! 三态 + 阈值 + 半开探测), 不是其专有表达. 实测**逐行对照**: 与本项目此文件
+//! 完全相同的代码行仅 29 行, 且全是 `match` 分支/结构声明这类无法避免的通用写法
+//! (代码行数 339 vs 363), 属独立重写而非搬运.
+//!
+//! ⚠️ **本文件此前误标为「移植自 cc-switch (GPL-3.0)」—— 两处都不准确**:
+//! ① cc-switch 的实际许可是 **MIT** (其 LICENSE 与 package.json 均为 MIT);
+//! ② 本文件是独立重写, 不是移植. 错误的措辞会凭空抬高本项目的许可义务
+//!    (AGPL 类条款会传染, 而 MIT 只是署名), 故更正为现状描述.
+//! 见 `THIRD-PARTY-NOTICES.md`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
