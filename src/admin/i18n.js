@@ -78,6 +78,18 @@ const I18N = {
     'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情', 'detail.reasoning': '思考强度', 'detail.cache_hit_rate': '缓存命中率', 'detail.opt_saved': '优化省量',
     
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
+    // ── 首字延迟 (TTFT) ──
+    // 措辞纪律: "无样本"必须显示「—」而非 0ms (0ms 在物理上不成立, 会被读成"瞬间响应").
+    'ttft_title': '首字延迟', 'ttft_subtitle': '从发出请求到收到第一个 token 的等待时间 —— 只统计真正吐了字的请求（从未出字的空等不计入）',
+    'ttft_avg': '平均首字延迟', 'ttft_p50': '中位数', 'ttft_p90': 'P90', 'ttft_samples': '样本', 'ttft_samples_hint': '有效样本 {0} 条：首字延迟已知、且确实有输出 token 的请求',
+    'ttft_no_data': '暂无首字延迟样本', 'ttft_no_data_hint': '当前窗口没有采集到有效样本。常见原因：请求都是非流式，或从未真正收到过 token（空等/上游排队）。',
+    'ttft_approx_hint': '中位数与 P90 由分布直方图反推（取桶上界），是近似值；桶边界见下方分布图。',
+    'ttft_dist_title': '首字延迟分布', 'ttft_dist_desc': '各档位请求数占比 —— 看的是「多数请求多快出字」，不只是平均值（均值会被个别长尾拉高）',
+    'ttft_bucket_0': '≤0.25s', 'ttft_bucket_1': '≤0.5s', 'ttft_bucket_2': '≤1s', 'ttft_bucket_3': '≤2s', 'ttft_bucket_4': '≤3.5s',
+    'ttft_bucket_5': '≤5s', 'ttft_bucket_6': '≤10s', 'ttft_bucket_7': '≤20s', 'ttft_bucket_8': '≤60s', 'ttft_bucket_9': '>60s',
+    'ttft_slow_hint': '{0} 条请求等待超过 60 秒才出第一个字 —— 通常是上游排队或空等，值得看一眼记录页的对应条目。',
+    'ttft_takeaway': '多数请求在 {0} 内出字；{1} 的请求超过 {2}。',
+    'ttft_col_avg': '首字延迟',
     'total_count': '共 {0} 条', 'prev_page': '上一页', 'next_page': '下一页',
     
     'tbl.model_id': '模型 ID', 'tbl.upstream_model': '上游模型', 'tbl.reasoning': '思考强度', 'tbl.reasoning_hint': '默认档位：客户端（编程工具）请求自带思考强度时以客户端为准，此配置仅在客户端未指定时生效（客户端显式关闭也不会被注入）', 'tbl.protocol': '协议', 'dup_model_id_hint': '该 ID 也存在于 {0} —— 同名只有一条路由生效，本条的设置可能不会起作用；建议改成「本供应商/…」形式', 'dup_model_id_saved': '（注意：有 {0} 个中转 ID 与其它供应商重复，那些条目不会生效）', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'fmt.auto': '自动（跟随客户端）', 'fmt_inferred_hint': '未显式标注，实际按「{0}」转发（由供应商与模型名自动判断）', 'fmt_explicit_hint': '已显式标注，锁定按「{0}」转发', 'fmt_available': '可用', 'fmt_available_hint': '该模型可用的协议（由上游实测能力与配置推断得出）—— 编程工具打哪个入口就用哪个，命中即原生直通，无需手工勾选', 'probed_protocols': '实测该上游支持：{0}（已自动生效）',
@@ -325,6 +337,19 @@ const I18N = {
     'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details', 'detail.reasoning': 'Reasoning', 'detail.cache_hit_rate': 'Cache Hit Rate', 'detail.opt_saved': 'Tokens Saved',
     
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
+    // ── Time to first token (TTFT) ──
+    // Wording rule: "no samples" must render as an em dash, never 0ms (0ms is physically
+    // impossible and would read as "instant").
+    'ttft_title': 'Time to first token', 'ttft_subtitle': 'Wait from sending the request to receiving the first token — only requests that actually produced output are counted (silent upstream waits are excluded)',
+    'ttft_avg': 'Average first token', 'ttft_p50': 'Median', 'ttft_p90': 'P90', 'ttft_samples': 'Samples', 'ttft_samples_hint': '{0} valid samples: requests whose first-token delay is known and that produced output tokens',
+    'ttft_no_data': 'No first-token samples yet', 'ttft_no_data_hint': 'No valid sample in the current window. Usual causes: all requests were non-streaming, or no token ever arrived (upstream queuing / idle waits).',
+    'ttft_approx_hint': 'Median and P90 are approximated from the distribution histogram (bucket upper bounds); see bucket boundaries in the chart below.',
+    'ttft_dist_title': 'First-token distribution', 'ttft_dist_desc': 'Share of requests per bucket — how fast *most* requests start, not just the average (the mean gets pulled up by a few long waits)',
+    'ttft_bucket_0': '≤0.25s', 'ttft_bucket_1': '≤0.5s', 'ttft_bucket_2': '≤1s', 'ttft_bucket_3': '≤2s', 'ttft_bucket_4': '≤3.5s',
+    'ttft_bucket_5': '≤5s', 'ttft_bucket_6': '≤10s', 'ttft_bucket_7': '≤20s', 'ttft_bucket_8': '≤60s', 'ttft_bucket_9': '>60s',
+    'ttft_slow_hint': '{0} request(s) waited over 60s for the first token — usually upstream queuing or an idle wait; worth checking the matching rows on the records page.',
+    'ttft_takeaway': 'Most requests start within {0}; {1} exceed {2}.',
+    'ttft_col_avg': 'First token',
     'total_count': 'Total {0}', 'prev_page': 'Prev', 'next_page': 'Next',
     
     'tbl.model_id': 'Model ID', 'tbl.upstream_model': 'Upstream Model', 'tbl.reasoning': 'Reasoning', 'tbl.reasoning_hint': 'Default level: a thinking level sent by the client (coding tool) request takes precedence; this setting applies only when the client does not specify one (an explicit client disable is never overridden)', 'tbl.protocol': 'Protocol', 'dup_model_id_hint': 'This ID also exists under {0} — only one route can win per ID, so this entry\'s settings may have no effect; consider renaming to "this-provider/..."', 'dup_model_id_saved': '(note: {0} proxy ID(s) collide with other providers and will not take effect)', 'fmt.openai': 'OpenAI', 'fmt.anthropic': 'Anthropic', 'fmt.responses': 'Responses', 'fmt.auto': 'Auto (follow client)', 'fmt_inferred_hint': 'Not explicitly set - actually forwarded as {0} (auto-detected from provider and model name)', 'fmt_explicit_hint': 'Explicitly set - pinned to {0}', 'fmt_available': 'Available', 'fmt_available_hint': 'Protocols available for this model (derived from probed upstream capability and config/inference) - whichever entry the coding tool calls is used, with native passthrough and no manual ticking', 'probed_protocols': 'Probed upstream support: {0} (now applied automatically)',

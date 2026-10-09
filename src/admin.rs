@@ -2963,6 +2963,21 @@ pub struct ModelStats {
     /// 映射到本聚合项的中转 ID 集合 (去重). 因统计按"供应商/上游模型"聚合,
     /// 多个中转 ID 可映射到同一上游模型, 此字段便于对照溯源.
     pub aliases: Vec<String>,
+    // ── 首字延迟 (TTFT) ──
+    /// 有效 TTFT 样本数 (判据同 `crate::rollup::ttft_of`).
+    #[serde(default)]
+    pub ttft_samples: u64,
+    /// Σ首字延迟 (毫秒), 与 ttft_samples 相除得均值; 无样本时为 0.
+    #[serde(default)]
+    pub ttft_sum_ms: u64,
+    /// 平均首字延迟 (毫秒); 无样本时 `None` —— 前端据此显示「—」而不是 0
+    /// (**没样本 ≠ 首字 0 毫秒**, 与"没配价显示 — 而非 ¥0"同一个道理).
+    #[serde(default)]
+    pub ttft_avg_ms: Option<f64>,
+    /// TTFT 分布直方图 (桶上界见 `crate::rollup::TTFT_BUCKET_MAX_MS`).
+    /// 存分布而非只存均值: 均值会被长尾拉平, 看不出"到底是慢还是偶发很慢".
+    #[serde(default)]
+    pub ttft_hist: Vec<u64>,
     /// 该模型累计费用 (元), 见 `crate::pricing`.
     pub total_cost: f64,
     /// 应用于本聚合项的单价（元/百万tokens）. 来自 providers.json 覆盖或内置表;
@@ -2994,6 +3009,15 @@ pub struct ProviderStats {
     pub gen_output_tokens: u64,
     #[serde(skip)]
     pub gen_time_sum_ms: u64,
+    // ── 首字延迟 (TTFT), 口径同 ModelStats 的同名字段 ──
+    #[serde(default)]
+    pub ttft_samples: u64,
+    #[serde(default)]
+    pub ttft_sum_ms: u64,
+    #[serde(default)]
+    pub ttft_avg_ms: Option<f64>,
+    #[serde(default)]
+    pub ttft_hist: Vec<u64>,
     /// 该供应商累计费用 (元), 见 `crate::pricing`.
     pub total_cost: f64,
     /// 该供应商今日窗口费用 (元, 东八区日界). 前端据 total_cost/today_cost 是否 >0 决定
@@ -3015,6 +3039,66 @@ pub struct ProviderStats {
     pub today_trim_saved_tokens: u64,
     /// 今日窗口优化省量明细: 仅响应缓存命中省下的 token.
     pub today_resp_cache_saved_tokens: u64,
+}
+
+/// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
+/// 渲染逻辑处理三处.
+///
+/// `p50_ms` / `p90_ms` 由**直方图**反推 (见 [`ttft_quantile`]), 是桶上界近似值,
+/// 不是精确分位数 —— 日级聚合落盘时只保留桶计数, 没有逐条样本可回溯。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TtftSummary {
+    /// 有效样本数 (首字延迟已知且严格小于总耗时、且有输出 token)。
+    pub samples: u64,
+    /// 平均首字延迟 (毫秒); 无样本时 `None`。
+    pub avg_ms: Option<f64>,
+    /// 中位数近似 (毫秒, 取首次累计过半的桶上界)。
+    pub p50_ms: Option<u64>,
+    /// p90 近似 (毫秒)。
+    pub p90_ms: Option<u64>,
+    /// 最慢一档 (>60s) 的样本数 —— 单独拎出来是因为它对应「上游空等/排队」,
+    /// 是用户最容易感知、也最值得报警的那一档。
+    pub slowest_bucket: u64,
+    /// 直方图各桶计数 (桶上界见 `crate::rollup::TTFT_BUCKET_MAX_MS`)。
+    pub hist: Vec<u64>,
+}
+
+impl TtftSummary {
+    /// 由样本数 / Σ延迟 / 直方图构造; 三处来源 (日志聚合、rollup 合并) 共用。
+    fn from_parts(samples: u64, sum_ms: u64, hist: Vec<u64>) -> Self {
+        TtftSummary {
+            samples,
+            avg_ms: if samples > 0 {
+                Some(sum_ms as f64 / samples as f64)
+            } else {
+                None
+            },
+            p50_ms: ttft_quantile(&hist, samples, 0.5),
+            p90_ms: ttft_quantile(&hist, samples, 0.9),
+            slowest_bucket: hist.last().copied().unwrap_or(0),
+            hist,
+        }
+    }
+
+    /// 累加另一份汇总 (rollup 历史合并用): 逐桶相加, 均值由 Σ/样本数重算。
+    fn merge(&mut self, samples: u64, sum_ms: u64, hist: &[u64]) {
+        if self.hist.len() != hist.len() {
+            return;
+        }
+        for (a, b) in self.hist.iter_mut().zip(hist.iter()) {
+            *a += *b;
+        }
+        let new_sum = (self.avg_ms.unwrap_or(0.0) * self.samples as f64) + sum_ms as f64;
+        self.samples += samples;
+        self.avg_ms = if self.samples > 0 {
+            Some(new_sum / self.samples as f64)
+        } else {
+            None
+        };
+        self.p50_ms = ttft_quantile(&self.hist, self.samples, 0.5);
+        self.p90_ms = ttft_quantile(&self.hist, self.samples, 0.9);
+        self.slowest_bucket = self.hist.last().copied().unwrap_or(0);
+    }
 }
 
 /// 单个模型在时间桶内的 Token 趋势.
@@ -3286,6 +3370,10 @@ pub struct UsageStats {
     pub has_priced_request: Option<bool>,
     /// 本轮 (进程启动以来) 累计统计 (原子计数, 不受日志滚动窗口封顶影响).
     pub session: SessionStats,
+    /// 当前窗口内所有有效样本的首字延迟汇总 (判据同 `per_model.ttft_*`).
+    /// 与模型/供应商表同源同口径, 只是粒度为「全局」。
+    #[serde(default)]
+    pub ttft: TtftSummary,
     /// 当前统计窗口内有效流式请求的加权生成速度 (tok/s).
     pub gen_speed: f64,
     /// 参与生成速度计算的请求数.
@@ -3992,6 +4080,9 @@ fn compute_stats(
             } else {
                 0.0
             };
+            // 首字延迟: 与生成速度**同判据**取样本 (rollup::ttft_of), 保证两个指标
+            // 说的是同一批请求 —— 否则"样本数对不上"会变成说不清的口径漂移.
+            let ttft = ttft_aggregate(logs.iter().copied());
             // 中转 ID 集合 (去重, 排序) — 便于对照"该上游模型由哪些中转 ID 映射而来".
             let mut aliases: Vec<String> = logs
                 .iter()
@@ -4027,6 +4118,10 @@ fn compute_stats(
                 gen_output_tokens: gen_ct,
                 gen_time_sum_ms: gen_ms,
                 aliases,
+                ttft_samples: ttft.samples,
+                ttft_sum_ms: ttft.sum_ms,
+                ttft_avg_ms: ttft.avg_ms,
+                ttft_hist: ttft.hist,
                 total_cost: cost,
                 price,
                 free: logs.iter().any(|l| free_ids.contains(&l.model)),
@@ -4102,6 +4197,8 @@ fn compute_stats(
             } else {
                 0.0
             };
+            // 首字延迟, 同 per_model 口径.
+            let ttft = ttft_aggregate(logs.iter().copied());
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -4115,6 +4212,10 @@ fn compute_stats(
                 gen_speed,
                 gen_output_tokens: gen_ct,
                 gen_time_sum_ms: gen_ms,
+                ttft_samples: ttft.samples,
+                ttft_sum_ms: ttft.sum_ms,
+                ttft_avg_ms: ttft.avg_ms,
+                ttft_hist: ttft.hist,
                 total_cost: cost,
                 today_cost,
                 cache_saved,
@@ -4185,6 +4286,12 @@ fn compute_stats(
         // 本轮 (进程级) 统计由 LogBuffer 原子计数提供, compute_stats 内无来源 → 默认空,
         // api_stats 返回前会覆盖为 log_buffer.session_stats().
         session: SessionStats::default(),
+        ttft: {
+            // 全局首字延迟: 与 per_model / per_provider 同判据, 但对**全部日志**再聚一次
+            // (不能拿 per_model 的均值再平均 —— 那是"均值的均值", 会被小样本模型拉偏).
+            let agg = ttft_aggregate(logs.iter());
+            TtftSummary::from_parts(agg.samples, agg.sum_ms, agg.hist)
+        },
         gen_speed,
         gen_samples,
         gen_output_tokens: stats_gen_output_tokens,
@@ -4382,6 +4489,15 @@ fn merge_rollup_days(
     } else {
         0.0
     };
+    // 首字延迟: 逐天逐条目累加直方图与 Σ延迟, 再由 TtftSummary 自己重算均值与分位数.
+    // 直方图可加 (这就是选它而不存分位数的原因 —— 分位数不可合并).
+    for day in days {
+        for e in &day.entries {
+            stats
+                .ttft
+                .merge(e.ttft_samples, e.ttft_sum_ms, &e.ttft_hist);
+        }
+    }
     // 合并天严格早于所有日志天 → 省量起算点取合并侧 (若有).
     if let Some(d) = saved_since_day {
         stats.opt_saved_since = ts_to_date(d);
@@ -4443,6 +4559,13 @@ fn merge_rollup_days(
                 m.aliases.sort();
                 m.total_cost += cost;
                 m.free = m.free || entry_free;
+                merge_ttft_into(
+                    &mut m.ttft_samples,
+                    &mut m.ttft_sum_ms,
+                    &mut m.ttft_avg_ms,
+                    &mut m.ttft_hist,
+                    e,
+                );
             } else {
                 let price = entry_price(price_table, e);
                 stats.per_model.push(ModelStats {
@@ -4473,6 +4596,14 @@ fn merge_rollup_days(
                         a.sort();
                         a
                     },
+                    ttft_samples: e.ttft_samples,
+                    ttft_sum_ms: e.ttft_sum_ms,
+                    ttft_avg_ms: if e.ttft_samples > 0 {
+                        Some(e.ttft_sum_ms as f64 / e.ttft_samples as f64)
+                    } else {
+                        None
+                    },
+                    ttft_hist: e.ttft_hist.to_vec(),
                     total_cost: cost,
                     price,
                     free: entry_free,
@@ -4517,6 +4648,13 @@ fn merge_rollup_days(
                 pv.total_cost += cost;
                 pv.cache_saved += cache_saved;
                 pv.billing = pv.billing || !entry_free;
+                merge_ttft_into(
+                    &mut pv.ttft_samples,
+                    &mut pv.ttft_sum_ms,
+                    &mut pv.ttft_avg_ms,
+                    &mut pv.ttft_hist,
+                    e,
+                );
             } else {
                 stats.per_provider.push(ProviderStats {
                     provider: e.provider.clone(),
@@ -4539,6 +4677,14 @@ fn merge_rollup_days(
                     },
                     gen_output_tokens: e.gen_output_tokens,
                     gen_time_sum_ms: e.gen_time_sum_ms,
+                    ttft_samples: e.ttft_samples,
+                    ttft_sum_ms: e.ttft_sum_ms,
+                    ttft_avg_ms: if e.ttft_samples > 0 {
+                        Some(e.ttft_sum_ms as f64 / e.ttft_samples as f64)
+                    } else {
+                        None
+                    },
+                    ttft_hist: e.ttft_hist.to_vec(),
                     total_cost: cost,
                     today_cost: 0.0,
                     cache_saved,
@@ -4750,6 +4896,89 @@ fn cache_hit_ratio(prompt_tokens: u64, cache_hit_tokens: u64) -> f64 {
         return 0.0;
     }
     (cache_hit_tokens.min(prompt_tokens) as f64 / prompt_tokens as f64).clamp(0.0, 1.0)
+}
+
+/// 一组请求日志的首字延迟聚合结果 (样本数 / Σ延迟 / 均值 / 直方图).
+///
+/// 单独抽出来是因为**三个地方**要算同一件事且必须同口径:
+/// 模型表、供应商表、全局汇总。各自写一遍 fold 早晚会出现"三处样本数不一致"。
+#[derive(Debug, Clone, Default)]
+struct TtftAgg {
+    samples: u64,
+    sum_ms: u64,
+    avg_ms: Option<f64>,
+    hist: Vec<u64>,
+}
+
+/// 按 [`crate::rollup::ttft_of`] 的判据聚合一组日志的首字延迟.
+///
+/// 无有效样本时 `avg_ms` 为 `None` —— 刻意区分「没有样本」与「首字 0 毫秒」:
+/// 后者在物理上不可能, 前者在纯非流式/全失败场景天天发生。
+fn ttft_aggregate<'a>(logs: impl Iterator<Item = &'a RequestLog>) -> TtftAgg {
+    use crate::rollup::{ttft_bucket, ttft_of, TTFT_BUCKETS};
+    let mut agg = TtftAgg {
+        hist: vec![0u64; TTFT_BUCKETS],
+        ..Default::default()
+    };
+    for ft in logs.filter_map(ttft_of) {
+        agg.samples += 1;
+        agg.sum_ms += ft;
+        agg.hist[ttft_bucket(ft)] += 1;
+    }
+    agg.avg_ms = if agg.samples > 0 {
+        Some(agg.sum_ms as f64 / agg.samples as f64)
+    } else {
+        None
+    };
+    agg
+}
+
+/// 把一条 rollup 历史条目的首字延迟并入目标聚合项 (模型表 / 供应商表共用).
+///
+/// 抽成函数是因为两处结构字段名相同但类型不同 (`ModelStats` / `ProviderStats`),
+/// 而合并逻辑必须逐字一致 —— 分开写会漂移。
+fn merge_ttft_into(
+    samples: &mut u64,
+    sum_ms: &mut u64,
+    avg_ms: &mut Option<f64>,
+    hist: &mut Vec<u64>,
+    e: &crate::rollup::RollupEntry,
+) {
+    if hist.len() != e.ttft_hist.len() {
+        return;
+    }
+    for (a, b) in hist.iter_mut().zip(e.ttft_hist.iter()) {
+        *a += *b;
+    }
+    *samples += e.ttft_samples;
+    *sum_ms += e.ttft_sum_ms;
+    *avg_ms = if *samples > 0 {
+        Some(*sum_ms as f64 / *samples as f64)
+    } else {
+        None
+    };
+}
+
+/// 从直方图反推分位数 (毫秒): 累计计数首次达到 `q × 样本数` 的那个桶的**上界**.
+///
+/// 之所以由直方图近似、不存原始样本: rollup 是日级聚合, 落盘时只有桶计数,
+/// 存不下逐条样本 (每天每模型可能上千条)。代价是分位数只能落在桶边界上 ——
+/// 10 个桶对"这个模型大体多快才出字"这个判断够用, 且这个近似必须在文档里讲明。
+/// 无样本时返回 `None` (不要返回 0, 那会被读成"0 毫秒就出字了")。
+fn ttft_quantile(hist: &[u64], samples: u64, q: f64) -> Option<u64> {
+    use crate::rollup::{TTFT_BUCKET_MAX_MS, TTFT_BUCKETS};
+    if samples == 0 || hist.len() != TTFT_BUCKETS {
+        return None;
+    }
+    let target = (samples as f64 * q).ceil() as u64;
+    let mut cum = 0u64;
+    for (i, &c) in hist.iter().enumerate() {
+        cum += c;
+        if cum >= target {
+            return Some(TTFT_BUCKET_MAX_MS[i]);
+        }
+    }
+    None
 }
 
 /// 省下 token 折算费用 (元): 按**该请求自身的 KV 缓存命中比例**, 把省量拆成
@@ -5257,6 +5486,123 @@ mod tests {
         let mut log = mk(model, provider, 0, 0);
         log.timestamp = ts;
         log
+    }
+
+    /// 构造一条带首字延迟的日志: mk 默认 latency_ms=10 太小, 放不进有效 TTFT
+    /// (判据要求 ft < latency_ms), 故总耗时与输出 token 一并显式给定.
+    fn mk_ttft(provider: &str, latency_ms: u64, first_token_ms: Option<u64>, ct: u32) -> RequestLog {
+        let mut log = mk("m", provider, 0, 0);
+        log.latency_ms = latency_ms;
+        log.first_token_ms = first_token_ms;
+        log.completion_tokens = ct;
+        log
+    }
+
+    /// 分位数: 由直方图反推, 取累计首次过半/过九成的**桶上界**.
+    ///
+    /// 10 个样本各落一桶时 p50 应是第 5 个样本所在桶的上界 (3500ms), p90 是第 9 个 (60000ms).
+    #[test]
+    fn ttft_quantile_reads_bucket_upper_bound() {
+        use crate::rollup::{ttft_bucket, TTFT_BUCKETS};
+        // 每桶一个样本: 100, 300, 700, 1500, 3000, 4500, 8000, 15000, 40000, 90000
+        let samples = [100u64, 300, 700, 1500, 3000, 4500, 8000, 15000, 40000, 90000];
+        let mut hist = vec![0u64; TTFT_BUCKETS];
+        for s in samples {
+            hist[ttft_bucket(s)] += 1;
+        }
+        assert_eq!(ttft_quantile(&hist, 10, 0.5), Some(3500), "p50 = 第5个样本所在桶上界");
+        assert_eq!(ttft_quantile(&hist, 10, 0.9), Some(60000), "p90 = 第9个样本所在桶上界");
+    }
+
+    /// 无样本时返回 None —— 绝不能返回 0 (那会被前端渲染成"0ms 就出字了").
+    #[test]
+    fn ttft_quantile_none_when_no_samples() {
+        use crate::rollup::TTFT_BUCKETS;
+        assert_eq!(ttft_quantile(&vec![0u64; TTFT_BUCKETS], 0, 0.5), None);
+        assert_eq!(ttft_quantile(&vec![0u64; TTFT_BUCKETS], 0, 0.9), None);
+    }
+
+    /// 直方图长度与桶数不符时返回 None (接口版本不一致): 宁可显示「—」也不画错位的图.
+    #[test]
+    fn ttft_quantile_rejects_mismatched_hist() {
+        assert_eq!(ttft_quantile(&[1u64, 2], 3, 0.5), None);
+    }
+
+    /// 聚合: 无效样本不计数, 均值与直方图只统计有效样本.
+    #[test]
+    fn ttft_aggregate_skips_invalid_samples() {
+        let logs = vec![
+            mk_ttft("p", 5_000, Some(200), 10),   // 有效, 桶 0
+            mk_ttft("p", 5_000, Some(3_000), 10), // 有效, 桶 4
+            mk_ttft("p", 5_000, None, 10),        // 首字未知
+            mk_ttft("p", 5_000, Some(9_000), 10), // ft > latency
+            mk_ttft("p", 5_000, Some(100), 0),    // 无输出 (空等)
+        ];
+        let agg = ttft_aggregate(logs.iter());
+        assert_eq!(agg.samples, 2, "仅两条有效");
+        assert_eq!(agg.sum_ms, 3_200);
+        assert_eq!(agg.avg_ms, Some(1_600.0));
+        assert_eq!(agg.hist.iter().sum::<u64>(), 2);
+        assert_eq!(agg.hist[0], 1);
+        assert_eq!(agg.hist[4], 1);
+    }
+
+    /// 全无效样本: 均值必须是 None 而不是 0.0 —— "没有样本" 与 "首字 0 毫秒"
+    /// 是两件事, 后者在物理上不成立, 显示出来会误导排查方向.
+    #[test]
+    fn ttft_aggregate_avg_is_none_without_samples() {
+        let logs = vec![mk_ttft("p", 5_000, None, 10)];
+        let agg = ttft_aggregate(logs.iter());
+        assert_eq!(agg.samples, 0);
+        assert_eq!(agg.sum_ms, 0);
+        assert_eq!(agg.avg_ms, None, "无样本不得给 0.0");
+    }
+
+    /// 汇总合并 (rollup 历史并入): 逐桶相加, 均值按 Σ/样本数重算而非平均两个均值.
+    ///
+    /// 后者是"均值的均值" —— 样本量悬殊时会失真 (10 条均值 1s + 1000 条均值 5s
+    /// 平均后是 3s, 真实是 ≈4.96s).
+    #[test]
+    fn ttft_summary_merge_recomputes_avg_from_sums() {
+        use crate::rollup::TTFT_BUCKETS;
+        let mut s = TtftSummary::from_parts(10, 10_000, {
+            let mut h = vec![0u64; TTFT_BUCKETS];
+            h[2] = 10;
+            h
+        });
+        assert_eq!(s.avg_ms, Some(1_000.0));
+        // 并 1000 条均值 5s 的历史
+        let mut h2 = vec![0u64; TTFT_BUCKETS];
+        h2[4] = 1000;
+        s.merge(1000, 5_000_000, &h2);
+        assert_eq!(s.samples, 1010);
+        assert_eq!(s.avg_ms, Some(5_010_000.0 / 1010.0), "必须是 Σ/样本数, 不是均值之均值");
+        assert_ne!(s.avg_ms, Some(3_000.0), "不得退化成两个均值的平均");
+        assert_eq!(s.hist[2], 10);
+        assert_eq!(s.hist[4], 1000);
+        // 分位数也按合并后的分布重算 (此时 p50 应落在 3500 档)
+        assert_eq!(s.p50_ms, Some(3500));
+    }
+
+    /// 全局汇总与逐模型聚合必须是同一批样本 (判据同源) ——
+    /// 否则"全局 100 条 / 各模型加起来 80 条"会变成说不清的口径漂移.
+    #[test]
+    fn stats_ttft_matches_model_level_samples() {
+        let logs = vec![
+            mk_ttft("p", 5_000, Some(200), 10),
+            mk_ttft("p", 5_000, Some(3_000), 10),
+            // 超 60s 的慢样本: 总耗时必须更大 (判据 ft < latency)
+            mk_ttft("p", 200_000, Some(90_000), 10),
+        ];
+        let stats = compute_stats(&logs, &PriceTable::default(), &std::collections::HashSet::new());
+        assert_eq!(stats.ttft.samples, 3, "全局样本数");
+        let model_samples: u64 = stats.per_model.iter().map(|m| m.ttft_samples).sum();
+        assert_eq!(model_samples, 3, "逐模型之和必须与全局一致");
+        let prov_samples: u64 = stats.per_provider.iter().map(|p| p.ttft_samples).sum();
+        assert_eq!(prov_samples, 3, "逐供应商之和必须与全局一致");
+        // 均值与最慢档
+        assert_eq!(stats.ttft.slowest_bucket, 1, "一条超 60s");
+        assert!((stats.ttft.avg_ms.unwrap() - 31_066.67).abs() < 1.0);
     }
 
     /// 回归: 跨年边界月桶年份必须正确 (ts_to_month 曾用 UTC 天数推年,

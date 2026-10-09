@@ -232,6 +232,100 @@
       return (h.upstream_cut || 0) + (h.upstream_error || 0) + (h.upstream_4xx || 0)
            + (h.loop_truncated || 0) + (h.aborted_no_output || 0);
     },
+    // ── 首字延迟 (TTFT) ──
+    // 桶上界必须与后端 `rollup::TTFT_BUCKET_MAX_MS` 逐项一致 —— 两份表一旦分叉,
+    // 分布图的每一根柱子都会指错档位而不报错 (本项目反复出现的 bug 类型).
+    // 末档用 null 表示"无上界", 渲染时显示为 ">60s".
+    get ttftBuckets() {
+      return [
+        { max: 250, label: t('ttft_bucket_0') },
+        { max: 500, label: t('ttft_bucket_1') },
+        { max: 1000, label: t('ttft_bucket_2') },
+        { max: 2000, label: t('ttft_bucket_3') },
+        { max: 3500, label: t('ttft_bucket_4') },
+        { max: 5000, label: t('ttft_bucket_5') },
+        { max: 10000, label: t('ttft_bucket_6') },
+        { max: 20000, label: t('ttft_bucket_7') },
+        { max: 60000, label: t('ttft_bucket_8') },
+        { max: null, label: t('ttft_bucket_9') },
+      ];
+    },
+    // 全局首字延迟汇总 (后端已算好样本数/均值/分位数/直方图, 前端只做渲染与文案).
+    // 分位数不下发时由直方图现算 —— 保证旧 exe / 老快照也能显示, 不至于空白.
+    get ttftSummary() {
+      const raw = (this.stats || {}).ttft || {};
+      const hist = Array.isArray(raw.hist) ? raw.hist : [];
+      const samples = Number(raw.samples || 0);
+      const buckets = this.ttftBuckets;
+      // 直方图长度对不上 (接口版本不一致) 时不猜: 直接按"无数据"渲染, 而不是画出半张图.
+      if (hist.length !== buckets.length) {
+        return { samples: 0, avgMs: null, p50Ms: null, p90Ms: null, hist: [], buckets, rows: [] };
+      }
+      const total = hist.reduce((s, v) => s + (Number(v) || 0), 0);
+      // 分位数: 后端给了就用后端的; 没给才由直方图反推 (取桶上界, 与后端 ttft_quantile 同算法).
+      const quantile = q => {
+        if (raw.p50_ms != null && q === 0.5) return raw.p50_ms;
+        if (raw.p90_ms != null && q === 0.9) return raw.p90_ms;
+        if (!total) return null;
+        let cum = 0;
+        const target = Math.ceil(total * q);
+        for (let i = 0; i < hist.length; i++) {
+          cum += Number(hist[i]) || 0;
+          if (cum >= target) return buckets[i].max;
+        }
+        return null;
+      };
+      const rows = buckets.map((b, i) => ({
+        k: 'b' + i,
+        label: b.label,
+        v: Number(hist[i]) || 0,
+        pct: total ? (Number(hist[i]) || 0) / total * 100 : 0,
+        // 越慢越"热": 前段用 accent(信息色), 尾段转 warn/err —— 让"慢的那一撮"自己跳出来.
+        color: i <= 2 ? 'var(--accent)' : i <= 5 ? 'var(--info-fg)' : i <= 7 ? 'var(--warn)' : 'var(--err)',
+      }));
+      return {
+        samples,
+        avgMs: raw.avg_ms != null ? raw.avg_ms : (samples ? Number(raw.avg_ms || 0) : null),
+        p50Ms: quantile(0.5),
+        p90Ms: quantile(0.9),
+        hist,
+        buckets,
+        rows,
+      };
+    },
+    get ttftHasData() { return this.ttftSummary.samples > 0; },
+    // 平均首字延迟文本: 无样本 → '—' (与 fmtMs 的 "无数据 ≠ 0" 同口径).
+    get ttftAvgText() {
+      const s = this.ttftSummary;
+      if (!(s.avgMs > 0)) { this._numSettle('ttftAvg', 0); return '—'; }
+      return this.fmtMs(this._numTweenRaw('ttftAvg', s.avgMs));
+    },
+    get ttftP50Text() {
+      const v = this.ttftSummary.p50Ms;
+      return v == null ? '—' : this.fmtMs(v);
+    },
+    get ttftP90Text() {
+      const v = this.ttftSummary.p90Ms;
+      return v == null ? '—' : this.fmtMs(v);
+    },
+    // 一句话结论: 只陈述分布里已有的事实, 不推断原因.
+    // 用 p90 (而非均值) 说"慢的那部分" —— 均值会被少数极慢样本拉高, 不能代表多数请求.
+    get ttftTakeaway() {
+      const s = this.ttftSummary;
+      if (!s.samples) return '';
+      const p50 = s.p50Ms, p90 = s.p90Ms;
+      if (p50 == null) return '';
+      // "超过 X" 的那一撮: 取 >10s 的两档之和 (10s 以上是明显可感知的等待).
+      const slow = s.rows.slice(6).reduce((sum, r) => sum + r.v, 0);
+      const slowPct = slow ? this.fmtPct(slow / s.samples * 100) : '0%';
+      return t('ttft_takeaway', this.fmtMs(p50), slowPct, this.fmtMs(10000));
+    },
+    // 超 60 秒的样本数 (单独提示: 这一档几乎都对应上游排队或空等, 不是"模型慢").
+    get ttftSlowCount() {
+      const s = this.ttftSummary;
+      if (!s.samples || !s.rows.length) return 0;
+      return s.rows[s.rows.length - 1].v;
+    },
     get donutSvg() {
       if(!this.stats||!this.stats.per_model.length) return '';
       const total=this.stats.total_requests||1;

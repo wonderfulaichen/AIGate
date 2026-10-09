@@ -27,7 +27,39 @@ use tracing::warn;
 
 use crate::admin::{bucket_start, RequestLog};
 
+/// TTFT 直方图桶数.
+pub const TTFT_BUCKETS: usize = 10;
+
+/// TTFT 直方图各桶的**上界**(毫秒), 含等号; 末桶无上界 (一切更慢的都进它).
+///
+/// 分档按真实体感切: <0.5s 几乎无感 → 0.5~1s 可接受 → 1~2s 能察觉 →
+/// 2~5s 明显等待 → 5~10s 难忍 → >10s 基本等于"卡住了".
+/// 刻意不用等宽桶: TTFT 是重尾分布, 等宽会把绝大多数样本压进前两桶.
+pub const TTFT_BUCKET_MAX_MS: [u64; TTFT_BUCKETS] =
+    [250, 500, 1000, 2000, 3500, 5000, 10000, 20000, 60000, u64::MAX];
+
+/// 把一次首字延迟映射到桶下标 (末桶兜底, 恒不越界).
+pub fn ttft_bucket(ms: u64) -> usize {
+    TTFT_BUCKET_MAX_MS
+        .iter()
+        .position(|&max| ms <= max)
+        .unwrap_or(TTFT_BUCKETS - 1)
+}
+
+/// 单条日志的 TTFT 是否有效 —— 与既有"生成速度"判据**完全一致**
+/// (首字延迟已知、且严格小于总耗时、且确实有输出 token).
+///
+/// 复用同一判据是为了避免"同一批请求在两个指标里样本数不同"这种说不清的口径漂移;
+/// 它也顺带排掉了「从未收到任何 token」的空等请求 (completion_tokens = 0).
+pub fn ttft_of(log: &RequestLog) -> Option<u64> {
+    log.first_token_ms
+        .filter(|&ft| ft < log.latency_ms && log.completion_tokens > 0)
+}
+
 /// 单个「供应商 × 上游模型」单日聚合条目.
+///
+/// ⚠️ 新增字段一律带 `#[serde(default)]`: 落盘的旧行没有该字段, 缺默认值会让
+/// 整行反序列化失败 → 该天所有历史统计静默消失 (已踩过 `d:0` 化石行那次).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RollupEntry {
     #[serde(default)]
@@ -68,6 +100,23 @@ pub struct RollupEntry {
     /// 参与生成速度计算的请求数 (样本量展示用).
     #[serde(default)]
     pub gen_samples: u64,
+    // ── 首字延迟 (TTFT) 直方图 ──
+    /// TTFT 样本数 (与 gen_samples 同判据: 首字延迟已知且有效).
+    ///
+    /// 之所以与 `gen_samples` 分开: 后者是"生成速度"的合成指标, 语义绑定吐字;
+    /// 这里只关心"等多久才吐第一个字", 二者判据此刻恰好相同但会各自演化.
+    #[serde(default)]
+    pub ttft_samples: u64,
+    /// Σ首字延迟 (毫秒) —— 与 ttft_samples 相除得均值.
+    #[serde(default)]
+    pub ttft_sum_ms: u64,
+    /// TTFT 分布直方图: 固定 10 个桶, 桶上界(毫秒)见 `TTFT_BUCKET_MAX_MS`,
+    /// 末桶为"更慢"兜底 (无上界). 存的是**每桶请求数**, 顺序与常量表一一对应.
+    ///
+    /// 存桶而非存均值/分位数: 均值会被长尾拉平 (一次 6 分钟的空等能把 100 次请求的
+    /// 均值抬高一大截), 而 p50/p90 无法由多个天的聚合结果再合并 —— 直方图可以.
+    #[serde(default)]
+    pub ttft_hist: [u64; TTFT_BUCKETS],
     // ── 优化省量 (全部请求) ──
     #[serde(default)]
     pub strip_saved_tokens: u64,
@@ -113,12 +162,16 @@ impl RollupEntry {
         self.completion_tokens += log.completion_tokens as u64;
         self.cache_hit_tokens += log.prompt_cache_hit_tokens as u64;
         self.cache_miss_tokens += log.prompt_cache_miss_tokens as u64;
-        if let Some(ft) = log.first_token_ms {
-            if ft < log.latency_ms && log.completion_tokens > 0 {
-                self.gen_output_tokens += log.completion_tokens as u64;
-                self.gen_time_sum_ms += log.latency_ms - ft;
-                self.gen_samples += 1;
-            }
+        // 首字延迟与生成速度**共用** ttft_of 这一个判据 —— 原先是同一套条件的两份
+        // 拷贝, 改一处忘另一处就会让两个指标的样本数对不上 (说不清的口径漂移).
+        // gen_ms = 总耗时 − 首字延迟, 排除排队与 TTFT, 只留纯吐字时间.
+        if let Some(ft) = ttft_of(log) {
+            self.ttft_samples += 1;
+            self.ttft_sum_ms += ft;
+            self.ttft_hist[ttft_bucket(ft)] += 1;
+            self.gen_output_tokens += log.completion_tokens as u64;
+            self.gen_time_sum_ms += log.latency_ms - ft;
+            self.gen_samples += 1;
         }
         let peak = crate::pricing::is_peak(log.timestamp);        let saved = log.strip_saved_tokens as u64
             + log.trim_saved_tokens as u64
@@ -457,6 +510,118 @@ mod tests {
         book2.load_from_file();
         assert!(book2.days_between(day1, day1).len() == 1, "day1 应可单独检索");
         assert!(book2.days_between(day2, day2).len() == 1, "day2 应可单独检索");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 构造一条带首字延迟的日志 (在 mk_log 之上只改三个字段).
+    fn mk_log_ttft(
+        ts: u64,
+        provider: &str,
+        upstream: &str,
+        latency_ms: u64,
+        first_token_ms: Option<u64>,
+        completion_tokens: u32,
+    ) -> crate::admin::RequestLog {
+        let mut l = mk_log(ts, provider, upstream);
+        l.latency_ms = latency_ms;
+        l.first_token_ms = first_token_ms;
+        l.completion_tokens = completion_tokens;
+        l
+    }
+
+    /// 桶边界: 落在上界上的值必须进**本桶**而不是下一桶 (<= 而非 <).
+    ///
+    /// 差一个字符就会让"恰好 1 秒"的请求被算进 1~2 秒档, 分布图整体右移而不报错.
+    #[test]
+    fn ttft_bucket_boundaries_are_inclusive() {
+        assert_eq!(ttft_bucket(0), 0);
+        assert_eq!(ttft_bucket(250), 0, "上界本身属于本桶");
+        assert_eq!(ttft_bucket(251), 1);
+        assert_eq!(ttft_bucket(1000), 2);
+        assert_eq!(ttft_bucket(1001), 3);
+        assert_eq!(ttft_bucket(60000), 8);
+        assert_eq!(ttft_bucket(60001), 9, "超末桶上界进末桶");
+        assert_eq!(ttft_bucket(u64::MAX), 9, "极端值不得越界");
+    }
+
+    /// 末桶必须兜住一切: 任意 u64 都返回合法下标 (数组索引越界会 panic 掉整条统计).
+    #[test]
+    fn ttft_bucket_never_out_of_range() {
+        for ms in [0u64, 1, 249, 250, 30_000, 86_400_000, u64::MAX] {
+            let i = ttft_bucket(ms);
+            assert!(i < TTFT_BUCKETS, "ms={ms} 得到越界下标 {i}");
+        }
+    }
+
+    /// 有效性判据: 三种"不能算作首字延迟"的情形必须全部排除.
+    ///
+    /// ① 首字延迟未知 (非流式 / 从未出字) —— 没有事实可记;
+    /// ② 首字 >= 总耗时 —— 数值自相矛盾 (时钟/单位问题), 记进去会污染均值;
+    /// ③ 无输出 token —— 典型是"上游空等", 它不是"首字慢", 是**根本没出字**,
+    ///    混进 TTFT 会把"上游卡死"粉饰成"响应慢" (本项目 10-08 那个空等 6 分钟正是此类).
+    #[test]
+    fn ttft_of_rejects_unusable_samples() {
+        assert_eq!(ttft_of(&mk_log(1, "p", "m")), None, "首字延迟未知");
+        // 首字晚于/等于总耗时
+        assert_eq!(
+            ttft_of(&mk_log_ttft(1, "p", "m", 100, Some(100), 5)),
+            None,
+            "ft == 总耗时应排除"
+        );
+        assert_eq!(
+            ttft_of(&mk_log_ttft(1, "p", "m", 100, Some(999), 5)),
+            None,
+            "ft > 总耗时应排除"
+        );
+        assert_eq!(
+            ttft_of(&mk_log_ttft(1, "p", "m", 100, Some(30), 0)),
+            None,
+            "无输出 token 应排除 (空等不算慢)"
+        );
+        // 正常样本
+        assert_eq!(ttft_of(&mk_log_ttft(1, "p", "m", 100, Some(30), 5)), Some(30));
+    }
+
+    /// 直方图与样本数: 一条日志只进一桶, 且样本数/Σ延迟同步累计.
+    #[test]
+    fn ttft_hist_accumulates_per_request() {
+        // 注意 latency 必须大于 ft: 判据要求 ft < 总耗时, 否则该样本被正确排除.
+        let mut e = RollupEntry::default();
+        e.add_log(&mk_log_ttft(1, "p", "m", 5_000, Some(100), 5));     // 桶 0
+        e.add_log(&mk_log_ttft(1, "p", "m", 5_000, Some(3_000), 5));   // 桶 4
+        e.add_log(&mk_log_ttft(1, "p", "m", 200_000, Some(90_000), 5));// 桶 9 (慢)
+        assert_eq!(e.ttft_samples, 3);
+        assert_eq!(e.ttft_sum_ms, 93_100);
+        assert_eq!(e.ttft_hist[0], 1);
+        assert_eq!(e.ttft_hist[4], 1);
+        assert_eq!(e.ttft_hist[9], 1);
+        assert_eq!(e.ttft_hist.iter().sum::<u64>(), 3, "每请求只进一桶");
+    }
+
+    /// 回归: 新增的 TTFT 字段不得破坏**旧落盘行**的反序列化.
+    ///
+    /// 这是本项目反复踩的坑: 聚合结构加字段若不带 `#[serde(default)]`, 磁盘上缺该
+    /// 字段的历史行会整行解析失败 → 该天统计静默消失 (且只在重启加载后可见).
+    #[test]
+    fn legacy_rollup_line_without_ttft_still_loads() {
+        let dir = "data-test-rollup-legacy-ttft";
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        let day = crate::admin::bucket_start(1_789_318_171, "day");
+        // 手写成"TTFT 字段出现之前"的行形态 (只有 provider/upstream/requests).
+        let legacy = format!(
+            r#"{{"d":{day},"e":[{{"provider":"p","upstream":"m","requests":42,"latency_sum_ms":4200}}]}}"#
+        );
+        std::fs::write(std::path::Path::new(dir).join("daily_stats.jsonl"), legacy + "\n").unwrap();
+
+        let book = RollupBook::new(dir);
+        book.load_from_file();
+        let days = book.days_between(day, day);
+        assert_eq!(days.len(), 1, "旧行必须仍能载入");
+        let e = &days[0].entries[0];
+        assert_eq!(e.requests, 42, "既有字段不得丢失");
+        assert_eq!(e.ttft_samples, 0, "缺失的 TTFT 字段应为默认值");
+        assert_eq!(e.ttft_hist, [0u64; TTFT_BUCKETS]);
         let _ = std::fs::remove_dir_all(dir);
     }
 
