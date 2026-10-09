@@ -2116,10 +2116,21 @@ where
         let this = &mut *self;
         match Pin::new(&mut this.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(b))) => {
-                // 收到数据, 重置空闲计时器
-                this.sleep
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + this.idle);
+                // 收到数据, 重置空闲计时器 —— **但"保活/注释帧"不算数据**.
+                //
+                // ⚠️ 2026-10-08 实测 (用户报障"延迟 365s / 首字 —/ 输出 0"):
+                //    部分上游 (实测 opencode go) 在长思考/长排队期间**持续下发 SSE 注释帧**
+                //    (`: keepalive`), 每次间隔远小于空闲超时 → 计时器被无限重置 →
+                //    空闲保护形同虚设, 网关陪着空等直到整体请求超时.
+                //    而这类帧**不携带任何内容**: 它们只用于保活, 不代表上游在产出.
+                //    故: 若整块内容**只由注释/空行构成**, 不重置计时器.
+                //    判定用"是否含非注释的有效负载"(data: 行或裸 JSON),
+                //    保守起见只要出现一个 data: 就按有效数据看待.
+                if chunk_has_payload(&b) {
+                    this.sleep
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + this.idle);
+                }
                 Poll::Ready(Some(Ok(b)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(IdleError::Inner(e)))),
@@ -2133,6 +2144,20 @@ where
             }
         }
     }
+}
+
+/// 一个上游数据块是否含**有效负载** (而非纯保活/注释).
+///
+/// SSE 注释帧以 `:` 开头 (规范: 客户端应忽略), 常见于上游保活 (`: keepalive`)。
+/// 这类帧不推进生成, 调用方不该据此认为"上游还活着在产出"。
+/// 判定: 任一非空行不以 `:` 开头 → 视为有效 (含 `data: ...` / 裸 JSON / `[DONE]`)。
+fn chunk_has_payload(b: &[u8]) -> bool {
+    // 非 UTF-8 块按有效处理 (罕见, 但别因解码失败而误判成保活).
+    let Ok(s) = std::str::from_utf8(b) else { return true };
+    s.lines().any(|l| {
+        let t = l.trim();
+        !t.is_empty() && !t.starts_with(':')
+    })
 }
 
 /// SSE keepalive 注入间隔: 上游静默期间每 15s 向客户端发一条 ": keepalive" 注释帧.
@@ -3180,10 +3205,16 @@ impl Stream for TokenStream {
                             } else {
                                 "续写次数已用尽, 请客户端重试"
                             };
-                            let mut msg = format!(
-                                "上游在生成中途断流（非网关截断；已输出 {} tok / 输入 {} tok，客户端已收到 length 终止帧，{}）",
-                                ct, pt, tail_hint
-                            );
+                        // 错误文案 (2026-10-08 修正): 原先写「客户端已收到 length 终止帧」——
+                        // **那个 length 帧是网关自己补发的**, 不是上游发的. 该措辞把网关的兜底
+                        // 描述成上游行为, 会让用户误以为上游做了截断, 排查方向被带偏
+                        // (实测 26 条 go/mimo-v2.6-flash 502 全部落在这句话上).
+                        // 现如实分述: 谁断的 (上游) / 网关做了什么 (补发终止帧) / 客户端收到什么.
+                        let mut msg = format!(
+                            "上游在生成中途断流（非网关截断；已输出 {} tok / 输入 {} tok；\
+                             网关已补发 length 终止帧收尾，客户端据此正常结束；{}）",
+                            ct, pt, tail_hint
+                        );
                             if !tail.is_empty() {
                                 msg.push_str(&format!(" [末帧: {tail}]"));
                             }
@@ -4817,6 +4848,32 @@ fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
 mod tests {
     use super::*;
     use crate::providers::ModelConfig;
+
+    /// 回归 (2026-10-08 用户报障「延迟 365s / 首字 —/ 输出 0」):
+    /// **保活注释帧不得重置空闲计时器**.
+    ///
+    /// 部分上游 (实测 opencode go) 在长排队/长思考期间持续下发 SSE 注释帧 (`: keepalive`),
+    /// 间隔远小于空闲超时 → 旧实现每次都重置计时器 → 空闲保护形同虚设, 网关陪着空等
+    /// 到整体请求超时 (实测 365s, 而空闲超时设的是 120s).
+    /// 注释帧不携带任何内容, 不代表上游在产出, 故不该算"数据".
+    #[test]
+    fn keepalive_comment_frames_do_not_count_as_data() {
+        // 注释帧 (上游保活) → 不算数据
+        assert!(!chunk_has_payload(b": keepalive\n\n"), "纯注释帧不得重置空闲计时器");
+        assert!(!chunk_has_payload(b":\n\n"), "空注释帧同理");
+        assert!(!chunk_has_payload(b""), "空块同理");
+        assert!(!chunk_has_payload(b"\n\n\n"), "纯空行同理");
+        assert!(!chunk_has_payload(b": ping\n: keepalive\n\n"), "全是注释也不重置");
+
+        // 含真实负载 → 算数据 (必须重置, 否则长生成会被误杀)
+        assert!(chunk_has_payload(b"data: {\"choices\":[]}\n\n"), "data 行是负载");
+        assert!(chunk_has_payload(b"[DONE]\n\n"), "裸 [DONE] 是负载");
+        assert!(chunk_has_payload(b"{\"a\":1}\n\n"), "裸 JSON 是负载");
+        assert!(chunk_has_payload(b": keepalive\ndata: {}\n\n"), "注释+负载混合算数据");
+
+        // 非 UTF-8 按负载处理 (罕见, 但别因解码失败而误判成保活 → 误杀)
+        assert!(chunk_has_payload(&[0xff, 0xfe, 0x00]), "非 UTF-8 不当作注释");
+    }
 
     fn cfg_with_effort(effort: &str) -> ModelConfig {
         ModelConfig {
