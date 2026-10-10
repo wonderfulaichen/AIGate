@@ -25,6 +25,28 @@
       if (genMs<=0) return '—';
       return (log.completion_tokens/genMs*1000).toFixed(1)+' '+t('unit_tokps');
     },
+    // 本轮"为什么结束"的人话 (2026-10-11 新增; 用户第四次报"跑一会就停下"之后补的可见性).
+    //
+    // 为什么非要单开一列: 三种"停止"在别的字段上**完全同形** —— 都可能是 `200 + 无错误`,
+    // 于是用户只能猜。只有这个字段能把它们分开:
+    //   · 上游报的 finish_reason (stop / tool_calls / length / …) = 上游交代了原因;
+    //   · `done` = 上游只发了 [DONE]、**没说**为什么停 (最可疑的一类, 此前与正常收尾同形);
+    //   · `eof`  = 上游连终止帧都没发就断了;
+    //   · `loop` / `idle` / `error_event` / `abort` = 网关或链路侧的主动行为。
+    // 缺字段一律显示 '—' (口径红线: 无数据 ≠ 0, 更不得猜成"正常结束")。
+    logEndReason(log) {
+      const k = log && log.end_reason;
+      if (!k) return '—';
+      const map = {
+        stop: 'end_stop', tool_calls: 'end_tool_calls', function_call: 'end_tool_calls',
+        length: 'end_length', content_filter: 'end_content_filter',
+        done: 'end_done', eof: 'end_eof', loop: 'end_loop', abort: 'end_abort',
+        idle: 'end_idle', error_event: 'end_error_event', cache: 'end_cache',
+      };
+      const key = map[k];
+      // 未知取值照实显示: 上游可能报出新枚举, 吞掉它就等于把线索埋了。
+      return key ? t(key) : k;
+    },
     get filteredLogs() {
       let r = this.logs;
       if (this.logProviderFilter) r = r.filter(l=>l.provider===this.logProviderFilter);

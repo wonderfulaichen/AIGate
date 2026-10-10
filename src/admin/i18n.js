@@ -83,6 +83,16 @@ const I18N = {
     'detail.time': '时间', 'detail.model': '模型', 'detail.provider': '供应商', 'detail.endpoint': '端点', 'detail.kv_cache': 'KV 缓存', 'detail.error': '错误详情', 'detail.reasoning': '思考强度', 'detail.cache_hit_rate': '缓存命中率', 'detail.opt_saved': '优化省量',
     
     'tbl.gen_speed': '吐字速度', 'unit_tokps': 'tok/s', 'detail.gen_speed': '生成速度',
+    // ── 本轮「为什么结束」(end_reason) ──
+    // 措辞纪律: 缺字段 = **未采集** → 显示「—」, 不得猜成"正常结束"
+    // (那等于把正待排查的停止洗白成正常, 用户就再也查不出来了).
+    'detail.end_reason': '结束方式',
+    'end_stop': '模型正常结束 (stop)', 'end_tool_calls': '转入工具调用 (tool_calls)',
+    'end_length': '输出额度用尽被截断 (length)', 'end_content_filter': '上游按内容策略拦截 (content_filter)',
+    'end_done': '上游只发了结束标记, 未说明原因', 'end_eof': '上游连接断开, 未发终止帧',
+    'end_loop': '网关按死循环截断', 'end_abort': '客户端中途断开',
+    'end_idle': '空闲超时 / 上游连接错误', 'end_error_event': '上游返回错误事件',
+    'end_cache': '本地缓存回放 (未请求上游)',
     // ── 首字延迟 (TTFT) ──
     // 措辞纪律: "无样本"必须显示「—」而非 0ms (0ms 在物理上不成立, 会被读成"瞬间响应").
     'ttft_title': '首字延迟', 'ttft_subtitle': '从发出请求到收到第一个 token 的等待时间 —— 只统计真正吐了字的请求（从未出字的空等不计入）',
@@ -353,6 +363,16 @@ const I18N = {
     'detail.time': 'Time', 'detail.model': 'Model', 'detail.provider': 'Provider', 'detail.endpoint': 'Endpoint', 'detail.kv_cache': 'KV Cache', 'detail.error': 'Error details', 'detail.reasoning': 'Reasoning', 'detail.cache_hit_rate': 'Cache Hit Rate', 'detail.opt_saved': 'Tokens Saved',
     
     'tbl.gen_speed': 'Gen Speed', 'unit_tokps': 'tok/s', 'detail.gen_speed': 'Gen Speed',
+    // ── "Ended by" (end_reason) ──
+    // Wording rule: a missing field means NOT COLLECTED, so it renders as an em dash —
+    // never guess "finished normally" (that would launder an unexplained stop into a healthy one).
+    'detail.end_reason': 'Ended by',
+    'end_stop': 'Model finished normally (stop)', 'end_tool_calls': 'Tool call (tool_calls)',
+    'end_length': 'Cut off by output limit (length)', 'end_content_filter': 'Blocked by upstream content policy (content_filter)',
+    'end_done': 'Upstream sent only its end marker, gave no reason', 'end_eof': 'Upstream closed with no terminator',
+    'end_loop': 'Truncated by the gateway loop guard', 'end_abort': 'Client aborted mid-stream',
+    'end_idle': 'Idle timeout / upstream connection error', 'end_error_event': 'Upstream error event',
+    'end_cache': 'Replayed from local cache (no upstream call)',
     // ── Time to first token (TTFT) ──
     // Wording rule: "no samples" must render as an em dash, never 0ms (0ms is physically
     // impossible and would read as "instant").

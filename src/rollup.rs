@@ -482,6 +482,7 @@ mod tests {
             effort: None,
             first_token_ms: None,
             upstream_model: Some(upstream.to_string()),
+            end_reason: None,
         }
     }
 

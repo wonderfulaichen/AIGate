@@ -167,6 +167,31 @@ pub struct RequestLog {
     /// (实际转发是客户端优先, 只是记录没采集; 见 thinking.rs 优先级链)。
     #[serde(default)]
     pub effort: Option<String>,
+    /// 本轮流**为什么结束** —— 回答"输出跑到一半就停了, 是谁停的".
+    ///
+    /// 取值分两类, 刻意不混成一类:
+    ///   · **上游报的 `finish_reason` 原值**: `stop` / `tool_calls` / `length` /
+    ///     `content_filter` / … —— 即"上游明确交代了它为什么停";
+    ///   · **网关侧的形态码** (上游没说或说不出时):
+    ///     `done`  = 上游只发了 `[DONE]`, **从未给过 finish_reason** (它没说自己为什么停);
+    ///     `eof`   = 上游连接直接结束, 既无 finish_reason 也无 `[DONE]`;
+    ///     `loop`  = 网关按死循环截断 (回答不完整);
+    ///     `abort` = 客户端中途断开 (对应 499);
+    ///     `idle`  = 空闲超时 / 上游连接错误;
+    ///     `error_event` = 上游以 SSE error 事件结束 (HTTP 200 + error);
+    ///     `cache` = 本地响应缓存回放 (根本没打上游).
+    ///
+    /// 缺失 (`None`) = **未采集**, 不是"没有结束原因": 旧日志、非流式路径等仍在其中 ——
+    /// 展示层须显示 "—" 而非任何结论 (口径红线: 无数据 ≠ 0, 也 ≠ 某个默认值).
+    ///
+    /// 为什么要单开一个字段 (2026-10-11, 用户第四次报"跑一会就停下"): 此前记录里
+    /// **既没有**上游的 finish_reason、**也没有**结束形态, 而"停止"的三种成因
+    /// (网关截断 / 上游断流 / 模型自己说完) 在记录上**长得一模一样** ——
+    /// 用户原话「因为软件导致的停止等各种软件操作不会出报告的, 我都不知道是不是软件
+    /// 导致的」正是这个盲区。有了它, `stop` 与 `done` 一眼可分:
+    /// 前者是模型自己说完了, 后者是上游没交代就收了尾。
+    #[serde(default)]
+    pub end_reason: Option<String>,
 }
 
 #[inline]
@@ -621,6 +646,8 @@ pub async fn record_request(
         seq: 0,
         // 失败/错误路径多在 body 改写前, 未采集本次思考强度 → None (展示回落面板配置档).
         effort: None,
+        // 失败路径不解析流内的结束信号, 未采集 → None (展示为 "—").
+        end_reason: None,
     };
     log_buffer.push(log).await;
 }
@@ -653,6 +680,8 @@ pub async fn record_request_with_tokens(
     error: Option<String>,
     usage_estimated: bool,
     effort: Option<String>,
+    // 本轮流"为什么结束" (见 [`RequestLog::end_reason`]); None = 未采集.
+    end_reason: Option<String>,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -678,6 +707,7 @@ pub async fn record_request_with_tokens(
         error,
         usage_estimated,
         effort,
+        end_reason,
     )
     .await;
 }
@@ -712,6 +742,8 @@ pub async fn record_request_with_tokens_status(
     error: Option<String>,
     usage_estimated: bool,
     effort: Option<String>,
+    // 本轮流"为什么结束" (见 [`RequestLog::end_reason`]); None = 未采集.
+    end_reason: Option<String>,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -745,6 +777,7 @@ pub async fn record_request_with_tokens_status(
         usage_estimated,
         seq: 0,
         effort,
+        end_reason,
     };
     log_buffer.push(log).await;
 }
@@ -1916,6 +1949,7 @@ pub async fn api_mock(
             effort: None,
             first_token_ms: None,
             upstream_model: None,
+            end_reason: None,
         });
     }
 
@@ -1958,6 +1992,7 @@ pub async fn api_mock(
             effort: None,
             first_token_ms: None,
             upstream_model: None,
+            end_reason: None,
         });
     }
 
@@ -2197,7 +2232,7 @@ mod changelog_tests {
             strip_saved_tokens: 0, trim_saved_tokens: 0, resp_cache_saved_tokens: 0,
             audit_exempt_reasoning_tokens: 0, audit_dup_block_tokens: 0,
             audit_dup_block_count: 0, strip_toolcall_saved_tokens: 0, audit_observed: false,
-            price: None, usage_estimated: false, seq: 0, effort: None,
+            price: None, usage_estimated: false, seq: 0, effort: None, end_reason: None,
         };
         let logs = vec![
             // 正常请求
@@ -5224,7 +5259,22 @@ mod tests {
             effort: None,
             first_token_ms: None,
             upstream_model: None,
+            end_reason: None,
         }
+    }
+
+    /// 旧日志缺 `end_reason` 必须仍能反序列化 —— 缺字段 = "未采集", 不是"整行坏掉".
+    ///
+    /// 这不是形式主义: `logs.jsonl` 是**追加式**的, 升级后新旧行混在同一个文件里,
+    /// 少一个 `#[serde(default)]` 会让历史行整行解析失败, 表现是"历史数据凭空消失"
+    /// (本项目在 rollup 加字段时真踩过一次)。`end_reason` 的语义正是"未采集 → None",
+    /// 与"模型正常结束"必须分得开。
+    #[test]
+    fn legacy_log_line_without_end_reason_still_deserializes() {
+        let line = r#"{"timestamp":1,"model":"m","provider":"p","endpoint":"e","status":200,"latency_ms":1,"body_len":2,"error":null,"prompt_tokens":3,"completion_tokens":4}"#;
+        let log: RequestLog = serde_json::from_str(line).expect("旧行 (无 end_reason) 必须能解析");
+        assert_eq!(log.end_reason, None, "缺字段 = 未采集, 不得猜成某个默认结论");
+        assert_eq!(log.prompt_tokens, 3, "同一行其余字段不受影响");
     }
 
     /// 499 客户端取消不算错误 (2026-10-01 用户报障: 模型正常工作却被标红成"错误",

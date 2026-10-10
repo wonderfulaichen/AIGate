@@ -799,6 +799,8 @@ pub async fn chat_completions(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, rt, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                         usage_missing(pt, ct), effort.clone(),
+                        // 非流式路径未采集结束形态 (展示为 "—").
+                        None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -848,6 +850,8 @@ pub async fn chat_completions(
                         &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, rt, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                         usage_missing(pt, ct), effort.clone(),
+                        // 非流式路径未采集结束形态 (展示为 "—").
+                        None,
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1515,6 +1519,8 @@ async fn relay_native_passthrough(
             false, hit, miss, creation,
             strip_saved_tokens, 0, 0, None, None, None,
             usage_missing(pt, ct), effort,
+            // 非流式路径未采集结束形态 (展示为 "—").
+            None,
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1816,12 +1822,16 @@ impl Stream for NativeTapStream {
                     };
                     // 档位需要在 spawn 前取成 owned 值 (self 不能跨线程借用).
                     let effort_copy = self.effort.clone();
+                    // 结束原因: 本路径只在"按 max_output_tokens 截断"时能确定原因, 其余形态
+                    // 未采集 (None = 未采集, 展示为 "—")。
+                    let end_reason = self.truncated.then(|| "length".to_string());
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
                             prompt, output, rt, resp_len, false, hit, miss, creation, st, 0, 0, None, None,
                             trunc_note,
                             usage_missing(prompt, output), effort_copy,
+                            end_reason,
                         ).await;
                     });
                 }
@@ -2265,6 +2275,8 @@ fn stream_response_with_tokens(
         pending_error_sse: None,
         finish_reason: None,
         clean_finish: false,
+        last_finish_reason: None,
+        saw_done: false,
         errored_msg: None,
             keepalive: Some(Box::pin(tokio::time::sleep(SSE_KEEPALIVE_INTERVAL))),
             out_buf: Vec::new(),
@@ -2401,6 +2413,8 @@ async fn try_replay_cache(
         false,
         // 缓存回放没有请求体上下文可采档位 (cached 是响应体) → None, 展示层回落面板配置.
         None,
+        // 结束原因: 根本没打上游, 是本地缓存回放 —— 单列一码, 免得与"上游停的"混为一谈.
+        Some("cache".to_string()),
     )
     .await;
     Some(serve_cached(&cached))
@@ -2477,6 +2491,25 @@ struct TokenStream {
     /// finish_reason/[DONE], 说明响应被截断 (典型如 10014 的 mid-object split 丢尾帧),
     /// 此前会被记成 200 成功 → 记录页不显示报错. 见 poll_next None 分支.
     clean_finish: bool,
+    /// 上游报过的**最后一个** `finish_reason` 原值 (含 `stop` / `tool_calls` 等正常值).
+    ///
+    /// 与上面 `finish_reason` 的分工: 那个**只在非正常值**时置位 (专给 10004 诊断用),
+    /// 这个照收**全部**取值 —— 它是回答"这轮到底是模型自己说完的、还是被谁掐掉的"
+    /// 唯一的证据。
+    ///
+    /// 为什么需要 (2026-10-11 用户第四次报"跑一会就停下"): 那时记录里**既没有**
+    /// finish_reason、**也没有**结束形态, 于是"输出为什么停了"只能靠猜 ——
+    /// 实测网关侧既没截断、没报错、没上游断流, 却同样没有任何"为什么结束"的痕迹。
+    /// 用户原话「因为软件导致的停止等各种软件操作不会出报告的, 我都不知道是不是软件导致的」
+    /// 指的正是这个盲区。
+    last_finish_reason: Option<String>,
+    /// 是否见过上游的 `[DONE]` 终止帧 (裸 `[DONE]` 或 `data: [DONE]`).
+    ///
+    /// 与 `last_finish_reason` 合起来才能区分两种"看起来都正常"的结束:
+    ///   · 有 finish_reason        → 上游明确说了为什么停;
+    ///   · 只有 [DONE]、无 finish_reason → **上游没说自己为什么停** (记 `done`)。
+    /// 后者此前与正常收尾完全同形 (都置 `clean_finish`), 是"停下但查不出原因"的典型形态。
+    saw_done: bool,
     /// 上游 SSE error 事件改写后的中文错误信息 (供完成时写错误日志).
     errored_msg: Option<String>,
     /// 归一化后的 SSE 输出缓冲: 把上游 payload (data: 前缀 / 裸 JSON / 裸 [DONE]) 统一封装为
@@ -2704,6 +2737,7 @@ impl TokenStream {
         if json_str == "[DONE]" {
             // 上游显式发送终止帧: 标记流为干净结束 (否则 None 分支会误判为截断).
             self.clean_finish = true;
+            self.saw_done = true;
             // 归一化发射结束帧 (兼容裸 [DONE] 与 data: [DONE] 两种形式).
             self.out_buf.extend_from_slice(b"data: [DONE]\n\n");
             return;
@@ -2866,6 +2900,9 @@ impl TokenStream {
                         } else {
                             // 非空取值 (含终止帧) 才视为上游发出了终止信号.
                             self.clean_finish = true;
+                            // 原值照收 (`stop`/`tool_calls` 这些"正常"值正是最需要的证据:
+                            // 它证明**模型自己说完了**, 而不是被网关/上游掐的).
+                            self.last_finish_reason = Some(fr.to_string());
                             if !matches!(fr, "stop" | "tool_calls" | "function_call") {
                                 warn!(
                                 "proxy: upstream finish_reason={fr:?} (model={}, provider={}); client may report completion error (10004)",
@@ -2907,6 +2944,35 @@ impl TokenStream {
         self.out_buf.extend_from_slice(b"\n\n");
     }
 
+    /// 本轮流「为什么结束」的结论, 落进记录的 `end_reason` 字段 (见 [`RequestLog::end_reason`]).
+    ///
+    /// 取值分两类, 刻意不混:
+    ///   · **上游报的 `finish_reason` 原值** (`stop` / `tool_calls` / `length` /
+    ///     `content_filter` / …) —— 上游明确交代了它为什么停;
+    ///   · **网关侧的形态码** (上游没说、或说不出时): `done` / `eof` / `loop` /
+    ///     `abort` / `idle` / `error_event`。
+    ///
+    /// 判定顺序 = "谁先掐的"优先级: 网关主动截断 > 上游报错事件 > 上游连接故障 >
+    /// 上游的 finish_reason > 只有 `[DONE]` > 什么都没给。
+    fn end_reason(&self) -> Option<String> {
+        if self.loop_aborted {
+            return Some("loop".to_string());
+        }
+        if self.stream_errored {
+            return Some("error_event".to_string());
+        }
+        if self.error_closed {
+            return Some("idle".to_string());
+        }
+        if let Some(fr) = &self.last_finish_reason {
+            return Some(fr.clone());
+        }
+        if self.saw_done {
+            return Some("done".to_string());
+        }
+        Some("eof".to_string())
+    }
+
     /// 流异常终止时写日志: 保留已解析到的 token / 首 token 延迟, 并按真实失败状态码记录.
     ///
     /// 原实现在这两条分支上用 `record_request`, 一律记 status=200 且 token 全 0 ——
@@ -2926,6 +2992,8 @@ impl TokenStream {
         let first_token_ms = self
             .first_token_at
             .map(|t| t.duration_since(ld.start).as_millis() as u64);
+        // 结束原因也要在 spawn 前取成 owned (self 不可跨线程借用).
+        let end_reason = self.end_reason();
         tokio::spawn(async move {
             let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
@@ -2951,6 +3019,7 @@ impl TokenStream {
                 first_token_ms,
                 Some(err),
                 usage_estimated, effort,
+                end_reason,
             )
             .await;
         });
@@ -3066,6 +3135,7 @@ impl Stream for TokenStream {
                             };
                             this.clean_finish = false;
                             this.finish_reason = None;
+                            this.last_finish_reason = None;
                             this.stream_errored = false;
                             this.pending_error_sse = None;
                             this.errored_msg = None;
@@ -3320,6 +3390,8 @@ impl Stream for TokenStream {
                             let status = if err_for_log.is_some() && !len_truncated { 502 } else { 200 };
                             // 档位在 spawn 前取成 owned (self 不可跨线程借用).
                             let effort = ld.effort.clone();
+                            // 结束原因同上必须在 async 块外取 (this 是 &mut).
+                            let end_reason = this.end_reason();
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3328,6 +3400,7 @@ impl Stream for TokenStream {
                                     first_token_ms,
                                     err_for_log,
                                     usage_estimated, effort,
+                                    end_reason,
                                 ).await;
                             });
                         }
@@ -3469,6 +3542,14 @@ impl Drop for TokenStream {
                 ct, pt
             )
         };
+        // 结束原因 (2026-10-11 新增): 走到 Drop 说明收尾路径没执行过 ——
+        //   · 未干净收尾且非网关截断 = 客户端中途断开 → `abort`;
+        //   · 其余 (含"上游只发了 [DONE] 就正常结束") 交给统一判定.
+        let end_reason = if !self.clean_finish && !self.loop_aborted {
+            Some("abort".to_string())
+        } else {
+            self.end_reason()
+        };
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3477,6 +3558,7 @@ impl Drop for TokenStream {
                 first_token_ms,
                 if err.is_empty() { None } else { Some(err) },
                 usage_estimated, effort,
+                end_reason,
             ).await;
         });
     }
@@ -5912,6 +5994,84 @@ mod tests {
         // 续写资格判定: tool_calls 出现过 / 正文为空 / 名额用尽 均不触发.
     }
 
+    /// 「输出为什么停了」的判定 —— 用户第四次报"跑一会就停下"后新增的字段 (`end_reason`).
+    ///
+    /// 这个字段的全部意义, 就是区分三种**在记录上长得一模一样**的停止:
+    /// 模型自己说完 (`stop`) / 上游没交代就收尾 (`done`) / 上游什么终止信号都没给 (`eof`),
+    /// 外加网关侧的两类主动行为 (`loop` / `idle`)。
+    ///
+    /// 用户原话:「因为软件导致的停止等各种软件操作不会出报告的, 我都不知道是不是软件导致的」
+    /// —— 判定错一格, 排查方向整个反掉 (把"上游没交代"读成"模型正常说完")。
+    #[test]
+    fn end_reason_classifies_who_stopped_the_stream() {
+        use futures::stream;
+        let mk = || TokenStream {
+            inner: Box::pin(stream::empty::<Result<Bytes, StreamErr>>()),
+            done: false, tokens_pt: 0, tokens_ct: 0,
+            tokens_cache_hit: 0, tokens_cache_miss: 0, tokens_cache_creation: 0,
+            response_bytes: 0,
+            loop_guard: None, loop_aborted: false, error_closed: false, stream_errored: false,
+            pending_error_sse: None, finish_reason: None, clean_finish: false,
+            last_finish_reason: None, saw_done: false, errored_msg: None,
+            keepalive: None, recent_lines: std::collections::VecDeque::new(),
+            out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
+            anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
+            accumulated_content: String::new(),
+            reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
+            usage_seen: false, emitted_tool_calls: false, cont_pending: None,
+            cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
+            loop_params: None, log_buffer: None,
+            tool_call_ids: std::collections::HashMap::new(),
+        };
+
+        // ① 上游明确说 stop = **模型自己说完了** —— 这正是排查时最需要的那条证据,
+        //    此前它被 `finish_reason` 字段刻意丢掉 (那个只收非正常值).
+        let mut ts = mk();
+        ts.handle_payload(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#);
+        assert_eq!(ts.end_reason().as_deref(), Some("stop"));
+
+        // ② tool_calls 同样是上游的明确交代 (agent 里最正常的一种结束).
+        let mut ts = mk();
+        ts.handle_payload(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#);
+        assert_eq!(ts.end_reason().as_deref(), Some("tool_calls"));
+
+        // ③ length (额度用尽) 必须如实记 length —— 不能被当成"正常收尾", 那会把
+        //    "答不完"洗成"答完了".
+        let mut ts = mk();
+        ts.handle_payload(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"#);
+        assert_eq!(ts.end_reason().as_deref(), Some("length"));
+
+        // ④ **只发了 [DONE]、从未给过 finish_reason** → `done`.
+        //    这是"停下但查不出原因"的核心形态: 在此之前它与正常收尾**完全同形**
+        //    (都置 clean_finish=true), 记录里看不出任何区别.
+        let mut ts = mk();
+        ts.handle_payload("[DONE]");
+        assert_eq!(ts.end_reason().as_deref(), Some("done"));
+        assert!(ts.clean_finish, "只有 [DONE] 仍算干净收尾 (否则会被误判成上游断流)");
+
+        // ⑤ 什么终止信号都没有 (上游直接关连接) → `eof`.
+        let ts = mk();
+        assert_eq!(ts.end_reason().as_deref(), Some("eof"));
+        assert!(!ts.clean_finish, "无终止帧不该算干净收尾");
+
+        // ⑥ 网关主动截断优先于上游信号: 即使上游说了 stop, 只要网关掐过就必须归因网关
+        //    (回答不完整这件事, 不能让上游背).
+        let mut ts = mk();
+        ts.handle_payload(r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#);
+        ts.loop_aborted = true;
+        assert_eq!(ts.end_reason().as_deref(), Some("loop"));
+
+        // ⑦ 上游 SSE error 事件 / 空闲超时兜底, 各占一码.
+        let mut ts = mk();
+        ts.stream_errored = true;
+        assert_eq!(ts.end_reason().as_deref(), Some("error_event"));
+
+        let mut ts = mk();
+        ts.error_closed = true;
+        assert_eq!(ts.end_reason().as_deref(), Some("idle"));
+    }
+
     /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
     #[test]
     fn test_parse_sse_chunk_cache_fields() {
@@ -5931,6 +6091,8 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
+            last_finish_reason: None,
+            saw_done: false,
             errored_msg: None,
             keepalive: None,
             recent_lines: std::collections::VecDeque::new(),
@@ -6002,6 +6164,7 @@ mod tests {
             response_bytes: 0,   // 稍后设置
             loop_guard: None, loop_aborted: false, error_closed: false, stream_errored: false,
             pending_error_sse: None, finish_reason: None, clean_finish: false, errored_msg: None,
+            last_finish_reason: None, saw_done: false,
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
             out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
@@ -6120,6 +6283,8 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
+            last_finish_reason: None,
+            saw_done: false,
             errored_msg: None,
             keepalive: None,
             recent_lines: std::collections::VecDeque::new(),
@@ -6211,6 +6376,8 @@ mod tests {
             pending_error_sse: None,
             finish_reason: None,
             clean_finish: false,
+            last_finish_reason: None,
+            saw_done: false,
             errored_msg: None,
             keepalive: None,
             out_buf: Vec::new(),
