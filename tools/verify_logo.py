@@ -11,11 +11,13 @@
               site/index.html                        (落地页顶栏品牌)
               docs/product-deck.html                 (封面 logo + 流向 hub, 共 2 处)
   光栅落点    build.rs::pixel_color()                (exe 图标的 32×32, 手写逐像素)
+              src/main.rs::make_icon_rgba()          (托盘 + **窗口**图标, 2026-10-10 补)
 
 用法:   python tools/verify_logo.py
 退出码: 0 = 全部一致; 1 = 有不一致 / 旧标残留
 分工:   PART A/B 查矢量落点, PART C 逐控制点比对 build.rs 的光栅几何, PART D 验 icon.ico 实体
-        (尺寸集合 / 采样像素 / 构建缓存有没有把改动吞掉)
+        (尺寸集合 / 采样像素 / 构建缓存有没有把改动吞掉),
+        PART E 逐控制点比对 **main.rs 的运行时图标** (漏改过, 见其注释)
 """
 import io
 import os
@@ -44,6 +46,12 @@ OLD_MARK_PATTERNS = [
 ]
 
 # 旧 exe 光栅的指纹 —— build.rs::pixel_color 用浮点系数而非 #hex, 故单列
+#
+# ⚠️ 2026-10-10 实测提醒: 这三个 pattern 是**写法指纹**, 只要换种写法就会漏
+#    (我亲手把注释改成"// 背景: 紫色渐变 (旧画法)"、把 `99.0 +` 改成就地变量,
+#     两次都没被抓到)。所以它们只是**兜底**, 真正的判据是 PART C/E 的逐控制点比对 ——
+#    旧画法不可能有 GATE_PTS/ARROW_PTS 这两个常量, 一碰就 FAIL。
+#    别再给这两个 pattern 加强化匹配去"追平"旧写法, 那是在和想象的敌人打架。
 OLD_RASTER_PATTERNS = [
     (r"// 背景: 紫色渐变", "旧光栅注释"),
     (r"99\.0 \+", "旧光栅紫底系数"),
@@ -307,10 +315,60 @@ def main():
                     print("  ✓ 32px %s" % label)
     print("")
 
+    print("PART E · 运行时图标 (main.rs) 几何 == 矢量标")
+    # ⚠️ 2026-10-10 补: 用户报"图标怎么不更新", 而 PART A~D **全绿**。
+    #    根因是 main.rs::make_icon_rgba() (托盘 + **窗口**图标) 从来没被换标改到,
+    #    一直在画旧标 (紫色渐变 + 中心白环 + 四节点) —— 而它不在 build.rs 里,
+    #    PART C/D 只扫 build.rs 与 icon.ico, 自然查不出来。
+    #    这与 2026-09-30 那次"三种画法"是同一类事故 (改了 A 忘改 B + 无机制报错),
+    #    只是漏的是第七处。故把 runtime 落点也纳入逐控制点比对。
+    RUNTIME = ("main.rs", "src/main.rs")
+    rt = read(RUNTIME[1])
+    rt_pairs = [
+        ("颜色 LOGO_BLUE", (10, 132, 255), rust_rgb(rt, "LOGO_BLUE")),
+        ("颜色 LOGO_FG", (255, 255, 255), rust_rgb(rt, "LOGO_FG")),
+        ("矩形 LOGO_BOX vs rect", tuple(float(m_rect[k]) for k in ("x", "y", "width", "height")),
+         rust_nums(rt, "LOGO_BOX")),
+        ("圆角 LOGO_RX", (float(m_rect["rx"]),), (rust_scalar(rt, "LOGO_RX"),)),
+        ("门框线宽 GATE_STROKE", (float(m_paths[0]["stroke-width"]),), (rust_scalar(rt, "GATE_STROKE"),)),
+        ("门框折线 GATE_PTS", expand_path(m_paths[0]["d"]), rust_pts(rt, "GATE_PTS")),
+        ("箭头多边形 ARROW_PTS", expand_path(m_paths[1]["d"]), rust_pts(rt, "ARROW_PTS")),
+    ]
+    for label, want_v, got_v in rt_pairs:
+        if got_v is None:
+            bad += fail("%s: main.rs 里找不到对应常量" % label)
+        elif want_v != got_v:
+            bad += fail("%s 与母版不一致 | 母版 %s | main.rs %s" % (label, want_v, got_v))
+        else:
+            print("  ✓ %s 与母版一致" % label)
+    # 运行时旧画法指纹 (与 build.rs 的 OLD_RASTER_PATTERNS 同源, 但**独立扫** ——
+    # 两处是不同文件, 共用一份 pattern 会让人以为扫过另一边)
+    for pat, what in OLD_RASTER_PATTERNS:
+        if re.search(pat, rt):
+            bad += fail("main.rs: 仍是旧光栅 -> %s" % what)
+    # 窗口/托盘图标必须与 build.rs 画**同一套几何**: 两个文件都不含对方的降级实现
+    if "make_icon_rgba" not in rt:
+        bad += fail("main.rs 里找不到 make_icon_rgba (托盘/窗口图标的入口)")
+    # ── 行为判据 (比写法指纹可靠) ──
+    # 把 main.rs 的采样函数抽出来**真跑一遍**, 检查关键像素。旧画法必败:
+    #   ① 圆角外不透明 (旧版整块填渐变)
+    #   ② 左上区域不是品牌蓝 (旧版是 #6366f1 靛蓝)
+    # 做法: 新建一个最小 Rust bin, include 不了 main.rs (它是 bin crate 且有 fn main),
+    # 故改为把关键函数体复制到临时文件里编译 —— 但那样就脱离真实代码了。
+    # 折中且仍有效: 单测已固化这些像素断言 (main.rs::tests 下有两条),
+    # 这里只做静态检查 —— 确认那两条回归测试**存在** (有人删掉测试时这里会报).
+    if "tray_and_window_icon_is_the_new_brand_mark" not in rt:
+        bad += fail(
+            "main.rs 缺回归测试 tray_and_window_icon_is_the_new_brand_mark —— "
+            "它是拦住「图标回退旧画法」的行为判据, 不许删")
+    if "icon_geometry_matches_svg_brand_mark" not in rt:
+        bad += fail("main.rs 缺回归测试 icon_geometry_matches_svg_brand_mark")
+    print("")
+
     if bad:
         print("[FAIL] 品牌标同源: %d 项不一致" % bad)
         return 1
-    print("[OK] 品牌标同源: 母版 + 5 处矢量落点全部一致")
+    print("[OK] 品牌标同源: 母版 + 5 处矢量落点 + build.rs/main.rs 两份光栅全部一致")
     return 0
 
 

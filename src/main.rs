@@ -293,9 +293,94 @@ async fn require_admin_token(
     next.run(req).await
 }
 
-// ─── 托盘图标生成 ───
+// ─── 品牌标几何 (与 icon.svg / build.rs **同一套 256 空间数字**) ───
+//
+// ⚠️ 2026-10-10 修的漏改: 09-30 换标时改了母版 + 5 处矢量落点 + `build.rs` 的 exe 光栅,
+//    **唯独漏了这里** —— 于是托盘与窗口图标一直在画**旧标**(紫色渐变 + 中心白环 + 四节点),
+//    而所有门禁都报绿 (verify_logo.py 的 PART C 只扫 build.rs, 不覆盖 main.rs).
+//    症状: 窗口标题栏/任务栏显示旧图标, 面板与 exe 资源却是新标, 用户报"图标怎么不更新".
+//
+//    这里是与 build.rs `logo_sample` 逐行对应的**同源还原**(不是又一份拷贝的画法):
+//    同样的常量、同样的 SDF、同样的 3×3 超采样, 只是输入尺寸由 ICO 的 6 档变成固定 32。
+//    改品牌标必须**同时**改三处: icon.svg / build.rs / 这里 (verify_logo.py PART E 会扫).
+const LOGO_BLUE: (u8, u8, u8) = (10, 132, 255); // #0a84ff = Apple systemBlue
+const LOGO_FG: (u8, u8, u8) = (255, 255, 255);
+const LOGO_BOX: (f32, f32, f32, f32) = (8.0, 8.0, 240.0, 240.0); // x y w h
+const LOGO_RX: f32 = 56.0; // 圆角半径 (占 23%)
+const GATE_STROKE: f32 = 20.0; // 门框线宽 (箭头 32 更粗, 主次靠线宽拉开)
+/// 门框折线: 上臂 → 左柱 → 下臂, 右缘敞开
+const GATE_PTS: [(f32, f32); 4] = [(148.0, 56.0), (52.0, 56.0), (52.0, 200.0), (148.0, 200.0)];
+/// 箭头填充多边形: 杆 y112–144 由 x104 贯到 176, 头 apex (220,128) 两翼落 y104/152
+const ARROW_PTS: [(f32, f32); 7] = [
+    (104.0, 112.0),
+    (176.0, 112.0),
+    (176.0, 104.0),
+    (220.0, 128.0),
+    (176.0, 152.0),
+    (176.0, 144.0),
+    (104.0, 144.0),
+];
 
-/// 创建 32×32 RGBA 图标字节, 复用 build.rs 的像素逻辑.
+/// 采样一个**子像素**的颜色 (256 空间), 返回 (r, g, b, a) —— a 取 0.0/1.0.
+/// 与 build.rs `logo_sample` 逐行对应.
+fn logo_sample(sx: f32, sy: f32) -> (f32, f32, f32, f32) {
+    // 圆角矩形 SDF: >0 在圆角外 → 透明 (旧版整块不透明, 圆角等于没画)
+    let half_w = LOGO_BOX.2 * 0.5;
+    let half_h = LOGO_BOX.3 * 0.5;
+    let dx = (sx - (LOGO_BOX.0 + half_w)).abs() - (half_w - LOGO_RX);
+    let dy = (sy - (LOGO_BOX.1 + half_h)).abs() - (half_h - LOGO_RX);
+    let outside = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt();
+    if outside + dx.max(dy).min(0.0) - LOGO_RX > 0.0 {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    // 门框: 到折线的距离 <= 半线宽即落在笔画上 (线段距离天然就是 SVG 的 round 线帽)
+    if dist_to_polyline(sx, sy, &GATE_PTS) <= GATE_STROKE * 0.5 || point_in_poly(sx, sy, &ARROW_PTS) {
+        return (LOGO_FG.0 as f32, LOGO_FG.1 as f32, LOGO_FG.2 as f32, 1.0);
+    }
+    (LOGO_BLUE.0 as f32, LOGO_BLUE.1 as f32, LOGO_BLUE.2 as f32, 1.0)
+}
+
+/// 点到折线的最短距离 (与 build.rs 对应).
+fn dist_to_polyline(px: f32, py: f32, pts: &[(f32, f32)]) -> f32 {
+    let mut best = f32::MAX;
+    for w in pts.windows(2) {
+        let (x1, y1) = w[0];
+        let (vx, vy) = (w[1].0 - x1, w[1].1 - y1);
+        let len2 = vx * vx + vy * vy;
+        let t = if len2 > 0.0 {
+            (((px - x1) * vx + (py - y1) * vy) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let d = ((px - (x1 + t * vx)).powi(2) + (py - (y1 + t * vy)).powi(2)).sqrt();
+        if d < best {
+            best = d;
+        }
+    }
+    best
+}
+
+/// 射线法判点是否落在填充多边形内 (与 build.rs 对应).
+fn point_in_poly(px: f32, py: f32, pts: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        let (xi, yi) = pts[i];
+        let (xj, yj) = pts[j];
+        if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// 托盘/窗口图标: 32×32 RGBA, 图案 = 品牌标「闸门通路」.
+///
+/// 与 build.rs 的 `bgra_bitmap` 同源 (3×3 超采样 + 直通 alpha), 差别只在:
+/// build.rs 输出 BGRA 行序自下而上 (BMP 系), 这里输出 RGBA 自上而下 (winit/tray_icon).
+///
+/// ⚠️ 必须超采样: 圆角与箭头斜边不抗锯齿会明显拉毛 (build.rs 里有同样的注释).
 fn make_icon_rgba() -> Vec<u8> {
     let w = 32u32;
     let h = 32u32;
@@ -303,36 +388,34 @@ fn make_icon_rgba() -> Vec<u8> {
 
     for y in 0..h {
         for x in 0..w {
-            let cx = w as f32 / 2.0;
-            let cy = h as f32 / 2.0;
-
-            // 背景紫色渐变
-            let bg_r = (99.0 + (y as f32 / h as f32) * (79.0 - 99.0)) as u8;
-            let bg_g = (102.0 + (y as f32 / h as f32) * (70.0 - 102.0)) as u8;
-            let bg_b = (241.0 + (y as f32 / h as f32) * (229.0 - 241.0)) as u8;
-
-            let dist_center = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
-
-            let (r, g, b, a) = if dist_center >= 5.5 && dist_center <= 7.5 {
-                (255, 255, 255, 255) // 中心白色环
-            } else if dist_center <= 4.0 {
-                (bg_r, bg_g, bg_b, 255) // 中心紫色圆点
-            } else {
-                // 4 个连接节点
-                let nodes = [(7, 8), (25, 8), (7, 24), (25, 24)];
-                let mut found = false;
-                for &(nx, ny) in &nodes {
-                    let nd = (((x as i32 - nx).pow(2) + (y as i32 - ny).pow(2)) as f32).sqrt();
-                    if nd <= 3.0 {
-                        found = true;
-                        break;
+            const SS: u32 = 3;
+            let kx = 256.0 / w as f32;
+            let ky = 256.0 / h as f32;
+            let mut acc = [0.0f32; 3];
+            let mut cov = 0.0f32;
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let px = (x as f32 + (sx as f32 + 0.5) / SS as f32) * kx;
+                    let py = (y as f32 + (sy as f32 + 0.5) / SS as f32) * ky;
+                    let s = logo_sample(px, py);
+                    if s.3 > 0.0 {
+                        acc[0] += s.0;
+                        acc[1] += s.1;
+                        acc[2] += s.2;
+                        cov += 1.0;
                     }
                 }
-                if found {
-                    (255, 255, 255, 255)
-                } else {
-                    (bg_r, bg_g, bg_b, 255)
-                }
+            }
+            let (r, g, b, a) = if cov == 0.0 {
+                (0, 0, 0, 0)
+            } else {
+                let n = (SS * SS) as f32;
+                (
+                    (acc[0] / cov).round() as u8,
+                    (acc[1] / cov).round() as u8,
+                    (acc[2] / cov).round() as u8,
+                    (cov / n * 255.0).round() as u8,
+                )
             };
             pixels.push(r);
             pixels.push(g);
@@ -925,7 +1008,118 @@ fn main() {
     });
 }
 
-// ─── 模型列表 ───
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 取 RGBA 缓冲中某个像素 (r,g,b,a).
+    fn px(buf: &[u8], x: u32, y: u32) -> (u8, u8, u8, u8) {
+        let i = ((y * 32 + x) * 4) as usize;
+        (buf[i], buf[i + 1], buf[i + 2], buf[i + 3])
+    }
+
+    /// **回归 (2026-10-10, 用户报"图标怎么不更新")**: 窗口/托盘图标必须画**新标**,
+    /// 不得回退成 09-30 换标前那版 (紫色渐变底 + 中心白环 + 四节点).
+    ///
+    /// 这个 bug 的真实教训: 换标改了母版 + 5 处矢量落点 + build.rs 光栅, 唯独漏了
+    /// main.rs —— 而所有门禁都报绿 (verify_logo.py PART C 只扫 build.rs).
+    /// 故这里用**三种旧标特征**同时盯: 旧靛蓝渐变、全不透明四角、中心白环.
+    #[test]
+    fn tray_and_window_icon_is_the_new_brand_mark() {
+        let buf = make_icon_rgba();
+        assert_eq!(buf.len(), 32 * 32 * 4, "必须是 32×32 RGBA");
+
+        // ① 四个角落必须**透明** (新标是圆角方块, 圆角外透明).
+        //    旧标整块填紫色渐变, 四角 alpha=255 —— 这是最直接的判据.
+        for &(x, y) in &[(0, 0), (31, 0), (0, 31), (31, 31)] {
+            let (_, _, _, a) = px(&buf, x, y);
+            assert_eq!(a, 0, "({x},{y}) 圆角外必须透明, 旧标整块不透明会被这里抓住");
+        }
+
+        // ② 中心附近必须是**新标蓝** #0a84ff (10,132,255), 不是旧靛蓝 #6366f1.
+        //    取左上区域偏蓝底的像素 (避开门框白笔画): x=12,y=30 落在方块内、笔画外.
+        let (r, g, b, a) = px(&buf, 12, 30);
+        assert!(a > 0, "方块内不应透明");
+        assert!(
+            (r as i32 - 10).abs() <= 6 && (g as i32 - 132).abs() <= 6 && (b as i32 - 255).abs() <= 6,
+            "底色必须是 #0a84ff, 实得 rgb({r},{g},{b}) —— 旧靛蓝 #6366f1 会被这里抓住"
+        );
+
+        // ③ 必须有**白色**像素 (门框/箭头的负形), 且数量在合理区间.
+        //    旧标也有白 (中心环+节点), 所以这条单独不够, 但与 ①② 组合足以定性.
+        let white = buf.chunks(4).filter(|p| p[0] > 240 && p[1] > 240 && p[2] > 240 && p[3] > 200).count();
+        assert!(white > 40, "新标的白笔画应占一定比例, 实得 {white} px");
+
+        // ④ 右侧必须**敞开** (右缘无门框): x=29 一列不应出现成片的白.
+        //    旧标右侧有两个白节点 (25,8)/(25,24) —— 若回退旧画法这里会命中.
+        let right_white = (0..32).filter(|&y| {
+            let (r, g, b, a) = px(&buf, 29, y);
+            r > 240 && g > 240 && b > 240 && a > 200
+        }).count();
+        assert!(
+            right_white <= 12,
+            "右缘应基本敞开 (旧标右侧有两个白节点), 实得 {right_white} px 白色"
+        );
+    }
+
+    /// 图标几何必须与母版/ build.rs **同源**: 采样点落在门框折线上时必须出白色.
+    /// 用 256 空间的已知坐标反推 (LOGO_BOX 左上 ~(8,8), 左柱 x=52 且 y=128 处是笔画).
+    #[test]
+    fn icon_geometry_matches_svg_brand_mark() {
+        // (52,128) 在左柱中点上 → 整块应是白 (笔画内)
+        let s = logo_sample(52.0, 128.0);
+        assert_eq!((s.0, s.1, s.2), (255.0, 255.0, 255.0), "左柱中点应为白色");
+        // (128,30) 在方块内、笔画外 → 蓝
+        let s2 = logo_sample(128.0, 30.0);
+        assert_eq!((s2.0, s2.1, s2.2), (10.0, 132.0, 255.0), "方块内应为品牌蓝");
+        // (128,128) 在箭头杆上 → 白
+        let s3 = logo_sample(128.0, 128.0);
+        assert_eq!((s3.0, s3.1, s3.2), (255.0, 255.0, 255.0), "箭头杆应为白色");
+        // 圆角外 (1,1) → 透明
+        let s4 = logo_sample(1.0, 1.0);
+        assert_eq!(s4.3, 0.0, "圆角外必须透明");
+    }
+
+    /// dump 32px 图标成二进制 PPM (P6), 供人工核对 (`AIGATE_DUMP_ICON=<目录>`).
+    ///
+    /// 为什么需要: 上面的断言只抽查了几个点, 而"图标到底长什么样"是**整体**判断.
+    /// 默认关闭 (单测不该写文件), 显式开:
+    ///     AIGATE_DUMP_ICON=<目录> cargo test --release dump_runtime_icon -- --nocapture
+    ///
+    /// 输出 PPM 而非 PNG: P6 格式就一个头 + 原始 RGB, 十几行搞定; 手写 PNG 编码器
+    /// (zlib + CRC32) 要上百行 —— 为一次性调试在正式代码里塞那么多不值得,
+    /// 而任何看图工具都开得了 PPM.
+    #[test]
+    fn dump_runtime_icon_on_demand() {
+        let Ok(dir) = std::env::var("AIGATE_DUMP_ICON") else { return };
+        let buf = make_icon_rgba();
+
+        // 放大 4 倍: 32px 直接看是糊的, 4 倍才好辨认形状与边缘
+        const SCALE: u32 = 4;
+        let (w, h) = (32 * SCALE, 32 * SCALE);
+        let mut raw = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let i = (((y / SCALE) * 32 + (x / SCALE)) * 4) as usize;
+                // alpha 合成到白底: winit/tray_icon 在显示时就是这么做的,
+                // 直接写原值会让半透明边缘在图片里看着像脏点.
+                let (r, g, b, a) = (buf[i] as u16, buf[i + 1] as u16, buf[i + 2] as u16, buf[i + 3] as u16);
+                let na = 255 - a;
+                raw.push((r + na * 255 / 255) as u8);
+                raw.push((g + na * 255 / 255) as u8);
+                raw.push((b + na * 255 / 255) as u8);
+            }
+        }
+        let path = std::path::Path::new(&dir).join("runtime_icon_32.ppm");
+        std::fs::write(&path, format!("P6\n{w} {h}\n255\n").into_bytes()).unwrap();
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(&raw).unwrap();
+        }
+        println!("dump 到 {} ({}×{}, {}× 放大)", path.display(), w, h, SCALE);
+    }
+}
 
 async fn handle_models(
     State(state): State<AppState>,
