@@ -42,6 +42,35 @@
       if (days <= 0) return t('credits_expired_now', amt);
       return t('credits_expiring_in', String(days), amt);
     },
+    // ── 本窗口额度进度 (仅积分制) ──
+    // 现状补的缺口: 面板原来只知道窗口**何时结束**, 不知道**已用多少 %** —— 于是
+    // "快用完了"和"几乎没用"长得一样, 用户只能等到报错才发现没额度 (§7 待办②).
+    //
+    // ⚠️ 口径由后端锁死并在单测里固化: **只统计仍有剩余的包**. 实测某账号 34 个包
+    //    横跨 34 个窗口, 若把已耗尽的旧包也算进分母会报"已用 82.5%" —— 那些是过去
+    //    一个月陆续送的体验/活动包, 早已用完、不会造成损失. 只看还有额度的 → 3.2%.
+    //    前端**不得**自己用 balance/consumed 反推 (那是累计口径, 跨多个窗口).
+    fmtQuotaProgress(row) {
+      const p = row && row.quota_progress;
+      if (!p || p.used_pct === null || p.used_pct === undefined) return '';
+      const pct = Number(p.used_pct) || 0;
+      const size = Number(p.window_size || 0);
+      const used = Number(p.window_used || 0);
+      const fmt = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+      // 进度条配色: 红→黄→绿 (越接近用完越刺眼; >85% 即视为该留意)
+      const color = pct >= 85 ? 'var(--err)' : pct >= 60 ? 'var(--warn)' : 'var(--ok)';
+      const label = pct >= 85 ? t('quota_almost_out') : pct >= 60 ? t('quota_running_low') : t('quota_healthy');
+      return {
+        pct,
+        color,
+        label,
+        // 「已用 26 / 500 积分」—— 绝对值必须一起给, 单看百分比在 500 与 50000 两种
+        // 体量下含义完全不同 (5% 的量级感觉不同).
+        text: t('quota_progress_text', fmt(used), fmt(size)),
+        width: Math.max(2, Math.min(100, pct)) + '%',
+        samples: p.packages || 0,
+      };
+    },
     // 极小金额友好显示: 换算后不足最小分位时给出 "<¥0.01", 而不是 0.00.
     // 省量费用常远小于 1 分 (单请求 1009 tok × 2元/1M ≈ 0.002), 一律 ¥0.00 会让人误以为没生效.
     fmtMoneyTiny(v) {

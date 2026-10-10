@@ -24,6 +24,11 @@ const I18N = {
     'balance_none': '未配置余额查询', 'balance_refresh': '刷新余额',
     'unit_credits': '积分', 'balance_consumed': '已用 {0}', 'balance_remain': '剩余 {0} 积分',
     'credits_expiring_in': '最近 {0} 天后过期 {1} 积分', 'credits_expired_now': '{0} 积分已过期',
+    // ── 本窗口额度进度 (§7 待办②) ──
+    // 措辞纪律: 百分比与绝对值一起给 —— 5% 在 500 与 50000 两种体量下含义完全不同.
+    'quota_progress_text': '本窗口已用 {0} / {1} 积分',
+    'quota_healthy': '额度充足', 'quota_running_low': '额度偏紧', 'quota_almost_out': '额度将尽',
+    'quota_progress_hint': '只统计仍有剩余的额度包（已耗尽的体验/活动包不计入，它们不会造成损失）',
     
     
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
@@ -283,6 +288,12 @@ const I18N = {
     'balance_none': 'Balance query not configured', 'balance_refresh': 'Refresh Balance',
     'unit_credits': 'credits', 'balance_consumed': 'used {0}', 'balance_remain': '{0} credits left',
     'credits_expiring_in': '{1} credits expire in {0} day(s)', 'credits_expired_now': '{0} credits expired',
+    // ── Quota window progress (TODO 2) ──
+    // Wording rule: give the percentage together with absolute values — 5% means
+    // very different things on a base of 500 vs 50000.
+    'quota_progress_text': 'Window usage {0} / {1} credits',
+    'quota_healthy': 'Plenty left', 'quota_running_low': 'Running low', 'quota_almost_out': 'Almost out',
+    'quota_progress_hint': 'Only packages with remaining quota are counted (exhausted trial/promo packs are excluded — they cost you nothing)',
     
     
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',

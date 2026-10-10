@@ -36,6 +36,8 @@
           balance: b.balance, currency: b.currency, source: b.source, error: b.error,
           consumed: b.consumed,
           expiring_at: b.expiring_at, expiring_amount: b.expiring_amount,
+          // 本窗口额度进度 (仅积分制且上游给了窗口字段时才有值; 老接口没有 → undefined)
+          quota_progress: b.quota_progress,
           account_label: b.account_label, account_count: b.account_count,
           total_balance: b.total_balance, total_consumed: b.total_consumed,
           hasBalance: b.balance !== null && b.balance !== undefined,

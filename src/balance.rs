@@ -45,6 +45,19 @@ pub struct BalanceInfo {
     /// 与 [`Self::expiring_at`] 同一窗口内**还剩多少**额度 (到窗口结束即作废这么多).
     #[serde(default)]
     pub expiring_amount: Option<f64>,
+    /// **本窗口额度进度** (仅积分制, 且仅当上游给了窗口字段时才有值).
+    ///
+    /// 现状补的缺口: 面板只知道配额窗口**何时结束** (`expiring_at`), 不知道
+    /// **本窗口已经用了多少 %** —— 于是"快用完了"和"几乎没用"看起来一样,
+    /// 用户只能等到报错才发现没额度 (§7 待办②).
+    ///
+    /// ⚠️ **口径: 只统计「仍有剩余」的包** (`CycleCapacityRemain > 0`), 不是全部包.
+    ///     实测 (2026-10-10, 34 个包): 若把已耗尽的旧包也算进去, ΣCycleCapacitySize
+    ///     = 4463 / ΣCycleCapacityUsed = 3682 → 会报「已用 82.5%」, 而那些包是过去
+    ///     一个月陆续赠送的**体验包/活动包**, 早已用完 —— 它们不会造成损失,
+    ///     不该拉高进度. 只看还有额度的 5 个包: 807 / 26 → **3.2%**, 才是事实.
+    #[serde(default)]
+    pub quota_progress: Option<QuotaProgress>,
     /// **当前使用账号**的显示名 (多账号; 昵称/登录名).
     ///
     /// 为什么余额行要带账号名与"每个号各自多少分": `balance`/`consumed` 取的是**当前账号**
@@ -76,6 +89,7 @@ impl BalanceInfo {
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
+            quota_progress: None,
             account_label: None,
             account_count: None,
             total_balance: None,
@@ -96,6 +110,7 @@ impl BalanceInfo {
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
+            quota_progress: None,
             account_label: None,
             account_count: None,
             total_balance: None,
@@ -103,12 +118,13 @@ impl BalanceInfo {
         }
     }
 
-    /// 创建积分制 (buddy) API 结果: 剩余 + 已消耗 + (可选) 最近过期时间与余量.
+    /// 创建积分制 (buddy) API 结果: 剩余 + 已消耗 + (可选) 最近过期/最近重置与余量/本窗口进度.
     fn from_credits(
         provider: &str,
         balance: f64,
         consumed: f64,
         expiring: Option<(u64, f64)>,
+        progress: Option<QuotaProgress>,
         now: u64,
     ) -> Self {
         Self {
@@ -122,6 +138,7 @@ impl BalanceInfo {
             consumed: Some(consumed),
             expiring_at: expiring.map(|(t, _)| t),
             expiring_amount: expiring.map(|(_, a)| a),
+            quota_progress: progress,
             account_label: None,
             account_count: None,
             total_balance: None,
@@ -147,18 +164,43 @@ struct ManualBalanceFile {
     balances: HashMap<String, f64>,
 }
 
+/// 本窗口额度进度 (由积分包聚合而来).
+///
+/// 只描述「还有额度的那些包」的合计 —— 已耗尽的包不参与, 见 [`BalanceInfo::quota_progress`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QuotaProgress {
+    /// 合计窗口总量 (Σ`CycleCapacitySize`).
+    pub window_size: f64,
+    /// 合计已用 (Σ`CycleCapacityUsed`).
+    pub window_used: f64,
+    /// 合计剩余 (Σ`CycleCapacityRemain`).
+    pub window_remain: f64,
+    /// 已用百分比 (0..100). `window_size == 0` 时为 `None` —— **没有窗口信息**,
+    /// 与"窗口里有 0 额度"是两回事, 不能显示成 0%.
+    pub used_pct: Option<f64>,
+    /// 参与统计的资源包数 (样本量展示用; 只有一个包时前端不该暗示"多家供应商").
+    pub packages: usize,
+}
+
 /// 聚合 buddy 的积分资源包.
+///
+/// 返回 `(总剩余, 总已消耗, 最近会重置的窗口 (时刻, 该窗口剩余), 还有额度的包的进度)`.
 ///
 /// ⚠️ **"最近会重置"取 `CycleEndTime`, 不是 `DeductionEndTime`** (2026-10-08 实测更正):
 /// 后者是"扣费有效期"(实测 2034/2035 年), 与配额何时重置无关, 取它会得出
 /// "十几年后到期"这种无用且误导的数字. `CycleEndTime` 才是窗口结束时刻
 /// (`CapacityType=4` 为自然月末 "2026-10-31 23:59:59"; `CapacityType=1` 为各自周期末).
 ///
-/// 返回 `(总剩余, 总已消耗, 最近会重置的窗口 (时刻, 该窗口剩余))`.
-/// 只统计**窗口内仍有剩余**的包: 已耗尽的窗口不会造成损失, 不该占据这个位置.
-pub fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>) {
+/// ⚠️ **进度只算「仍有剩余」的包**: 见 [`QuotaProgress` 的口径说明. 2026-10-10 实测
+/// 34 个包横跨 34 个窗口, 全加会算出 82.5% (把已耗尽的体验包/活动包算进去).
+pub fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>, Option<QuotaProgress>) {
     let (mut remain, mut used) = (0f64, 0f64);
     let mut expiring: Option<(u64, f64)> = None;
+    // 只统计"仍有剩余"的包 (与 expiring 的筛选口径一致).
+    let mut win_size = 0f64;
+    let mut win_used = 0f64;
+    let mut win_remain = 0f64;
+    let mut win_pkgs = 0usize;
     for pkg in arr {
         let rem = pkg
             .get("CapacityRemain")
@@ -186,9 +228,34 @@ pub fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f
                     expiring = Some((secs, cycle_rem));
                 }
             }
+            // 本窗口进度: 同一个包里累计 (与 expiring 同一个 if, 不会漏计).
+            win_remain += cycle_rem;
+            win_size += pkg
+                .get("CycleCapacitySize")
+                .or_else(|| pkg.get("CapacitySize"))
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0);
+            win_used += pkg
+                .get("CycleCapacityUsed")
+                .or_else(|| pkg.get("CapacityUsed"))
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0);
+            win_pkgs += 1;
         }
     }
-    (remain, used, expiring)
+    let progress = if win_pkgs > 0 && win_size > 0.0 {
+        Some(QuotaProgress {
+            window_size: win_size,
+            window_used: win_used,
+            window_remain: win_remain,
+            // size 已知才谈得上百分比; size 缺失 (老包只有 Capacity*) 时给 None.
+            used_pct: Some((win_used / win_size * 100.0).clamp(0.0, 100.0)),
+            packages: win_pkgs,
+        })
+    } else {
+        None
+    };
+    (remain, used, expiring, progress)
 }
 
 /// 解析上游的 `"YYYY-MM-DD HH:MM:SS"` (本机时区, 与面板显示口径一致).
@@ -660,16 +727,18 @@ impl BalanceManager {
         let mut expiring: Option<(u64, f64)> = None;
         let mut first_err: Option<String> = None;
         let mut ok_accounts = 0usize;
-        // 每个账号各自的 (剩余, 已消耗) —— 主值要取"当前使用账号"的那一份.
-        let mut per_account: HashMap<String, (f64, f64)> = HashMap::new();
+        // 每个账号各自的 (剩余, 已消耗, 本窗口进度) —— 主值取"当前使用账号"的那一份.
+        // 进度也必须按账号分: 多账号的额度窗口互不相干 (实测两个号各有一批资源包),
+        // 混算会得出一个谁都不是的百分比.
+        let mut per_account: HashMap<String, (f64, f64, Option<QuotaProgress>)> = HashMap::new();
         for acct in &list {
             match Self::query_one_buddy_credits(client, &acct.access_token).await {
-                Ok((remain, used, exp, n)) => {
+                Ok((remain, used, exp, prog, n)) => {
                     ok_accounts += 1;
                     remain_total += remain;
                     used_total += used;
                     packages += n;
-                    per_account.insert(acct.id.clone(), (remain, used));
+                    per_account.insert(acct.id.clone(), (remain, used, prog));
                     // 供选号策略 (pace) 使用: 记下该账号的额度与最近重置窗口.
                     record_quota(&acct.id, &acct.access_token, remain, exp.map(|(t, _)| t), now);
                     if let Some((t, a)) = exp {
@@ -708,14 +777,24 @@ impl BalanceManager {
             "buddy 积分: 合计剩余 {remain_total} / 已消耗 {used_total} ({ok_accounts}/{} 个账号共 {packages} 个资源包), 最近过期={:?}",
             list.len(), expiring
         );
-        let mut info = BalanceInfo::from_credits(provider, remain_total, used_total, expiring, now);
+        let mut info = BalanceInfo::from_credits(
+            provider,
+            remain_total,
+            used_total,
+            expiring,
+            // 进度: 单账号时直接用它; 多账号时下面按"当前使用账号"覆盖.
+            // 取第一个成功的 (反正马上会被覆盖, 只为不让字段空着).
+            per_account.values().find(|v| v.2.is_some()).and_then(|v| v.2),
+            now,
+        );
         info.account_count = Some(list.len());
         info.total_balance = Some(remain_total);
         info.total_consumed = Some(used_total);
         if let Some(acct) = list.iter().find(|e| Some(&e.id) == active_id.as_ref()) {
-            if let Some((r, u)) = per_account.get(&acct.id) {
+            if let Some((r, u, prog)) = per_account.get(&acct.id) {
                 info.balance = Some(*r);
                 info.consumed = Some(*u);
+                info.quota_progress = *prog;
             }
             info.account_label = crate::accounts::account_display_name(&acct.access_token)
                 .or_else(|| acct.label.clone());
@@ -759,7 +838,10 @@ impl BalanceManager {
             );
         }
         let mut remain_total = 0f64;
-        let mut per: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        // 每个账号各自的 (剩余, 本窗口进度) — 主值取"当前使用账号"的那一份.
+        // 进度按账号分: 各账号的额度窗口互不相干, 混算会得出谁都不是的百分比.
+        let mut per: std::collections::HashMap<String, (f64, Option<QuotaProgress>)> =
+            std::collections::HashMap::new();
         let mut expiring: Option<(u64, f64)> = None;
         let mut first_err: Option<String> = None;
         let mut ok = 0usize;
@@ -769,10 +851,10 @@ impl BalanceManager {
                 .query_generic_balance_with_token(client, endpoint, &acct.access_token)
                 .await
             {
-                Ok((remain, exp)) => {
+                Ok((remain, exp, prog)) => {
                     ok += 1;
                     remain_total += remain;
-                    per.insert(acct.id.clone(), remain);
+                    per.insert(acct.id.clone(), (remain, prog));
                     record_quota(&acct.id, &acct.access_token, remain, exp.map(|(t, _)| t), now);
                     if let Some((t, a)) = exp {
                         if expiring.map_or(true, |(et, _)| t < et) {
@@ -803,8 +885,9 @@ impl BalanceManager {
         info.account_count = Some(list.len());
         info.total_balance = Some(remain_total);
         if let Some(a) = active {
-            if let Some(r) = per.get(&a.id) {
+            if let Some((r, prog)) = per.get(&a.id) {
                 info.balance = Some(*r);
+                info.quota_progress = *prog;
             }
             info.account_label = crate::accounts::account_display_name(&a.access_token)
                 .or_else(|| a.label.clone());
@@ -817,13 +900,13 @@ impl BalanceManager {
         info
     }
 
-    /// 通用余额端点查询 (GET + Bearer), 返回 `(剩余额度, 最近重置窗口)`.
+    /// 通用余额端点查询 (GET + Bearer), 返回 `(剩余额度, 最近重置窗口, 本窗口进度)`.
     async fn query_generic_balance_with_token(
         &self,
         client: &reqwest::Client,
         endpoint: &str,
         token: &str,
-    ) -> Result<(f64, Option<(u64, f64)>), String> {
+    ) -> Result<(f64, Option<(u64, f64)>, Option<QuotaProgress>), String> {
         let resp = client
             .get(endpoint)
             .header("Authorization", format!("Bearer {token}"))
@@ -851,21 +934,21 @@ impl BalanceManager {
             .or_else(|| json.pointer("/data/Accounts"))
             .and_then(|a| a.as_array());
         if let Some(arr) = accs {
-            let (remain, _used, exp) = aggregate_credits(arr);
-            return Ok((remain, exp));
+            let (remain, _used, exp, prog) = aggregate_credits(arr);
+            return Ok((remain, exp, prog));
         }
         let (balance, _) = extract_balance_from_json(&json);
         match balance {
-            Some(b) => Ok((b, None)),
+            Some(b) => Ok((b, None, None)),
             None => Err("响应中未找到余额字段".to_string()),
         }
     }
 
-    /// 单个账号的积分查询: 返回 `(剩余, 已消耗, 最近过期批次, 资源包数)`.
+    /// 单个账号的积分查询: 返回 `(剩余, 已消耗, 最近重置窗口, 本窗口进度, 资源包数)`.
     async fn query_one_buddy_credits(
         client: &reqwest::Client,
         token: &str,
-    ) -> Result<(f64, f64, Option<(u64, f64)>, usize), String> {
+    ) -> Result<(f64, f64, Option<(u64, f64)>, Option<QuotaProgress>, usize), String> {
         let resp = client
             .post("https://copilot.tencent.com/v2/billing/meter/get-user-resource")
             .header("Authorization", format!("Bearer {token}"))
@@ -906,9 +989,9 @@ impl BalanceManager {
             .or_else(|| v.pointer("/data/Accounts"))
             .and_then(|a| a.as_array())
             .ok_or_else(|| "响应中未找到积分包字段".to_string())?;
-        // 聚合: 剩余总量 / 已消耗 / 最近过期批次 (纯函数, 见 aggregate_credits).
-        let (remain, used, expiring) = aggregate_credits(arr);
-        Ok((remain, used, expiring, arr.len()))
+        // 聚合: 剩余总量 / 已消耗 / 最近重置窗口 / 本窗口进度 (纯函数, 见 aggregate_credits).
+        let (remain, used, expiring, progress) = aggregate_credits(arr);
+        Ok((remain, used, expiring, progress, arr.len()))
     }
 }
 
@@ -1009,7 +1092,7 @@ mod tests {
             {"CycleCapacityRemain": 120, "CapacityRemain": 120, "CapacityUsed": 30,
              "CycleEndTime": "2026-10-20 07:00:18"},
         ]);
-        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        let (remain, used, expiring, _prog) = aggregate_credits(arr.as_array().unwrap());
         assert_eq!(remain, 420.0);
         assert_eq!(used, 730.0);
         let (at, amt) = expiring.expect("应有最近重置的窗口");
@@ -1025,7 +1108,7 @@ mod tests {
             {"CapacityRemain": 100, "CapacityUsed": 0},
             {"CapacityRemain": 50, "CapacityUsed": 0, "CycleEndTime": ""},
         ]);
-        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        let (remain, used, expiring, _prog) = aggregate_credits(arr.as_array().unwrap());
         assert_eq!(remain, 150.0);
         assert_eq!(used, 0.0);
         assert!(expiring.is_none(), "空/缺失的窗口时间不得当作有效期限");
@@ -1046,7 +1129,7 @@ mod tests {
              "CycleCapacityRemain": 120, "CycleStartTime": "2026-09-16 20:09:25",
              "CycleEndTime": "2026-10-16 20:09:24", "DeductionEndTime": 1792152564000i64},
         ]);
-        let (remain, used, expiring) = aggregate_credits(arr.as_array().unwrap());
+        let (remain, used, expiring, _prog) = aggregate_credits(arr.as_array().unwrap());
         assert_eq!(remain, 620.0);
         assert_eq!(used, 30.0);
         let (at, amt) = expiring.expect("应有最近重置的窗口");
@@ -1054,6 +1137,126 @@ mod tests {
         let expect = parse_datetime("2026-10-16 20:09:24").unwrap();
         assert_eq!(at, expect, "取 CycleEndTime, 不得取 DeductionEndTime");
         assert_eq!(amt, 120.0, "窗口内剩余应看 CycleCapacityRemain");
+    }
+
+    /// **本窗口进度只算「仍有剩余」的包** (§7 待办②, 2026-10-10 定案).
+    ///
+    /// 形态取自真实响应 (34 个包): 已耗尽的旧包 (`CycleCapacityRemain=0`) 占了绝大部分
+    /// 容量. 若把它们也算进分母: ΣCycleCapacitySize=4463 / ΣUsed=3682 → **82.5%**,
+    /// 而那些包是过去一个月陆续赠送的体验包/活动包, 早已用完、**不会造成损失**.
+    /// 只算还有额度的 5 个包: 807 / 26 → **3.2%** —— 这才是"当前还剩多少"的事实.
+    #[test]
+    fn quota_progress_counts_only_packages_with_remainder() {
+        let arr = serde_json::json!([
+            // 已耗尽 (不该进分母): 30 天滚动包, 9 月中旬开始、此刻已用完
+            {"CapacityRemain": 0, "CapacityUsed": 1500, "CycleCapacityRemain": 0,
+             "CycleCapacitySize": 1500, "CycleCapacityUsed": 1500,
+             "CycleEndTime": "2026-10-16 20:09:24"},
+            {"CapacityRemain": 0, "CapacityUsed": 100, "CycleCapacityRemain": 0,
+             "CycleCapacitySize": 100, "CycleCapacityUsed": 100,
+             "CycleEndTime": "2026-10-16 20:10:28"},
+            // 仍有剩余 (该进): 月末自然月包, 用了 26/500
+            {"CapacityRemain": 473, "CapacityUsed": 500, "CycleCapacityRemain": 473,
+             "CycleCapacitySize": 500, "CycleCapacityUsed": 26,
+             "CycleEndTime": "2026-10-31 23:59:59"},
+            // 仍有剩余且尚未动用 (该进: 它是"还没用"的事实, 不是"没有")
+            {"CapacityRemain": 100, "CapacityUsed": 0, "CycleCapacityRemain": 100,
+             "CycleCapacitySize": 100, "CycleCapacityUsed": 0,
+             "CycleEndTime": "2026-11-01 00:49:45"},
+        ]);
+        let (remain, used, expiring, prog) = aggregate_credits(arr.as_array().unwrap());
+        // 总量口径不变: 仍统计**全部**包 (那是"账户还剩多少积分", 与进度是两回事).
+        assert_eq!(remain, 573.0, "总剩余 = 473 + 100 (已耗尽的包贡献 0)");
+        assert_eq!(used, 2100.0);
+        let (_at, amt) = expiring.expect("应有最近重置窗口");
+        assert_eq!(amt, 473.0);
+
+        let p = prog.expect("应有进度");
+        assert_eq!(p.window_size, 600.0, "只算 2 个有剩余的包 (500+100), 不含已耗尽的 1600");
+        assert_eq!(p.window_used, 26.0);
+        assert_eq!(p.window_remain, 573.0);
+        assert_eq!(p.packages, 2, "样本量 = 有剩余的包数");
+        // 26/600 = 4.33% —— 而不是全算进来的 3682/4463 = 82.5%
+        assert!((p.used_pct.unwrap() - 4.333).abs() < 0.01, "实得 {}", p.used_pct.unwrap());
+    }
+
+    /// 所有包都耗尽 → 进度为 None (**不是 0%**) —— "没有额度了"也不该显示成"0% 已用",
+    /// 那会被读成"完全没用过". 调用方据此显示"额度已耗尽".
+    #[test]
+    fn quota_progress_none_when_all_exhausted() {
+        let arr = serde_json::json!([
+            {"CapacityRemain": 0, "CapacityUsed": 500, "CycleCapacityRemain": 0,
+             "CycleCapacitySize": 500, "CycleCapacityUsed": 500},
+        ]);
+        let (_, _, _, prog) = aggregate_credits(arr.as_array().unwrap());
+        assert!(prog.is_none(), "全部耗尽时不得给 0% 进度");
+    }
+
+    /// 无窗口字段的老式积分包 → 进度为 None. 不得把 `Capacity*`(累计口径) 当窗口用:
+    /// 累计口径跨多个周期, 拿它算"本窗口已用"是错的.
+    #[test]
+    fn quota_progress_none_without_cycle_fields() {
+        let arr = serde_json::json!([
+            {"CapacityRemain": 100, "CapacityUsed": 40},
+            {"CapacityRemain": 50, "CapacityUsed": 10},
+        ]);
+        let (_, _, _, prog) = aggregate_credits(arr.as_array().unwrap());
+        assert!(prog.is_none(), "没有 Cycle* 字段就没有窗口口径, 不得拿累计口径凑");
+    }
+
+    /// 上游给了包、有剩余, 但**没给窗口总量** → 整个进度为 None (不编造百分比).
+    ///
+    /// 这是刻意的: `window_size == 0` 时"已用百分之几"这个问题本身不成立,
+    /// 返回一个 `used_pct: None` 的半截结构只会让每个消费方都要多判一次.
+    /// 面板据此只显示"还剩多少", 不显示进度条.
+    #[test]
+    fn quota_progress_none_when_window_size_missing() {
+        let arr = serde_json::json!([
+            // 有剩余、有 CycleCapacityUsed, 唯独缺 CycleCapacitySize/CapacitySize
+            {"CapacityRemain": 30, "CapacityUsed": 0, "CycleCapacityRemain": 30,
+             "CycleCapacityUsed": 0},
+        ]);
+        let (_, _, _, prog) = aggregate_credits(arr.as_array().unwrap());
+        assert!(prog.is_none(), "分母缺失时不给半截进度, 由前端只显示剩余");
+    }
+
+    /// 上游数值异常 (已用 > 总量) 时钳到 100 —— 进度条不能超出容器, 也不能显示 >100%.
+    #[test]
+    fn quota_progress_clamps_over_100_pct() {
+        let arr = serde_json::json!([
+            {"CapacityRemain": 0, "CapacityUsed": 0, "CycleCapacityRemain": 5,
+             "CycleCapacitySize": 50, "CycleCapacityUsed": 120,
+             "CycleEndTime": "2026-10-31 23:59:59"},
+        ]);
+        let (_, _, _, prog) = aggregate_credits(arr.as_array().unwrap());
+        let p = prog.expect("仍有 5 剩余, 该有进度");
+        assert_eq!(p.used_pct, Some(100.0), "异常值必须钳到 100, 不得显示 240%");
+    }
+
+    /// `BalanceInfo` 序列化必须带 `quota_progress` 字段 (前端按现有 snake_case 读,
+    /// 与 `expiring_at` / `expiring_amount` 同一套 —— 该结构体**没有** `rename_all`,
+    /// 是刻意保持与既有字段一致的).
+    /// 老消费方读到 None → 显示「—」, 不会崩.
+    #[test]
+    fn balance_info_serializes_quota_progress() {
+        let info = BalanceInfo::from_credits(
+            "buddy", 473.0, 26.0, Some((1_700_000_000, 473.0)),
+            Some(QuotaProgress {
+                window_size: 500.0,
+                window_used: 26.0,
+                window_remain: 473.0,
+                used_pct: Some(5.2),
+                packages: 1,
+            }),
+            1_700_000_000,
+        );
+        let v = serde_json::to_value(&info).unwrap();
+        let prog = v.get("quota_progress").expect("应序列化为 quota_progress (snake_case)");
+        assert_eq!(prog["window_size"], 500.0);
+        assert_eq!(prog["used_pct"], 5.2);
+        assert_eq!(prog["packages"], 1);
+        // 旧消费方 (老前端) 读不到也不报错 —— 字段缺失时按 None 处理.
+        assert!(v.get("nonexistent_field").is_none());
     }
 
     /// parse_datetime 的边界: 非法/缺字段返回 None (不参与判定, 不影响总额).
