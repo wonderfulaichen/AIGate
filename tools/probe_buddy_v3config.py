@@ -2,7 +2,9 @@
 """拉取 CodeBuddy 权威模型配置 GET /v3/config — 找 deepseek-v4-flash 的
 maxInputTokens/maxOutputTokens/supportsToolCall/reasoning (harness buddy-adapter.ts:93
 声明的权威来源; 本机 CodeBuddy CN main.js 的 CloudProductProvider 也调它)。
-凭据只读 %TEMP%\\cb_plain.json, 响应只打印目标模型条目, 不落盘。
+凭据来源两选一 (2026-10-11 补): ① 网关的 data/accounts.json (推荐 —— 账号化之后
+token 在那里, %TEMP%\\cb_plain.json 早已不存在, 本探针曾因此直接 FileNotFound);
+② 老路 %TEMP%\\cb_plain.json。响应只打印目标模型条目, 不落盘。
 """
 import json
 import os
@@ -12,8 +14,36 @@ import tempfile
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-cred = json.load(open(os.path.join(tempfile.gettempdir(), "cb_plain.json"), encoding="utf-8"))
-tok = cred["auth"]["accessToken"]
+
+
+def _token():
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "data", "accounts.json")
+    alt = r"D:\Office software\Development Project\AI中转\data\accounts.json"
+    for cand in (alt, p):
+        if not os.path.exists(cand):
+            continue
+        try:
+            j = json.load(open(cand, encoding="utf-8"))
+        except Exception:
+            continue
+        ent = j.get("buddy")
+        if isinstance(ent, list):
+            ent = ent[0] if ent else None
+        if isinstance(ent, dict) and ent.get("access_token"):
+            print("凭据: " + cand)
+            return ent["access_token"]
+    cb = os.path.join(tempfile.gettempdir(), "cb_plain.json")
+    if os.path.exists(cb):
+        print("凭据: " + cb)
+        return json.load(open(cb, encoding="utf-8"))["auth"]["accessToken"]
+    return None
+
+
+tok = _token()
+if not tok:
+    print("找不到 buddy 凭据 (data/accounts.json 或 %TEMP%\\cb_plain.json)")
+    sys.exit(1)
 
 HEADERS = {
     "X-Domain": "copilot.tencent.com",
