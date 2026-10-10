@@ -95,16 +95,41 @@ impl LoopDetector {
         (self.min_repeat + 6).max(12)
     }
 
-    /// 单元是否**全为空白**（空格/制表/换行）。这类重复**绝不算**退化循环。
+    /// 是否**排版填充字符**（空白 / ASCII 图 / Markdown 表格 / 分隔线 / 进度条 / 框线）。
     ///
-    /// 依据（实机 2026-10-05~10-07，17 条误报样本全部命中此形态）：模型写代码块时
-    /// 常用成串空格做行内注释对齐，输出末尾因此留下 13~41 个连续空格 —— 旧实现
-    /// 「末尾 12 个相同字符即判循环」把它当死循环，于是网关主动发
-    /// `finish_reason:length` + `[DONE]` 收尾；客户端看到的是"正常结束"（该轮没有
-    /// tool_calls）→ **IDE 里表现为"跑一会就突然停下"**，任务其实没做完。
-    /// 空白重复没有任何"内容退化"含义，直接从判据里排除。
-    fn is_blank_unit(unit: &[char]) -> bool {
-        unit.iter().all(|c| c.is_whitespace())
+    /// 这类字符成串出现是**结构化排版的常态，不是内容退化** —— 一律不参与循环判据。
+    ///
+    /// ⚠️ 依据来自**两轮实测误报**，用户两次报的症状都是「跑一会就突然停下」：
+    /// ① 2026-10-05~10-07 共 17 条：模型写代码块时用成串空格做行内注释对齐，
+    ///    输出末尾留下 13~41 个连续空格 —— 当时只排除了空白（`is_whitespace`）。
+    /// ② 2026-10-10 共 5 条（**用户第二次报**）：末尾是 18/32/18 个 `.`（ASCII 河网图点阵）
+    ///    与 12 个 `-`（Markdown 分隔线），三个不同模型在同一会话里连续中招 ——
+    ///    **不是模型问题，是①的修复漏了这一整类图形填充字符**。
+    ///
+    /// 判据造成的后果都一样：网关主动发 `finish_reason:length` + `[DONE]` 收尾，
+    /// 客户端看到的是"正常结束"（该轮没有 tool_calls）→ 任务其实没做完却毫无提示。
+    fn is_filler_char(c: char) -> bool {
+        c.is_whitespace()
+            // ASCII 图 / 表格 / 分隔线 / 注释横线 的常用字符
+            || matches!(
+                c,
+                '.' | '-' | '=' | '_' | '|' | '+' | '*' | '#' | '~' | ':' | ';'
+                    | '/' | '\\' | '<' | '>' | '^' | '·'
+            )
+            // Unicode 框线 / 块元素（部分模型偏好用它们画图与进度条）
+            || matches!(
+                c,
+                '─' | '│' | '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '━' | '┃'
+                    | '▁' | '▔' | '█' | '▉' | '▊' | '▋' | '▌' | '▍' | '▎' | '▏'
+            )
+    }
+
+    /// 单元是否**全由排版填充字符构成**（空白 / ASCII 图 / Markdown 表格 / 分隔线 / 框线）。
+    ///
+    /// 这是 [`Self::is_blank_unit`] 的**超集**：空白重复早就被排除，但同一类"无内容含义"的
+    /// 图形填充字符（`.` `-` `=` `|` `+` `*` `#` `~` …）当时漏了 —— 于是绘图内容继续被误杀。
+    fn is_filler_unit(unit: &[char]) -> bool {
+        unit.iter().all(|&c| Self::is_filler_char(c))
     }
 
     /// 在窗口尾部检测子串连续重复。
@@ -115,19 +140,22 @@ impl LoopDetector {
         if win == 0 {
             return false;
         }
-        // 整窗全空白 = 真正的退化输出 (模型只吐空白, 没有任何内容) → 判循环.
+        // 整窗全是**填充字符** = 真正的退化输出 (模型只吐空白/绘图字符, 没有任何内容)
+        // → 判循环. 原为"整窗全空白", 2026-10-10 扩到填充字符集 (同 `is_filler_unit`).
         // ⚠️ 必须要求**缓冲区已满一个窗口**: 否则开头几个字符若是空白, `win=min(window,n)`
         // 会让"窗口"只有一个空格 → 立刻误判 (实机回归样本正是以空格开头, 首字符即被误杀).
-        if n >= self.window && chars[n - win..].iter().all(|c| c.is_whitespace()) {
+        if n >= self.window && chars[n - win..].iter().all(|&c| Self::is_filler_char(c)) {
             return true;
         }
         // 单字符极端重复（如 "。。。。。。。。") 单独用更高阈值保护，
         // 避免正常省略号（"...")被误判。
-        // ⚠️ 空白字符**排除在判据之外**: 末尾一串空格是代码块对齐填充, 不是循环
-        // (实机 17/17 误报都是这个形态, 详见 `is_blank_unit`).
+        // ⚠️ **填充字符排除在判据之外**（含空白）: 末尾一串空格是代码块对齐填充,
+        // 末尾一串 `.` 是 ASCII 图点阵 —— 都不是循环.
+        // 实机两类误报: 2026-10-05~07 的 17 条(空格) + 2026-10-10 的 5 条(`.`/`-`).
+        // 详见 `is_filler_char` 与 `is_filler_unit`.
         if win >= 12 {
             let tail = &chars[n - 12..];
-            if tail.iter().all(|&c| c == tail[0]) && !tail[0].is_whitespace() {
+            if tail.iter().all(|&c| c == tail[0]) && !Self::is_filler_char(tail[0]) {
                 return true;
             }
         }
@@ -142,9 +170,9 @@ impl LoopDetector {
                 continue;
             }
             let unit = &chars[n - l..];
-            // 纯空白单元直接跳过: 对齐填充/缩进/空行天然成串重复, 与"内容退化"无关
-            // (实机误报的主因, 见 `is_blank_unit`).
-            if Self::is_blank_unit(unit) {
+            // 纯填充单元直接跳过: 对齐填充/缩进/空行/ASCII 图/表格线天然成串重复,
+            // 与"内容退化"无关 (实机两类误报的主因, 见 `is_filler_unit`).
+            if Self::is_filler_unit(unit) {
                 continue;
             }
             // 纯噪声单元（全为空白/标点/表格线，不含字母/数字/汉字）用更宽松阈值，
@@ -342,16 +370,52 @@ mod tests {
         assert!(!hit, "纯噪声短单元重复 6 次不应误判 (需达 12 次)");
     }
 
-    /// 回归: 纯噪声短单元重复达到 `noise_repeat()`(12) 次仍应判为循环
-    /// (既放宽误杀, 又不丢失对极端噪声的保护)。
+    /// 回归 (2026-10-10 语义更新): **纯填充单元在任何次数下都不判循环** ——
+    /// 它们成串出现是排版常态, 与"内容退化"无关。
+    ///
+    /// ⚠️ 本测试原是 `noise_unit_triggers_at_twelve`(断言 `"| "`×12 应判循环),
+    /// 该期望**已被实机证据推翻**: 2026-10-10 的真实误报样本里就有一条末尾是
+    /// `|---|------|------------`(Markdown 表格线), 被旧判据截断, 用户报了"跑一会就突然停下"。
+    /// `"| "` 重复 12 次正是表格形态, 判它是错的那一边。
     #[test]
-    fn noise_unit_triggers_at_twelve() {
+    fn filler_unit_never_triggers_as_loop() {
         let mut d = LoopDetector::new(384, 6, 4096);
         let mut hit = false;
-        for _ in 0..12 {
+        for _ in 0..30 {
             hit = d.feed("| ");
         }
-        assert!(hit, "纯噪声短单元重复 12 次应判为循环");
+        assert!(!hit, "表格填充 `| ` 重复任何次数都不应判循环");
+
+        // ASCII 图点阵同理 (实机样本末尾 18/32 个 `.`)
+        let mut d2 = LoopDetector::new(384, 6, 4096);
+        let mut hit2 = false;
+        for _ in 0..40 {
+            hit2 = d2.feed(".");
+        }
+        assert!(!hit2, "ASCII 图点阵 `.` 重复不应判循环");
+
+        // Markdown 分隔线同理 (实机样本末尾 12 个 `-`)
+        let mut d3 = LoopDetector::new(384, 6, 4096);
+        let mut hit3 = false;
+        for _ in 0..30 {
+            hit3 = d3.feed("-");
+        }
+        assert!(!hit3, "Markdown 分隔线 `-` 重复不应判循环");
+    }
+
+    /// 但**整窗全是填充字符**仍判循环 —— "模型只吐绘图字符"确实是退化输出,
+    /// 不能因为放宽误报而完全放弃保护 (与"整窗全空白"同一条兜底)。
+    #[test]
+    fn whole_window_of_filler_still_triggers() {
+        let mut d = LoopDetector::new(384, 6, 4096);
+        let mut hit = false;
+        for _ in 0..600 {
+            if d.feed(".") {
+                hit = true;
+                break;
+            }
+        }
+        assert!(hit, "整窗 (≥window) 全是填充字符应判为退化输出");
     }
 
     /// 回归: 含语义字符的真循环 (代码标识符/中文片段) 仍按 `min_repeat`(6) 判定, 不受放宽影响。
@@ -363,5 +427,21 @@ mod tests {
             hit = d.feed("fn main() ");
         }
         assert!(hit, "含语义字符的重复片段应仍按原阈值判为循环");
+    }
+
+    /// TEMP-PROBE: 40 次 "循环输出" 在部署实际配置下是否触发.
+    #[test]
+    fn temp_probe_repeat_40() {
+        let mut d = LoopDetector::new(512, 8, 8192);
+        let mut hit = false;
+        for i in 0..40 {
+            if d.feed("循环输出") {
+                hit = true;
+                println!("TEMP-PROBE hit at repeat {}", i + 1);
+                break;
+            }
+        }
+        println!("TEMP-PROBE hit={}", hit);
+        assert!(hit, "40 次重复应触发");
     }
 }

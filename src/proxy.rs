@@ -3120,11 +3120,6 @@ impl Stream for TokenStream {
                 // 下游模型陷入死循环 → 立即截断流, 干净地发 [DONE] 结束.
                     // 不向客户端正文塞说明 (说明仅写运行日志, 满足"不污染正文").
                     if this.loop_guard.as_ref().map(|g| g.triggered()).unwrap_or(false) {
-                        // 先 flush 已解析的归一化帧, 避免截断时丢失内容.
-                        if !this.out_buf.is_empty() {
-                            let out = std::mem::take(&mut this.out_buf);
-                            return Poll::Ready(Some(Ok(Bytes::from(out))));
-                        }
                         if !this.loop_aborted {
                             this.loop_aborted = true;
                             // 附带最近检测窗口的文本样本 (≤384 字符, 换行转义为 \n), 供事后区分
@@ -3138,20 +3133,28 @@ impl Stream for TokenStream {
                                 this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
                                 sample,
                             );
+                            // ⚠️ 截断必须**当场完成**, 不能等"下一个不含内容的 chunk" (2026-10-11 修):
+                            //    原实现先在 `out_buf` 非空时 flush 并 return —— 而上游若每个 chunk 都
+                            //    带内容(常规流式就是如此), `out_buf` **永远非空**, 于是每一轮都只 flush
+                            //    不置 `loop_aborted`, 截断**永不生效** (实测 mock 连续 4 轮
+                            //    `triggered=true` 却全部只 flush; 线上靠上游偶发的注释帧才碰巧截断成功).
+                            //    现改为: 把已解析帧与终止帧**一次发出**, 截断结果确定.
                             // 收尾帧必须带合法 finish_reason: 否则 OpenAI 兼容客户端 (IDE) 因末帧缺
                             // finish_reason 报 "完成原因错误" (10004). 用 "length" 语义=被截断的正常
-                            // 完成, 客户端当作正常收尾不报错; 空 delta 不污染正文. 若某客户端仍 10004,
-                            // 改 "stop" (最稳但把截断伪装成自然结束).
-                            // 置 clean_finish: 流由网关主动干净收尾 (发了合法终止帧+[DONE]),
-                            // 不属于"上游连接意外结束"; 记录页报错由 loop_aborted 分支单独判定.
+                            // 完成, 客户端当作正常收尾不报错; 空 delta 不污染正文.
+                            // 置 clean_finish: 流由网关主动干净收尾 (发了合法终止帧+[DONE]).
                             this.clean_finish = true;
-                            // 截断的残缺流禁止入库: 虽已发 [DONE] 收尾,
-                            // 但正文被 loop_guard 砍断不完整, 命中回放会返回残缺答案 → 污染后续请求.
-                            let term = "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
-                                        data: [DONE]\n\n";
-                            return Poll::Ready(Some(Ok(Bytes::from(term.as_bytes().to_vec()))));
+                            // 截断的残缺流禁止入库: 虽已发 [DONE] 收尾, 但正文被砍断不完整,
+                            // 命中回放会返回残缺答案 → 污染后续请求 (由 clean_finish 之外的
+                            // 记录文案区分, 见 Drop).
+                            let mut out = std::mem::take(&mut this.out_buf);
+                            out.extend_from_slice(
+                                b"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
+                                  data: [DONE]\n\n",
+                            );
+                            return Poll::Ready(Some(Ok(Bytes::from(out))));
                         }
-                        // 已发过 [DONE], 终止流 (收尾日志由下方 None 分支写入).
+                        // 已发过终止帧: 丢弃上游剩余内容, 直接结束流.
                         return Poll::Ready(None);
                     }
                     // 返回归一化后的 SSE 帧 (替代原始裸字节透传): 每条上游行 → 恰好一帧, 不会重复.
@@ -3434,8 +3437,26 @@ impl Drop for TokenStream {
         // 断连定性 (丢失接线, 2026-10-04 补回): 生成已完整收尾 (客户端收完尾帧才关) 是竞态,
         // 记 200; 真正的中途取消才记 499 —— 否则工具正常取消会被统计成失败 (实测近 200 条里
         // 130 条 499, 成功率被打崩). 判据见 drop_close_status.
-        let close_status = drop_close_status(self.clean_finish);
-        let err = if self.clean_finish {
+        //
+        // ⚠️ 循环截断例外 → 502 (与下方 None 分支同口径): 它是**网关主动掐断**,
+        // 回答不完整, 不该混进"成功". 原先这里一律走 clean_finish → 200.
+        let close_status = if self.loop_aborted {
+            502
+        } else {
+            drop_close_status(self.clean_finish)
+        };
+        // ⚠️ **网关主动截断必须留痕** (2026-10-11 修, 用户报"软件导致的停止不出报告"):
+        // 循环检测命中后会发 `finish_reason:length` + `[DONE]` 并置 `clean_finish=true`,
+        // 然后由**客户端关闭连接**走到这里 —— 原先 clean_finish 为真就写空 error,
+        // 于是记录页显示 `200 / 错误详情 —`, 用户完全看不出"是网关掐的".
+        // 实测: 日志里 18 条循环截断对应的记录全部是 `200 + error=''`。
+        // 更隐蔽的是: 该路径**绕过了下方 None 分支的收尾日志**(循环分支里直接
+        // `return Poll::Ready(None)`), 所以 loop_aborted 分支精心写的文案从未被写出过。
+        // 用户的诉求是"我得知道是不是软件导致的" —— 故这里必须如实标注。
+        let err = if self.loop_aborted {
+            // 复用与 None 分支**完全相同**的文案, 避免同一件事在记录页有两种说法.
+            "model loop detected, stream truncated by AIGate".to_string()
+        } else if self.clean_finish {
             // 已正常收尾: 不带错误文案 (否则记录页会标红一条实际成功的请求).
             String::new()
         } else {

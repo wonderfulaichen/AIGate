@@ -39,10 +39,12 @@ ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_genspeed")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG, PM = 8965, 8966
 
-# mock 的构造参数: 思考占 95%, 但实现只流 50 字正文
+# mock 的构造参数: 思考占 95%, 正文只有几十字
 CT_TOTAL = 1000
 CT_REASONING = 950
-CONTENT_CHARS = 50
+# 正文文案 (与 Mock 共用; 必须是**不重复**的自然文本, 否则触发循环检测 → 无 usage 帧)
+BODY_TEXT = "递归是指函数在其定义中直接或间接地调用自身的一种编程技巧与数学概念"
+CONTENT_CHARS = len(BODY_TEXT)
 FIRST_DELAY_MS = 200
 STREAM_MS = 1000
 
@@ -68,11 +70,13 @@ class Mock(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         time.sleep(FIRST_DELAY_MS / 1000.0)
-        # 先流思考 (按我们实测, buddy 确实把 reasoning 以文本流出来)
-        think = "思考" * 12
+        # 先流思考 (按我们实测, buddy 确实把 reasoning 以文本流出来).
+        # ⚠️ 不能发重复串! 循环检测会把它判成死循环并截断 —— 那样本轮就没有 usage 帧,
+        #    记录里 completion_tokens=0, 探针会误报"计费口径被改" (实测踩过).
+        think = "让我分析一下这个问题的关键点在哪里以及应当如何回答"
         frame({"choices": [{"index": 0, "delta": {"reasoning_content": think}, "finish_reason": None}]})
-        # 再流正文, 摊在 STREAM_MS 里
-        body = "答" * CONTENT_CHARS
+        # 再流正文, 摊在 STREAM_MS 里. 同理: 用不重复的自然文本.
+        body = BODY_TEXT
         per = max(1, len(body) // 5)
         for i in range(0, len(body), per):
             frame({"choices": [{"index": 0, "delta": {"content": body[i:i + per]}, "finish_reason": None}]})

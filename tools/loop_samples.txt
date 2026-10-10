@@ -209,3 +209,42 @@ ViewSpec.contour(r.bed(), n, i, j, hMin, bandBlocks);      // ← 自适应档�
 
 // 我的生产探针：
 ViewSpec.contourFixed(bed, n, i, j);                      
+=====LOOP_SAMPLE=====
+# 调查报告：四个参考项目的河网拓扑 / 防树枝 / 防直线机制\
+\
+---\
+\
+## 1. `参考\sources\worldgen-master\`（Rust，重点）\
+\
+结构：`src/{hydrology, elevation, climate, plates/*, render, config, grid, noise}.rs` + `bin/server.rs` + 前端。水文全部集中在 **`D:\Office software\Development Project\GeoGenesis-mod\参考\sources\worldgen-master\src\hydrology.rs`（570 行，已通读）**。\
+\
+### D. 完整管线（`compute_hydrology`，hydrology.rs:354-509）\
+\
+| # | Pass | 输入 → 输出 | 行号 |\
+|---|------|------------
+=====LOOP_SAMPLE=====
+# D. worldgen-master 完整管线（`src/hydrology.rs`，570 行已通读）\
+\
+入口 = `compute_hydrology(height, precipitation, seed, params)`（hydrology.rs:354-509）。README:21 也自述了该管线："Rivers: 8x upscale, meander noise, Barnes priority flood (ocean-seeded), D8 flow direction, flow accumulation, per-basin upstream extension, valley carving"。\
+\
+| # | Pass | 输入 → 输出 | 行号 |\
+|---|------|------------
+=====LOOP_SAMPLE=====
+**ASCII 图给出了决定性证据。** 看 y=-96 那一行：\
+\
+```\
+-96 ........RR..................
+=====LOOP_SAMPLE=====
+**决定性证据到手。** 看 y=-152~-135 那列 `R`：\
+\
+```\
+-153 ................................
+=====LOOP_SAMPLE=====
+继续。ASCII 图已给出**决定性形态证据**——这些“孤立段”是**平地上横平竖直的网格线**（水平段在 y=-96 整行、竖直段在常数 x、还有 45° 阶梯）：\
+\
+```\
+-96 ........RR..................
+=====LOOP_SAMPLE=====
+**`sample` 字段只存了 77~128 字符** —— 这正是关键线索。看代码：`recent_text()` 只返回窗口尾部，而截断判据用的是**整个 buffer**。\
+\
+而这三条的末尾都是**ASCII 图里的连续 `.`**（18 个、32 个）—— 就是截图上那个 `-96 ........RR..................
