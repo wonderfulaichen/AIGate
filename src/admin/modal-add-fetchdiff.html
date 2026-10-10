@@ -62,9 +62,17 @@
             <span class="txs" :style="a.active?'color:var(--accent);font-weight:600':'color:var(--muted)'"
                   x-text="a.active?t('acc_active_tag'):(a.dead?t('acc_dead'):(a.cooling?t('acc_cooling'):t('acc_idle_tag')))"></span>
             <span class="txs tm" style="margin-left:auto" x-text="acctExpiryText(a)"></span>
+            <!-- 「设为首选」而非「设为当前账号」: acctPromote 做的是**置顶**, 而实际用的是
+                 「第一个可用账号」—— 置顶的号在冷却/已作废时会被跳过 (acc_promote_* 三条提示即为此).
+                 文案说成"设为当前"会让用户以为点了就立刻生效, 冷却时观感就是"点了没反应".
+                 title 里把这句话讲清, 不靠 hover 才知道有例外. -->
             <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px" x-show="!a.active"
+                    :title="t('acc_set_active_hint')"
                     @click="acctPromote(loginProv, a.id)" x-text="t('acc_set_active')"></button>
-            <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px;color:var(--err)" @click="logoutProv(loginProv, a.id)" x-text="t('logout')"></button>
+            <!-- 行内登出必须带"此账号" —— 底部还有一个「登出全部账号」, 同一个
+                 "登出" 词在多账号列表里指代不清 (用户截图指出分不清哪个是哪个). -->
+            <button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 8px;color:var(--err)"
+                    :title="t('logout_this')" @click="logoutProv(loginProv, a.id)" x-text="t('logout_this')"></button>
           </div>
         </template>
       </div>
@@ -85,8 +93,17 @@
     <p class="txs tm" style="margin-top:8px;word-break:break-all" x-show="loginMsg" x-text="loginMsg"></p>
   </div>
   <div class="modal-foot">
-    <button class="btn btn-g" style="color:var(--err);margin-right:auto" x-show="accountsStatus&&accountsStatus[loginProv]" @click="stopLoginPoll();logoutProv(loginProv);loginProv=''" x-text="t('logout')"></button>
-    <button class="btn btn-g" @click="stopLoginPoll();loginProv=''" x-text="t('cancel')"></button><button class="btn btn-o" :disabled="!loginTok.trim()||loginBusy" @click="submitLogin()" x-text="t('login_submit')"></button>
+    <!-- 底部「登出全部账号」是破坏性动作 (一次清空该供应商所有凭据), 必须确认.
+         原实现直接 logoutProv(loginProv) 无 id = 全部登出, 而按钮只写「登出」——
+         与行内那个只登出一个号的按钮**同名**, 用户截图表明分不清, 误点代价极大. -->
+    <button class="btn btn-g" style="color:var(--err);margin-right:auto" x-show="accountsStatus&&accountsStatus[loginProv]"
+            :title="t('logout_all_hint')"
+            @click="confirmAsk(t('logout_all_confirm', (accountsStatus&&accountsStatus[loginProv]||[]).length), { title: t('logout_all'), danger: true, onOk: () => { stopLoginPoll(); logoutProv(loginProv); loginProv=''; } })"
+            x-text="t('logout_all')"></button>
+    <button class="btn btn-g" @click="stopLoginPoll();loginProv=''" x-text="t('cancel')"></button>
+    <!-- 手动粘贴是**兜底**形态 (上方浏览器登录才是推荐), 故用 btn-o 描边而非 btn-p 实心:
+         两个实心主按钮并列会争夺焦点, 而官方浏览器登录明显更省事、更安全. -->
+    <button class="btn btn-o" :disabled="!loginTok.trim()||loginBusy" @click="submitLogin()" x-text="t('login_submit')"></button>
   </div>
 </div></div>
 <!-- 拉取模型差异结果: 新增(可勾选)/已存在/下架 三 Tab + 前缀分组全选 + 选择汇总 -->

@@ -380,7 +380,15 @@ tr:hover td.th-sticky{background:var(--card)}
    2px 位移 + 6% 收缩才构成"按进去了"的体感 (transform 不参与布局, 不会挤动邻居) */
 .btn:active:not([disabled]){transform:translateY(2px) scale(.94)}
 .btn-p{background:var(--primary);color:var(--primary-fg);box-shadow:var(--elev-1)}.btn-p:hover{background:var(--primary-h);box-shadow:var(--glow-primary)}
-.btn-g{background:transparent;color:var(--muted)}.btn-g:hover{background:var(--fill-5);color:var(--fg)}
+/* .btn-g 原来"透明底 + muted 字 + 无边框" —— 看着就是一行普通文字, 用户不知道能点
+   (2026-10-10 用户截图指出: 登录弹窗里「登出 / 设为当前账号」全无按钮框).
+   改成**默认就有一条极淡边框**, hover 才加深+出底色: 仍是四个变体里最轻的
+   (边框色 --border-subtle 是最淡的一档), 但"这里有个可点的控件"一眼可见.
+   边框走 token 而非 rgba 字面量 (§5.5 红线: 组件里不得出现 rgba(255,255,255,*)/rgba(0,0,0,*)). */
+.btn-g{border:1px solid var(--border-subtle);color:var(--muted)}
+.btn-g:hover{background:var(--fill-5);color:var(--fg);border-color:var(--border-s)}
+/* 图标按钮 (.icon-btn) 已有固定尺寸, 边框会显重 → 保持无框, 靠 hover 底色提示 */
+.btn-g.icon-btn{border-color:transparent}
 .btn-o{background:transparent;color:var(--fg);border:1px solid var(--border-s)}.btn-o:hover{background:var(--fill-5);border-color:var(--primary-bd)}
 .btn[disabled]{opacity:.45;cursor:not-allowed;filter:saturate(.3)}
 @keyframes aispin{to{transform:rotate(360deg)}}
