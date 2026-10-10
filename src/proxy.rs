@@ -2228,14 +2228,18 @@ fn stream_response_with_tokens(
     let inner_stream = IdleTimeoutStream::new(upstream.bytes_stream(), idle)
         .map(|r| r.map_err(|e| Box::new(e) as StreamErr));
 
-    let loop_guard_enabled = if !loop_cfg.enabled {
-        false
-    } else if let Some(v) = model_loop_guard {
+    // 启用判定 (2026-10-11 调整: 全局默认改为**关闭**, 见 config.rs 的实测依据):
+    //   ① 模型级**显式声明优先** —— 所以 `loop_guard: true` 在全局关闭时仍能单独开启
+    //      (旧序把 `!loop_cfg.enabled` 放最前, 会让全局一关就再也开不起来);
+    //   ② 未声明 → 跟随全局默认 (现为关闭);
+    //   ③ 全局开启时仍排除 muse-spark (历史误报大户).
+    let loop_guard_enabled = if let Some(v) = model_loop_guard {
         v
+    } else if !loop_cfg.enabled {
+        false
     } else if model.to_ascii_lowercase().contains("muse-spark")
         || upstream_model.as_deref().map(|s| s.to_ascii_lowercase().contains("muse-spark")).unwrap_or(false)
     {
-        // muse-spark 长推理含表格/代码围栏易误触，默认关闭，仍可通过模型档 loop_guard: true 显式开启
         false
     } else {
         true

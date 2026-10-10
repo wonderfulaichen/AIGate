@@ -133,7 +133,22 @@ impl Config {
             cache_max_entries: env_u64("CACHE_MAX_ENTRIES", 1024) as usize,
             cache_persist_path: parse_cache_persist_path(),
             loop_guard: LoopGuardConfig {
-                enabled: env_bool("LOOP_GUARD_ENABLED", true),
+                // ⚠️ **默认关闭**（2026-10-11，用户决定）。
+                //
+                // 依据（aigate.log 全量审计，2026-10-05 上线 ~ 10-11）：
+                //   **24 次命中，全部是误报，零次真循环** ——
+                //   17 次末尾是代码块对齐的成串空格、2 次是 Markdown 表格线、
+                //   4 次是 ASCII 图点阵（`.`）、1 次是 ASCII 图的海面行（`SSSSS…`）。
+                // 也就是说它的判据（"末尾一段重复"）**无法区分"模型死循环"与
+                // "结构化/图形输出"**：该用户的典型产出就是 ASCII 地图，
+                // 天然含成串 `.` `S` `-`。每次误报的代价是**静默掐断用户的任务**
+                // （客户端只看到正常结束），已连续三轮误杀真实工作。
+                //
+                // 代价对比：真循环最多浪费到 max_tokens 为止（客户端与上游都有限额）；
+                // 误报则是**丢掉整个回答**。故默认关。
+                // 仍可显式开启：全局 `LOOP_GUARD_ENABLED=1`，或模型级 `loop_guard: true`
+                // （后者优先，见 proxy.rs 的启用判定）。
+                enabled: env_bool("LOOP_GUARD_ENABLED", false),
                 window: env_usize("LOOP_GUARD_WINDOW", 512),
                 min_repeat: env_usize("LOOP_GUARD_MIN_REPEAT", 8),
                 max_buffer: env_usize("LOOP_GUARD_MAX_BUFFER", 8192),

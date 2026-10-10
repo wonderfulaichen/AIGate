@@ -111,7 +111,10 @@ io.open(os.path.join(ISO, "providers.json"), "w", encoding="utf-8").write(json.d
 ]}))
 
 env = dict(os.environ)
-env.update(PORT=str(PG), AIGATE_DATA_DIR=os.path.join(ISO, "data"), RUST_LOG="warn", AIGATE_NO_PROXY="1")
+# ⚠️ 循环检测自 2026-10-11 起**默认关闭**（全量审计: 24 次命中全是误报）——
+#    本探针专门验"截断要留痕", 故显式开启这条能力 (否则永远不触发, 探针失去意义).
+env.update(PORT=str(PG), AIGATE_DATA_DIR=os.path.join(ISO, "data"), RUST_LOG="warn",
+           AIGATE_NO_PROXY="1", LOOP_GUARD_ENABLED="1")
 proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
