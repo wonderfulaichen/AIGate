@@ -1,8 +1,9 @@
 # 交接文档 — AIGate
 
-> 最后更新 **2026-10-10**（① **首字延迟探测历史** ② **本窗口额度进度** 已做完，
-> 见 §8 最新两节。另更正三处过时记录、46 提交已推送、部署份仍缺代码提交待你自行替换。
-> **部署红线**：AI 不主动替换 exe/重启实例，见 §6）。
+> 最后更新 **2026-10-11**（**吐字速度虚高修复** —— 分子含思考 token，实测最高虚高 80 倍；
+> 由用户指定的外部项目 dsh-our-free-model 触发的一次自查，见 §8 最新节与 §9）。
+> 此前同日：窗口/托盘图标漏改修复、`.btn-g` 可点性、额度进度、TTFT 探测历史。
+> **部署红线**：AI 不主动替换 exe/重启实例，见 §6。
 >
 > 🎬 **项目 PV（90s）已完成** —— 取代早先「介绍片」（后者已删，见下）。
 > 成片 `aigate-pv-silent.mp4`（无声画面，交剪辑软件）+ `music_v10-90s.wav`（独立音轨）
@@ -104,7 +105,7 @@
 > 🔎 **接手先看这里（2026-10-10 更新）**
 >
 > **状态**：工作区干净（本轮提交后），`HEAD` 见 `git log -1`，版本 **0.7.2**，
-> `cargo test --release` **297 绿**，`cargo build` 零警告，门禁全过
+> `cargo test --release` **303 绿**，`cargo build` 零警告，门禁全过
 > （parts 38 件 / i18n **685 键** / balance / test_brands 47 / fmt_rules / pages / 主题三道 /
 > **verify_logo 五部分**）。
 > 构建份哈希见 §3.3（**每次构建都会变，引用前重新测**）。
@@ -939,6 +940,7 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 | ~~① 首字延迟探测历史~~ | ✅ **已做**（2026-10-10）：日级 rollup 持久化 + 按模型聚合 + 分析页新面板 + 两张表各一列。单测 + `e2e_ttft_history.py` 15 断言，判据已验证有牙齿。见 §8 |
 | ~~② 额度进度~~ | ✅ **已做**（2026-10-10）：buddy 上游本就带 `CycleCapacitySize/Used/Remain/End`，聚合出来即可，**不用反推 logs.jsonl**。口径 = **只算仍有剩余的包**（34 包里取 5 个，3.2% 而非误导的 82.5%）。6 单测 + `e2e_quota_progress.py` 10 断言。见 §8 |
 | **面板截图重拍** | `assets/screenshots/` 两张仍是换标前拍的（README 正引用）—— 现在概览还多了「转发中断」一格 |
+| **按 body 形状嗅探流式响应**（来自 dsh-our-free-model 的提醒） | 它的车道上，网关高负载时会以 `200 + application/json` 返回**完整 SSE 帧序列**。我们的解析目前按行 + content-type 走 —— 若 buddy 哪天也这么发，会整轮报废（它强调修法是「嗅探首块 ≤4KB 按形状分流，再把已读字节重新注入流，实时性不受影响」）。**这是已知残留风险，不是已修项**；改前先看 §9 该条 |
 | `icon.ico` 补 256 档 | §5.8：大尺寸需走 PNG 编码（加 `png`/`miniz_oxide` 到 build-dependencies 或手写 deflate），本轮未采纳 |
 | **替换部署 exe** | ⚠️ 部署份 `D4A1CC9F…`（10-08，编译于 `b6d8d48`）缺 **3 个代码提交**：`e3753ea` 保活帧空闲超时、`75290c5` TTFT 探测历史、以及本轮额度进度。构建份见 §2 顶部（每次构建都会变，**引用前重新测哈希**）。按 §6 红线由用户自行替换，AI 不动（**当前实例 PID 44056 是用户自己的，别杀**） |
 | ~~推送~~ | ✅ **已完成**（2026-10-09 深夜）：46 个提交全部上 origin，`origin/main` = `82c68ac`，未推送数 **0**。⚠️ 顺带推翻了 §6 的旧推送口径 —— 「http.proxy 必须留空」不成立，见 §2.4 |
@@ -1005,6 +1007,53 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 ---
 
 ## 8. 各轮做了什么，便于判断现状
+
+### 🆕 10-11 轮：吐字速度虚高（分子含思考 token）—— 由外部项目触发的一次自查
+
+**起因**：用户让我看 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)（MIT，可并入）。
+读它的 README 时看到一条实测教训 —— 它曾为一条实际 ~40 tok/s 的车道报出 **2941 tok/s**，
+根因是「分子与分母度量的不是同一段时间」：422 个输出 token 里 **291 个是 reasoning**，
+**在第一个可见 token 之前就已生成完毕**，而窗口起点正是那个 token。
+
+**这条立刻让我怀疑本项目有同款问题**，实测确认**有，且更严重**。
+
+**根因**：`gen_speed = Σcompletion_tokens / Σ(总耗时 − 首字延迟)`。
+`completion_tokens` 是上游**计费**口径（思考也算产出），而分母从首字之后起算 —— 分子含思考、分母不含。
+
+**实测数据**（buddy/deepseek-v4-flash · `reasoning_effort=high`，直连上游）：
+
+| 项 | 值 |
+|---|---|
+| `usage.completion_tokens` | 166 |
+| `completion_tokens_details.reasoning_tokens` | **138（83%）** |
+| 实际流出正文 | 约 28 token |
+| 首字延迟 / 分母窗口 | 6.01s / **1.12s** |
+| 不剔除报出 | **1193 tok/s** |
+| 真值（正文） | 约 15 tok/s |
+
+**另发现**：上游**自己就报了** `reasoning_tokens`（`completion_tokens_details.reasoning_tokens`
+与 `completion_thinking_tokens` 两个字段都发，值相同），我们**完全没读**。
+
+**修复**：
+1. `RequestLog` 新增 `reasoning_tokens`（`completion_tokens` 的**子集**，**计费口径不动**）。
+2. 四条链路都收：chat 的 `completion_tokens_details.reasoning_tokens` / `completion_thinking_tokens`、
+   Anthropic 的 `output_tokens_details.thinking_tokens`、Responses 的 `output_tokens_details.reasoning_tokens`。
+   ⚠️ **`prompt_tokens_details.reasoning_tokens` 不收** —— 那是输入侧，语义不同。
+3. `gen_speed` 分子改为 `completion_tokens − reasoning_tokens`；**纯思考段（正文 0）不计样本**
+   （记进去会算出假的 0，而面板该显示「—」）。
+4. **顺手收敛**：原先算吐字速度的逻辑在 **5 处**各写一遍（rollup 累计 / 实时统计 / 全局 / 模型表 / 供应商表），
+   判据还各不相同 —— 全部并成单个 `gen_speed_of()`，与首字延迟共用 `rollup::ttft_of`。
+
+**验证**：303 单测（+6）· build 零警告 · 新 `tools/probe_gen_speed_reasoning.py` **5 断言**
+（本地 mock 精确构造「思考占 95%」，不出网，端到端量到 1193 → 60 tok/s）·
+**探针已验证有牙齿**（还原成 `completion_tokens` → 探针 + 3 条单测立刻变红）·
+门禁全过 · 6 个既有 e2e 回归全 PASS · CHANGELOG 已补并过格式单测。
+
+**这一轮的教训（值得记住）**：
+1. **派生指标要问"分子分母是不是同一段时间"** —— 这次和 TTFT 那次都栽在同一个思维盲区上。
+2. **上游往往已经给了修复所需的数据** —— `reasoning_tokens` 一直在响应里，我们只是没读；
+   查到"上游没给"之前先确认**真的没给**。
+3. **同一件事在代码里写 5 遍必然会漂移** —— 这次的 5 处判据就已经不一致了。
 
 ### 🆕 10-10 轮 ③：窗口/托盘图标不更新 —— 换标漏改第七处（含一次误判）
 
@@ -1550,3 +1599,28 @@ CHANGELOG 拆出 0.7.0 发布节点。
 AIGate 的 buddy 供应商（端点 + 归属头电池 + 模型白名单）即提取自其 `product.ts` / `buddy-adapter.ts`。
 其「非 JSON 响应给可读原因」与 AIGate 的 `freetier_hint` 同类；「锁定永久积分/签到自动化」属对
 上游促销系统的自动化，**上游随时会封**（同 OpenCode 403），不要当稳定能力宣传。
+
+`github.com/Ebony-Vinyl/dsh-our-free-model`（2026-10-11 侦察，用户指定）：DeepSeek Harness 的
+**免费额度插件**（MIT —— 已核对 LICENSE，与 GPL-3.0 兼容）。
+
+**我们实际借鉴了什么：只有一条「口径教训」，没有抄代码。**
+它的 README 记了一个实测结论：曾为一条实际 ~40 tok/s 的车道报出 **2941 tok/s**，根因是
+「分子与分母度量的不是同一段时间」—— 422 个输出 token 里 291 个是 reasoning，
+**在第一个可见 token 之前就已生成完毕**，而窗口起点正是那个 token。
+这条直接促成我们查出自己的同款 bug（更严重：实测虚高 80 倍，见 §8 10-11 轮）。
+它还给了两个佐证性做法：只在「能容纳分子的那段时间」内算速率、$\Sigma$token/$\Sigma$秒 而不对各次速率取平均
+（「曾有一个 1 ms 的窗口把 26 次调用的均值抬高三个数量级」）。我们采用的是前者的思想（剔除 + 单样本合并），
+**未移植任何代码**。
+
+**明确不借鉴的**（逐条记下，避免以后又想去抄）：
+- **应用内自升级 + Ed25519 签名链**：与 §6 红线冲突 —— AI 不主动替换 exe/重启实例，部署由用户决定。
+- **十三渠道白嫖 / 号池 / 每日签到领积分**：上游随时会封（OpenCode 403 前车之鉴），
+  HANDOFF 已定「不要当稳定能力宣传」。
+- **自由 git/目录布局**：我们是单 exe 内嵌前端（`include_str!`），它是插件形态，架构前提不同。
+
+**它的 README 值得一读的地方**（都写得很实在）：`providerRetryPolicy` 返回扁平策略（嵌套会让退避变 NaN）、
+被中断的工具调用会永久污染会话（重放必 400）、按 body 形状而非 Content-Type 判定流式
+（网关在高负载下会以 200 + `application/json` 返回完整 SSE 帧序列）。
+后两条我们**已有对策**（工具调用配对修复见 §5、buddy 的 finish_reason 空串归一化见 §8 10-01 轮），
+但「按 body 形状嗅探」这一点我们的解析仍是按行/按 content-type 走的 —— 若哪天 buddy 也这么发，
+会整轮报废。**目前未改用，属已知残留风险，不是已修项。**

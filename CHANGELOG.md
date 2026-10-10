@@ -22,6 +22,17 @@
 - **顺带修掉误导文案**：原写「客户端已收到 length 终止帧」—— **那个 length 帧是网关自己补发的**，措辞却像上游做的截断，把排查方向带偏。现如实分述「上游断流 → 网关补发终止帧收尾 → 客户端据此正常结束」
 - 新增 `tools/probe_idle_noise.py`（4 断言：mock 持续发注释帧且不出正文）与单测 `keepalive_comment_frames_do_not_count_as_data`（9 个判定用例，含非 UTF-8 兜底）。**已验证有牙齿**：临时还原成"任何块都重置" → 耗时被撑到 10.5s、断言失败；修复后 3.0s（= 空闲超时值）
 
+### 修复吐字速度虚高：分子剔除了思考 token（最高虚高 80 倍）
+
+- **发现方式**：读外部项目 [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model)（MIT）时看到它的实测教训 —— 曾为一条实际 ~40 tok/s 的车道报出 **2941 tok/s**，根因是「分子与分母度量的不是同一段时间」：一次调用计费 422 个输出 token，其中 **291 个是 reasoning**，它们在第一个**可见** token 之前就已生成完毕，而窗口起点正是那个 token。遂回查本项目是否有同款问题，**实测确认有，且更严重**
+- **根因**：`gen_speed = Σcompletion_tokens / Σ(总耗时 − 首字延迟)`。`completion_tokens` 是上游的**计费**口径（思考也算产出、按输出价计费），而分母从**首字**（含思考帧）之后起算 —— 分子含思考、分母不含
+- **实测数据**（buddy/deepseek-v4-flash · reasoning_effort=high，直连上游）：`completion_tokens=166`，其中 `reasoning_tokens=138`（**83%**），实际流出正文仅约 28 token；首字延迟 6.01s 时思考已产出完毕，分母只剩 1.12s → **不剔除报 1193 tok/s，真值约 15**
+- **修复**：新增 `RequestLog.reasoning_tokens`（`completion_tokens` 的**子集**，计费口径不变），从上游 `usage.completion_tokens_details.reasoning_tokens` / `usage.completion_thinking_tokens`（buddy 实测两者都发）/ Anthropic `output_tokens_details.thinking_tokens` / Responses `output_tokens_details.reasoning_tokens` 四处收；`gen_speed` 的分子改为 `completion_tokens − reasoning_tokens`
+- **边界**：**纯思考段（正文为 0）不计入速度样本** —— 它没有可测的正文速度，记进去会算出一个假的 0，而面板该显示「—」（无样本）而不是「0 tok/s」。思考数超过输出数（口径不一致/流中途断）时按正文 0 处理并跳过，不产生负分子
+- **顺手收敛**：原先「按日志算吐字速度」的逻辑在 **5 处**各写了一遍（rollup 累计 + 实时统计 + 全局 + 模型表 + 供应商表），且判据各不相同（有的用 `ft < latency && ct > 0`，有的复用 `ttft_of`）—— 全部收敛为单个 `gen_speed_of()`，与首字延迟共用同一判据，杜绝再次漂移
+- **验证**：303 单测（+6）· `cargo build` 零警告 · 新增 `tools/probe_gen_speed_reasoning.py` 5 断言（本地 mock 精确构造「思考占 95%」场景，不出网）· 该探针**已验证有牙齿**：把剔除还原成 `completion_tokens` → 探针与 3 条单测立刻变红 · 门禁全过 · 6 个既有 e2e 回归全 PASS
+- **口径声明**：`completion_tokens`（计费/用量）**保持原样不动**，只有「吐字速度」这一个派生指标剔除思考。面板的 token 总量、费用、KV 缓存口径均不受影响
+
 ### 修复窗口/托盘图标不更新：`main.rs` 是换标时漏改的第七处
 
 - **现象与误判**：用户报「旧图标怎么不更新」并贴出任务栏截图（紫色渐变 + 中心白环 + 四节点，09-30 换标前的老图案）。第一反应是 Windows 图标缓存 —— **错了**。缓存论被用户一句「不行」推翻后重新取证，才发现真因

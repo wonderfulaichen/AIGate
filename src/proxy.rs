@@ -793,10 +793,10 @@ pub async fn chat_completions(
                     } else {
                         body_text
                     };
-                    let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
+                    let (pt, ct, rt, hit, miss, creation) = extract_usage(&body_text);
                     state.cache.put(key, &body_text, (pt, ct));
                     crate::admin::record_request_with_tokens(
-                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
+                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, rt, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                         usage_missing(pt, ct), effort.clone(),
                     ).await;
@@ -843,9 +843,9 @@ pub async fn chat_completions(
                     } else {
                         body_text
                     };
-                    let (pt, ct, hit, miss, creation) = extract_usage(&body_text);
+                    let (pt, ct, rt, hit, miss, creation) = extract_usage(&body_text);
                     crate::admin::record_request_with_tokens(
-                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, body_text.len(),
+                        &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), start, pt, ct, rt, body_text.len(),
                         false, hit, miss, creation, strip_saved_tokens, trim_saved_tokens, 0, Some(audit), None, None,
                         usage_missing(pt, ct), effort.clone(),
                     ).await;
@@ -1505,13 +1505,13 @@ async fn relay_native_passthrough(
             Ok(t) => t,
             Err(e) => return Err(proto.error_response(StatusCode::BAD_GATEWAY, &format!("failed to read upstream body: {e}"))),
         };
-        let (pt, ct, hit, miss, creation) = match proto {
+        let (pt, ct, rt, hit, miss, creation) = match proto {
             NativeProto::Anthropic => extract_anthropic_usage(&text),
             NativeProto::Responses => extract_responses_usage(&text),
         };
         crate::admin::record_request_with_tokens(
             &state.log_buffer, &model, &provider_name, &endpoint,
-            model_cfg.upstream_model.as_deref(), start, pt, ct, text.len(),
+            model_cfg.upstream_model.as_deref(), start, pt, ct, rt, text.len(),
             false, hit, miss, creation,
             strip_saved_tokens, 0, 0, None, None, None,
             usage_missing(pt, ct), effort,
@@ -1552,28 +1552,41 @@ async fn relay_native_passthrough(
 ///
 /// Anthropic usage: input_tokens(不含缓存读) + cache_read_input_tokens + cache_creation_input_tokens
 /// = 总输入; prompt_tokens 记三者之和 (与 usage_openai 口径一致), hit/creation 分别记账.
-fn extract_anthropic_usage(text: &str) -> (u32, u32, u32, u32, u32) {
+///
+/// 返回 `(prompt, completion, 思考token, hit, miss, creation)`. 思考 token 见
+/// [`usage_reasoning_tokens`] 的说明 —— Anthropic 放在 `output_tokens_details.thinking_tokens`.
+fn extract_anthropic_usage(text: &str) -> (u32, u32, u32, u32, u32, u32) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0, 0, 0, 0);
+        return (0, 0, 0, 0, 0, 0);
     };
-    let Some(u) = v.get("usage") else { return (0, 0, 0, 0, 0) };
+    let Some(u) = v.get("usage") else { return (0, 0, 0, 0, 0, 0) };
     let input = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let output = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let hit = u.get("cache_read_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let creation = u.get("cache_creation_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    // Anthropic 的思考口径叫 thinking_tokens; 也收 OpenAI 命名的 reasoning_tokens (部分中转改写).
+    let rt = u
+        .get("output_tokens_details")
+        .and_then(|d| {
+            d.get("thinking_tokens")
+                .or_else(|| d.get("reasoning_tokens"))
+        })
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as u32;
     let prompt = input + hit + creation;
-    (prompt, output, hit, input, creation)
+    (prompt, output, rt.min(output), hit, input, creation)
 }
 
 /// 从 Responses 非流式响应抽取 OpenAI 口径的 token 用量.
 ///
 /// OpenAI Responses 口径: input_tokens **已含**缓存读部分 (input_tokens_details.cached_tokens
 /// 是其子集), 故 prompt 记 input_tokens 全量, hit = cached, miss = input - cached.
-fn extract_responses_usage(text: &str) -> (u32, u32, u32, u32, u32) {
+/// 思考 token 在 `output_tokens_details.reasoning_tokens` (与 [`crate::responses`] 同源).
+fn extract_responses_usage(text: &str) -> (u32, u32, u32, u32, u32, u32) {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
-        return (0, 0, 0, 0, 0);
+        return (0, 0, 0, 0, 0, 0);
     };
-    let Some(u) = v.get("usage") else { return (0, 0, 0, 0, 0) };
+    let Some(u) = v.get("usage") else { return (0, 0, 0, 0, 0, 0) };
     let input = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let output = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     let cached = u
@@ -1581,7 +1594,12 @@ fn extract_responses_usage(text: &str) -> (u32, u32, u32, u32, u32) {
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0) as u32;
-    (input, output, cached, input.saturating_sub(cached), 0)
+    let rt = u
+        .get("output_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as u32;
+    (input, output, rt.min(output), cached, input.saturating_sub(cached), 0)
 }
 
 /// 原生直通流式透传包装器: 字节原样转发, 同时按协议口径从 SSE 帧抽取 usage,
@@ -1599,6 +1617,9 @@ struct NativeTapStream {
     // usage 累计 (原始值, 记账时按协议口径合成)
     input_tokens: u32,
     output_tokens: u32,
+    /// 上游上报的思考 token (output_tokens 的**子集**).
+    /// 用于把「吐字速度」的分子还原成正文 —— 见 [`RequestLog::reasoning_tokens`].
+    reasoning_tokens: u32,
     cache_read: u32,
     cache_creation: u32,
     response_bytes: usize,
@@ -1645,6 +1666,7 @@ impl NativeTapStream {
             start,
             input_tokens: 0,
             output_tokens: 0,
+            reasoning_tokens: 0,
             cache_read: 0,
             cache_creation: 0,
             response_bytes: 0,
@@ -1686,6 +1708,17 @@ impl NativeTapStream {
         }
         if let Some(x) = u.get("output_tokens").and_then(|t| t.as_u64()) {
             self.output_tokens = x as u32;
+        }
+        // 思考 token: Anthropic 叫 thinking_tokens, Responses/OpenAI 叫 reasoning_tokens.
+        if let Some(x) = u
+            .get("output_tokens_details")
+            .and_then(|d| {
+                d.get("thinking_tokens")
+                    .or_else(|| d.get("reasoning_tokens"))
+            })
+            .and_then(|t| t.as_u64())
+        {
+            self.reasoning_tokens = x as u32;
         }
         if let Some(x) = u.get("cache_read_input_tokens").and_then(|t| t.as_u64()) {
             self.cache_read = x as u32;
@@ -1745,11 +1778,12 @@ impl Stream for NativeTapStream {
                     let (m, p, ep, up) = (self.model.clone(), self.provider.clone(), self.endpoint.clone(), self.upstream_model.clone());
                     let start = self.start;
                     let resp_len = self.response_bytes;
-                    let (prompt, output, hit, miss, creation) = match self.proto {
+                    let (prompt, output, rt, hit, miss, creation) = match self.proto {
                         // Anthropic 口径: input_tokens 不含缓存, prompt = input + read + creation.
                         NativeProto::Anthropic => (
                             self.input_tokens + self.cache_read + self.cache_creation,
                             self.output_tokens,
+                            self.reasoning_tokens.min(self.output_tokens),
                             self.cache_read,
                             self.input_tokens,
                             self.cache_creation,
@@ -1758,6 +1792,7 @@ impl Stream for NativeTapStream {
                         NativeProto::Responses => (
                             self.input_tokens,
                             self.output_tokens,
+                            self.reasoning_tokens.min(self.output_tokens),
                             self.cache_read,
                             self.input_tokens.saturating_sub(self.cache_read),
                             0,
@@ -1784,7 +1819,7 @@ impl Stream for NativeTapStream {
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
-                            prompt, output, resp_len, false, hit, miss, creation, st, 0, 0, None, None,
+                            prompt, output, rt, resp_len, false, hit, miss, creation, st, 0, 0, None, None,
                             trunc_note,
                             usage_missing(prompt, output), effort_copy,
                         ).await;
@@ -2247,6 +2282,7 @@ fn stream_response_with_tokens(
             cont_left: auto_continue_max,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
@@ -2314,9 +2350,11 @@ async fn try_replay_cache(
     let (cached, stored_usage) = state.cache.get(key)?;
     // 命中回放的 token 统计优先用缓存时回填的精确 usage; 无精确值时退回从缓存体解析.
     // 仅用于计算"省下多少"(saved), 不再写回日志的 prompt/completion (见下方说明).
-    let (pt, mut ct, ..) = if stored_usage != (0, 0) {
+    // ⚠️ 命中缓存**不读** rt: 本路径 prompt/completion 一律记 0 (没打上游),
+    //    reasoning 同理记 0 —— 读进来只用于算 saved, 见下方参数位.
+    let (pt, mut ct, _rt, ..) = if stored_usage != (0, 0) {
         let (p, c) = stored_usage;
-        (p, c, 0u32, 0u32, 0u32)
+        (p, c, 0u32, 0u32, 0u32, 0u32)
     } else {
         extract_usage(&cached)
     };
@@ -2341,6 +2379,8 @@ async fn try_replay_cache(
         upstream_model,
         start,
         0,
+        0,
+        // reasoning 同理记 0: 命中缓存没有上游产出, 也没有思考.
         0,
         cached.len(),
         true,
@@ -2472,6 +2512,11 @@ struct TokenStream {
     /// `reasoning` 在流却被记为 "已输出 0 tok"). 累加长度而非文本本身: 只用于估算,
     /// 无需保留内容, 长思考流不会因此涨内存.
     reasoning_chars_seen: usize,
+    /// 上游上报的**思考 token 数** (usage 里的 reasoning_tokens / completion_thinking_tokens).
+    ///
+    /// 与 `reasoning_chars_seen` 的分工: 后者是**本地按字符估**的 (上游没给 usage 时的兜底),
+    /// 这个是**上游权威值**. 用途是给 gen_speed 剔除思考 —— 见 [`RequestLog::reasoning_tokens`].
+    tokens_reasoning: u32,
     /// 本流是否解析到上游上报的 usage.
     ///
     /// 用于区分「实测」与「估算/未上报」: 上游没给 usage 时 token 是本地按文本长度估的
@@ -2712,6 +2757,14 @@ impl TokenStream {
             if let Some(ct) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                 self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
             }
+            // 思考 token: 单独取出, 供 gen_speed 剔除 (见 RequestLog::reasoning_tokens).
+            if let Some(rt) = usage_reasoning_tokens(usage) {
+                self.tokens_reasoning = if is_cont_seg {
+                    self.tokens_reasoning.saturating_add(rt)
+                } else {
+                    rt
+                };
+            }
             // 上游 KV Cache 命中/未命中/首次写入 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema)
             // 同一 usage 事件内 hit / miss / creation 任一非零则整体覆盖, 避免分块 usage 互相覆盖致数值错乱.
             let (hit, miss, creation) = usage_cache(usage);
@@ -2739,6 +2792,13 @@ impl TokenStream {
                     }
                     if let Some(ct) = inner_usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                         self.tokens_ct = if is_cont_seg { self.tokens_ct.saturating_add(ct as u32) } else { ct as u32 };
+                    }
+                    if let Some(rt) = usage_reasoning_tokens(inner_usage) {
+                        self.tokens_reasoning = if is_cont_seg {
+                            self.tokens_reasoning.saturating_add(rt)
+                        } else {
+                            rt
+                        };
                     }
                     // 上游 KV Cache 命中/未命中/首次写入 (兼容两种 schema); 任一非零则整体覆盖.
                     let (hit, miss, creation) = usage_cache(inner_usage);
@@ -2851,6 +2911,7 @@ impl TokenStream {
     fn log_stream_failure(&mut self, mut ld: TokenLogData, status: u16, err: String) {
         ld.response_body_len = self.response_bytes;
         let (pt, ct) = (self.tokens_pt, self.tokens_ct);
+        let rt = self.tokens_reasoning;
         let (hit, miss, creation) = (
             self.tokens_cache_hit,
             self.tokens_cache_miss,
@@ -2873,6 +2934,7 @@ impl TokenStream {
                 ld.start,
                 pt,
                 ct,
+                rt,
                 ld.response_body_len,
                 false,
                 hit,
@@ -2892,16 +2954,22 @@ impl TokenStream {
 
     /// 流结束时计算最终 token 数: 优先使用上游返回的精确值, 否则估算.
     ///
-    /// 返回 `(prompt, completion, cache_hit, cache_miss, cache_creation, 是否估算/未上报)`.
+    /// 返回 `(prompt, completion, 思考token, cache_hit, cache_miss, cache_creation, 是否估算)`.
     /// 末位为 `true` 表示上游未给 usage (值为本地估算或 0) —— 调用方据此在日志里打标,
     /// 避免把估算值当实测值展示.
-    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32, u32, bool) {
+    ///
+    /// ⚠️ 思考 token 是 `completion` 的**子集**(不是额外量): 计费按 completion 全额,
+    ///    而「吐字速度」要用 `completion − reasoning`. 估算路径下两者同源
+    ///    (都出自 reasoning_chars_seen / 4), 故比例自洽.
+    fn final_tokens(&self, req_body_len: usize) -> (u32, u32, u32, u32, u32, u32, bool) {
         let pt = if self.tokens_pt > 0 {
             self.tokens_pt
         } else {
             // 估算: 请求 body 字节 / 4 ≈ prompt token 数
             std::cmp::max(1, (req_body_len / 4) as u32)
         };
+        // 估算路径下的思考 token: 与 ct 的估算同源 (字符数 / 4).
+        let estimated_reasoning = std::cmp::max(0, (self.reasoning_chars_seen / 4) as u32);
         let ct = if self.tokens_ct > 0 {
             self.tokens_ct
         } else {
@@ -2926,10 +2994,20 @@ impl TokenStream {
                 0
             }
         };
+        // 上游给了 usage → 用上游权威的 reasoning; 没给 → 用本地估算值.
+        // 上限钳到 ct: reasoning 是 completion 的**子集**, 超出说明两边口径不一致
+        // (或流中途断掉只收到部分 usage), 钳住可保证 completion − reasoning 不为负.
+        let rt = if self.usage_seen {
+            self.tokens_reasoning
+        } else {
+            estimated_reasoning
+        }
+        .min(ct);
         // 缓存命中/未命中/首次写入: 上游未返回 usage 时无法估算, 保持解析到的精确值 (默认 0).
         (
             pt,
             ct,
+            rt,
             self.tokens_cache_hit,
             self.tokens_cache_miss,
             self.tokens_cache_creation,
@@ -3136,7 +3214,7 @@ impl Stream for TokenStream {
                         }
                         this.done = true;
                         let req_body_len = this.log_buffer.as_ref().map(|ld| ld.req_body_len).unwrap_or(0);
-                        let (pt, ct, hit, miss, creation, usage_estimated) = this.final_tokens(req_body_len);
+                        let (pt, ct, rt, hit, miss, creation, usage_estimated) = this.final_tokens(req_body_len);
                         // 完成日志的 error 判定:
                         //  - 死循环检测截断 (loop_aborted): 用专属文案, 避免误显示为上游截断.
                         //  - 续写尝试失败 (cont_fail_note): 展示失败原因.
@@ -3238,7 +3316,7 @@ impl Stream for TokenStream {
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                                    status, ld.start, pt, ct, ld.response_body_len, false,
+                                    status, ld.start, pt, ct, rt, ld.response_body_len, false,
                                     hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                                     first_token_ms,
                                     err_for_log,
@@ -3340,6 +3418,7 @@ impl Drop for TokenStream {
         };
         ld.response_body_len = self.response_bytes;
         let (pt, ct) = (self.tokens_pt, self.tokens_ct);
+        let rt = self.tokens_reasoning;
         let (hit, miss, creation) = (
             self.tokens_cache_hit,
             self.tokens_cache_miss,
@@ -3368,7 +3447,7 @@ impl Drop for TokenStream {
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
-                close_status, ld.start, pt, ct, ld.response_body_len, false,
+                close_status, ld.start, pt, ct, rt, ld.response_body_len, false,
                 hit, miss, creation, ld.strip_saved_tokens, ld.trim_saved_tokens, 0, Some(ld.audit),
                 first_token_ms,
                 if err.is_empty() { None } else { Some(err) },
@@ -3519,14 +3598,37 @@ pub(crate) fn usage_cache(usage: &serde_json::Value) -> (u32, u32, u32) {
     (0, 0, 0)
 }
 
+/// 从上游 usage 里取**思考 token 数**; 上游没报则返回 None.
+///
+/// 收两种写法 (实测同一次响应里两者都出现, 值相同, 取其一即可):
+///   · `completion_tokens_details.reasoning_tokens` —— OpenAI 系标准位置
+///   · `completion_thinking_tokens`               —— buddy(CodeBuddy) 实测也发
+/// 还有的供应商把 reasoning 放在 `prompt_tokens_details` 下 —— 那是**输入侧**的
+/// (prompt 里的推理链), 与输出侧的思考不是一回事, **刻意不收**.
+///
+/// 为什么必须有这个函数: `completion_tokens` 是计费口径 (含思考), 而「吐字速度」
+/// 要的是正文流出速度 —— 不剔除会把 gen_speed 报成虚高几十倍 (实测 1193 vs 15 tok/s,
+/// 见 [`RequestLog::reasoning_tokens`] 的实测记录).
+fn usage_reasoning_tokens(usage: &serde_json::Value) -> Option<u32> {
+    usage
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| usage.get("completion_thinking_tokens").and_then(|v| v.as_u64()))
+        // 0 与"没上报"不同: 上报 0 说明这轮确实没思考, 也应记 0 (而不是落回估算).
+        // 但两者对 gen_speed 的效果一样 (都是不剔), 故这里统一返回 Some.
+        .map(|v| v as u32)
+}
+
 /// 从已完成 (非流式) 的响应 JSON 中提取 token 用量, 用于日志统计.
 ///
-/// 返回 (prompt_tokens, completion_tokens, cache_hit_tokens, cache_miss_tokens, cache_creation_tokens).
-/// 后三者来自上游 `usage` 的 KV Cache 统计 (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema),
-/// 未提供时为 0.
-fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
+/// 返回 `(prompt_tokens, completion_tokens, 思考token, cache_hit, cache_miss, cache_creation)`.
+/// 思考 token 见 [`usage_reasoning_tokens`]; 后三者来自上游 `usage` 的 KV Cache 统计
+/// (兼容 DeepSeek 扁平 / OpenAI 嵌套 / Anthropic 原生 schema), 未提供时为 0.
+fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32, u32) {
     let mut pt = 0u32;
     let mut ct = 0u32;
+    let mut rt = 0u32;
     let mut hit = 0u32;
     let mut miss = 0u32;
     let mut creation = 0u32;
@@ -3550,6 +3652,9 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
             if let Some(c) = u.get("completion_tokens").and_then(|x| x.as_u64()) {
                 ct = c as u32;
             }
+            if let Some(r) = usage_reasoning_tokens(u) {
+                rt = r;
+            }
             let (h, m, c) = usage_cache(u);
             if h > 0 {
                 hit = h;
@@ -3562,7 +3667,7 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32) {
             }
         }
     }
-    (pt, ct, hit, miss, creation)
+    (pt, ct, rt, hit, miss, creation)
 }
 
 /// 省量潜力审计结果 (只读统计, 不改变任何转发内容).
@@ -5688,19 +5793,31 @@ mod tests {
         assert!(!result.contains("请求参数错误（模型不支持、参数缺失或格式错误）: 请求参数错误")); // 不重复
     }
 
-    /// 非流式: extract_usage 提取上游 KV Cache 命中/未命中 token.
+    /// 非流式: extract_usage 提取上游 KV Cache 命中/未命中 token + 思考 token.
     #[test]
     fn test_extract_usage_cache_fields() {
-        // 含 cache 字段 → 完整提取 4 元组
+        // 含 cache 字段 → 完整提取 6 元组
         let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":5}}"#;
-        assert_eq!(extract_usage(body), (10, 20, 100, 5, 0));
+        assert_eq!(extract_usage(body), (10, 20, 0, 100, 5, 0));
 
         // 无 cache 字段 → 命中/未命中记 0
         let body = r#"{"usage":{"prompt_tokens":7,"completion_tokens":3}}"#;
-        assert_eq!(extract_usage(body), (7, 3, 0, 0, 0));
+        assert_eq!(extract_usage(body), (7, 3, 0, 0, 0, 0));
 
         // 非 JSON → 全部为 0
-        assert_eq!(extract_usage("not json"), (0, 0, 0, 0, 0));
+        assert_eq!(extract_usage("not json"), (0, 0, 0, 0, 0, 0));
+
+        // 思考 token: OpenAI 位置 (completion_tokens_details.reasoning_tokens)
+        let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":166,"completion_tokens_details":{"reasoning_tokens":138}}}"#;
+        assert_eq!(extract_usage(body), (10, 166, 138, 0, 0, 0));
+
+        // 思考 token: buddy 的另一个字段名 (completion_thinking_tokens), 值相同时取其一即可
+        let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":166,"completion_thinking_tokens":138}}"#;
+        assert_eq!(extract_usage(body), (10, 166, 138, 0, 0, 0));
+
+        // 输入侧的 prompt_tokens_details.reasoning_tokens **不算**输出思考 (语义不同)
+        let body = r#"{"usage":{"prompt_tokens":10,"completion_tokens":20,"prompt_tokens_details":{"reasoning_tokens":99}}}"#;
+        assert_eq!(extract_usage(body), (10, 20, 0, 0, 0, 0), "输入侧 reasoning 不得计入");
     }
 
     /// 流式缓存命中体为归一化 SSE 文本 (多个 `data: {...}` 事件 + `data: [DONE]`),
@@ -5714,11 +5831,11 @@ mod tests {
             "data: {\"usage\":{\"prompt_tokens\":150,\"completion_tokens\":12,\"prompt_cache_hit_tokens\":140,\"prompt_cache_miss_tokens\":10}}\n\n",
             "data: [DONE]\n\n",
         );
-        assert_eq!(extract_usage(sse), (150, 12, 140, 10, 0));
+        assert_eq!(extract_usage(sse), (150, 12, 0, 140, 10, 0));
 
         // data: 前缀缺失/空行/纯 [DONE] 仍不影响解析 (容错).
         let sse2 = "data: [DONE]\n\n\n   \ndata: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}";
-        assert_eq!(extract_usage(sse2), (3, 1, 0, 0, 0));
+        assert_eq!(extract_usage(sse2), (3, 1, 0, 0, 0, 0));
     }
 
     /// 续写请求体构造: 三种协议格式都应追加 assistant 已输出正文 + user 继续指令.
@@ -5801,6 +5918,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
@@ -5864,6 +5982,7 @@ mod tests {
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
             usage_seen: false, emitted_tool_calls: false, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
@@ -5988,6 +6107,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,
@@ -6078,6 +6198,7 @@ mod tests {
             cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
+            tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
             cont_pending: None,

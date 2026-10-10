@@ -169,9 +169,20 @@ impl RollupEntry {
             self.ttft_samples += 1;
             self.ttft_sum_ms += ft;
             self.ttft_hist[ttft_bucket(ft)] += 1;
-            self.gen_output_tokens += log.completion_tokens as u64;
-            self.gen_time_sum_ms += log.latency_ms - ft;
-            self.gen_samples += 1;
+            // ⚠️ 分子必须**剔除思考 token** (2026-10-11 实测修正).
+            //    completion_tokens 是**计费**口径 (含思考), 而这里要的是**正文流出速度**;
+            //    分母 (首字之后的窗口) 只覆盖正文, 两者不是同一段时间.
+            //    实测 buddy/deepseek-v4-flash·high: completion=166 / reasoning=138 (83%) /
+            //    正文仅约 28 token → 不剔除会把速度报成 1193 tok/s, 真值约 15 (虚高 80 倍).
+            //    这与 dsh-our-free-model 那个"2941 tok/s"假读数是同一个成因.
+            let visible = log.completion_tokens.saturating_sub(log.reasoning_tokens);
+            // 纯思考段 (正文为 0): **不计入样本** —— 它没有可测的正文速度,
+            // 记进去会算出一个假的 0 tok/s (面板该显示「—」而不是「0」).
+            if visible > 0 {
+                self.gen_output_tokens += visible as u64;
+                self.gen_time_sum_ms += log.latency_ms - ft;
+                self.gen_samples += 1;
+            }
         }
         let peak = crate::pricing::is_peak(log.timestamp);        let saved = log.strip_saved_tokens as u64
             + log.trim_saved_tokens as u64
@@ -452,6 +463,7 @@ mod tests {
             error: None,
             prompt_tokens: 100,
             completion_tokens: 10,
+            reasoning_tokens: 0,
             cached: false,
             prompt_cache_hit_tokens: 0,
             prompt_cache_miss_tokens: 0,
@@ -625,7 +637,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// 回归: 查询范围起点晚于账本最早天 (start > end) 时必须返回空而不是 BTreeMap panic.
+    /// 回归: rollup 累计的 `gen_output_tokens` 必须是**正文** (剔除思考).
+    ///
+    /// 这是持久化的**源头** —— 面板的速度、模型表、供应商表全部由它汇总而来,
+    /// 这里错了后面三处全错. 口径与 `admin::gen_speed_of` 必须一致.
+    #[test]
+    fn gen_tokens_exclude_reasoning_in_rollup() {
+        let mut e = RollupEntry::default();
+        let mut log = mk_log_ttft(1, "p", "m", 5_000, Some(200), 1_000);
+        log.reasoning_tokens = 950; // 83% 是思考
+        e.add_log(&log);
+        assert_eq!(e.gen_output_tokens, 50, "只算正文 (1000 − 950)");
+        assert_eq!(e.gen_samples, 1);
+        assert_eq!(e.gen_time_sum_ms, 4_800);
+        // 计费口径不受影响: completion_tokens 仍记全额
+        assert_eq!(e.completion_tokens, 1_000);
+    }
+
+    /// 纯思考段 (正文 0) 不计样本 —— 否则会算出一个假的 0 tok/s.
+    #[test]
+    fn pure_reasoning_segment_not_counted_in_rollup() {
+        let mut e = RollupEntry::default();
+        let mut log = mk_log_ttft(1, "p", "m", 5_000, Some(200), 800);
+        log.reasoning_tokens = 800;
+        e.add_log(&log);
+        assert_eq!((e.gen_output_tokens, e.gen_samples), (0, 0), "纯思考段不贡献生成速度样本");
+        // 但首字延迟仍记 (它确实有首字) —— 两个指标的口径独立
+        assert_eq!(e.ttft_samples, 1, "首字延迟与生成速度的样本口径不同");
+    }
+
+    /// 查询范围起点晚于账本最早天 (start > end) 时必须返回空而不是 BTreeMap panic.
     #[test]
     fn days_between_empty_range_returns_empty() {
         let book = RollupBook::new("data-test-rollup");

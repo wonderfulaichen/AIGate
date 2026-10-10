@@ -65,6 +65,20 @@ pub struct RequestLog {
     /// 输出 token 数 (从上游响应 usage 中提取).
     #[serde(default)]
     pub completion_tokens: u32,
+    /// `completion_tokens` 里属于**思考 (reasoning)** 的部分 (0 = 上游未上报或本轮无思考).
+    ///
+    /// 为什么单独记: `completion_tokens` 是**计费**口径 (思考也算产出), 但
+    /// 「吐字速度」度量的是**正文流出速度** —— 两者不是同一件事.
+    /// 实测 (2026-10-11, buddy/deepseek-v4-flash · high):
+    ///     completion_tokens=166, 其中 reasoning=138 (83%), 实际流出的正文仅约 28 token.
+    /// 不剔除就会把 gen_speed 报成 1193 tok/s (真值约 15) —— 虚高 80 倍, 与
+    /// dsh-our-free-model 那个 2941 tok/s 的假读数是同一个成因:
+    /// **分子含思考、分母(首字之后的窗口)不含**.
+    ///
+    /// 上游字段来源 (两种都收): `usage.completion_tokens_details.reasoning_tokens`
+    /// (OpenAI 系) / `usage.completion_thinking_tokens` (buddy 实测两者都发, 取其一).
+    #[serde(default)]
+    pub reasoning_tokens: u32,
     /// 是否命中本地响应缓存 (命中则未真实请求上游, 省 token + 延迟).
     #[serde(default)]
     pub cached: bool,
@@ -586,6 +600,7 @@ pub async fn record_request(
         error,
         prompt_tokens: 0,
         completion_tokens: 0,
+        reasoning_tokens: 0,
         cached: false,
         prompt_cache_hit_tokens: 0,
         prompt_cache_miss_tokens: 0,
@@ -622,6 +637,9 @@ pub async fn record_request_with_tokens(
     start: Instant,
     prompt_tokens: u32,
     completion_tokens: u32,
+    // `completion_tokens` 里属于思考的部分 (0 = 上游未上报或本轮无思考).
+    // 计费仍按 `completion_tokens` 全额; 这个只用于把「吐字速度」的分子还原成**正文**.
+    reasoning_tokens: u32,
     response_body_len: usize,
     cached: bool,
     cache_hit_tokens: u32,
@@ -646,6 +664,7 @@ pub async fn record_request_with_tokens(
         start,
         prompt_tokens,
         completion_tokens,
+        reasoning_tokens,
         response_body_len,
         cached,
         cache_hit_tokens,
@@ -678,6 +697,8 @@ pub async fn record_request_with_tokens_status(
     start: Instant,
     prompt_tokens: u32,
     completion_tokens: u32,
+    // `completion_tokens` 里属于思考的部分 (见同名参数在上一个函数的说明).
+    reasoning_tokens: u32,
     response_body_len: usize,
     cached: bool,
     cache_hit_tokens: u32,
@@ -705,6 +726,7 @@ pub async fn record_request_with_tokens_status(
         error,
         prompt_tokens,
         completion_tokens,
+        reasoning_tokens,
         cached,
         prompt_cache_hit_tokens: cache_hit_tokens,
         prompt_cache_miss_tokens: cache_miss_tokens,
@@ -1874,6 +1896,8 @@ pub async fn api_mock(
             error: None,
             prompt_tokens: rng.gen_range(50, 500) as u32,
             completion_tokens: rng.gen_range(100, 2000) as u32,
+            // 演示数据: 让思考占约 1/3, 面板上能看出「吐字速度」已剔除它.
+            reasoning_tokens: rng.gen_range(0, 600) as u32,
             cached: false,
             prompt_cache_hit_tokens: rng.gen_range(0, 400) as u32,
             prompt_cache_miss_tokens: rng.gen_range(0, 100) as u32,
@@ -1915,6 +1939,7 @@ pub async fn api_mock(
             error: Some(err_msgs[i % err_msgs.len()].to_string()),
             prompt_tokens: 0,
             completion_tokens: 0,
+            reasoning_tokens: 0,
             cached: false,
             prompt_cache_hit_tokens: 0,
             prompt_cache_miss_tokens: 0,
@@ -2166,7 +2191,7 @@ mod changelog_tests {
         let mk = |status: u16, err: Option<&str>, out_tok: u32| RequestLog {
             timestamp: 0, model: "m".into(), provider: "p".into(), endpoint: "e".into(),
             status, latency_ms: 0, body_len: 0, error: err.map(|s| s.to_string()),
-            prompt_tokens: 0, completion_tokens: out_tok, cached: false,
+            prompt_tokens: 0, completion_tokens: out_tok, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
             strip_saved_tokens: 0, trim_saved_tokens: 0, resp_cache_saved_tokens: 0,
@@ -2426,9 +2451,12 @@ impl LogBuffer {
             r_latency_sum += l.latency_ms;
             r_hit += l.prompt_cache_hit_tokens as u64;
             r_prompt += l.prompt_tokens as u64;
-            if let Some(ft) = l.first_token_ms {
-                if ft < l.latency_ms && l.completion_tokens > 0 {
-                    r_gen_ct += l.completion_tokens as u64;
+            // 生成速度: 与 rollup / per_model 同口径 —— 判据复用 ttft_of,
+            // 分子剔除思考 token (只算正文), 正文为 0 的纯思考段不计样本.
+            if let Some(ft) = crate::rollup::ttft_of(l) {
+                let visible = l.completion_tokens.saturating_sub(l.reasoning_tokens);
+                if visible > 0 {
+                    r_gen_ct += visible as u64;
                     r_gen_ms += l.latency_ms - ft;
                 }
             }
@@ -3841,11 +3869,7 @@ fn compute_stats(
     let total_cache_miss_tokens: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
     let total_cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
     let total_cache_saved: f64 = logs.iter().map(|l| log_cache_saved(&memo, l)).sum();
-    let (gen_tokens, gen_millis, gen_samples) = logs.iter().filter_map(|l| {
-        l.first_token_ms.filter(|ft| *ft < l.latency_ms && l.completion_tokens > 0)
-            .map(|ft| (l.completion_tokens as u64, l.latency_ms.saturating_sub(ft), 1usize))
-    }).fold((0u64, 0u64, 0usize), |(tokens, millis, samples), (t, m, s)| (tokens + t, millis + m, samples + s));
-    let gen_speed = if gen_millis > 0 { gen_tokens as f64 / gen_millis as f64 * 1000.0 } else { 0.0 };
+    let (gen_tokens, gen_millis, gen_samples, gen_speed) = gen_speed_of(logs.iter());
     let (stats_gen_output_tokens, stats_gen_time_sum_ms) = (gen_tokens, gen_millis);
     // 转发优化省量 (剥离推理链 + 历史裁剪 + 响应缓存命中): 累计 token 与折算费用 (按各模型 input 单价, 与 total_cost 同口径).
     let total_strip_saved_tokens: u64 = logs.iter().map(|l| l.strip_saved_tokens as u64).sum();
@@ -4065,21 +4089,8 @@ fn compute_stats(
             let hit: u64 = logs.iter().map(|l| l.prompt_cache_hit_tokens as u64).sum();
             let miss: u64 = logs.iter().map(|l| l.prompt_cache_miss_tokens as u64).sum();
             let cost: f64 = logs.iter().map(|l| log_cost(&memo, l)).sum();
-            // 纯生成吐字速度: 仅累计首 token 延迟已知的流式请求 (ft<总耗时 且 有输出 token),
-            // gen_ms = 总耗时 - 首 token 延迟, 排除排队与 TTFT.
-            let (gen_ct, gen_ms): (u64, u64) = logs
-                .iter()
-                .filter_map(|l| {
-                    l.first_token_ms
-                        .filter(|&ft| ft < l.latency_ms && l.completion_tokens > 0)
-                        .map(|ft| (l.completion_tokens as u64, l.latency_ms - ft))
-                })
-                .fold((0u64, 0u64), |(ac, am), (c, m)| (ac + c, am + m));
-            let gen_speed = if gen_ms > 0 {
-                gen_ct as f64 / gen_ms as f64 * 1000.0
-            } else {
-                0.0
-            };
+            // 纯生成吐字速度: 与首字延迟同判据、分子剔除思考 —— 细节见 gen_speed_of.
+            let (gen_ct, gen_ms, _gen_n, gen_speed) = gen_speed_of(logs.iter().copied());
             // 首字延迟: 与生成速度**同判据**取样本 (rollup::ttft_of), 保证两个指标
             // 说的是同一批请求 —— 否则"样本数对不上"会变成说不清的口径漂移.
             let ttft = ttft_aggregate(logs.iter().copied());
@@ -4183,20 +4194,8 @@ fn compute_stats(
                 .sum();
             let today_opt_saved_tokens =
                 today_strip_saved_tokens + today_trim_saved_tokens + today_resp_cache_saved_tokens;
-            // 纯生成吐字速度, 同 per_model 口径.
-            let (gen_ct, gen_ms): (u64, u64) = logs
-                .iter()
-                .filter_map(|l| {
-                    l.first_token_ms
-                        .filter(|&ft| ft < l.latency_ms && l.completion_tokens > 0)
-                        .map(|ft| (l.completion_tokens as u64, l.latency_ms - ft))
-                })
-                .fold((0u64, 0u64), |(ac, am), (c, m)| (ac + c, am + m));
-            let gen_speed = if gen_ms > 0 {
-                gen_ct as f64 / gen_ms as f64 * 1000.0
-            } else {
-                0.0
-            };
+            // 纯生成吐字速度, 同 per_model 口径 (共用 gen_speed_of, 避免第 N 份拷贝).
+            let (gen_ct, gen_ms, _gen_n, gen_speed) = gen_speed_of(logs.iter().copied());
             // 首字延迟, 同 per_model 口径.
             let ttft = ttft_aggregate(logs.iter().copied());
             ProviderStats {
@@ -4910,6 +4909,43 @@ struct TtftAgg {
     hist: Vec<u64>,
 }
 
+/// 纯生成吐字速度 (tok/s): 返回 `(Σ正文token, Σ生成耗时ms, 样本数, 速度)`.
+///
+/// **口径 (2026-10-11 修正, 踩过真坑)**: `completion_tokens` 是**计费**口径
+/// (思考也算产出、按输出价计费), 而「吐字速度」度量的是**正文流出速度** ——
+/// 两者不是同一件事, 分子必须剔除思考.
+///
+/// 为什么不剔就是错的 (实测 buddy/deepseek-v4-flash · high):
+///     completion_tokens = 166, 其中 reasoning = 138 (83%), 实际流出正文仅约 28 token;
+///     首字延迟 6.01s 时思考已产出完毕, 分母(首字后的窗口)只剩 1.12s.
+///     不剔除 → 166 / 1.12s ≈ 148 tok/s (端到端实测报 1193);
+///     剔除后 → 28 / 1.12s ≈ 25 tok/s, 与"看到正文在流"的体感一致.
+/// 同一个成因让 dsh-our-free-model 报出过 2941 tok/s 的假读数 —— 分子分母不同段.
+///
+/// 判据复用 [`crate::rollup::ttft_of`] (与首字延迟同源, 不会漂移);
+/// **正文为 0 的纯思考段不计样本** —— 它没有可测的正文速度, 记进去会算出一个假的 0,
+/// 而面板该显示「—」(无样本) 而不是「0 tok/s」.
+fn gen_speed_of<'a>(logs: impl Iterator<Item = &'a RequestLog>) -> (u64, u64, usize, f64) {
+    let (gen_ct, gen_ms, samples): (u64, u64, usize) = logs
+        .filter_map(|l| {
+            let ft = crate::rollup::ttft_of(l)?;
+            let visible = l.completion_tokens.saturating_sub(l.reasoning_tokens);
+            if visible == 0 {
+                return None;
+            }
+            Some((visible as u64, l.latency_ms - ft, 1usize))
+        })
+        .fold((0u64, 0u64, 0usize), |(ac, am, an), (c, m, n)| {
+            (ac + c, am + m, an + n)
+        });
+    let speed = if gen_ms > 0 {
+        gen_ct as f64 / gen_ms as f64 * 1000.0
+    } else {
+        0.0
+    };
+    (gen_ct, gen_ms, samples, speed)
+}
+
 /// 按 [`crate::rollup::ttft_of`] 的判据聚合一组日志的首字延迟.
 ///
 /// 无有效样本时 `avg_ms` 为 `None` —— 刻意区分「没有样本」与「首字 0 毫秒」:
@@ -5168,6 +5204,8 @@ mod tests {
             error: None,
             prompt_tokens: 100,
             completion_tokens: 50,
+            // mk() 是通用夹具: 默认无思考. 需要思考样本用 mk_ttft_rt().
+            reasoning_tokens: 0,
             cached: false,
             prompt_cache_hit_tokens: hit,
             prompt_cache_miss_tokens: miss,
@@ -5496,6 +5534,78 @@ mod tests {
         log.first_token_ms = first_token_ms;
         log.completion_tokens = ct;
         log
+    }
+
+    /// 构造带思考 token 的日志 (completion 含 reasoning).
+    fn mk_ttft_rt(
+        provider: &str,
+        latency_ms: u64,
+        first_token_ms: Option<u64>,
+        ct: u32,
+        rt: u32,
+    ) -> RequestLog {
+        let mut log = mk_ttft(provider, latency_ms, first_token_ms, ct);
+        log.reasoning_tokens = rt;
+        log
+    }
+
+    /// **回归 (2026-10-11, 用户提议读外部项目时发现)**: 吐字速度的分子必须**剔除思考 token**.
+    ///
+    /// 这个坑的实测来源: buddy/deepseek-v4-flash · high 一轮里
+    /// `completion_tokens=166` 而 `reasoning_tokens=138` (83%), 实际流出正文仅约 28 token.
+    /// 不剔除 → gen_speed 报 1193 tok/s, 真值约 15 (虚高 80 倍, 端到端实测复现过).
+    /// 同因让 dsh-our-free-model 报出过 2941 tok/s —— 分子含思考、分母(首字后窗口)不含.
+    #[test]
+    fn gen_speed_excludes_reasoning_tokens() {
+        // 一条: 总输出 1000 token, 其中 950 是思考 → 正文只有 50.
+        // 窗口 = 5000 - 200 = 4800ms.
+        let logs = vec![mk_ttft_rt("p", 5_000, Some(200), 1_000, 950)];
+        let (ct, ms, n, speed) = gen_speed_of(logs.iter());
+        assert_eq!(ct, 50, "分子必须是正文 50 (= 1000 − 950), 不是 1000");
+        assert_eq!(ms, 4_800);
+        assert_eq!(n, 1);
+        // 50 token / 4.8s ≈ 10.4 tok/s
+        assert!((speed - 10.416).abs() < 0.01, "实得 {speed}");
+        // 对照: 不剔除会是 1000/4.8 ≈ 208 tok/s —— 差 20 倍
+        assert!(speed < 20.0, "剔除后必须远低于未剔除的 208");
+    }
+
+    /// 无思考 token 的请求不受影响 (reasoning=0 时退化成原口径).
+    #[test]
+    fn gen_speed_unchanged_without_reasoning() {
+        let logs = vec![mk_ttft_rt("p", 5_000, Some(200), 100, 0)];
+        let (ct, _ms, n, _sp) = gen_speed_of(logs.iter());
+        assert_eq!((ct, n), (100, 1), "没有思考时分子就是 completion_tokens");
+    }
+
+    /// **纯思考段 (正文为 0) 不计入样本** —— 它没有可测的正文速度.
+    ///
+    /// 记进去会算出一个假的 0 tok/s, 而面板该显示「—」(= 无样本) 而不是「0」.
+    #[test]
+    fn gen_speed_skips_pure_reasoning_segments() {
+        // ① 全部是思考
+        let pure = vec![mk_ttft_rt("p", 5_000, Some(200), 800, 800)];
+        let (ct, ms, n, speed) = gen_speed_of(pure.iter());
+        assert_eq!((ct, ms, n), (0, 0, 0), "纯思考段不该贡献任何样本");
+        assert_eq!(speed, 0.0, "无样本时速度 0, 由前端显示「—」");
+
+        // ② 混一条纯思考 + 一条正常: 只有正常的计入
+        let mixed = vec![
+            mk_ttft_rt("p", 5_000, Some(200), 800, 800), // 纯思考 → 跳过
+            mk_ttft_rt("p", 5_000, Some(200), 100, 0),   // 正常 → 计入
+        ];
+        let (ct2, ms2, n2, _) = gen_speed_of(mixed.iter());
+        assert_eq!((ct2, n2), (100, 1), "只计正常那条");
+        assert_eq!(ms2, 4_800);
+    }
+
+    /// 思考数超过输出数 (上游口径不一致/流中途断) 时不得算出**负**的正文量.
+    /// 用 saturating_sub 兜底: 正文记 0 → 该条被跳过, 而不是变成一个巨大的负数分子.
+    #[test]
+    fn gen_speed_clamps_reasoning_over_completion() {
+        let logs = vec![mk_ttft_rt("p", 5_000, Some(200), 100, 500)];
+        let (ct, _ms, n, _sp) = gen_speed_of(logs.iter());
+        assert_eq!((ct, n), (0, 0), "reasoning > completion 时按正文 0 处理并跳过");
     }
 
     /// 分位数: 由直方图反推, 取累计首次过半/过九成的**桶上界**.
