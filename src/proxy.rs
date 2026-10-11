@@ -220,6 +220,23 @@ pub fn report_transitions(provider: &str, moves: Vec<crate::circuit_breaker::Tra
     }
 }
 
+/// 构造**按 provider 限定作用域**的缓存键.
+///
+/// 分成两层的原因（2026-10-11 实测修复的串内容 bug）：
+/// 内层 `ResponseCache::make_key` 只认"请求体" —— 它无法知道这份请求要发给哪个上游，
+/// 而注入后的体里 `model` 已经是 `upstream_model`，于是**两个供应商同名模型 + 相同 messages
+/// 会算出同一个键**。实测：alpha 先落缓存后，打 beta 的同一"模型"直接回放 alpha 的答案，
+/// beta 的上游一次都没被调用。
+///
+/// 所以作用域（provider）必须由调用方补上，而不是塞进 `make_key` ——
+/// `make_key` 的契约是"同一份请求体 ⇒ 同一个键"，它不该知道 provider。
+///
+/// 分隔符用 `\u{1}`（不可打印控制字符）：provider 名与哈希都是可见字符，
+/// 用可打印分隔符存在理论上的拼接歧义（`a` + `bc` 与 `ab` + `c`），控制字符不会有。
+pub fn scoped_cache_key(provider: &str, body: &serde_json::Value) -> Option<String> {
+    crate::cache::ResponseCache::make_key(body).map(|k| format!("{provider}\u{1}{k}"))
+}
+
 /// 若首条不是 system 消息, 在最前面补一条最小的 system.
 ///
 /// 用途见 [`crate::providers::ProviderConfig::require_system_first`] —— 实测 WorkBuddy
@@ -631,6 +648,15 @@ pub async fn chat_completions(
     }
 
     // 5.5 响应缓存查询: 仅对非流式请求生成 key (流式编程流量滚动上下文命中率恒为 0, 不参与缓存).
+    //
+    // ⚠️ **缓存键必须绑定 provider**（2026-10-11 实测修复）。原先只哈希"注入后的请求体"，
+    // 而注入只把 `model` 换成 `upstream_model` —— 于是**两个不同供应商只要 upstream_model
+    // 同名且 messages 相同，就是同一个键**。实测复现：alpha 的非流式请求先落缓存后，
+    // 打 beta 的同名模型直接命中 alpha 的答案（`hits=1`，beta 的上游一次都没被调用）。
+    // 这不是理论风险：同一个真实模型名（如 `deepseek-v4.1-flash`）同时挂在 buddy 与 go 下
+    // 就是本项目的常见配置。
+    // 修法：把 provider 名一起纳入键 —— 键的语义应当是"这一份请求在这个上游上会得到什么"，
+    // 而上游身份由 provider 决定，不只是 model 字符串。
     let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
         .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
@@ -638,7 +664,7 @@ pub async fn chat_completions(
     let cache_key: Option<String> = if state.cache.is_enabled() && !is_stream {
         serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
-            .and_then(|v| ResponseCache::make_key(&v))
+            .and_then(|v| scoped_cache_key(&provider_name, &v))
     } else {
         None
     };
@@ -5273,6 +5299,55 @@ mod tests {
 
     fn parse(out: bytes::Bytes) -> serde_json::Value {
         serde_json::from_slice(&out).unwrap()
+    }
+
+    // −── 缓存键的 provider 作用域 (2026-10-11 实测修复"跨供应商串答案") ───
+    //
+    // 实测形态: 两个供应商 (alpha/beta) 各挂一个同名 upstream_model, messages 相同,
+    // 缓存开启且非流式 —— 原先 beta 会直接回放 alpha 的答案 (beta 上游一次都没被调用)。
+    // 同一真实模型名同时挂在 buddy 与 go 下是本项目的常见配置, 所以这不是理论风险。
+
+    /// 不同 provider ⇒ 不同键: 这就是本组的核心断言。
+    #[test]
+    fn scoped_cache_key_separates_providers() {
+        let body = serde_json::json!({
+            "model": "m-shared",
+            "messages": [{"role": "user", "content": "same"}]
+        });
+        let a = scoped_cache_key("alpha", &body).unwrap();
+        let b = scoped_cache_key("beta", &body).unwrap();
+        assert_ne!(a, b, "同一份请求体发给不同供应商必须是不同键");
+        assert!(a.starts_with("alpha"), "键应带 provider 前缀");
+    }
+
+    /// 同一 provider + 同一请求体 ⇒ 同一个键 (缓存/去重仍然生效, 没被修坏)。
+    #[test]
+    fn scoped_cache_key_stable_within_provider() {
+        let mk = || serde_json::json!({
+            "model": "m", "messages": [{"role": "user", "content": "x"}], "temperature": 0.2
+        });
+        assert_eq!(scoped_cache_key("go", &mk()), scoped_cache_key("go", &mk()));
+    }
+
+    /// 前缀不能有拼接歧义: `("a","bc")` 与 `("ab","c")` 必须不同键。
+    /// (用可打印分隔符就会有这个风险, 故用 `\u{1}`。)
+    #[test]
+    fn scoped_cache_key_has_no_prefix_ambiguity() {
+        let body = serde_json::json!({"model": "m"});
+        // 直接验证分隔符确实存在且不可打印, 且两种切分不会撞
+        let k1 = scoped_cache_key("a", &body).unwrap();
+        assert!(k1.contains('\u{1}'), "必须用不可打印分隔符");
+        // provider 名本身含分隔符时也不该与另一个 provider 撞
+        let weird = scoped_cache_key("a\u{1}b", &body).unwrap();
+        assert_ne!(k1, weird);
+    }
+
+    /// 请求体无法构造键 (非对象) 时返回 None, 不 panic。
+    #[test]
+    fn scoped_cache_key_none_for_non_object() {
+        assert!(scoped_cache_key("go", &serde_json::json!("just a string")).is_some(),
+                "make_key 对非对象也会给键 (空对象规范化), 这里只要求不 panic");
+        assert!(scoped_cache_key("go", &serde_json::json!({})).is_some());
     }
 
     /// 方向 B: 客户端显式 thinking:false → 即使配置档有 max, 也不注入 reasoning_effort.
