@@ -132,6 +132,17 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .ov-api-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--fill-4)}
 .ov-api-row:last-child{border-bottom:none}
 .ov-api-method{font:600 var(--fs-10) var(--font-mono);color:var(--accent);background:var(--primary-soft);padding:3px 6px;border-radius:var(--rs)}
+/* ── 事件台账 (概览「最近发生的事」) ──
+   一行一条: 状态点 | 时间 | 类别 | 主体 | 说明。时间用等宽 + tabular 便于竖扫。
+   配色一律走 token (浅色主题下同样成立) —— 禁止 rgba 字面量 (docs/frontend.md 红线)。 */
+.evt-list{display:flex;flex-direction:column}
+.evt-row{display:flex;align-items:baseline;gap:8px;padding:7px 0;border-bottom:1px solid var(--fill-4);flex-wrap:wrap}
+.evt-row:last-child{border-bottom:none}
+.evt-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;align-self:center}
+.evt-time{color:var(--muted);flex-shrink:0;font-variant-numeric:tabular-nums}
+.evt-kind{font-weight:600;flex-shrink:0}
+.evt-sub{color:var(--fg);flex-shrink:0}
+.evt-detail{flex:1;min-width:0;line-height:1.5}
 .ov-api-path{font:var(--fs-9) var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-actions{display:flex;gap:8px;flex-wrap:wrap}
 .an-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}

@@ -97,6 +97,8 @@ function dashboard() {  return {
     toolOutputLimit: 0,
     // 静默降级计数 {body_parse_failed, upstream_error_parse_failed}
     degradations: {},
+    // 事件台账 (关键事件时间线, 最新在最前)
+    events: [],
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
     streamTimeoutSecs: 120,
     retryMax: 1,

@@ -190,7 +190,7 @@
       // 切回概览重播 KPI 数字补间: 补间槽是持久对象, 目标值没变时 numTween 会直接返回旧值,
       // 故必须显式打 replay 标 (否则只有"手动刷新"能重播, 切页签毫无数字反馈).
       // 首次加载传 false (守 numTween 的"初值即真值"约束, 避免首屏像加载动画).
-      if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
+      if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); this.fetchEvents(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
       if (tabId==='analytics') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchDegradations(); }
       // 记录页的统计来自 logs (不走 stats): 已加载过才重播 —— 首访让骨架→内容自然出现, 不从 0 滚.
       if (tabId==='records') { if (this.logsFetched) this.replayNumTweens(); this.fetchLogs(); }
@@ -202,6 +202,9 @@
       this.pollTimer = setInterval(() => {
         this.fetchLogs();
         if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
+        // 事件台账也要跟着轮询: 熔断/恢复是**异步发生**的, 只在切页签时拉一次
+        // 就会"打开面板看到的是十分钟前的状态" —— 那等于没有通知。
+        if (this.activeTab==='dashboard') this.fetchEvents();
         if (this.activeTab==='analytics') { this.fetchStats(); this.fetchDegradations(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
       }, 3000);
     },

@@ -182,6 +182,12 @@ pub struct QuotaProgress {
     pub packages: usize,
 }
 
+/// 额度进度达到此百分比即记一条「额度将尽」台账.
+///
+/// 80% 的取舍: 留出**可行动的余量** —— 报到 95% 才说, 用户基本已经用完了;
+/// 报到 50% 又太吵 (半个窗口就喊, 而大多数窗口本来就会用到一半以上)。
+pub const QUOTA_LOW_PCT: f64 = 80.0;
+
 /// 聚合 buddy 的积分资源包.
 ///
 /// 返回 `(总剩余, 总已消耗, 最近会重置的窗口 (时刻, 该窗口剩余), 还有额度的包的进度)`.
@@ -805,6 +811,27 @@ impl BalanceManager {
                 "{}: {e}",
                 crate::i18n::pick("部分账号查询失败", "some accounts failed")
             ));
+        }
+        // 额度将尽 → 记一条台账 (2026-10-11, 用户要的"异常通知").
+        //
+        // 判据用**窗口进度**而非剩余绝对值: "还剩 200 积分"是否算少, 取决于窗口多大
+        // (剩 200/300 是少, 剩 200/100000 还很多)。这与面板进度条同源, 不会出现
+        // "面板说还健康、台账说快没了"这种自相矛盾。
+        // ⚠️ 只在 `used_pct` 有值 (= 上游确实给了窗口字段) 时判, 缺数据不猜 (口径红线)。
+        if let Some(p) = info.quota_progress.and_then(|p| p.used_pct) {
+            if p >= QUOTA_LOW_PCT {
+                crate::admin::note_event(
+                    crate::events::EventKind::QuotaLow,
+                    provider,
+                    &format!(
+                        "{}使用了 {:.0}%（剩余 {} / 共 {}）",
+                        crate::i18n::pick("本窗口额度", "window quota"),
+                        p,
+                        info.quota_progress.map(|q| q.window_remain).unwrap_or(0.0).round(),
+                        info.quota_progress.map(|q| q.window_size).unwrap_or(0.0).round(),
+                    ),
+                );
+            }
         }
         info
     }

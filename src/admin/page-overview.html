@@ -88,6 +88,28 @@
           </div>
         </div>
         <div class="pnl"><div class="pnl-b"><div class="fb mb2"><span class="pnl-ht" x-text="t('opt_saved_title')"></span><span class="txs tm" style="margin-left:8px" x-text="t('opt_saved_cumulative',fmtT(stats.total_opt_saved_tokens||0),stats.opt_saved_since||new Date().toLocaleDateString())+(stats.total_opt_saved_fee>0?(' · ≈ '+fmtMoneyTiny(stats.total_opt_saved_fee)):'')"></span></div><div class="ov-summary-grid"><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_today_tokens')"></span><span class="ov-icon" style="background:rgba(52,211,153,.12);color:var(--ok)">⚡</span></div><div class="ov-kpi-value" style="color:var(--ok)" x-text="numText('todaySaved',todaySavedTokens)"></div><div class="ov-kpi-hint" x-text="(stats.today_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.today_opt_saved_fee)+' · '):'')+t('session_saved_tokens_hint')"></div></div><div class="ov-summary-card"><div class="ov-kpi-top"><span class="ov-kpi-label" x-text="t('opt_saved_month_tokens')"></span><span class="ov-icon" style="background:var(--primary-soft);color:var(--accent)">📊</span></div><div class="ov-kpi-value" style="color:var(--accent)" x-text="numText('monthSaved',stats.month_opt_saved_tokens||0)"></div><div class="ov-kpi-hint" x-text="(stats.month_opt_saved_fee>0?('≈ '+fmtMoneyTiny(stats.month_opt_saved_fee)+' · '):'')+monthSavedHint"></div></div></div></div></div>
+        <!-- ── 事件台账 (2026-10-11): 用户要的「工作报告 + 异常通知」──
+             用户原话:「熔断、报错等等连工作报告、异常通知都没做。出问题得用户自己去一点点找。」
+             此前熔断开合**一行日志都没有** (circuit_breaker.rs 零 tracing), 面板只有当前快照 ——
+             刷新一下, 断过的痕迹就没了。这块按时间列出"发生了什么 + 为什么"。
+             放在健康度右边紧邻: "是不是出事了"与"出了什么事"是同一个问题。 -->
+        <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('events_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('events_desc')"></div></div><div class="fb"><span class="bdg" :class="eventsHasProblem?'bdg-e':'bdg-n'" x-show="events.length" x-text="t('events_count',events.length)"></span><button class="btn btn-g" style="font-size:var(--fs-11)" x-show="events.length" @click="clearEvents()" x-text="t('events_clear')"></button></div></div><div class="pnl-b">
+          <template x-if="!events.length"><div class="txs tm" style="padding:6px 0" x-text="t('events_empty')"></div></template>
+          <div class="evt-list">
+            <template x-for="(e,i) in events.slice(0,8)" :key="String(e.ts)+e.kind+e.subject+i">
+              <div class="evt-row">
+                <span class="evt-dot" :style="'background:'+({ok:'var(--ok)',warn:'var(--warn)',err:'var(--err)'}[e.severity]||'var(--muted)')" aria-hidden="true"></span>
+                <span class="evt-time mono txs" x-text="eventTime(e.ts)"></span>
+                <span class="evt-kind" :style="'color:'+({ok:'var(--ok)',warn:'var(--warn)',err:'var(--err)'}[e.severity]||'var(--muted)')" x-text="eventLabel(e.kind)"></span>
+                <span class="evt-sub mono txs" x-show="e.subject" x-text="e.subject"></span>
+                <!-- 合并次数: 同一次持续故障累计发生几次, 避免刷屏又不丢掉"它还在继续" -->
+                <span class="bdg bdg-w" x-show="e.count>1" x-text="'×'+e.count"></span>
+                <span class="evt-detail txs tm" x-text="e.detail"></span>
+              </div>
+            </template>
+          </div>
+          <div class="panel-takeaway" x-show="eventsTakeaway" x-text="eventsTakeaway"></div>
+        </div></div>
         <div class="pnl"><div class="pnl-h"><div><span class="pnl-ht"><span x-text="t('performance_health')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('avg_latency')"></div><div class="ov-health-value" x-text="avgLatencyText"></div></div>

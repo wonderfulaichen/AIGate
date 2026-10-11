@@ -36,6 +36,57 @@
         else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
       } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
+    // ── 事件台账 (2026-10-11): 关键事件的时间线 ──
+    // 用户原话:「熔断、报错等等连工作报告、异常通知都没做。出问题得用户自己去一点点找。」
+    // 这里就是那份"工作报告": 熔断开合、上游连续失败、额度将尽、账号作废等按时间列出,
+    // 每条带**原因** —— 不必再去日志里猜关键词。
+    async fetchEvents() {
+      try {
+        const r = await fetch('/admin/api/events?limit=100', { headers: authHeaders() });
+        if (r.ok) this.events = (await r.json()).events || [];
+      } catch (e) {}
+    },
+    async clearEvents() {
+      await confirmAsk(t('events_clear_confirm'), { danger: true, onOk: async () => {
+        try { await fetch('/admin/api/events/clear', { method: 'POST', headers: authHeaders() }); } catch (e) {}
+        await this.fetchEvents();
+      }});
+    },
+    // 事件时间: 今天的只显示时分秒 (台账多数是今天的, 省掉日期更好扫读), 更早的带日期。
+    eventTime(ts) {
+      const d = new Date((Number(ts) || 0) * 1000);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      return sameDay ? `${hh}:${mm}:${ss}` : this.fmtDateTime(Math.floor(Number(ts) || 0));
+    },
+    // 事件人话: kind → i18n 文案, 未知取值照实显示 (上游/后端加新类别时吞掉就等于埋了线索).
+    eventLabel(kind) {
+      const map = {
+        breaker_open: 'ev_breaker_open', breaker_closed: 'ev_breaker_closed',
+        breaker_half_open: 'ev_breaker_half_open', breaker_reset: 'ev_breaker_reset',
+        upstream_failing: 'ev_upstream_failing', upstream_recovered: 'ev_upstream_recovered',
+        quota_low: 'ev_quota_low', account_dead: 'ev_account_dead',
+        providers_reloaded: 'ev_providers_reloaded', started: 'ev_started',
+      };
+      const k = map[kind];
+      return k ? t(k) : (kind || '');
+    },
+    // 台账的整体一句话结论 —— 让用户不必逐条读完才知道"要不要担心".
+    get eventsTakeaway() {
+      const evs = this.events || [];
+      if (!evs.length) return '';
+      const errs = evs.filter(e => e.severity === 'err').length;
+      const warns = evs.filter(e => e.severity === 'warn').length;
+      if (errs) return t('events_takeaway_err', errs);
+      if (warns) return t('events_takeaway_warn', warns);
+      return t('events_takeaway_ok');
+    },
+    get eventsHasProblem() {
+      return (this.events || []).some(e => e.severity === 'err');
+    },
     // 静默降级计数: 解析失败导致优化/翻译未生效的次数. 用于区分
     // "这次确实没什么可省" 与 "我们根本没解析成功".
     async fetchDegradations() {

@@ -57,6 +57,7 @@ mod proxy_cfg;
 mod seen_version;
 mod model_meta;
 mod recall;
+mod events;
 mod provider_catalog;
 mod presets;
 
@@ -682,6 +683,9 @@ fn main() {
     if local_log_len == 0 {
         info!("main: no log history in '{resolved_data_dir}'; set AIGATE_DATA_DIR to reuse another instance's data dir");
     }
+    // 事件台账 (2026-10-11): 必须在任何转发路径之前安装 —— 否则启动早期的事件
+    // (如首次健康探测发现的异常) 会静默丢弃。安装成功与否不影响启动。
+    let _ = events::install(Arc::new(events::EventLog::new(&resolved_data_dir)));
     // 路由表句柄提前取出: AppState 与日志缓冲区 (价格快照) 都要引用它.
     let registry = Arc::new(RwLock::new(registry));
     let state = AppState {
@@ -776,6 +780,9 @@ fn main() {
         .route("/admin/api/recall/clear", post(admin::api_recall_clear))
         // 降级埋点: 静默降级计数 (解析失败导致优化/翻译未生效).
         .route("/admin/api/degradations", get(admin::api_degradations))
+        // 事件台账 (2026-10-11): 关键事件的时间线 + 清空.
+        .route("/admin/api/events", get(admin::api_events))
+        .route("/admin/api/events/clear", post(admin::api_events_clear))
         .route("/admin/api/tool-output-limit", get(admin::api_tool_output_limit_get).post(admin::api_tool_output_limit_set))
         .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
         .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))
@@ -844,6 +851,13 @@ fn main() {
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     info!("{} — listening on http://{}", crate::version::build_info(), addr);
+    // 台账里留一条"进程启动": 它既是分界线 (哪些事件属于哪一次运行), 也让用户
+    // 打开面板时台账必定**不是空的** —— 空的台账会让"这个功能是不是没工作"没法判断。
+    events::note(
+        events::EventKind::Started,
+        "",
+        &format!("{} 已启动，监听 {}", crate::version::build_info(), addr),
+    );
 
     // ── 绑定端口并启动 Axum ──
     let listener = rt.block_on(async {

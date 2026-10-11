@@ -107,9 +107,15 @@ pub type BreakerMap = Arc<Mutex<HashMap<String, CircuitBreaker>>>;
 /// ⚠️ 每个请求**只在入口调用一次**. 重试循环复检请用 [`breaker_allows_retry`].
 pub fn check_breaker(breakers: &BreakerMap, provider: &str) -> bool {
     let mut g = breakers.lock().expect("breaker lock poisoned");
-    g.entry(provider.to_string())
-        .or_insert_with(CircuitBreaker::new)
-        .allow_request()
+    let cb = g.entry(provider.to_string()).or_insert_with(CircuitBreaker::new);
+    let allowed = cb.allow_request();
+    // `allow_request` 会推进 Open→HalfOpen (冷却结束), 这就是"它自己开始试探了"
+    // 那一瞬。必须**在这里**取走: 若等下一次 `report_breaker` 才顺手带走,
+    // 崩溃/无请求的空档期里这条事件会一直躺着, 用户看到的时间线就是错的。
+    let moves = cb.take_transitions();
+    drop(g);
+    report_transitions(provider, moves);
+    allowed
 }
 
 /// 重试循环用的非消费式复检 (不重复认领探测名额).
@@ -139,6 +145,78 @@ pub fn report_breaker(breakers: &BreakerMap, provider: &str, success: bool) {
         cb.record_success();
     } else {
         cb.record_failure();
+    }
+    let moves = cb.take_transitions();
+    drop(g); // 先把熔断锁放掉再写台账: 写盘绝不能落在临界区里
+    report_transitions(provider, moves);
+}
+
+/// 把熔断状态迁移写进事件台账 + 日志 (2026-10-11 新增).
+///
+/// 为什么单开一个函数: 迁移可能在**三个**地方产生 (入口 `check_breaker` 的
+/// 冷却→半开、`report_breaker` 的成功/失败判定、面板的手动重置), 三处必须写**同一套**
+/// 文案 —— 否则同一件事在台账与日志里会有两种说法 (本项目在截断文案上踩过这个坑)。
+///
+/// 用户原话「熔断...连工作报告、异常通知都没做。出问题得用户自己去一点点找」
+/// 指的就是这里: 此前 `circuit_breaker.rs` **一行日志都没有**, 面板只有当前快照。
+pub fn report_transitions(provider: &str, moves: Vec<crate::circuit_breaker::Transition>) {
+    use crate::circuit_breaker::{CircuitState, TransitionReason};
+    for m in moves {
+        let detail = m.reason.describe();
+        match (m.from, m.to) {
+            // from == to == Closed = **通知性事件** (状态没变, 但情况变了):
+            //   · 连续失败达 2 次但还没到熔断阈值 → 预警 (用户想提前知道"这供应商不稳");
+            //   · 之前的预警状态现在成功了 → 已恢复。
+            // 这两条正是用户说的"异常通知" —— 此前它们**完全没有出口**: 熔断没开就没有任何痕迹。
+            (CircuitState::Closed, CircuitState::Closed) => match m.reason {
+                TransitionReason::RespondingAgain { n } => {
+                    info!("proxy: provider {provider} responding again ({n} ok in a row)");
+                    crate::admin::note_event(
+                        crate::events::EventKind::UpstreamRecovered,
+                        provider,
+                        &detail,
+                    );
+                }
+                _ => {
+                    warn!("proxy: provider {provider} failing ({detail})");
+                    crate::admin::note_event(
+                        crate::events::EventKind::UpstreamFailing,
+                        provider,
+                        &detail,
+                    );
+                }
+            },
+            // 断开: 这是"出事了"的那一条, 必须带原因。
+            (_, CircuitState::Open) => {
+                warn!("proxy: circuit OPEN for provider={provider} ({detail})");
+                crate::admin::note_event(
+                    crate::events::EventKind::BreakerOpen,
+                    provider,
+                    &detail,
+                );
+            }
+            // 恢复: 只在**真的从断开状态回来**时记, 避免"本就闭合"刷屏。
+            (CircuitState::Open | CircuitState::HalfOpen, CircuitState::Closed) => {
+                let kind = if matches!(m.reason, TransitionReason::ManualReset) {
+                    crate::events::EventKind::BreakerReset
+                } else {
+                    crate::events::EventKind::BreakerClosed
+                };
+                info!("proxy: circuit CLOSED for provider={provider} ({detail})");
+                crate::admin::note_event(kind, provider, &detail);
+            }
+            // 冷却结束、放行探测: 只是"准备试探", 还不是恢复, 单独一档。
+            (CircuitState::Open, CircuitState::HalfOpen) => {
+                info!("proxy: circuit HALF-OPEN for provider={provider} ({detail})");
+                crate::admin::note_event(
+                    crate::events::EventKind::BreakerHalfOpen,
+                    provider,
+                    &detail,
+                );
+            }
+            // 其余组合不存在.
+            _ => {}
+        }
     }
 }
 

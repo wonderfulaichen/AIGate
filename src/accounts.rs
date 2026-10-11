@@ -740,6 +740,14 @@ pub async fn refresh_account(
                     e.updated_at = Some(now_secs());
                 })
                 .await;
+            // 账号作废是**必须让用户知道**的事件: 此后该账号不再自动续期,
+            // 唯一出路是重新登录 —— 而此前它只在日志里留一行, 用户要等请求开始
+            // 失败才会察觉 (用户报"出问题得自己一点点找")。
+            crate::admin::note_event(
+                crate::events::EventKind::AccountDead,
+                provider,
+                &format!("账号 {account_id} 续期被拒 HTTP {status}，已停止自动续期，需重新登录"),
+            );
         }
         return Err(format!(
             "续期被拒 HTTP {status}{}: {}",

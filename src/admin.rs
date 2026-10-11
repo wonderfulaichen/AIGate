@@ -1346,6 +1346,14 @@ pub async fn api_providers_reload(
         }
     }
     sync_breakers_for(&state).await;
+    // 热重载会整体替换路由表 (改端点/加删供应商都可能), 是"配置变了"的明确分界点 ——
+    // 用户排查"是不是我改配置改坏的"时, 台账里这条就是时间锚点。
+    let n = state.registry.read().await.providers().len();
+    note_event(
+        crate::events::EventKind::ProvidersReloaded,
+        "",
+        &format!("已重新加载 providers.json（当前 {n} 个供应商）"),
+    );
     Json(serde_json::json!({ "message": crate::i18n::msg_config_reloaded() }))
 }
 
@@ -2074,6 +2082,11 @@ pub async fn api_circuit_reset(
     match g.get_mut(&payload.provider) {
         Some(cb) => {
             cb.force_close();
+            // 手动重置也要留痕: 否则台账里会看到"熔断打开"却永远等不到对应的关闭事件,
+            // 用户会以为它一直断着 (而事实是有人点过重置)。
+            let moves = cb.take_transitions();
+            drop(g);
+            super::proxy::report_transitions(&payload.provider, moves);
             Json(serde_json::json!({ "message": crate::i18n::msg_circuit_reset(&payload.provider) }))
         }
         None => Json(serde_json::json!({ "message": crate::i18n::msg_circuit_none(&payload.provider) })),
@@ -2918,6 +2931,58 @@ pub fn degradation_counts() -> serde_json::Value {
 /// GET /admin/api/degradations — 静默降级计数 (进程级, 重启清零).
 pub async fn api_degradations() -> Json<serde_json::Value> {
     Json(degradation_counts())
+}
+
+/// 记一条**关键事件** (2026-10-11). 转发到 [`crate::events`] 的进程级台账.
+///
+/// 为什么在这里转一层而不是各处直接调 `events::note`: 本项目所有"埋点"都经过
+/// `admin` 这一层 (`note_degradation` 同款), 好处是**失败静默**这条纪律只有一处实现
+/// —— 埋点绝不能因为自身出错而破坏转发。
+pub fn note_event(kind: crate::events::EventKind, subject: &str, detail: &str) {
+    crate::events::note(kind, subject, detail);
+}
+
+/// GET /admin/api/events — 事件台账 (最近 `limit` 条, 时间倒序).
+///
+/// 这就是用户要的「工作报告」: 不必再去日志里翻关键词, 关键事件按时间列出来,
+/// 每条都带**原因**与**后果**。与 `/admin/api/errors` 的分工:
+/// 那个是"哪几条请求失败了"(逐条), 这个是"系统状态发生了什么变化"(带原因)。
+pub async fn api_events(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(200)
+        .min(crate::events::MAX_EVENTS);
+    let mut items: Vec<serde_json::Value> = crate::events::ledger()
+        .map(|l| {
+            l.recent(limit)
+                .into_iter()
+                .rev() // 面板要"最新在最上"
+                .map(|e| {
+                    serde_json::json!({
+                        "ts": e.ts,
+                        "kind": e.kind.as_str(),
+                        "severity": e.kind.severity(),
+                        "subject": e.subject,
+                        "detail": e.detail,
+                        "count": e.count,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    items.truncate(limit);
+    Json(serde_json::json!({ "events": items, "total": items.len() }))
+}
+
+/// POST /admin/api/events/clear — 清空台账 (面板"清空"按钮).
+pub async fn api_events_clear() -> Json<serde_json::Value> {
+    if let Some(l) = crate::events::ledger() {
+        l.clear();
+    }
+    Json(serde_json::json!({ "ok": true }))
 }
 
 // ─── 常态截断超长 tool 输出 ───
