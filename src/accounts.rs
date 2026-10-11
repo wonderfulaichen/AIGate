@@ -846,21 +846,64 @@ fn now_secs_pub() -> u64 {
         .unwrap_or(0)
 }
 
+/// 一次登录流要用到的产品取值 (由预设下发; 见 `presets::LoginProfile`)。
+///
+/// 为什么要参数化: 同一套登录协议被 CodeBuddy 国内版与 WorkBuddy 国际版共用,
+/// 而 `platform` / 归属头 / 版本号 / UA 各产品不同 —— 原先这些值硬编码为国内版,
+/// 导致"给国际版条目点登录会拿到国内区的凭据"(2026-10-11 接入 WorkBuddy 时发现)。
+#[derive(Debug, Clone)]
+pub struct LoginProfile {
+    pub endpoint: String,
+    pub platform: String,
+    pub api_domain: String,
+    pub product_code: String,
+    pub attribution_name: String,
+    pub client_version: String,
+    pub user_agent: String,
+}
+
+impl LoginProfile {
+    /// 国内版默认值 (无预设信息时的回落, 保持既有行为不变)。
+    pub fn buddy_default() -> Self {
+        Self {
+            endpoint: buddy_endpoint(),
+            platform: "ide".to_string(),
+            api_domain: "copilot.tencent.com".to_string(),
+            product_code: "codebuddy".to_string(),
+            attribution_name: "CodeBuddy".to_string(),
+            client_version: "1.106.1".to_string(),
+            user_agent: BUDDY_UA.to_string(),
+        }
+    }
+}
+
 /// 第 1 步: 取登录 state + authUrl, 记入会话表 (pending), 返回 authUrl 供前端打开.
 pub async fn buddy_login_start(
     client: &reqwest::Client,
     sessions: &LoginSessions,
     provider: &str,
+    profile: &LoginProfile,
 ) -> Result<String, String> {
-    let url = format!("{}{AUTH_STATE_PATH}?platform=ide", buddy_endpoint());
+    let url = format!(
+        "{}{AUTH_STATE_PATH}?platform={}",
+        profile.endpoint.trim_end_matches('/'),
+        urlencode(&profile.platform)
+    );
     let resp = client
         .post(&url)
-        .header("X-Domain", "copilot.tencent.com")
+        // 身份头与转发路径同源 (配置里写的与这里发的必须一致, 否则上游看到的"产品"
+        // 与它下发的凭据区域不一致) —— 这三个值国内版/国际版不同, 故走 profile。
+        .header("X-Domain", &profile.api_domain)
+        .header("X-Product-Code", &profile.product_code)
+        .header("X-Product", &profile.attribution_name)
+        .header("X-IDE-Name", &profile.attribution_name)
+        .header("X-IDE-Type", &profile.attribution_name)
+        .header("X-IDE-Version", &profile.client_version)
         .header("X-No-Authorization", "true")
         .header("X-No-User-Id", "true")
         .header("X-No-Enterprise-Id", "true")
         .header("X-No-Department-Info", "true")
-        .header("User-Agent", BUDDY_UA)
+        .header("User-Agent", &profile.user_agent)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -896,12 +939,17 @@ pub async fn buddy_login_poll(
     sessions: LoginSessions,
     store: AccountStore,
     provider: String,
+    profile: LoginProfile,
 ) {
     let state = match sessions.read().await.get(&provider) {
         Some(s) => s.state.clone(),
         None => return,
     };
-    let url = format!("{}{AUTH_TOKEN_PATH}?state={}", buddy_endpoint(), urlencode(&state));
+    let url = format!(
+        "{}{AUTH_TOKEN_PATH}?state={}",
+        profile.endpoint.trim_end_matches('/'),
+        urlencode(&state)
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(LOGIN_TIMEOUT_SECS);
     loop {
         if std::time::Instant::now() >= deadline {
@@ -913,7 +961,7 @@ pub async fn buddy_login_poll(
         let resp = client
             .get(&url)
             .header("X-No-Authorization", "true")
-            .header("User-Agent", BUDDY_UA)
+            .header("User-Agent", &profile.user_agent)
             .timeout(std::time::Duration::from_secs(10))
             .send()
             .await;

@@ -1,13 +1,16 @@
 # 交接文档 — AIGate
 
-> 最后更新 **2026-10-11**（同日六轮：① **吐字速度虚高修复**（分子含思考 token，实测最高虚高 80 倍）；
+> 最后更新 **2026-10-11**（同日七轮：① **吐字速度虚高修复**（分子含思考 token，实测最高虚高 80 倍）；
 > ② **循环检测误报第二轮 + 网关截断不再无声**；
 > ③ **循环检测改为默认关闭** —— 全量审计 24 次命中全是误报、零次真循环，用户定案；
 > ④ **记录新增「结束方式」`end_reason`** —— 让"输出跑到一半停了"一眼可判是谁停的
 > （此前三种停止在记录上完全同形，用户四次报障才定位到这个观测盲区）；
 > ⑤ **外部项目 dsh-our-free-model 二轮复核** → 修掉记录详情同款漏剔除（虚高 204 倍）；
 > ⑥ **新增事件台账** —— 熔断/上游失败/额度/账号等关键事件带**原因**落盘并显示在概览
-> （此前熔断开合**一行日志都没有**，用户报「出问题得自己去一点点找」）。
+> （此前熔断开合**一行日志都没有**，用户报「出问题得自己去一点点找」）；
+> ⑦ **WorkBuddy（国际版）反代接通并收录** —— 走面板浏览器登录拿国际版凭据后打通，
+> 顺带修掉三处硬编码（登录 platform / 拉取端点 / 只认 buddy）与两条新机制
+> （按模型前缀覆盖 UA、`require_system_first`）。见 §9 定案。
 > 见 §8 最新六节。此前同日：窗口/托盘图标漏改修复、`.btn-g` 可点性、额度进度、TTFT 探测历史。
 > **部署红线**：AI 不主动替换 exe/重启实例，见 §6。
 >
@@ -2007,10 +2010,71 @@ DeepSeek Harness 的**免费额度插件**（**MIT —— 已核对仓库根 LIC
 价值密度高于此前评估过的任何外部项目。**但它没有任何一段代码值得我们抄** ——
 我们缺的是观测与口径，不是实现。
 
-#### ⚠️ WorkBuddy（国际版）接入评估 —— **按"内置跑不通的按钮比不内置更糟"暂不收录**（2026-10-11 实测）
+#### ✅ WorkBuddy（国际版）已接通并收录（2026-10-11 两轮：先判"接不通"，拿到凭据后打通）
 
-用户提出「希望支持更多反代，比如国际版的 workbuddy」。**要件与可行性都查清了，结论是当前接不通**，
-故**不内置**（同 TRAE 的处置口径）。留档以免以后重复评估。
+用户提出「希望支持更多反代，比如国际版的 workbuddy」，随后告知「我电脑里面就有 workbuddy 国际版」。
+
+**第一轮结论是「接不通」**（下方保留完整取证，因为那次排除的正是**误导性最强的一条路**），
+**第二轮拿到真实凭据后打通了** —— 两轮的分界点是「有没有国际版凭据」，而不是代码。
+
+**第一轮为什么判"接不通"**：用**国内版 buddy 的 token** 打国际端点，
+`/v3/config` 能拿到 24 KB / 29 个模型（含 `gpt-6.1-sol`、`gemini-3.5-flash`、`grok-4.7` 等国内版没有的），
+**但 `/v2/chat/completions` 返回 401**（`openresty`/APISIX 边缘网关，HTML 而非 JSON）。
+对照实验：同一 token 打国内端点 → **429**（被正常受理），打国际端点 → **401**；
+变体（国际头 + 国内 UA、国际端点 + `X-Domain: copilot.tencent.com`）**全部 401**。
+根因是 token 的 `iss = https://www.codebuddy.cn/auth/realms/copilot`（**大陆 realm**）——
+`/v3/config` 是产品配置接口、容忍跨 realm，而 `/v2/chat/completions` 是**计费边界**，不认。
+⇒ **当时的结论是对的**：没有国际版凭据就是接不通。**错的只是"以为拿不到凭据"** ——
+面板自带的浏览器登录（`platform=workbuddy-ai`）就是正规获取路径。
+
+**第二轮：走面板登录流拿到国际版凭据 → 全部打通。** 实测链（探针 `probe_workbuddy_login.py`
++ `probe_workbuddy_proxy.py`，都走真实上游）：
+
+| 环节 | 结果 |
+|---|---|
+| 登录流 `POST /v2/plugin/auth/state?platform=workbuddy-ai` | ✅ 返回官方 `authUrl`（域名 `www.workbuddy.ai`） |
+| 授权后落盘 | ✅ `data/accounts.json` 写入 workbuddy 账号（accessToken 1382 字符）|
+| 凭据 realm | ✅ `iss = https://www.workbuddy.ai/auth/realms/copilot`（**国际版**，与国内版不同）|
+| 401 | ✅ **消失** |
+| **新问题：400 `code=11128`** | `"first message is not system prompt"`（另附一条**误导性**的"被安全策略拦截" displayMsg）—— 网关**硬性要求 `messages[0]` 是 system** |
+| 补一条 system 后 | ✅ **200**，`gpt-5.6-sol` 真的回了内容；国内系 `deepseek-v4.1-flash` 也 200 |
+
+**第二轮的三处代码改动**（全部已落地 + 单测）：
+
+1. **预设 `workbuddy`**（`presets.rs`）：endpoint / `platform=workbuddy-ai` / 归属头
+   `WorkBuddy` / `X-IDE-Version=5.5.2` / UA 分档规则。
+2. **登录流的 `platform` 改成按预设可配**：原先硬编码 `platform=ide` ——
+   给国际版条目点登录会**拿到国内区的凭据**（静默、极难查）。现由 `LoginProfile` 驱动；
+   新增单测 `account_presets_carry_their_own_platform` 同时钉住**续期端点也要跟着产品走**。
+3. **`ua_by_model_prefix`：按模型 id 前缀覆盖 User-Agent**（新机制）——
+   上游按 UA 归因「使用端」，而国际版**同一供应商下两个模型族形态不同**：
+   `gpt-*`/`gemini-*`/`claude-*` → `WorkBuddy/<v> WorkBuddy AI/<v> CLI/<v>`；
+   `glm-*`/`hy*`/`kimi-*`/`minimax-*` → `WorkBuddy/<v> WorkBuddy/<v> CLI/<v>`。
+   共用一个 UA 会让其中一类归因错误。匹配用 **upstream_model**（归因是上游按自己的模型名算的）。
+4. **`require_system_first`：缺失时由网关补一条最小 system**（新机制）——
+   按本项目「适配在网关做」的原则，客户端（编程工具）不保证带 system；
+   **只在缺失时插入，绝不改写客户端已有的 system**（那会篡改用户语义）。
+   实测确认这是**行为开关**：关掉它 → 立刻回到 400/11128。
+5. **顺带修掉两处硬编码**（否则"能登录但拉不到模型"）：
+   `fetch_buddy_models` 的 `/v3/config` **端点写死了 `copilot.tencent.com`**，且拉取分支只认
+   `preset == Some("buddy")` → WorkBuddy 会落到通用 `/v1/models` 分支撞 404。
+   现改为按预设取端点（`presets::login_endpoint_of`）+ 按"是否 CodeBuddy 系"
+   （`presets::is_codebuddy_family`，判据 = 声明了 `login`）分流。
+
+**验证**：**332 单测**（+5 条 system 注入：缺失时插入 / 已有 system 一个字不动 / 幂等 /
+无 messages 不 panic / 短路返回分支也必须补上）· 构建零警告 · 门禁全过（parts / i18n 718 键 /
+balance / test_pages / test_brands 47 / fmt_rules / ime / provload / 主题三道零视觉变化 /
+verify_logo 五部分）· 回归 `e2e_presets` 17 / `e2e_accounts` 13 / `e2e_record_count` 13 形态 /
+`probe_event_ledger` 全 PASS · 新探针 `probe_workbuddy_login.py`（登录流端到端）+
+`probe_workbuddy_proxy.py` **4 断言**（直连对照复现 400/11128 → 经网关 200 → 自带 system 也 200 →
+国际系模型也 200 → `end_reason=stop` 证明非网关截断）。
+**有牙齿**：把 `require_system_first` 改成 False → 探针 ①③ 立刻变红（回到 400/11128），随后还原。
+
+⚠️ **凭据不入库**：隔离实例的 `data/accounts.json` 在 `.openbitfun/` 下，已被 `.gitignore` 覆盖
+（`git check-ignore` 实测命中）。探针只读该文件，不打印 token 原文。
+
+**第一轮的取证（保留，因为它排除的是最容易误判的一条路）**：
+
 
 **要件（来源：`deepseek-harness-codearts` 的 `src/product.ts:381 WORKBUDDY`，
 MIT / Copyright (c) 2026 Jet，已读 LICENSE 原文）** —— 与国内版**协议完全相同**，
@@ -2044,16 +2108,14 @@ MIT / Copyright (c) 2026 Jet，已读 LICENSE 原文）** —— 与国内版**�
 （`app_type=codebuddy`）—— 它是**中国大陆 realm** 的凭据，转发的边缘网关按 realm 校验。
 `/v3/config` 是产品配置接口、容忍跨 realm；`/v2/chat/completions` 是计费边界，不认。
 
-**结论与出路**：
-- **当前接不通** ⇒ 按本项目纪律（"内置一个跑不通的按钮比不内置更糟"，同 TRAE / OpenCode-free-tier）
-  **不收录为预设**。
-- **要接通需要**（两件都缺一不可）：
-  ① **一份国际版（WorkBuddy AI）账号的凭据** —— 需用 `platform=workbuddy-ai` 走官方登录流单独登录；
-  ② **按模型族分档的 User-Agent** —— 我们的 `ProviderConfig.headers` 是**provider 级静态表**，
-     无法按模型 id 切 UA（`resolveUserAgent` 那种前缀匹配）。国际版 GPT/Gemini/Claude 系走国际形态 UA、
-     国内系走国内形态 UA，共用一个 UA 会让其中一类归因错误（腾讯后台按 UA 计「使用端」）。
-  ⇒ 技术上要做的是：① `presets.rs` 加 workbuddy 条目（endpoint/头/`platform`）；
-  ② 登录流程的 `platform` 参数改成**按预设可配**（现在硬编码 `platform=ide`，见 `accounts.rs::buddy_endpoint` 附近）；
-  ③ `headers` 支持**按模型前缀覆盖 UA**（新机制，改动最大）。
-- ⚠️ **不要在没拿到国际版凭据前动手**：第 ③ 项是新机制，而 401 未解开前无法端到端验证
-  —— 会做出一个"看起来对但发不出去"的实现。
+**当时开出的"要接通需要三件事"，回头看全部对上了**（第一轮的判断力没问题，缺的只是凭据）：
+① 预设加 workbuddy（endpoint/头/`platform`）→ 已做；
+② 登录 `platform` 按预设可配 → 已做；
+③ `headers` 支持按模型前缀覆盖 UA（新机制）→ 已做。
+**第一轮唯一没料到的**是第 ④ 件：`require_system_first`（400/11128）——
+它在 401 未解开前**根本看不到**，这正是当时「先别动手」的价值：
+一旦有真凭据，新问题会以"下一个错误码"的形式自己冒出来。
+
+**方法论**：这轮最值得记的不是"打通了"，而是**判"接不通"时要把"缺凭据"与"缺能力"分开**。
+第一轮的结论「接不通」是对的，但如果就此写进"明确不做"，就会永久关掉一个其实只差一次登录的功能。
+留档时把**缺失的前置条件**（国际版凭据）与**技术障碍**（UA 分档）分开写，今天才敢直接捡起来做。

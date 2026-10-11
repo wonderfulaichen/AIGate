@@ -170,6 +170,12 @@
               openai_cache_control: p.openai_cache_control,
               max_request_body_bytes: p.max_request_body_bytes,
               headers: p.headers||undefined,
+              // 按模型族覆盖 UA 的规则 (WorkBuddy 国际版按模型产品线分档; 见后端同名字段).
+              // ⚠️ 必须在这里透传 —— 本函数是保存白名单, 不入白名单的字段会在保存时**被丢掉**,
+              // 表现是"预设加进来能登录、一保存就 400"(UA 没了)。
+              ua_by_model_prefix: (Array.isArray(p.ua_by_model_prefix) && p.ua_by_model_prefix.length) ? p.ua_by_model_prefix : undefined,
+              // 上游要求首条为 system (WorkBuddy 国际版实测 400/11128) → 让网关补.
+              require_system_first: p.require_system_first||undefined,
               // 实测支持的协议 (供应商级, 由「拉取模型」时的探测写入). 仅在有值时落盘,
               // 免得给未探测过的供应商塞空字段. 用途: 面板展示「实测支持」+ 供用户判断.
               probed_protocols: (Array.isArray(p.probed_protocols) && p.probed_protocols.length) ? p.probed_protocols.slice() : undefined,
@@ -286,6 +292,11 @@
     presetAdded(t){ return (this.providersFormData||[]).some(p=>p.preset===t.id); },
     addFromPreset(t){
       if (this.presetAdded(t)) return;
+      // 身份头与 UA: 优先用预设自带的 (账号型预设各产品不同 —— 国内版
+      // X-IDE-Name=CodeBuddy, 国际版 WorkBuddy; 漏掉这些头会让上游把用量归因到
+      // 错误的产品, 甚至拒绝请求)。非账号型预设 (deepseek) 没有这些字段 → null,
+      // 与手工添加的行为一致。
+      const lg = t.login || null;
       this.providersFormData.push({
         name: t.name, _origName: t.name,
         endpoint: t.endpoint,
@@ -294,7 +305,22 @@
         auth: t.auth || null,
         preset: t.id,
         balance_endpoint: null,
-        headers: null,
+        headers: lg ? {
+          'X-Domain': lg.api_domain,
+          'X-Product-Code': lg.product_code,
+          'X-Product': lg.attribution_name,
+          'X-IDE-Name': lg.attribution_name,
+          'X-IDE-Type': lg.attribution_name,
+          'X-IDE-Version': lg.client_version,
+          'X-Agent-Purpose': 'conversation',
+          'user-agent': lg.user_agent,
+        } : null,
+        // 按模型族覆盖 UA (WorkBuddy 国际版: gpt/gemini/claude 走国际形态,
+        // glm/hy/kimi/minimax 走国内形态)。空数组 → null, 保持旧行为。
+        ua_by_model_prefix: (t.ua_by_model_prefix && t.ua_by_model_prefix.length) ? t.ua_by_model_prefix : null,
+        // 上游硬性要求首条是 system 时, 由网关补一条 (WorkBuddy 国际版实测 400/11128)。
+        // 漏了这个字段 = 预设能登录但一发请求就 400。
+        require_system_first: t.require_system_first ? true : null,
         _expanded: true, _testing: false, _testResult: null,
         _filter: '', _selected: {},
         models: [],

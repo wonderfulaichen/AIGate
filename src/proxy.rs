@@ -220,6 +220,58 @@ pub fn report_transitions(provider: &str, moves: Vec<crate::circuit_breaker::Tra
     }
 }
 
+/// 若首条不是 system 消息, 在最前面补一条最小的 system.
+///
+/// 用途见 [`crate::providers::ProviderConfig::require_system_first`] —— 实测 WorkBuddy
+/// 国际版网关对首条非 system 的请求返回 `400 code=11128`, 客户端不保证带 system,
+/// 故按"适配在网关做"补一条。
+///
+/// 两条纪律:
+/// - **只在缺失时插入**: 客户端已有 system (无论在第几条) 就一个字都不动 ——
+///   改写用户语义比补一条默认值危险得多。
+/// - **可测的纯函数**: 返回是否真的插入了, 便于单测与诊断。
+pub fn ensure_system_first(body: &mut serde_json::Value) -> bool {
+    let Some(msgs) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return false;
+    };
+    // 已有任意一条 system 即视为满足 (上游校验的是"首条", 但用户把 system 放在别处
+    // 也不该由我们重排 —— 那同样是改写语义)。
+    let has_system = msgs
+        .iter()
+        .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"));
+    if has_system {
+        return false;
+    }
+    msgs.insert(
+        0,
+        serde_json::json!({ "role": "system", "content": "You are a helpful assistant." }),
+    );
+    true
+}
+
+/// 按模型 id 前缀覆盖 `User-Agent` (见 [`crate::providers::ProviderConfig::ua_by_model_prefix`]).
+///
+/// 匹配用 **上游模型 id**（`upstream_model`，即真正发给上游的那个名字）——
+/// 归因是上游按它自己的模型名算的，用中转 id 匹配会在改名后失效。
+/// 未命中任何规则时**不动** `headers` 里已有的 user-agent（保持原行为）。
+pub fn apply_ua_by_model(
+    req_headers: &mut axum::http::HeaderMap,
+    provider: &crate::providers::ProviderConfig,
+    model: &str,
+) {
+    let Some(rules) = &provider.ua_by_model_prefix else {
+        return;
+    };
+    for (prefix, ua) in rules {
+        if !prefix.is_empty() && model.starts_with(prefix.as_str()) {
+            if let Ok(v) = axum::http::HeaderValue::from_str(ua) {
+                req_headers.insert(axum::http::header::USER_AGENT, v);
+            }
+            return;
+        }
+    }
+}
+
 /// 供应商配置热重载后同步熔断表.
 ///
 /// - 新增的供应商: 按 `cfg` 阈值创建熔断器 (避免退回默认阈值).
@@ -407,6 +459,8 @@ pub async fn chat_completions(
         } else {
             None
         },
+        // 首条必须是 system 的上游 (实测 WorkBuddy 国际版 400/11128).
+        provider.require_system_first.unwrap_or(false),
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
@@ -653,6 +707,15 @@ pub async fn chat_completions(
             }
         }
     }
+    // 按模型族覆盖 User-Agent (在 headers 之后, 故能覆盖其中的 user-agent).
+    // 见 ProviderConfig::ua_by_model_prefix —— 上游按 UA 归因「使用端」, 而同一供应商
+    // 下的模型可能分属不同产品线 (WorkBuddy 国际版的 gpt-* 与 glm-* 就是这样).
+    // 用 upstream_model (真正发给上游的名字) 匹配: 归因是上游按自己的模型名算的.
+    let ua_model = model_cfg
+        .upstream_model
+        .clone()
+        .unwrap_or_else(|| model.to_string());
+    apply_ua_by_model(&mut req_headers, &provider, &ua_model);
     // OpenCode 系 (zen/go) 身份头: filter_headers 只放行 user-agent, 这里把客户端
     // 自带的 x-opencode-* 原样补回 (上游按 session 计配额, 缺头会被当"无会话").
     if is_opencode_gateway(&provider) {
@@ -4568,6 +4631,8 @@ fn inject_model_params(
     tool_output_max_bytes: usize,
     // 降级可回取 (可为 None = 不留存). 留存是旁路, 失败不影响转发.
     recall: Option<(&crate::recall::RecallStore, Option<&str>)>,
+    // 是否保证首条为 system (见 ProviderConfig::require_system_first).
+    require_system_first: bool,
 ) -> (bytes::Bytes, bool, usize, usize, TokenAudit, Option<String>) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         // 注: 此分支**正常不可达** —— 调用前 `parse_model` 已用同一个 `serde_json::from_slice`
@@ -4641,6 +4706,15 @@ fn inject_model_params(
     // 思考参数规范化: 客户端 thinking:true → reasoning_effort 等 (见 thinking.rs).
     // 返回客户端是否显式关闭思考 (thinking:false), 用于跳过配置档兜底注入.
     let explicitly_disabled = crate::thinking::normalize_thinking(&mut v, model_cfg);
+
+    // 某些上游 (实测 WorkBuddy 国际版) 硬性要求首条是 system, 缺失即 400/11128.
+    // 只在确实缺失时补一条最小的, 绝不改写客户端已有的 system (见函数文档).
+    // ⚠️ 调用得放在 has_remap/has_effort/has_extra 的**短路返回之前** ——
+    //    否则"只补 system、其它什么都不用注入"的请求会走上面的原样返回分支,
+    //    补的 system 根本没写进去 (实测过的顺序坑)。
+    if require_system_first {
+        ensure_system_first(&mut v);
+    }
 
     // 没有任何需要注入的参数 → 已含规范化结果, 序列化返回.
     let has_remap = model_cfg.upstream_model.is_some();
@@ -5206,10 +5280,78 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
+    }
+
+    // ─── 首条必须是 system (2026-10-11, WorkBuddy 国际版 400/11128) ───
+    //
+    // 实测: www.workbuddy.ai 对 messages[0] 不是 system 的请求直接拒绝,
+    // 报 `11128 "first message is not system prompt"` + 一条"被安全策略拦截"的误导 displayMsg;
+    // 同一凭据同一模型, 首条加 system 后立刻 200。客户端不保证带 system, 故网关补。
+
+    /// 缺失时补一条最小的 system, 且补在**最前面**。
+    #[test]
+    fn ensure_system_first_inserts_when_missing() {
+        let mut v = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(ensure_system_first(&mut v), "缺失时应插入并返回 true");
+        let msgs = v["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2, "只多一条");
+        assert_eq!(msgs[0]["role"], "system", "必须补在首条");
+        assert!(msgs[0]["content"].as_str().unwrap().len() > 0, "内容非空");
+        assert_eq!(msgs[1]["role"], "user", "原有消息顺序不变");
+    }
+
+    /// **已有 system 就一个字都不动** —— 改写用户语义比补默认值危险得多。
+    #[test]
+    fn ensure_system_first_never_rewrites_existing() {
+        let mut v = serde_json::json!({
+            "model": "x",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "用户自己的提示词"}
+            ]
+        });
+        let before = v.clone();
+        assert!(!ensure_system_first(&mut v), "已有 system 不应插入");
+        assert_eq!(v, before, "原样不动 (含顺序)");
+    }
+
+    /// 幂等: 连调两次只补一条 (防止将来被放进重试路径后重复插入).
+    #[test]
+    fn ensure_system_first_is_idempotent() {
+        let mut v = serde_json::json!({ "model": "x", "messages": [{"role": "user", "content": "hi"}] });
+        assert!(ensure_system_first(&mut v));
+        assert!(!ensure_system_first(&mut v), "第二次不应再插入");
+        assert_eq!(v["messages"].as_array().unwrap().len(), 2);
+    }
+
+    /// 没有 messages 字段时不得 panic, 也不得凭空造一个 messages。
+    #[test]
+    fn ensure_system_first_safe_without_messages() {
+        let mut v = serde_json::json!({ "model": "x" });
+        assert!(!ensure_system_first(&mut v));
+        assert!(v.get("messages").is_none(), "不应凭空造 messages");
+    }
+
+    /// 端到端: 经 `inject_model_params` 且**没有任何其它可注入项**时也必须补上
+    /// （曾把插入放在短路返回之后 → 补的 system 根本没写进去）。
+    #[test]
+    fn require_system_first_survives_short_circuit_return() {
+        let cfg = cfg_with_effort("");   // 无配置档、无 upstream_model → 走短路返回分支
+        let body = serde_json::json!({
+            "model": "x",
+            "messages": [{"role": "user", "content": "hi"}]
+        }).to_string();
+        let (out, _, _, _, _, _) =
+            inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, true);
+        let v = parse(out);
+        assert_eq!(v["messages"][0]["role"], "system", "短路返回分支也必须补上 system");
     }
 
     /// 客户端未提思考 → 注入配置档默认 (max).
@@ -5217,7 +5359,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -5227,7 +5369,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -5237,7 +5379,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -6505,6 +6647,8 @@ mod tests {
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,
+            ua_by_model_prefix: None,
+            require_system_first: None,
             api_format: None,
             endpoint_anthropic: None,
             endpoint_responses: None,
@@ -6527,6 +6671,8 @@ mod tests {
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,
+            ua_by_model_prefix: None,
+            require_system_first: None,
             api_format: None,
             endpoint_anthropic: None,
             endpoint_responses: None,

@@ -1524,18 +1524,42 @@ pub async fn api_accounts_login_start(
     if let Err(e) = find_account_provider(&state, &name).await {
         return Json(e);
     }
-    match crate::accounts::buddy_login_start(&state.client, &state.login_sessions, &name).await {
+    // 登录流的取值由**该供应商的预设**决定 (国内版 platform=ide / 国际版 workbuddy-ai).
+    // 拿不到预设信息时回落国内版默认值 —— 与参数化之前的行为完全一致.
+    let profile = login_profile_for(&state, &name).await;
+    match crate::accounts::buddy_login_start(&state.client, &state.login_sessions, &name, &profile).await {
         Ok(auth_url) => {
             tokio::spawn(crate::accounts::buddy_login_poll(
                 state.client.clone(),
                 state.login_sessions.clone(),
                 state.accounts.clone(),
                 name.clone(),
+                profile,
             ));
             Json(serde_json::json!({ "auth_url": auth_url, "name": name }))
         }
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
+}
+
+/// 组装某供应商的登录流取值: 命中内置预设则用预设的, 否则回落国内版默认.
+///
+/// 为什么以**预设**为准而不是"按名字猜": `platform` 决定拿哪个区域的凭据,
+/// 猜错的后果是"登录成功但凭据属于另一个区"(静默), 比报错更难查。
+async fn login_profile_for(
+    state: &super::proxy::AppState,
+    name: &str,
+) -> crate::accounts::LoginProfile {
+    let preset_id = {
+        let reg = state.registry.read().await;
+        reg.providers()
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.preset.clone())
+            .unwrap_or_else(|| name.to_string())
+    };
+    crate::presets::login_profile_of(&preset_id)
+        .unwrap_or_else(crate::accounts::LoginProfile::buddy_default)
 }
 
 /// POST /admin/api/accounts/login/status `{name}` — 浏览器登录进度

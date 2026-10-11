@@ -372,6 +372,40 @@ pub struct ProviderConfig {
     /// 额外注入的 HTTP 请求头.
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
+    /// **按模型 id 前缀覆盖 `User-Agent`** 的规则表（先命中先返回；未命中回落到 `headers`）。
+    ///
+    /// 为什么需要它（2026-10-11，接入 WorkBuddy 国际版时实测确认）：
+    /// 同一供应商下的模型可能分属**不同产品线**，而上游**按 User-Agent 归因「使用端」**
+    /// （腾讯后台的用量归属列）。WorkBuddy 国际版就是典型：
+    /// - `gpt-*` / `gemini-*` / `claude-*` → 客户端形态是 `WorkBuddy/<v> WorkBuddy AI/<v> CLI/<v>`；
+    /// - `glm-*` / `hy*` / `kimi-*` / `minimax-*` → 客户端形态是 `WorkBuddy/<v> WorkBuddy/<v> CLI/<v>`。
+    ///
+    /// 只用一个全局 UA 无法让两类模型都归因正确。而 `headers` 是**供应商级静态表**，
+    /// 表达不了"看模型决定 UA" —— 故新增本字段。
+    ///
+    /// 格式：`{"gpt-": "WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2", "glm-": "..."}`
+    /// （键是模型 id 前缀，大小写敏感，与模型 id 一致；**按声明顺序匹配**，
+    ///  故更具体的前缀要写在前面）。
+    ///
+    /// ⚠️ 只覆盖 `user-agent`，不提供任意头覆盖 —— 那会让配置变成"半套代码"，
+    /// 且归因需求本身就只落在这一个头上。
+    #[serde(default)]
+    pub ua_by_model_prefix: Option<Vec<(String, String)>>,
+    /// **保证 `messages[0]` 是 system 消息**，缺失时补一条最小的 system。
+    ///
+    /// 为什么需要（2026-10-11 实测 WorkBuddy 国际版）：
+    /// `www.workbuddy.ai` 的网关对**首条不是 system** 的请求直接拒绝 ——
+    /// `400 code=11128 "first message is not system prompt"`（并附带一条"被安全策略拦截"的
+    /// 误导性 displayMsg）。实测：同一凭据、同一模型，首条加一条 system 后立刻 200。
+    ///
+    /// 这是**上游的硬性协议要求**，而非我们的偏好 —— 但客户端不保证带 system
+    /// （很多编程工具确实不带，或只在首轮带）。按本项目一贯原则「适配在网关做」：
+    /// 缺失时补一条最小 system，让用户不必为了某个上游去改客户端配置。
+    ///
+    /// ⚠️ 只在**确实缺失**时插入，绝不覆盖/改写客户端已有的 system（那会篡改用户语义）。
+    /// 默认关闭 —— 只有声明需要它的上游才补，避免给不需要的上游塞无用消息。
+    #[serde(default)]
+    pub require_system_first: Option<bool>,
     /// 上游 API 格式: 缺省 "openai" (chat/completions);
     /// 模型级 API 格式覆盖: `"openai"` (默认/可省略), `"anthropic"`, 或 `"responses"`.
     /// - `"openai"`: 走 `/v1/chat/completions` (默认)
@@ -960,11 +994,15 @@ pub async fn fetch_models_from_upstream(
     provider: &ProviderConfig,
     key: &str,
 ) -> Result<Vec<String>, String> {
-    // 内置 buddy 预设: 上游 **没有** /v1/models (实测 /v2/models、/v1/models、/v2/chat/models
-    // 全部 404 —— 面板「拉取模型」因此永远返回 "HTTP 404 拉取模型失败").
-    // 权威模型目录是 GET /v3/config 的 data.models[] (CodeBuddy IDE 本体与 harness 都取它,
-    // 见 probe_buddy_v3config.py)。新模型 (如 space-bunny) 只会先出现在这里。
-    if provider.preset.as_deref() == Some("buddy") {
+    // CodeBuddy 系预设 (buddy / workbuddy): 上游 **没有** /v1/models (实测 budy 的
+    // /v2/models、/v1/models、/v2/chat/models 全部 404 —— 面板「拉取模型」因此永远
+    // 返回 "HTTP 404 拉取模型失败"). 权威模型目录是 GET /v3/config 的 data.models[]
+    // (CodeBuddy IDE 本体与 harness 都取它, 见 probe_buddy_v3config.py)。
+    // 新模型只会先出现在这里。
+    //
+    // 判据用**预设声明了 login**（即 CodeBuddy 系产品）而不是写死 `== Some("buddy")` ——
+    // 后者会让新增的 WorkBuddy 落到通用 /v1/models 分支去撞 404。
+    if crate::presets::is_codebuddy_family(provider.preset.as_deref()) {
         return fetch_buddy_models(client, provider, key).await;
     }
     // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
@@ -1004,18 +1042,26 @@ pub async fn fetch_models_from_upstream(
     extract_model_ids(&body)
 }
 
-/// CodeBuddy 模型目录: `GET /v3/config` (buddy 预设专属; 通用 `/models` 路径在该站 404).
+/// CodeBuddy 系模型目录: `GET /v3/config` (通用 `/models` 路径在该站 404).
+///
+/// ⚠️ **端点取自预设**而不是写死 —— 国内版 (`copilot.tencent.com`) 与国际版
+/// (`www.workbuddy.ai`) 是**同一套路径、不同域名、不同模型池**（实测：国际版返回
+/// 含 GPT / Gemini / Grok 系的目录，国内版没有）。写死端点会让 WorkBuddy 的
+/// 「拉取模型」永远打到国内站 → 拿到一批国际版用不了的模型或直接失败。
 ///
 /// 只收**对话模型** —— 判据 `supportsToolCall == true`：该站同一份目录里还挂着
 /// 补全/图像专用模型 (`codewise-completions` / `codewise-rewrite` / `codewise-jump` /
 /// `hunyuan-image-alpha` / `nes-gf`)，它们无一支持工具调用，混进路由表会被客户端
-/// 当对话模型选中而必失败。实测 21 个中 15 个满足。
+/// 当对话模型选中而必失败。实测国内版 21 个中 15 个满足。
 async fn fetch_buddy_models(
     client: &Client,
     provider: &ProviderConfig,
     key: &str,
 ) -> Result<Vec<String>, String> {
-    let mut req = client.get("https://copilot.tencent.com/v3/config");
+    // 认证基址: 优先预设声明, 否则回落国内版 (保持既有行为).
+    let base = crate::presets::login_endpoint_of(provider.preset.as_deref().unwrap_or("buddy"))
+        .unwrap_or_else(|| "https://copilot.tencent.com".to_string());
+    let mut req = client.get(format!("{}/v3/config", base.trim_end_matches('/')));
     if !key.is_empty() {
         req = req.header("Authorization", format!("Bearer {key}"));
     }
@@ -1765,6 +1811,8 @@ mod tests {
             probed_protocols: None,
             balance_endpoint: None,
             headers: None,
+            ua_by_model_prefix: None,
+            require_system_first: None,
             api_format: None,
             prompt_cache: None,
             endpoint_anthropic: None,

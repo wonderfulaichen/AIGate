@@ -13,6 +13,32 @@
 失效自动切换。另含两处修复：**循环检测误报**（会让编程工具里的任务中途停住，本次报障的根因）与
 **账号型供应商的登录弹窗**丢失一键登录按钮。
 
+### 新增内置预设 WorkBuddy（腾讯国际版）：与 CodeBuddy 同一套协议、国际区模型池
+
+- **新预设 `workbuddy`**：`https://www.workbuddy.ai`，模型池为国际区（含 GPT / Gemini / Grok 系，
+  这些在国内版没有）。登录、续期、对话协议与 CodeBuddy **完全相同**，差异只在域名与几个标识。
+  走面板的**浏览器登录**即可接入（与 CodeBuddy 同一个入口）。
+- **修掉三处硬编码**（原先只有 CodeBuddy，这些地方都写死了国内版）：
+  - **登录流的 `platform`**：原硬编码 `ide` —— 给国际版条目点登录会**拿到国内区的凭据**（静默、
+    极难查）。现按预设取（国内 `ide` / 国际 `workbuddy-ai`），**续期端点也跟着产品走**
+    （单测 `account_presets_carry_their_own_platform` 同时钉住这两条）。
+  - **「拉取模型」的端点**：原写死 `copilot.tencent.com/v3/config` → 国际版会拉到国内站的模型。
+  - **拉取分支的判据**：原只认 `preset == "buddy"` → 国际版落到通用 `/v1/models` 撞 404
+    （该站没有这个路径）。现按"是否声明了登录配置"分流。
+- **新机制「按模型 id 前缀覆盖 User-Agent」**（`ua_by_model_prefix`）：上游**按 UA 归因「使用端」**，
+  而国际版同一供应商下两个模型族形态不同 —— `gpt-*`/`gemini-*`/`claude-*` 用国际形态 UA，
+  `glm-*`/`hy*`/`kimi-*`/`minimax-*` 用国内形态 UA。共用一个会让其中一类归因错误。
+- **新机制「首条必须是 system」**（`require_system_first`）：实测该上游对 `messages[0]` 不是 system
+  的请求直接返回 **400 code=11128**（还附一条"被安全策略拦截"的**误导性**提示）。按本项目
+  「适配在网关做」的原则，缺失时由网关补一条最小 system ——
+  **只在缺失时插入，绝不改写客户端已有的 system**（那会篡改用户语义）。
+- **回归**：5 条新单测（system 注入：缺失时插入 / 已有 system 一个字不动 / 幂等 /
+  无 `messages` 不 panic / 短路返回分支也必须补上）+ `account_presets_carry_their_own_platform`；
+  新探针 `tools/probe_workbuddy_login.py`（登录流端到端）与 `tools/probe_workbuddy_proxy.py`
+  **4 断言**（直连对照复现 400/11128 → 经网关 200 → 自带 system 也 200 → 国际系模型也 200 →
+  `end_reason=stop` 证明非网关截断）。**有牙齿**：关掉该开关 → 探针立刻回到 400/11128。
+  ⚠️ 凭据只存本地 `data/accounts.json`（在 `.openbitfun/` 隔离目录内，不入库）。
+
 ### 说明：账号型供应商的凭据独立于本机 IDE（卸载那个 IDE 也能用）
 
 - **回答用户实际提问**：「如果我在电脑上卸载了 CodeBuddy，还能反代吗？」—— **能**。
