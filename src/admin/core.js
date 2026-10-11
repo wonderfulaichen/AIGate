@@ -231,6 +231,38 @@ function logSortValue(log, key) {
     default: return '';
   }
 }
+// ── 纯生成吐字速度 (单一事实源, 2026-10-11) ──
+// 判据必须与后端 `admin.rs::gen_speed_of` / `rollup.rs::ttft_of` **逐条一致**,
+// 否则同一个请求会"列表一个数、详情另一个数"(前端与后端各写一份判据是本项目反复出现的
+// bug 类型 —— 协议镜像那几条也是同一模式)。
+//
+// 两条口径, 缺一不可:
+//   ① **分子剔除思考 token**: `completion_tokens` 是上游计费口径(含思考), 而"吐字速度"
+//      量的是**正文流出**速度。实测(buddy/deepseek-v4-flash·high) 166 个输出里 138 是思考,
+//      不剔除会把 15 tok/s 报成 1193 (虚高 80 倍)。思考 token 在第一个可见 token 之前
+//      就已生成完, 而窗口起点正是那个 token —— 分子含它、分母不含它, 是同一个错误的两个方向。
+//   ② **正文为 0 时不给速度**: 纯思考段没有可观测的解码过程, 报任何数字都是假的
+//      (实测 2 条 `out=8192/rt=8192` 的记录会被算成 41.3 tok/s, 真值不存在) —— 与"无数据"一样显示 —。
+//
+// 为什么同时要"窗口必须真实计时"(>0): `latency_ms == first_token_ms` 时窗口为 0, 除法无意义。
+// 返回 `{ms, tokens, speed}`; 不可计时或无可测正文时 `speed` 为 `null` (调用方显示 —)。
+function genSpeedParts(log) {
+  if (!log) return { ms: 0, tokens: 0, speed: null };
+  const ft = Number(log.first_token_ms);
+  const lat = Number(log.latency_ms) || 0;
+  const out = Number(log.completion_tokens) || 0;
+  // 与后端 ttft_of 同判据: 首字延迟必须已知、且严格早于总耗时。
+  if (!ft || ft >= lat) return { ms: 0, tokens: 0, speed: null };
+  const ms = lat - ft;
+  const tokens = Math.max(0, out - (Number(log.reasoning_tokens) || 0));
+  if (ms <= 0 || tokens <= 0) return { ms, tokens, speed: null };
+  return { ms, tokens, speed: tokens / ms * 1000 };
+}
+// 文本形式 (记录详情等): 不可测时显示「—」而非 0 —— 无数据 ≠ 0。
+function genSpeedText(log) {
+  const p = genSpeedParts(log);
+  return p.speed == null ? '—' : p.speed.toFixed(1) + ' ' + t('unit_tokps');
+}
 const CHART_SEMANTIC = {
   strip: '#0a84ff',   // 剥离推理链(普通轮次) —— 与品牌强调色一致
   stripTc: '#40c8e0', // 剥离推理链(工具轮次) —— systemTeal

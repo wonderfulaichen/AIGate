@@ -18,13 +18,11 @@
       if (!pt || hit<=0) return '—';
       return this.fmtPct(hit/pt*100);
     },
-    // 单条请求的纯生成速度 (tok/s): 排除排队与 TTFT, 需要首 token 延迟已知的流式请求.
-    logGenSpeed(log) {
-      if (!log || !log.first_token_ms || log.first_token_ms>=log.latency_ms || !log.completion_tokens) return '—';
-      const genMs=log.latency_ms-log.first_token_ms;
-      if (genMs<=0) return '—';
-      return (log.completion_tokens/genMs*1000).toFixed(1)+' '+t('unit_tokps');
-    },
+    // 单条请求的纯生成速度 (tok/s): 排除排队与 TTFT, 并**剔除思考 token**.
+    // 判据全部收敛在 core.js 的 genSpeedText (与后端 gen_speed_of 同口径) ——
+    // 这里原先自己写了一份 `.completion_tokens/genMs`, 漏了剔除思考, 实测虚高最高 204 倍
+    // (且纯思考行会显示一个根本不存在的速度)。不要再在这里复刻判据。
+    logGenSpeed(log) { return genSpeedText(log); },
     // 本轮"为什么结束"的人话 (2026-10-11 新增; 用户第四次报"跑一会就停下"之后补的可见性).
     //
     // 为什么非要单开一列: 三种"停止"在别的字段上**完全同形** —— 都可能是 `200 + 无错误`,

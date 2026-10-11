@@ -6,7 +6,7 @@ const src = fs.readFileSync(path.join(ROOT, 'src', 'admin', 'core.js'), 'utf8');
 
 // 只在顶层定义处求值 (core.js 是拼接进 <script> 的顶层函数集合, 可整段 eval)
 const __out = {};
-const fn = new Function('__out', src + '\n;Object.assign(__out, {pageNumbers, logSortValue, granularityForDays, spanOfRange, rateTone, statusTone, bcls, PAGE_SIZE_OPTIONS});');
+const fn = new Function('__out', src + '\n;Object.assign(__out, {pageNumbers, logSortValue, granularityForDays, spanOfRange, rateTone, statusTone, bcls, genSpeedParts, PAGE_SIZE_OPTIONS});');
 fn(__out);
 
 let fail = 0;
@@ -17,7 +17,7 @@ const eq = (name, got, want) => {
   if (!ok) fail = 1;
 };
 
-const { pageNumbers, logSortValue, granularityForDays, spanOfRange, rateTone, bcls } = __out;
+const { pageNumbers, logSortValue, granularityForDays, spanOfRange, rateTone, bcls, genSpeedParts } = __out;
 
 // 页码省略
 eq('pages: 单页', pageNumbers(0, 1), [0]);
@@ -56,6 +56,27 @@ eq('rate: 69.9 → err', rateTone(69.9), 'err');
 eq('rate: NaN → neutral', rateTone('x'), 'neutral');
 eq('bcls 映射', bcls('warn'), 'bdg-w');
 eq('bcls 未知 tone → neutral', bcls('nope'), 'bdg-n');
+
+// ── 纯生成吐字速度 (前端判据, 必须与后端 gen_speed_of 同口径) ──
+// 修复前的真实故障: 详情页用 `completion_tokens/genMs`, 漏剔除思考 ——
+// 实测 1229 输出里 1223 是思考, 详情显示 44.3 tok/s 而真实正文只有 0.2 (虚高 204 倍);
+// 另有 2 条 out==rt 的纯思考记录显示 41.3 tok/s (真值不存在)。
+// 这几条断言就是钉住"分子剔除思考 + 正文为 0 不给速度"。
+eq('genSpeed: 剔除思考 token (分子=正文)',
+  Math.round(genSpeedParts({ first_token_ms: 1000, latency_ms: 3000, completion_tokens: 1229, reasoning_tokens: 1223 }).speed * 10) / 10,
+  3.0);
+eq('genSpeed: 无思考时与旧口径一致',
+  Math.round(genSpeedParts({ first_token_ms: 1000, latency_ms: 3000, completion_tokens: 100 }).speed * 10) / 10,
+  50.0);
+eq('genSpeed: 纯思考 (out==rt) → 不可测', genSpeedParts({ first_token_ms: 100, latency_ms: 2000, completion_tokens: 8192, reasoning_tokens: 8192 }).speed, null);
+eq('genSpeed: 思考 > 输出 (脏数据) 不出现负速度', genSpeedParts({ first_token_ms: 100, latency_ms: 2000, completion_tokens: 10, reasoning_tokens: 99 }).speed, null);
+eq('genSpeed: 无首字延迟 (非流式) → 不可测', genSpeedParts({ latency_ms: 2000, completion_tokens: 100 }).speed, null);
+eq('genSpeed: 首字 >= 总耗时 → 不可测', genSpeedParts({ first_token_ms: 2000, latency_ms: 2000, completion_tokens: 100 }).speed, null);
+eq('genSpeed: 空记录安全', genSpeedParts(null).speed, null);
+eq('genSpeed: tokens 用于加权聚合 (与返回的 ms/tokens 自洽)',
+  (() => { const p = genSpeedParts({ first_token_ms: 0 + 250, latency_ms: 1250, completion_tokens: 500, reasoning_tokens: 300 });
+           return [p.tokens, Math.round(p.ms), Math.round(p.speed)]; })(),
+  [200, 1000, 200]);
 
 console.log(fail ? 'FAILED' : 'all page/sort/granularity checks passed');
 process.exit(fail);

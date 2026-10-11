@@ -36,6 +36,7 @@
 | [magpie](https://github.com/yetone/magpie) | MIT | **只读了 README 的设计思路**（路由策略的分类概念）。其中「意图路由」（自动换模型）经评估**违反本项目红线，明确不做** | 仅读文档 |
 | [zen-gate](https://github.com/LAGcomcom/zen-gate) | MIT | **只读了 README**。它揭示的上游"按 session 计配额"这一事实，促成本项目修复身份头透传。其"客户端身份伪装"做法**明确不做**（见下） | 仅读文档 |
 | [dsh-zen-proxy](https://github.com/Yee-h/dsh-zen-proxy) | MIT | **只读了 README**（上游闸门规则的实测记录） | 仅读文档 |
+| [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) | **MIT** | **只读 README / 未抄代码**。两轮沟通各取一条**口径教训**：① 「分子与分母度量的不是同一段时间」——促成查出本项目 gen_speed 虚高（实测 80 倍）；② 「拒绝过短窗口 / Σtoken÷Σ秒 而不对各次速率取平均」——促成修掉**记录详情**同款漏剔除（实测虚高 204 倍）。详见 §9 | 仅读文档 |
 | [models.dev](https://models.dev) | 公开数据 | 模型元数据（上下文/输出上限、模态能力）—— 运行时按 API 拉取，未拷贝其数据文件 | 数据源 |
 | DeepSeek Harness 系列插件 | MIT | **反代要件的事实取证**（端点、头、错误码）；架构不可直接搬（TS 插件跑在客户端侧） | 读文档 + 实测 |
 
@@ -49,6 +50,17 @@
   用户在其编程工具里指定。详见 `HANDOFF.md` §7 最高优先级红线。
 - **自动改写用户的客户端配置文件**（magpie / zen-gate 都有此能力）—— 本项目只提供
   `base_url`，由用户自行接入。
+- **应用内自动升级**（dsh-our-free-model 的 SHA-256 清单 + Ed25519 签名链做得很好）——
+  与部署红线冲突：AI 只构建到 `target/release/`，换 exe 与重启由用户决定。
+- **工具输出压缩（RTK）**：它在请求发出前就地重写 `tool_result`（git diff/status/log、grep、
+  find、ls、tree、构建日志、成串重复行），实测 40 KB 的 `git diff` 去掉 90% 字节且模型仍能作答。
+  **暂不采用（不是许可问题，MIT 可并入）**，两条理由：
+  ① **字节 ≠ token**：中文约 1 token/字 ≈ 3 字节，而 `git diff` / 构建日志几乎全是 ASCII，
+  4 字节才 ≈ 1 token ⇒ 去掉 90% 字节约只省 **33%** token。真正要压的是 token，而双方都没有
+  精确分母（本项目日志口径是"剥离省 4.04 亿 token = 全部输入 24%"，已在按 token 计的方向上）。
+  ② **代价与收益的量级不同**：本项目现有的有损改写只有「剥离历史推理链」（默认仅 chat 协议、
+  按模型可关、Anthropic 恒不剥）；而 RTK 改的是**用户自己的代码与工具输出**，
+  误压一次就是模型看不到用户真实的 diff。收益 33%、风险是语义，暂不划算。
 
 ## 依赖库
 
