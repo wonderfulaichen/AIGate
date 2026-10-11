@@ -1491,6 +1491,16 @@ pub async fn api_accounts_logout(
 }
 
 /// 校验 name 是账号形式供应商, 返回其配置 (登录两步共用).
+///
+/// 两级查找（2026-10-12 修用户报障「从预设添加 workbuddy 后点登录 → 报不是账号形式」）：
+///  ① 已保存的注册表（权威）；
+///  ② **内置预设目录**（回落）。
+///
+/// 为什么必须有 ②：预设「添加」只把条目放进**前端表单**，要点「保存配置」才落盘
+/// （既有设计，见 §8 补遗四：拉取只填表单，避免冲掉草稿）。于是"加进来还没保存就点登录"
+/// 是**完全正常的使用顺序**，而注册表里查不到 → 旧实现直接报"不是账号形式（无 auth 配置）"，
+/// 把"还没保存"说成了"配置错了"，用户无从判断。
+/// 预设条目的 auth 段是内置的、可信的，故把它当作合法的兜底身份声明。
 async fn find_account_provider(
     state: &super::proxy::AppState,
     name: &str,
@@ -1504,10 +1514,45 @@ async fn find_account_provider(
         .and_then(|p| p.auth.as_ref())
         .map(|a| a.mode == crate::providers::AuthMode::Account)
         .unwrap_or(false);
-    if !is_account {
-        return Err(serde_json::json!({ "error": "该供应商不是账号形式 (无 auth 配置)" }));
+    if is_account {
+        return provider.ok_or_else(|| serde_json::json!({ "error": crate::i18n::msg_provider_not_found(name) }));
     }
-    provider.ok_or_else(|| serde_json::json!({ "error": crate::i18n::msg_provider_not_found(name) }))
+    // 回落: 该名字命中某个**账号型内置预设**时也放行（条目尚未保存）。
+    if crate::presets::login_profile_of(name).is_some() {
+        if let Some(p) = provider {
+            return Ok(p);
+        }
+        // 注册表里没有（未保存）→ 现造一个最小配置供登录流使用：
+        // 只有 name 与 auth 段是有意义的，其余字段在"登录"这一步都用不到
+        // （登录只发 auth/state 请求，不读 endpoint/models）。
+        let preset = crate::presets::PRESETS.iter().find(|x| x.id == name);
+        return Ok(crate::providers::ProviderConfig {
+            name: name.to_string(),
+            endpoint: preset.map(|x| x.endpoint.to_string()).unwrap_or_default(),
+            api_key_env: preset.map(|x| x.api_key_env.to_string()).unwrap_or_default(),
+            api_key_default: None,
+            auth: preset.and_then(|x| x.auth()),
+            preset: Some(name.to_string()),
+            disabled: None,
+            probed_protocols: None,
+            balance_endpoint: None,
+            headers: None,
+            ua_by_model_prefix: None,
+            require_system_first: None,
+            api_format: None,
+            endpoint_anthropic: None,
+            endpoint_responses: None,
+            prompt_cache: None,
+            openai_cache_control: None,
+            max_request_body_bytes: None,
+            models: std::collections::HashMap::new(),
+        });
+    }
+    Err(serde_json::json!({
+        "error": "该供应商不是账号形式（无 auth 配置），无法用浏览器登录 —— \
+                  如果你刚添加了它，请先点「保存配置」再登录；\
+                  若它是静态 Key 型供应商，请在密钥框填入 Key 后保存。"
+    }))
 }
 
 /// POST /admin/api/accounts/login/start `{name}` — 浏览器一键登录第 1 步.

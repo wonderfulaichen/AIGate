@@ -23,11 +23,13 @@
   <div class="modal-head"><div><div class="modal-title" x-text="t('login_title')+' · '+loginProv"></div><div class="txs tm" style="margin-top:2px" x-text="t('login_browser_hint')"></div></div></div>
   <div class="modal-body">
     <!-- 浏览器一键登录: 开官方页, 登录完成后台自动写凭据 (无需回调, 见 accounts.rs) -->
-    <!-- 判定: 优先表单里的供应商条目 (prov.auth 由预设保存链写入), 回落预设目录 (登录入口可能是预设卡);
-         两边都找不到 = 静态型提示. providersFormData 加载前是 null, 必须兜空 (否则 pageerror).
-         原写法 presetOf(loginProv) 传的是字符串名, 而 presetOf 期待带 .preset 的条目 → 恒 null,
-         于是账号型 buddy 被判成静态型, 登录按钮永不渲染 (2026-10-04 实测 bug) -->
-    <template x-if="isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
+    <!-- 判定账号型: 表单条目 **或** 预设目录命中即可 —— 两者都要看, 不能短路。
+         原写法 `表单条目 || 预设条目` 在**表单里存在同名条目时就不再看预设**：
+         刚「添加」还没「保存配置」的新条目**没有 auth 段**（auth 由保存链写入），
+         于是被误判成"静态 Key 型" → 浏览器登录按钮不渲染 + 显示"不是账号形式"，
+         而用户明明是从账号型预设加进来的（2026-10-12 实测）。
+         正确语义是"任一边声明了 auth.mode=account 就算账号型"。 -->
+    <template x-if="isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||{}) || isAccountProv((presets||[]).find(x=>x.id===loginProv)||{})">
     <div>
     <!-- 已有账号列表 (多账号): 顺序即优先级 —— 靠前的先用, 失效自动跳到下一个 -->
     <template x-if="acctCount(loginProv)>0">
@@ -83,7 +85,10 @@
     </button>
     </div>
     </template>
-    <template x-if="!isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||(presets||[]).find(x=>x.id===loginProv)||{})">
+    <!-- 静态 Key 型提示: 与上面**同一个判据取反**, 必须完全对应 ——
+         两处写法不一致就会出现"既显示浏览器登录按钮、又显示不是账号形式"
+         （用户 2026-10-12 截图里正是这个自相矛盾的界面）。 -->
+    <template x-if="!isAccountProv((providersFormData||[]).find(p=>p.name===loginProv)||{}) && !isAccountProv((presets||[]).find(x=>x.id===loginProv)||{})">
       <div class="txs tm" style="margin-bottom:10px" x-text="t('login_statickey_hint')"></div>
     </template>
     <div class="txs tm" style="margin-top:10px;text-align:center" x-text="t('login_manual_divider')"></div>

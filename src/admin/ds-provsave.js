@@ -378,13 +378,29 @@
       // (在浏览器里没退出当前账号时, 登录页会直接把同一个号的凭据再发回来 ——
       //  2026-10-07 用户报障"再登录一个还是 1 个"就是这个原因, 必须给出可操作提示).
       const before=(this.accountsStatus&&this.accountsStatus[this.loginProv]||[]).map(a=>a.id).join(',');
+      // ⚠️ **必须先开窗口再 await**（2026-10-12 修用户报障「点了闪一下、不跳转浏览器」）：
+      // 浏览器只在**用户手势的同步调用栈内**允许 window.open；一旦先 await 一个 fetch，
+      // 后续 window.open 会被弹窗拦截器**静默丢弃** —— 而且多数浏览器返回的不是 null，
+      // 而是一个"已关闭的窗口代理"（truthy），于是旧代码的 `if(!opened)` 分支也不会进，
+      // 结果既不跳转、也不提示，就是用户看到的"闪一下、没反应"。
+      //
+      // 做法: 先用一个占位页**同步**打开窗口占住"用户手势"名额，拿到 URL 后再导航过去。
+      // 这样被拦截时 `opened` 才可靠为 null，走提示分支；同时后端报错时也能把窗口关掉。
+      const win = window.open('about:blank', '_blank');
       try{
         const r=await fetch('/admin/api/accounts/login/start',{method:'POST',headers:authHeaders(),
           body:JSON.stringify({name:this.loginProv})});
         const d=await r.json();
-        if(d.error){ this.loginMsg=d.error; return; }
-        const opened = window.open(d.auth_url, '_blank');
-        if(!opened){
+        if(d.error){
+          // 后端拒绝（如"不是账号形式"）: 关掉占位窗口，别留一个空白标签页。
+          try { if (win) win.close(); } catch(e) {}
+          this.loginMsg=d.error; return;
+        }
+        if(win){
+          try { win.location.href = d.auth_url; } catch(e) { win.location = d.auth_url; }
+          this.loginMsg='';   // 成功打开, 清掉旧提示
+        }else{
+          // 真的被拦截（同步 open 也返回 null）→ 明确告知并给出可点链接。
           this.loginMsg=t('login_browser_blocked')+' '+d.auth_url;
         }
         this.loginBrowserPending=true;
@@ -416,7 +432,10 @@
             }
           }catch(e){}
         }, 2000);
-      }catch(e){ this.loginMsg=t('network_error'); }
+      }catch(e){
+        try { if (win) win.close(); } catch(err) {}
+        this.loginMsg=t('network_error');
+      }
       finally{ this.loginBusy=false; }
     },
     async submitLogin(){
