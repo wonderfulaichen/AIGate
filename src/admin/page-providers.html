@@ -22,7 +22,7 @@
 <template x-if="visibleProviders.length===0 && providersFormData!==null && (providersFormData||[]).length===0"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_prov_title')"></h2><p class="empty-d" x-text="t('empty_prov_desc')"></p><button class="btn btn-p" @click="showAddProvider=true" x-text="t('empty_prov_cta')"></button></div></div></template>
 <template x-if="visibleProviders.length===0 && (providersFormData||[]).length>0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:var(--fs-11)" @click="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
 <template x-if="provViewMode==='table' && visibleProviders.length>0"><div class="pnl"><div style="overflow-x:auto">
-<table><thead><tr>
+<table class="prov-table"><thead><tr>
 <th style="width:5%"></th>
 <th x-text="t('provider_name')"></th>
 <th x-text="t('provider_status')"></th>
@@ -34,7 +34,10 @@
 </tr></thead>
 <tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr>
   <td><div style="width:28px;height:28px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
-  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><template x-if="prov.preset"><span class="bdg bdg-p" style="font-size:var(--fs-9)" x-text="t('preset_badge')"></span></template><template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('preset_modified')"></span></template><template x-if="prov.disabled"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('prov_disabled_badge')"></span></template><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" x-text="prov.endpoint"></div></td>
+  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><!-- 「内置」此前是这一行里**唯一没有 title 的徽章**, 而它的词义有歧义:
+     非开发者容易读成"软件自带的、应该自动就能用", 实际含义是"此条目由内置模板生成
+     (因此受保护、不可删除)"。加 title 说清来源 (2026-10-12 审计)。 -->
+<template x-if="prov.preset"><span class="bdg bdg-p" style="font-size:var(--fs-9)" :title="t('preset_badge_hint')" x-text="t('preset_badge')"></span></template><template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" style="font-size:var(--fs-9)" :title="t('preset_modified_hint')" x-text="t('preset_modified')"></span></template><template x-if="prov.disabled"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('prov_disabled_badge')"></span></template><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" :title="prov.endpoint" x-text="prov.endpoint"></div></td>
   <td>
     <!-- P2: 状态色统一走 bcls(tone) 语义表 (原为各处手写三元链, 同一状态在不同页取不同色) -->
     <template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).status_level==='ok'?'ok':'err')" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
@@ -66,9 +69,12 @@
     </div>
   </td>
   <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
+    <!-- ⚡/↓ 原本是**无文字图标**, 含义只能靠 hover 才知道 —— 而「拉取模型」是每次新增
+         供应商后都要做的高频操作（HANDOFF 原文: 部署后点拉取 + 保存即得新模型）。
+         2026-10-12 审计后给这两个加文字（图标保留在前面, 仍一眼可扫）。 -->
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
     <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
+    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓ <span x-text="t('fetch_models')"></span></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
     <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
     <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
     <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>
@@ -90,8 +96,8 @@
       <!-- 健康/密钥状态放在标题右侧, 与名称同排 —— 一眼看到"这家能不能用" -->
       <template x-if="health.find(h=>h.provider===prov.name)"><span class="bdg" :class="health.find(h=>h.provider===prov.name).status_level==='ok'?'bdg-s':'bdg-e'" x-text="health.find(h=>h.provider===prov.name).status_level==='ok'?t('health_ok'):t('health_err')"></span></template>
       <span class="bdg" :class="hasCred(prov.name)?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
-      <template x-if="prov.preset"><span class="bdg bdg-p" x-text="t('preset_badge')"></span></template>
-      <template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" x-text="t('preset_modified')"></span></template>
+      <template x-if="prov.preset"><span class="bdg bdg-p" :title="t('preset_badge_hint')" x-text="t('preset_badge')"></span></template>
+      <template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" :title="t('preset_modified_hint')" x-text="t('preset_modified')"></span></template>
       <template x-if="prov.disabled"><span class="bdg bdg-w" x-text="t('prov_disabled_badge')"></span></template>
     </div>
     <div class="plaza-ft">
@@ -105,8 +111,9 @@
     </div>
     <!-- 操作条: 次级按钮靠左, 主操作(编辑)与删除靠右 —— 原为 5 个平铺按钮挤一行 -->
     <div class="plaza-acts">
-      <button class="btn btn-g icon-btn" :title="t('test_connection')" :aria-label="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡</span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
-      <button class="btn btn-g icon-btn" :title="t('fetch_models')" :aria-label="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓</span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
+      <!-- 卡片视图宽度够, 这两个高频操作直接给文字（表格视图同款改动, 见上方注释） -->
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
+      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓ <span x-text="t('fetch_models')"></span></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
       <button class="btn btn-g icon-btn" style="color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" :title="t('reset_circuit')" :aria-label="t('reset_circuit')" @click="resetCircuit(prov.name)">⟲</button>
       <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
       <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>

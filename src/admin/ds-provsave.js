@@ -91,15 +91,15 @@
             this.showFetchDiff = true;
           }
         } else {
-          // 失败必须置 Ok=false 并 toast: 否则点了"获取"毫无反馈 (用户实测报的正是这个现象)。
+          // 失败必须置 Ok=false: 否则点了"获取"毫无反馈 (用户实测报的正是这个现象)。
+          // ⚠️ 不再在这里手写 toast —— `providersFormMsg` 的**统一出口**（ds-core.js 的
+          // $watch）会据 `providersFormOk=false` 自动弹 error toast。写两处会弹两次。
           this.providersFormOk = false;
           this.providersFormMsg = d.error || t('fetch_failed');
-          toast(this.providersFormMsg, 'error', 'fetch_fail');
         }
       } catch(e) {
         this.providersFormOk = false;
         this.providersFormMsg = t('network_error');
-        toast(this.providersFormMsg, 'error', 'net_err');
       }
       prov._fetching = false;
       if (this.providersFormMsg) setTimeout(() => { this.providersFormMsg = ''; }, 4000);
@@ -289,21 +289,26 @@
       this.providersFormOk=true; this.providersFormMsg=t('preset_reset_done');
       setTimeout(()=>this.providersFormMsg='',3000);
     },
-    presetAdded(t){ return (this.providersFormData||[]).some(p=>p.preset===t.id); },
-    addFromPreset(t){
-      if (this.presetAdded(t)) return;
+    presetAdded(pt){ return (this.providersFormData||[]).some(p=>p.preset===pt.id); },
+    // ⚠️ **参数名不能叫 `t`**（2026-10-12 实测 bug）：全局翻译函数就叫 `t()`，
+    // 形参 `t` 会**遮蔽**它 —— 于是函数体里 `t('preset_added_hint')` 变成"把预设对象
+    // 当函数调用"，抛 `TypeError: t is not a function`，**从那一行起整个函数中断**：
+    // 提示没设上、`showAddProvider` 也没关（实测该报错就是这么来的）。
+    // 现改名 `pt`（与 presetAdded 的参数名一致），并把翻译调用写清楚。
+    addFromPreset(pt){
+      if (this.presetAdded(pt)) return;
       // 身份头与 UA: 优先用预设自带的 (账号型预设各产品不同 —— 国内版
       // X-IDE-Name=CodeBuddy, 国际版 WorkBuddy; 漏掉这些头会让上游把用量归因到
       // 错误的产品, 甚至拒绝请求)。非账号型预设 (deepseek) 没有这些字段 → null,
       // 与手工添加的行为一致。
-      const lg = t.login || null;
+      const lg = pt.login || null;
       this.providersFormData.push({
-        name: t.name, _origName: t.name,
-        endpoint: t.endpoint,
-        api_key_env: t.api_key_env,
+        name: pt.name, _origName: pt.name,
+        endpoint: pt.endpoint,
+        api_key_env: pt.api_key_env,
         api_key_default: null,
-        auth: t.auth || null,
-        preset: t.id,
+        auth: pt.auth || null,
+        preset: pt.id,
         balance_endpoint: null,
         headers: lg ? {
           'X-Domain': lg.api_domain,
@@ -317,10 +322,10 @@
         } : null,
         // 按模型族覆盖 UA (WorkBuddy 国际版: gpt/gemini/claude 走国际形态,
         // glm/hy/kimi/minimax 走国内形态)。空数组 → null, 保持旧行为。
-        ua_by_model_prefix: (t.ua_by_model_prefix && t.ua_by_model_prefix.length) ? t.ua_by_model_prefix : null,
+        ua_by_model_prefix: (pt.ua_by_model_prefix && pt.ua_by_model_prefix.length) ? pt.ua_by_model_prefix : null,
         // 上游硬性要求首条是 system 时, 由网关补一条 (WorkBuddy 国际版实测 400/11128)。
         // 漏了这个字段 = 预设能登录但一发请求就 400。
-        require_system_first: t.require_system_first ? true : null,
+        require_system_first: pt.require_system_first ? true : null,
         _expanded: true, _testing: false, _testResult: null,
         _filter: '', _selected: {},
         models: [],
@@ -511,7 +516,14 @@
           try { await this.fetchBalance(); } catch(e) {}
           this.keyMsg=d.message||t('logout');
           setTimeout(()=>{ this.keyMsg=''; },3000);
+        }else{
+          // ⚠️ 原先只有成功分支: 后端拒绝时**完全静默**（用户点了登出、界面毫无变化，
+          // 无从判断是成功了还是失败了）。2026-10-12 审计发现, 现补齐失败提示。
+          this.keyMsg=t('logout_failed')+(d.error?('：'+d.error):'');
         }
-      }catch(e){}
+      }catch(e){
+        // 原为空 catch —— 网络异常同样静默。
+        this.keyMsg=t('network_error');
+      }
     },
     isAccountProv(p){ return !!(p.auth && p.auth.mode==='account'); },

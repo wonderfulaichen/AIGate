@@ -94,6 +94,32 @@
         }
       });
       this.$watch('chartMode', ()=>{ this.computeModelTrend(); });
+      // ── 供应商表单提示的**唯一出口**（2026-10-12 修「提示写了却永远不显示」）──
+      //
+      // 背景（审计实测）: `providersFormMsg` 被写入 20+ 次（添加预设/自定义添加/删除/
+      // 恢复默认/启用停用/拉取成功/保存成功/保存失败/网络错误/名称重复…），
+      // 但**任何 HTML 里都没有渲染点**（grep 全部 .html 零命中）——
+      // 写好的文案全部"写了就丢"。后果是用户点「添加」后屏幕上只多一张卡、
+      // **没有任何文字说"还没保存"**；保存失败也完全静默（他分不清成功和失败）。
+      //
+      // 修法: 不逐个改 20 个写入点（那样以后新增一处又会漏），而是在**唯一出口**接上 ——
+      // 用 $watch 监听该变量，一旦被赋非空值就交给全局 toast 渲染。
+      // 这样新增写入点**自动生效**，不需要记得同步。
+      //
+      // ⚠️ 已带 toast 的调用点（拉取失败/网络错误）会重复弹一次，故用 `providersFormOk`
+      //    之外再加一个"该文案是否已 toast 过"的去重锚点：toast 的 key 用文案本身，
+      //    相同的 3s 内自动合并计数（见 stores.js 的 push 实现），不会刷屏。
+      this.$watch('providersFormMsg', (v) => {
+        if (!v) return;
+        toast(v, this.providersFormOk === false ? 'error' : 'info', 'pform:' + v);
+      });
+      // 同类的第二个死变量: `keyMsg`（清空密钥的成功/失败提示）也没有渲染点
+      // （审计实测: ds-providers.js:24-26 写入, 全 HTML 零渲染）。
+      // 抽屉内的密钥保存走的是 `drawerProv._keyMsg`（有渲染, 保留不动）。
+      this.$watch('keyMsg', (v) => {
+        if (!v) return;
+        toast(v, 'info', 'keymsg:' + v);
+      });
       // 快捷键: / 聚焦记录页搜索框 (输入控件内不劫持; 非记录页不切换页签, 避免误跳).
       this._onSlashKey = (e) => {
         if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;

@@ -21,8 +21,10 @@
       try {
         const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({provider:prov.name,value:''})});
         const d=await r.json();
+        // ⚠️ `keyMsg` 曾是死变量（无渲染点）→ 失败完全静默。现由 ds-core.js 的统一出口
+        // 弹 toast；这里只需保证**成功与失败都赋值**（失败不再落进 catch 的空档）。
         if(r.ok) { this.keyMsg=t('key_cleared',prov.name); this.fetchKeys(); setTimeout(()=>this.keyMsg='',3000); }
-        else this.keyMsg=d.error||t('save_failed');
+        else { this.keyMsg=t('key_clear_failed',prov.name)+(d.error?('：'+d.error):''); }
       } catch(e){ this.keyMsg=t('network_error'); }
     },
     async saveDrawerKey() {

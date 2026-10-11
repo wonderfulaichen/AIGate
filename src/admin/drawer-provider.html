@@ -77,7 +77,11 @@
             <div class="key-status-row" x-text="keyStatusText(drawerProv.name)"></div>
             <div style="display:flex;gap:8px;align-items:center">
               <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="saveDrawerKey()">
-              <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" x-text="drawerProv._keySaving?t('saving'):t('save')"></button>
+              <!-- ⚠️ 这两个「保存」语义不同, 必须从**按钮文字**就能分辨 (2026-10-12 审计):
+                   这里是**立即生效**（直接 PUT /admin/api/keys, 不经过表单保存链）;
+                   而底部那个「保存配置」走表单链、要等落盘。原实现两个都叫「保存」,
+                   用户无法从命名推断哪个立刻生效。现按语义改名。 -->
+              <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" :title="t('key_save_hint')" x-text="drawerProv._keySaving?t('saving'):t('save_key_now')"></button>
               <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
             </div>
             <template x-if="drawerProv._keyMsg"><div :style="'margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:var(--rm);'+(drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)')" x-text="drawerProv._keyMsg"></div></template>
@@ -198,7 +202,11 @@
 
       <!-- Footer -->
       <div class="dr-foot">
-        <button class="btn btn-g" @click="closeProviderDrawer()" x-text="t('cancel')"></button>
+        <!-- 「取消」语义应是"放弃改动", 但 closeProviderDrawer() 只关闭面板、**保留**改动
+             （改动留在表单里、脏标记亮起）。按钮叫「取消」会让用户以为改动已丢弃
+             （2026-10-12 审计）。改名「关闭」+ 提示"改动保留" —— 若真丢弃, 用户可用
+             页头的「刷新」（那条会弹确认）。 -->
+        <button class="btn btn-g" @click="closeProviderDrawer()" :title="t('drawer_close_hint')" x-text="t('close')"></button>
         <button class="btn btn-p" :disabled="_saving" @click="saveProvidersForm()"><template x-if="!_saving"><span x-text="t('save_config')"></span></template><template x-if="_saving"><span class="spin"></span></template></button>
       </div>
     </div>

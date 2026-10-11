@@ -20,6 +20,15 @@ th{text-align:left;padding:12px 14px;font-weight:650;font-size:var(--fs-11);colo
 .th-sort:hover{color:var(--fg)}
 .th-sort-ico{display:inline-block;min-width:9px;color:var(--primary);font-size:var(--fs-12)}
 td{padding:14px 14px;font-size:var(--fs-13);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
+/* ── 供应商表的"窄屏挤压"防护（2026-10-12）──
+   给操作列的图标按钮加文字后（⚡测试 / ↓拉取模型），操作列变宽 → 挤压其它列，
+   实测 1024 宽下「正常」被**逐字换行**成两行、「未配置」三行，整行高度错乱。
+   修法: 给这张表（`.prov-table`）的状态类单元格禁止换行 —— 表格外层本就有
+   `overflow-x:auto`，"不换行 + 横向滚动"是正确降级。
+   ⚠️ 刻意**不做成全局 `td{white-space:nowrap}`**：记录页的错误详情列需要换行显示长文本，
+   全局改会把那些长文本挤成一行横向滚动条（更难读）。 */
+.prov-table td{white-space:nowrap}
+.prov-table td .txs{white-space:nowrap}
 /* 行悬停指示条: 由"直接出现的 2px 实心条"改成**从中间向上下生长** (scaleY 0→1).
    生长比闪现更像"光标落在这一行"的因果, 也顺手去掉了 box-shadow 方案.
    ⚠️ 用 :where() 把定位压到 0 特异度: 首列若是 .th-sticky (sticky 列), 它必须仍然赢,
