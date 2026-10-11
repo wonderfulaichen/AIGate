@@ -250,6 +250,11 @@ const I18N = {
     'faq_protocol_q': '协议（api_format）怎么选？', 'faq_protocol_a': '默认「自动」：客户端打哪个入口（/v1/chat/completions、/v1/messages、/v1/responses）就用哪个协议转发，网关按上游能力自动判断，通常无需设置。只有当你确认某个模型必须固定走某条协议时，才在「协议」列手动选定——选定即锁定，客户端打别的入口也会被转到该协议。',
     'faq_breaker_q': '熔断是什么？会自动恢复吗？', 'faq_breaker_a': '同一供应商连续失败达到阈值后会暂停转发并返回 503（写明是熔断），冷却后自动放探测请求试探，上游恢复即自动放行。**开合与恢复都会记进概览页的「最近发生的事」**（含触发原因：是连续失败还是错误率超标），记录页则能看到被熔断挡下的那些 503 请求。',
     'faq_slow_q': '为什么有时很慢或超时？', 'faq_slow_a': '先看记录页该条请求：总耗时长但首字快 = 上游生成慢；「连接被断开」= 链路中断（换供应商或检查代理）；客户端报超时但记录是 200 = 客户端自己的超时，网关已成功。',
+    // ── 账号凭据与「要不要装那个 IDE」(2026-10-11 实测后加) ──
+    // 这个问题用户真问过（「卸载了 CodeBuddy 还能反代吗」），而面板此前没有任何地方说明，
+    // 用户只能来问 —— 属于"缺一格观测"的同一个病, 故写进 FAQ。
+    'faq_cred_q': '账号型供应商（如 CodeBuddy）必须先装那个 IDE 吗？卸载了还能用吗？',
+    'faq_cred_a': '登录一次之后，凭据就存进网关自己的 data/accounts.json，之后不再访问那个 IDE —— 卸载它不影响反代。实测：网关代码中没有任何一处读取本机 IDE 的凭据库或设备指纹；转发用的身份头是配置里的固定值。唯一需要 IDE 的场景是「手动粘贴 Token」那种登录方式（Token 加密存在 IDE 里）；推荐用本页的浏览器一键登录，它走官方网页流程，不需要装任何东西。注意两点：① 凭据到期前会自动续期，续期也只用 refresh_token、不碰 IDE；② 上游随时可能收紧对身份头的校验，那属于上游策略变化，与装没装 IDE 无关。',
     'foot_docs': '使用说明', 'foot_repo': 'GitHub 仓库', 'foot_issue': '问题反馈',
     'fd_title': '拉取模型结果', 'fd_tab_new': '新增', 'fd_tab_existing': '已存在', 'fd_tab_removed': '下架',
     'fd_hint': '勾选要导入的新增模型，取消勾选将不导入；已存在与下架仅供对照。',
@@ -543,6 +548,8 @@ const I18N = {
     'faq_protocol_q': 'Which protocol (api_format) should I pick?', 'faq_protocol_a': 'Leave it on Auto: whichever entry the client calls (/v1/chat/completions, /v1/messages, /v1/responses) is the protocol used, and the gateway decides based on upstream capability - normally no configuration is needed. Only pick a protocol when a model must be pinned to one: selecting it locks the model, so calls to other entries are converted to it.',
     'faq_breaker_q': 'What is the circuit breaker? Does it self-recover?', 'faq_breaker_a': 'After repeated failures for one provider, forwarding pauses and returns 503 (stating it is the breaker). A probe is sent after cooldown and traffic resumes automatically when the provider recovers. Trips and recoveries - with the reason (consecutive failures vs. error rate) - are listed under "Recent activity" on the Overview page; Records shows the individual 503 requests that were blocked.',
     'faq_slow_q': 'Why is it sometimes slow or timing out?', 'faq_slow_a': 'Check that request in Records: long total but fast first token = slow upstream generation; “connection closed” = network path issue (switch provider or check proxy); client timeout with a 200 in Records = the client’s own timeout — the gateway succeeded.',
+    'faq_cred_q': 'Do account-based providers (e.g. CodeBuddy) require that IDE to be installed? What if I uninstall it?',
+    'faq_cred_a': 'Once you sign in, the credential is stored in the gateway\'s own data/accounts.json and that IDE is never contacted again - uninstalling it does not affect forwarding. Verified: no code path reads the local IDE credential store or any device fingerprint, and the identity headers sent upstream are fixed values from your config. The only flow that needs the IDE is "paste token manually" (the token is encrypted inside the IDE); use the browser sign-in on this page instead - it goes through the official web flow and requires nothing installed. Two caveats: (1) credentials auto-renew before expiry using only the refresh token, still without touching the IDE; (2) the upstream may tighten identity-header validation at any time - that is an upstream policy change and is unrelated to whether the IDE is installed.',
     'foot_docs': 'Docs', 'foot_repo': 'GitHub repo', 'foot_issue': 'Report an issue',
     'fd_title': 'Fetch models result', 'fd_tab_new': 'New', 'fd_tab_existing': 'Existing', 'fd_tab_removed': 'Removed',
     'fd_hint': 'Check new models to import; unchecked ones will be skipped. Existing/removed rows are informational.',

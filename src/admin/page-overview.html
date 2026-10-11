@@ -135,7 +135,7 @@
   <div class="pnl" style="margin-top:16px">
     <div class="pnl-h"><div><span class="pnl-ht" x-text="t('faq_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('faq_desc')"></div></div></div>
     <div class="pnl-b"><div class="faq-list">
-      <template x-for="(q,i) in [{k:'cost'},{k:'protocol'},{k:'breaker'},{k:'slow'}]" :key="q.k">
+      <template x-for="(q,i) in [{k:'cost'},{k:'protocol'},{k:'breaker'},{k:'slow'},{k:'cred'}]" :key="q.k">
         <div class="faq-item" :class="{'open':faqOpen===i}">
           <button type="button" class="faq-q" @click="faqOpen=(faqOpen===i?-1:i)"><span x-text="t('faq_'+q.k+'_q')"></span><span class="faq-caret" x-text="faqOpen===i?'⌃':'⌄'"></span></button>
           <div class="faq-a" x-show="faqOpen===i" x-cloak><div class="faq-a-in" x-text="t('faq_'+q.k+'_a')"></div></div>

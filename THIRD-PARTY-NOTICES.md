@@ -37,8 +37,11 @@
 | [zen-gate](https://github.com/LAGcomcom/zen-gate) | MIT | **只读了 README**。它揭示的上游"按 session 计配额"这一事实，促成本项目修复身份头透传。其"客户端身份伪装"做法**明确不做**（见下） | 仅读文档 |
 | [dsh-zen-proxy](https://github.com/Yee-h/dsh-zen-proxy) | MIT | **只读了 README**（上游闸门规则的实测记录） | 仅读文档 |
 | [dsh-our-free-model](https://github.com/Ebony-Vinyl/dsh-our-free-model) | **MIT** | **只读 README / 未抄代码**。两轮沟通各取一条**口径教训**：① 「分子与分母度量的不是同一段时间」——促成查出本项目 gen_speed 虚高（实测 80 倍）；② 「拒绝过短窗口 / Σtoken÷Σ秒 而不对各次速率取平均」——促成修掉**记录详情**同款漏剔除（实测虚高 204 倍）。详见 §9 | 仅读文档 |
+| [deepseek-harness-codearts](https://gitee.com/iJetLi/deepseek-harness-codearts) | **MIT**（`LICENSE` = MIT / Copyright (c) 2026 Jet） | **反代要件的事实取证**：buddy（CodeBuddy 国内版）端点/归属头/模型白名单提取自其 `product.ts` / `buddy-adapter.ts`；WorkBuddy（国际版）的要件（endpoint / platform / 归属头 / UA 分档规则）同样取自其 `product.ts:381`。**均为公开可观测的接口事实**（端点、HTTP 头、参数名），未搬运其代码；架构不可直接搬（TS 插件跑在客户端侧） | 读文档 + 实测 |
 | [models.dev](https://models.dev) | 公开数据 | 模型元数据（上下文/输出上限、模态能力）—— 运行时按 API 拉取，未拷贝其数据文件 | 数据源 |
-| DeepSeek Harness 系列插件 | MIT | **反代要件的事实取证**（端点、头、错误码）；架构不可直接搬（TS 插件跑在客户端侧） | 读文档 + 实测 |
+
+> 注：上面第 1 行那条 `deepseek-harness-codearts` 就是原先泛称的「DeepSeek Harness 系列插件」
+> （2026-10-11 补上具体仓库与 LICENSE 原文，替换掉此前含混的写法）。
 
 ## 明确不做的做法（越界，非许可问题）
 

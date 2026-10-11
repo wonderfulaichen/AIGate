@@ -1663,6 +1663,17 @@ i18n **zh 650 = en 650** 无缺无重 / balance 跨文件开合正常 / test_bra
 **下午 — 反代 CodeBuddy（腾讯）**：
 
 - 要件（端点 + 归属头电池 + 模型白名单）提取自 gitee `iJetLi/deepseek-harness-codearts` 源码（§9）；凭据从本机 CodeBuddy CN 的 `state.vscdb` 逐级解出（`secret://` Buffer → v10 blob → DPAPI 解 Local State 的 key → AES-256-GCM），token 有效期至 ~**2026-11-25**。
+  > 🆕 **「卸载 CodeBuddy 之后还能反代吗」—— 能**（2026-10-11 用户提问后实测定案）。
+  > 凭据**只在第一次登录时**从 IDE 解出，之后存进网关自己的 `data/accounts.json`，
+  > **运行期不再访问 IDE**。四条证据：
+  > ① 全仓 grep `state.vscdb` / `Local State` / `DPAPI` / `machine_id` / `device_id` / `codebuddy.exe` **零命中**；
+  > ② 转发身份头是 `providers.json` 里的**字面量**（`X-IDE-Version: 1.106.1` 等），不探测本机 IDE；
+  > ③ 续期只发 `X-Refresh-Token`（**无设备指纹**）；
+  > ④ 历史 **1933 条** buddy 请求 / **1865 条 200**，全程只用写死的头 + 自存 token。
+  > ⚠️ 唯一需要 IDE 的是**「手动粘贴 Token」**那种登录方式（token 加密存在 IDE 里）——
+  > 用面板的**浏览器一键登录**就不需要（走官方网页流程）。已写进面板 FAQ（`faq_cred_*`）。
+  > ⚠️ 但**上游可以随时收紧**：网关是"冒用 IDE 身份头"在打这个上游，目前不校验设备指纹；
+  > 真收紧了则装不装 IDE 都一样用不了（同 OpenCode 403 前车之鉴）。
 - `providers.json` **文本级手术**追加 `buddy`（15 个实测可用模型，`buddy/deepseek-v4-flash` 等），`POST /admin/api/providers/reload` **热重载生效、未动用户进程**；备份 `providers.json.bak_before_buddy`。
 - 已知限制（写死在 e2e）：端点**只收流式**（非流式 400 code=11101）；token 无自动续期；11140 腾讯安全拦截按账号生效、随时可能收紧（OpenCode 403 前车之鉴）。
 
@@ -1995,3 +2006,54 @@ DeepSeek Harness 的**免费额度插件**（**MIT —— 已核对仓库根 LIC
 **二轮结论**：这一个项目两轮共贡献 **2 个真修复**，且都是"它踩过的坑我们正在踩"，
 价值密度高于此前评估过的任何外部项目。**但它没有任何一段代码值得我们抄** ——
 我们缺的是观测与口径，不是实现。
+
+#### ⚠️ WorkBuddy（国际版）接入评估 —— **按"内置跑不通的按钮比不内置更糟"暂不收录**（2026-10-11 实测）
+
+用户提出「希望支持更多反代，比如国际版的 workbuddy」。**要件与可行性都查清了，结论是当前接不通**，
+故**不内置**（同 TRAE 的处置口径）。留档以免以后重复评估。
+
+**要件（来源：`deepseek-harness-codearts` 的 `src/product.ts:381 WORKBUDDY`，
+MIT / Copyright (c) 2026 Jet，已读 LICENSE 原文）** —— 与国内版**协议完全相同**，
+差异只在 endpoint 与几个标识：
+
+| 字段 | CodeBuddy（国内） | **WorkBuddy（国际）** |
+|---|---|---|
+| endpoint | `https://copilot.tencent.com` | `https://www.workbuddy.ai` |
+| `platform`（auth/state 查询参数） | `ide` | **`workbuddy-ai`** |
+| `X-Product-Code` | `codebuddy` | **`workbuddy`** |
+| `X-IDE-Name` / `X-IDE-Type` / `X-Product` | `CodeBuddy` | **`WorkBuddy`** |
+| `X-IDE-Version` | `1.106.1` | **`5.5.2`** |
+| user-agent | `CodeBuddyIDE/1.106.1` | **`WorkBuddy/5.5.2 WorkBuddy AI/5.5.2 CLI/5.5.2`**（国际系模型）/ `WorkBuddy/5.5.2 WorkBuddy/5.5.2 CLI/5.5.2`（国内系模型 glm/hy/kimi/minimax） |
+| 登录 URL | 直接 `authUrl` | 需追加 `version` + `loginSessionId`（`appendSessionParams`） |
+
+**实测结果（逐条可复现）**：
+
+| 探测 | 结果 |
+|---|---|
+| 端点连通 | ✅ `GET https://www.workbuddy.ai/v3/config` 可达 |
+| 登录流入口 | ✅ `POST /v2/plugin/auth/state?platform=workbuddy-ai` 返回官方 `authUrl`（域名 = `www.workbuddy.ai`，**与国内版不同 realm**） |
+| 国内 token 能否解锁模型池 | ✅ **能** —— 带国内 buddy token 时 `/v3/config` 返回 **24 KB / 29 个模型**（含 `gpt-6.1-sol`、`gpt-5.6-sol`、`gemini-3.5-flash`、`grok-4.7`、`claude` 系等**国内版没有的**）；无认证只有 252 字节且 `models: null` |
+| **对话能不能通** | ❌ **401**（`openresty` + APISIX 边缘网关，返回 HTML 而非 JSON） |
+
+**对照实验（证明 401 是 realm 问题、不是我们构造错头）**：同一份代码、同一个 token ——
+国内端点 `copilot.tencent.com` → **429**（额度限流，**说明请求被正常受理**）；
+国际端点 `www.workbuddy.ai` → **401**。并试过变体（国际头 + 国内 UA 分档、
+国际端点 + `X-Domain: copilot.tencent.com`）**全部 401**。
+
+**为什么是 401**：token 的 `iss` 是 **`https://www.codebuddy.cn/auth/realms/copilot`**
+（`app_type=codebuddy`）—— 它是**中国大陆 realm** 的凭据，转发的边缘网关按 realm 校验。
+`/v3/config` 是产品配置接口、容忍跨 realm；`/v2/chat/completions` 是计费边界，不认。
+
+**结论与出路**：
+- **当前接不通** ⇒ 按本项目纪律（"内置一个跑不通的按钮比不内置更糟"，同 TRAE / OpenCode-free-tier）
+  **不收录为预设**。
+- **要接通需要**（两件都缺一不可）：
+  ① **一份国际版（WorkBuddy AI）账号的凭据** —— 需用 `platform=workbuddy-ai` 走官方登录流单独登录；
+  ② **按模型族分档的 User-Agent** —— 我们的 `ProviderConfig.headers` 是**provider 级静态表**，
+     无法按模型 id 切 UA（`resolveUserAgent` 那种前缀匹配）。国际版 GPT/Gemini/Claude 系走国际形态 UA、
+     国内系走国内形态 UA，共用一个 UA 会让其中一类归因错误（腾讯后台按 UA 计「使用端」）。
+  ⇒ 技术上要做的是：① `presets.rs` 加 workbuddy 条目（endpoint/头/`platform`）；
+  ② 登录流程的 `platform` 参数改成**按预设可配**（现在硬编码 `platform=ide`，见 `accounts.rs::buddy_endpoint` 附近）；
+  ③ `headers` 支持**按模型前缀覆盖 UA**（新机制，改动最大）。
+- ⚠️ **不要在没拿到国际版凭据前动手**：第 ③ 项是新机制，而 401 未解开前无法端到端验证
+  —— 会做出一个"看起来对但发不出去"的实现。
