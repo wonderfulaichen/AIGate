@@ -17,6 +17,150 @@
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
+// ─── POST /v1/messages/count_tokens（本地估算，2026-10-11）───
+
+/// 估算一段文本的 token 数。
+///
+/// 刻意**不引入分词器**：本项目是单 exe、零外部依赖，为估算再带一份 BPE 词表
+/// 既破坏交付形态、又必然与上游真实分词器有偏差（各家分词器本就不同）。
+/// Anthropic 官方该端点也是"估算"，故这里如实给出**保守估算**并在响应里说明口径。
+///
+/// 口径（与项目里其它省量估算一致，见 `HANDOFF §5.3`）：
+/// - 按 **UTF-8 字节数 / 4** 计（= 代码与英文为主时的近似，与 `chars/4` 同源）；
+/// - **中日韩字符单独按 ~1.5 字节/token 更接近**：CJK 一个字 3 字节，
+///   真实分词普遍 1 字 ≈ 1 token，故对 CJK 直接按"每字 1 token"计，
+///   其余字节按 /4 —— 两者相加。混排文本因此不会因汉字被高估 3 倍。
+///
+/// ⚠️ 结论仍是**估算值**，对外表述不得说成"精确分词"。
+pub fn estimate_tokens(text: &str) -> u64 {
+    let mut cjk_chars = 0u64;
+    let mut other_bytes = 0u64;
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            cjk_chars += 1;
+        } else {
+            other_bytes += ch.len_utf8() as u64;
+        }
+    }
+    // 非 CJK: 字节/4（向上取整，避免极短文本算出 0）；CJK: 每字 1 token。
+    let other = (other_bytes + 3) / 4;
+    cjk_chars + other
+}
+
+/// 是否 CJK（中日韩）字符 —— 这些字符的真实分词普遍接近「一字一 token」。
+fn is_cjk(ch: char) -> bool {
+    matches!(ch as u32,
+        0x3000..=0x303F |   // CJK 标点
+        0x3040..=0x30FF |   // 平假名 / 片假名
+        0x3400..=0x4DBF |   // 扩展 A
+        0x4E00..=0x9FFF |   // 基本汉字
+        0xF900..=0xFAFF |   // 兼容汉字
+        0xFF00..=0xFFEF |   // 全角形式
+        0x20000..=0x2FA1F   // 扩展 B~F
+    )
+}
+
+/// 估算 **Anthropic `/v1/messages` 请求体**的输入 token 数（供 `count_tokens` 端点）。
+///
+/// 覆盖 Anthropic 消息形态的**全部文本来源**，逐项累加：
+/// - 顶层 `system`：字符串 或 block 数组（只取 `text` 块）；
+/// - `messages[]`：`content` 既可为字符串，也可为 block 数组 —— 其中
+///   `text` / `thinking` / `tool_use.name` / `tool_use.input`(JSON) /
+///   `tool_result.content` 都要计入（工具结果往往是最大的那块，漏了会显著低估）；
+/// - `tools[]`：`name` + `description` + `input_schema`(JSON)。
+///
+/// ⚠️ **图片不计入**：Anthropic 的 image block 按像素折算视觉 token，
+/// 不属文本估算范围。这里不猜（猜出来的数会伪装成精确值）—— 缺的那部分
+/// 由响应里的 `note` 如实说明。
+///
+/// 返回 `(tokens, has_images)`：`has_images` 供调用方如实提示"未含图片部分"。
+pub fn estimate_messages_tokens(body: &Value) -> (u64, bool) {
+    let mut total = 0u64;
+    let mut has_images = false;
+
+    // 顶层 system
+    if let Some(sys) = body.get("system") {
+        total += estimate_content_field(sys, &mut has_images, true);
+    }
+
+    // messages[]
+    if let Some(msgs) = body.get("messages").and_then(|m| m.as_array()) {
+        for m in msgs {
+            if let Some(c) = m.get("content") {
+                total += estimate_content_field(c, &mut has_images, false);
+            }
+        }
+    }
+
+    // tools[]：名称 + 描述 + schema（schema 走 JSON 序列化后按文本估）
+    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
+        for t in tools {
+            if let Some(n) = t.get("name").and_then(|v| v.as_str()) {
+                total += estimate_tokens(n);
+            }
+            if let Some(d) = t.get("description").and_then(|v| v.as_str()) {
+                total += estimate_tokens(d);
+            }
+            if let Some(s) = t.get("input_schema") {
+                total += estimate_tokens(&s.to_string());
+            }
+        }
+    }
+
+    (total, has_images)
+}
+
+/// 估算一个 `content` 字段（字符串或 block 数组）。
+///
+/// `allow_string_direct` 为 false 时，字符串也照常计（Anthropic 的 message.content
+/// 允许直接是字符串）；该参数保留给将来语义分化，当前两条路径等价。
+fn estimate_content_field(v: &Value, has_images: &mut bool, _allow_string_direct: bool) -> u64 {
+    match v {
+        Value::String(s) => estimate_tokens(s),
+        Value::Array(blocks) => {
+            let mut n = 0u64;
+            for b in blocks {
+                // 每块只按 type 取对应字段 —— 不整块 to_string()，
+                // 否则会把字段名、JSON 标点都算进 token，系统性高估。
+                match b.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                    "text" => {
+                        if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                            n += estimate_tokens(t);
+                        }
+                    }
+                    "thinking" => {
+                        if let Some(t) = b.get("thinking").and_then(|x| x.as_str()) {
+                            n += estimate_tokens(t);
+                        }
+                    }
+                    "tool_use" => {
+                        if let Some(t) = b.get("name").and_then(|x| x.as_str()) {
+                            n += estimate_tokens(t);
+                        }
+                        // input 是任意 JSON，按序列化后的文本估（工具参数常是大头）。
+                        if let Some(i) = b.get("input") {
+                            n += estimate_tokens(&i.to_string());
+                        }
+                    }
+                    "tool_result" => {
+                        // tool_result.content 可以是字符串，也可以是 block 数组（含嵌套图片）。
+                        if let Some(c) = b.get("content") {
+                            n += estimate_content_field(c, has_images, true);
+                        }
+                    }
+                    "image" => {
+                        // 见函数文档：图片不参与文本估算，只登记"有图片"。
+                        *has_images = true;
+                    }
+                    _ => {}
+                }
+            }
+            n
+        }
+        _ => 0,
+    }
+}
+
 // ─── 请求转换: OpenAI → Anthropic ───
 
 /// 把 OpenAI chat/completions 请求体转换为 Anthropic /messages 请求体.
@@ -1256,6 +1400,109 @@ impl OpenAIStreamConv {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── count_tokens 本地估算 (2026-10-11) ───
+    //
+    // 用户让我系统对标 dsh-our-free-model 后补的缺口: Claude Code 等客户端发送前会调
+    // POST /v1/messages/count_tokens 估算上下文占用, 我们此前没有这个路由 → 404。
+
+    /// 英文/代码: 4 字节 ≈ 1 token。
+    #[test]
+    fn estimate_tokens_ascii() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("a"), 1, "极短文本不得算成 0");
+        assert_eq!(estimate_tokens("1234"), 1);
+        assert_eq!(estimate_tokens("12345678"), 2);
+    }
+
+    /// 汉字按 **1 字 1 token** 计，而不是"3 字节 / 4"（那会把中文低估 3 倍）。
+    #[test]
+    fn estimate_tokens_counts_cjk_per_char() {
+        let s = "你好世界"; // 4 个汉字 = 12 字节
+        assert_eq!(estimate_tokens(s), 4, "4 个汉字应估 4 token");
+        // 对照: 若按字节/4 会得到 3 —— 这就是刻意分开计的理由
+        assert_ne!(estimate_tokens(s), (s.len() as u64 + 3) / 4);
+    }
+
+    /// 中英混排: 两部分分别计，不互相放大。
+    #[test]
+    fn estimate_tokens_mixed() {
+        // "你好" (2 汉字=2) + "abcdefgh" (8 ASCII 字节=2) = 4
+        assert_eq!(estimate_tokens("你好abcdefgh"), 4);
+    }
+
+    /// 请求体估算要覆盖**所有文本来源**：system / messages / tool_use / tool_result / tools。
+    /// 漏掉 tool_result 或 tools 会显著低估（工具结果常是最大那块）。
+    #[test]
+    fn estimate_messages_covers_all_text_sources() {
+        let body = json!({
+            "model": "m",
+            "system": "你是一个助手",
+            "messages": [
+                {"role": "user", "content": "abcd"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "回答"},
+                    {"type": "tool_use", "id": "t1", "name": "read_file",
+                     "input": {"path": "/tmp/x"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "文件内容在这里"}
+                ]}
+            ],
+            "tools": [{"name": "read_file", "description": "读取文件",
+                       "input_schema": {"type": "object"}}]
+        });
+        let (n, has_img) = estimate_messages_tokens(&body);
+        assert!(!has_img);
+        // 不断言精确值（JSON 序列化长度会随格式微调），只断言"显著大于只算 user 文本"。
+        let user_only = estimate_tokens("abcd");
+        assert!(n > user_only + 20, "应把 system/工具/工具结果都算进来, 实得 {n}");
+    }
+
+    /// 图片不计入文本估算，但必须**如实登记**（供调用方提示"未含图片"），
+    /// 而不是静默算一个偏小的数。
+    #[test]
+    fn estimate_messages_flags_images_without_counting() {
+        let body = json!({
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "abcd"},
+                {"type": "image", "source": {"type": "base64", "data": "AAAA"}}
+            ]}]
+        });
+        let (n, has_img) = estimate_messages_tokens(&body);
+        assert!(has_img, "必须登记有图片");
+        assert_eq!(n, 1, "图片不参与文本估算");
+    }
+
+    /// 嵌套 tool_result（content 是 block 数组）也要算 —— 真实工具结果常是这种形态。
+    #[test]
+    fn estimate_messages_handles_nested_tool_result() {
+        let body = json!({
+            "messages": [{"role": "user", "content": [
+                {"type": "tool_result", "content": [
+                    {"type": "text", "text": "abcd"},
+                    {"type": "text", "text": "efgh"}
+                ]}
+            ]}]
+        });
+        let (n, _) = estimate_messages_tokens(&body);
+        assert_eq!(n, 2, "嵌套的两块文本都要算");
+    }
+
+    /// 畸形/缺字段不得 panic。
+    #[test]
+    fn estimate_messages_safe_on_malformed() {
+        for v in [
+            json!({}),
+            json!({"messages": "not-an-array"}),
+            json!({"messages": [{}]}),
+            json!({"system": 123}),
+            json!({"tools": [{"name": 1}]}),
+            json!("just a string"),
+        ] {
+            let _ = estimate_messages_tokens(&v);
+        }
+    }
 
     #[test]
     fn request_basic_text() {

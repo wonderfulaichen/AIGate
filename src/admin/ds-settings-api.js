@@ -36,6 +36,15 @@
         else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
       } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
+    // ── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ──
+    // 数据源是日级 rollup（持久化、跨日志滚动窗口），故能覆盖 17 周 ——
+    // 前端趋势图那边最大只到 logs.jsonl 的窗口，两者不是一回事。
+    async fetchHeatmap() {
+      try {
+        const r = await fetch('/admin/api/heatmap?weeks=17', { headers: authHeaders() });
+        if (r.ok) this.heatmap = await r.json();
+      } catch (e) {}
+    },
     // ── 事件台账 (2026-10-11): 关键事件的时间线 ──
     // 用户原话:「熔断、报错等等连工作报告、异常通知都没做。出问题得用户自己去一点点找。」
     // 这里就是那份"工作报告": 熔断开合、上游连续失败、额度将尽、账号作废等按时间列出,

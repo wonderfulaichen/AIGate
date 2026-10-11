@@ -158,6 +158,14 @@ const I18N = {
     'tool_trunc_confirm': '开启后单条超长工具输出会被截断（有损，会影响模型看到的工具结果）。可同时开启「降级可回取」以便事后核查被截内容。确认开启？',
     'degrade_title': '静默降级次数', 'degrade_note': '计数解析失败导致"优化/翻译未生效"的次数（进程级，重启清零）—— 这类失败请求会照常转发，只是省量或错误翻译没生效，容易与"这次确实没什么可省"混淆',
     'degrade_upstream_error_parse_failed': '上游错误体解析失败', 'degrade_ok': '无降级记录', 
+    // ── 用量热力图 (2026-10-11) ──
+    // 措辞纪律: 0 在这里的含义是"那天确实没有请求"(日级账本每天都有记录),
+    // 而"无数据"是"我们没测到" —— 日历上必须区别对待, 故文案说"没有请求"而非"无数据"。
+    'heatmap_title': '用量热力图', 'heatmap_desc': '最近 17 周每天的 token 总量 —— 一眼看出哪几天集中使用、有没有长时间断档',
+    'heatmap_less': '少', 'heatmap_more': '多', 'heatmap_total': '合计 {0}',
+    'hm_mon': '一', 'hm_wed': '三', 'hm_fri': '五', 'hm_sun': '日', 'hm_month_suffix': '月',
+    'heatmap_takeaway': '这 {1} 天里有 {0} 天有请求；用量最高的是 {2}（{3}）。',
+    'heatmap_takeaway_empty': '最近 {0} 天没有请求记录。',
     // ── 事件台账 (概览「最近发生的事」, 2026-10-11) ──
     // 用户原话:「熔断、报错等等连工作报告、异常通知都没做。出问题得用户自己去一点点找。」
     // 这里是他要的那份"工作报告": 每条事件都有**类别 + 主体 + 原因**, 不必翻日志。
@@ -170,7 +178,7 @@ const I18N = {
     'ev_breaker_open': '熔断已打开', 'ev_breaker_closed': '熔断已恢复', 'ev_breaker_half_open': '熔断转入试探',
     'ev_breaker_reset': '熔断被手动重置', 'ev_upstream_failing': '上游连续失败', 'ev_upstream_recovered': '上游已恢复响应',
     'ev_quota_low': '额度将尽', 'ev_account_dead': '账号已作废', 'ev_providers_reloaded': '配置已重载',
-    'ev_started': '服务已启动',
+    'ev_started': '服务已启动', 'ev_port_fallback': '端口被占用，已顺延',
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
     'unit_secs': '秒', 'conn_params_hint': '空闲超时：上游超过该时长未吐出数据则断开（30~600 秒）；重试仅对连接/超时错误与 5xx 生效。修改即时生效，重启后回到环境变量默认值',
     'meta_vision': '视觉', 'meta_ctx': '上下文', 'meta_out': '最大输出', 
@@ -457,6 +465,14 @@ const I18N = {
     'tool_trunc_confirm': 'Enabling this truncates oversized tool output (lossy; it changes what the model sees). Consider also enabling Recall to inspect what was removed. Enable?',
     'degrade_title': 'Silent degradations', 'degrade_note': 'Counts of parse failures that silently skipped optimization/translation (process-wide, resets on restart). Such requests are forwarded anyway, so savings or error translation just did not apply - easily mistaken for "nothing to save this time"',
     'degrade_upstream_error_parse_failed': 'Upstream error parse failed', 'degrade_ok': 'No degradations recorded',
+    // ── Usage heatmap (2026-10-11) ──
+    // Wording: 0 here means "no requests that day" (the daily ledger has an entry for every day),
+    // which is different from "not measured" — the calendar must distinguish them.
+    'heatmap_title': 'Usage heatmap', 'heatmap_desc': 'Tokens per day over the last 17 weeks - see at a glance which days were busy and whether there were long gaps',
+    'heatmap_less': 'Less', 'heatmap_more': 'More', 'heatmap_total': '{0} total',
+    'hm_mon': 'M', 'hm_wed': 'W', 'hm_fri': 'F', 'hm_sun': 'S', 'hm_month_suffix': '',
+    'heatmap_takeaway': '{0} of the last {1} days had requests; the busiest was {2} ({3}).',
+    'heatmap_takeaway_empty': 'No requests recorded in the last {0} days.',
     // ── Event ledger ("Recent activity" on Overview, 2026-10-11) ──
     'events_title': 'Recent activity', 'events_desc': 'Timeline of key events - breaker open/close, repeated upstream failures, low quota, dead accounts - each with its reason',
     'events_empty': 'No events recorded yet. Key events such as breaker trips, upstream failures and low quota will appear here.',
@@ -467,7 +483,7 @@ const I18N = {
     'ev_breaker_open': 'Breaker opened', 'ev_breaker_closed': 'Breaker recovered', 'ev_breaker_half_open': 'Breaker probing',
     'ev_breaker_reset': 'Breaker reset manually', 'ev_upstream_failing': 'Upstream failing repeatedly', 'ev_upstream_recovered': 'Upstream responding again',
     'ev_quota_low': 'Quota running low', 'ev_account_dead': 'Account invalidated', 'ev_providers_reloaded': 'Config reloaded',
-    'ev_started': 'Service started',
+    'ev_started': 'Service started', 'ev_port_fallback': 'Port in use, fell back',
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',
     'unit_secs': 's', 'conn_params_hint': 'Idle timeout: disconnect if upstream sends nothing for this long (30~600 s); retries apply to connection/timeout errors and 5xx. Changes apply live; restart reverts to env defaults',
     'meta_vision': 'Vision', 'meta_ctx': 'Context', 'meta_out': 'Max output', 

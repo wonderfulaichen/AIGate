@@ -54,6 +54,12 @@ pub enum EventKind {
     ProvidersReloaded,
     /// 进程启动 —— 台账的"分界线", 便于分辨"这条是重启前还是重启后".
     Started,
+    /// **端口被占用, 已顺延到别的端口**（2026-10-11）。
+    ///
+    /// 为什么单独一类而不是复用 `Started`: 事件台账会**合并**同 `(kind, subject)`
+    /// 60 秒内的重复。端口变更与"服务已启动"都是 `subject=""`, 合并后只会留下最后一条
+    /// （实测把变更详情吞掉了）。语义上也确实不同：那条说"起来了", 这条说"**换了地址**"。
+    PortFallback,
 }
 
 impl EventKind {
@@ -69,6 +75,7 @@ impl EventKind {
             EventKind::AccountDead => "account_dead",
             EventKind::ProvidersReloaded => "providers_reloaded",
             EventKind::Started => "started",
+            EventKind::PortFallback => "port_fallback",
         }
     }
 
@@ -84,7 +91,9 @@ impl EventKind {
             EventKind::BreakerHalfOpen
             | EventKind::UpstreamFailing
             | EventKind::QuotaLow
-            | EventKind::ProvidersReloaded => "warn",
+            | EventKind::ProvidersReloaded
+            // 端口顺延是"提醒"级: 一切可用, 只是地址变了 —— 用户该知道, 但不必紧张。
+            | EventKind::PortFallback => "warn",
             EventKind::BreakerOpen | EventKind::BreakerReset | EventKind::AccountDead => "err",
         }
     }

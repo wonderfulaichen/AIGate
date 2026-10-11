@@ -1073,6 +1073,60 @@ pub async fn chat_completions(
     Ok(resp)
 }
 
+/// 处理 POST /v1/messages/count_tokens — Anthropic 的**输入 token 估算**端点（2026-10-11 新增）。
+///
+/// 为什么必须有它：Claude Code 等 Anthropic 系客户端在发送前会先调这个端点估算上下文占用
+/// （据此决定要不要压缩历史）。此前我们**没有这个路由** → 客户端拿到 404，
+/// 轻则降级为"不估算"，重则直接报错（本项目反复强调的"适配在网关做"）。
+///
+/// 关键设计取舍（三条，都写在返回值里，不靠文档）：
+/// 1. **纯本地估算，不打上游** —— 该端点按定义就不该消耗额度；我们也不带分词器（单 exe 零依赖），
+///    故与 Anthropic 官方一致：给**估算值**。
+/// 2. **不猜的部分如实说** —— 图片按像素折算视觉 token，不属文本估算，故不计入，
+///    并在响应里用 `note` 说明"未含图片"，而不是让一个偏小的数字伪装成精确值。
+/// 3. **鉴权/路由与 /v1/messages 一致** —— 未知模型返回 404（与其它入口同形）。
+pub async fn count_tokens(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Result<Response, Response> {
+    let (_, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(e) => return Err(anthropic_error(StatusCode::BAD_REQUEST, &e.to_string())),
+    };
+    let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return Err(anthropic_error(StatusCode::BAD_REQUEST, &e.to_string())),
+    };
+    // 模型名照常校验（与 /v1/messages 同形），避免这个端点变成"绕过路由表的探针"。
+    let model = parsed
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    if state.registry.read().await.lookup(&model).is_none() {
+        return Err(anthropic_error(
+            StatusCode::NOT_FOUND,
+            &format!("unknown model '{model}' - not in providers.json"),
+        ));
+    }
+
+    let (tokens, has_images) = crate::anthropic::estimate_messages_tokens(&parsed);
+    let mut resp = serde_json::json!({
+        "input_tokens": tokens,
+        // 字段名照 Anthropic 规范；额外字段用下划线前缀，客户端忽略即可，
+        // 但面板/排障能看出这个数是怎么来的（"看着精确的假数"是本项目明确避免的）。
+        "_estimated": true,
+        "_method": "bytes/4 + 每汉字 1（本地估算, 未用分词器）",
+    });
+    if has_images {
+        resp["_note"] = serde_json::json!(
+            "估算未包含图片部分：图片按像素折算视觉 token, 不属文本估算范围"
+        );
+    }
+    Ok(axum::Json(resp).into_response())
+}
+
 /// 处理 POST /v1/messages — 对外 Anthropic 协议入口.
 ///
 /// 按【上游协议】分流, 保证中转保真:

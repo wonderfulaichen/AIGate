@@ -294,6 +294,112 @@
       };
     },
     get ttftHasData() { return this.ttftSummary.samples > 0; },
+
+    // ─── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ───
+    //
+    // 数据来自 `/admin/api/heatmap`（后端按日级 rollup 逐日补齐），前端只负责画格子。
+    // **逐日连续**是硬要求: 缺的那天必须占一格（值为 0），否则日历会错位 ——
+    // 这与"无数据 ≠ 0"并不矛盾: 这里 0 的含义是"那天确实没有请求"（rollup 每天都有账），
+    // 而"无数据"是"我们没测到"（如旧日志缺字段），两者在日历上必须区分:
+    // 有账但为 0 → 最浅的空格; 无账（区间外）→ 不画。
+    get heatmapDays() { return this.heatmap && this.heatmap.days ? this.heatmap.days : []; },
+    get heatmapTotal() { return (this.heatmap && this.heatmap.total_tokens) || 0; },
+    // 分位阈值: 用**非零日**的分布切四档 —— 用全区间切的话, 一旦有一天爆量,
+    // 其余所有天都会落进最低档, 整张图看起来"全都没用过"(实测常见形态)。
+    _hmThresholds() {
+      const vals = this.heatmapDays.map(d => d.tokens).filter(v => v > 0).sort((a, b) => a - b);
+      if (!vals.length) return [0, 0, 0];
+      const q = p => vals[Math.min(vals.length - 1, Math.floor(vals.length * p))];
+      return [q(0.25), q(0.5), q(0.75)];
+    },
+    hmLevel(tokens) {
+      if (!(tokens > 0)) return 0;
+      const [a, b, c] = this._hmThresholds();
+      if (tokens <= a) return 1;
+      if (tokens <= b) return 2;
+      if (tokens <= c) return 3;
+      return 4;
+    },
+    // 四档颜色都走 token（§5.5 红线: 不得出现 rgba 字面量）。
+    // ⚠️ 只能引用**本页已经在用**的 token：`theme_dark_diff` 会比对"本页生效的颜色集合"，
+    // 引入一个本页此前没出现过的 token（如 `--fill-4`）会被判成"新增颜色"而报 DIFF
+    // —— 这不是形式主义，它挡的正是"随手引入新色导致浅色主题下没人验过"。
+    // 本页既有: --accent / --border / --fg / --fill-5 / --muted。故用它们表达四档。
+    hmLevelColor(level) {
+      const c = { 1: 'var(--border)', 2: 'var(--accent)', 3: 'var(--accent)', 4: 'var(--accent)' };
+      return c[level] || 'var(--border)';
+    },
+    // 四档用**同一支强调色 + 递增不透明度**表达深浅。
+    // ⚠️ 递增必须严格单调: 第一版写成 {1:1, 2:.35, 3:.62, 4:1} ——
+    //    第 1 档与第 4 档都满不透明, 于是"最少"和"最多"看起来一模一样,
+    //    整张图只剩两种颜色, "哪天花得多"这个目的就废了（截图核对才发现）。
+    hmLevelOpacity(level) { return { 1: 0.22, 2: 0.45, 3: 0.70, 4: 1.0 }[level] || 1; },
+    // 日历网格: **列 = 周, 行 = 星期**（与 GitHub 贡献图同构）。
+    // 首列要对齐到该周周日, 否则同一行的几天会跨到不同星期。
+    heatmapGridSvg() {
+      const days = this.heatmapDays;
+      if (!days.length) return '';
+      const CELL = 12, GAP = 3, STEP = CELL + GAP;
+      const first = new Date(days[0].day_start * 1000);
+      const lead = first.getDay();               // 0=周日
+      const n = days.length + lead;
+      const weeks = Math.ceil(n / 7);
+      const W = weeks * STEP, H = 7 * STEP;
+      const maxTok = Math.max(...days.map(d => d.tokens), 0);
+      let cells = '';
+      days.forEach((d, i) => {
+        const idx = i + lead;
+        const col = Math.floor(idx / 7), row = idx % 7;
+        const lv = this.hmLevel(d.tokens);
+        const dt = new Date(d.day_start * 1000);
+        const label = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')} · ${this.fmtT(d.tokens)}`;
+        // 用 rect 而非 div: 一次性 x-html 注入, 无需 Alpine 逐格绑定 (361 格下性能差异明显)。
+        // 空格用 --border（本页已有）, 不用 --fill-4 —— 见 hmLevelColor 的说明。
+        const op = lv === 0 ? 1 : this.hmLevelOpacity(lv);
+        const fill = lv === 0 ? 'var(--border)' : this.hmLevelColor(lv);
+        cells += `<rect x="${col * STEP}" y="${row * STEP}" width="${CELL}" height="${CELL}" rx="2.5" `
+               + `fill="${fill}" fill-opacity="${op}"><title>${label}</title></rect>`;
+      });
+      // 月度刻度: 每周一列, 只在该列含"1 号"时打标 (避免每列都写月份)。
+      return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">${cells}</svg>`;
+    },
+    // 月份标签与网格**按周对齐**: 每个标签占一列宽, 只有该列起始那周跨月才显示文字。
+    heatmapMonthLabels() {
+      const days = this.heatmapDays;
+      if (!days.length) return '';
+      const STEP = 15;
+      const first = new Date(days[0].day_start * 1000);
+      const lead = first.getDay();
+      const weeks = Math.ceil((days.length + lead) / 7);
+      const MN = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+      let out = '', lastMonth = -1;
+      for (let w = 0; w < weeks; w++) {
+        const dayIdx = w * 7 - lead;
+        const d = days[Math.max(0, Math.min(days.length - 1, dayIdx))];
+        if (!d) continue;
+        const dt = new Date(d.day_start * 1000);
+        const m = dt.getMonth();
+        if (m !== lastMonth && dayIdx >= 0) {
+          lastMonth = m;
+          out += `<span style="width:${STEP}px">${MN[m]}${t('hm_month_suffix')}</span>`;
+        } else {
+          out += `<span style="width:${STEP}px"></span>`;
+        }
+      }
+      return out;
+    },
+    // 一句话结论: 只说分布里的事实（活跃天数 / 峰值日）, 不推断原因。
+    get heatmapTakeaway() {
+      const days = this.heatmapDays;
+      if (!days.length) return '';
+      const active = days.filter(d => d.tokens > 0).length;
+      if (!active) return t('heatmap_takeaway_empty', days.length);
+      let peak = days[0];
+      for (const d of days) if (d.tokens > peak.tokens) peak = d;
+      const pd = new Date(peak.day_start * 1000);
+      const pds = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}-${String(pd.getDate()).padStart(2, '0')}`;
+      return t('heatmap_takeaway', active, days.length, pds, this.fmtT(peak.tokens));
+    },
     // 平均首字延迟文本: 无样本 → '—' (与 fmtMs 的 "无数据 ≠ 0" 同口径).
     get ttftAvgText() {
       const s = this.ttftSummary;

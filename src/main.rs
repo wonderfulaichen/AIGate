@@ -304,6 +304,12 @@ async fn require_admin_token(
 //    这里是与 build.rs `logo_sample` 逐行对应的**同源还原**(不是又一份拷贝的画法):
 //    同样的常量、同样的 SDF、同样的 3×3 超采样, 只是输入尺寸由 ICO 的 6 档变成固定 32。
 //    改品牌标必须**同时**改三处: icon.svg / build.rs / 这里 (verify_logo.py PART E 会扫).
+/// 端口被占用时最多顺延尝试的次数（含原端口本身）。
+///
+/// 20 是"够用且不掩盖问题"的折中：本地同时开几个实例最多也就占几个端口；
+/// 而无限顺延会让"PORT 配错了"变成"怎么每次端口都不一样"。
+const PORT_FALLBACK_TRIES: u16 = 20;
+
 const LOGO_BLUE: (u8, u8, u8) = (10, 132, 255); // #0a84ff = Apple systemBlue
 const LOGO_FG: (u8, u8, u8) = (255, 255, 255);
 const LOGO_BOX: (f32, f32, f32, f32) = (8.0, 8.0, 240.0, 240.0); // x y w h
@@ -783,6 +789,8 @@ fn main() {
         // 事件台账 (2026-10-11): 关键事件的时间线 + 清空.
         .route("/admin/api/events", get(admin::api_events))
         .route("/admin/api/events/clear", post(admin::api_events_clear))
+        // 用量热力图 (2026-10-11): 逐日 token 总量, 数据源是日级 rollup (跨日志滚动窗口).
+        .route("/admin/api/heatmap", get(admin::api_heatmap))
         .route("/admin/api/tool-output-limit", get(admin::api_tool_output_limit_get).post(admin::api_tool_output_limit_set))
         .route("/admin/api/auto-continue", get(admin::api_auto_continue_get).post(admin::api_auto_continue_set))
         .route("/admin/api/stream-timeout", get(admin::api_stream_timeout_get).post(admin::api_stream_timeout_set))
@@ -808,6 +816,9 @@ fn main() {
     let app = Router::new()
         .route("/v1/chat/completions", post(proxy::chat_completions))
         .route("/v1/messages", post(proxy::messages_completions))
+        // Anthropic 的输入估算端点：Claude Code 等客户端发送前会调它估算上下文占用。
+        // 纯本地估算、不打上游、不消耗额度（见 proxy::count_tokens 文档）。
+        .route("/v1/messages/count_tokens", post(proxy::count_tokens))
         .route("/v1/responses", post(proxy::responses_completions))
         .route("/v1/models", get(handle_models))
         .route("/health", get(|| async { "ok" }))
@@ -849,23 +860,105 @@ fn main() {
     // 退出时用于同步刷新日志到磁盘的 state 克隆 (事件循环闭包捕获).
     let state_for_shutdown = state;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("{} — listening on http://{}", crate::version::build_info(), addr);
+    // ── 绑定端口并启动 Axum ──
+    //
+    // 端口被占时**从 PORT 起顺延试几个**, 而不是直接退出（2026-10-11 对标 dsh-our-free-model）：
+    // 本地网关最常见的"打不开"就是上次的进程还没退干净 / 另一个工具占了 8787，
+    // 此时"启动失败并退出"会让用户以为软件坏了；顺延到可用端口并在日志与面板里
+    // **如实标注实际端口**，则一切照常可用。
+    //
+    // ⚠️ 三条纪律：
+    // ① **只在"端口被占"时顺延**（`AddrInUse`）—— 地址非法、权限不足等错误直接报错退出，
+    //    顺延只会把真正的问题掩盖成"端口变了"。
+    // ② **顺延范围有限**（最多 20 个）——无限顺延会掩盖"端口配置错了"。
+    // ③ **必须如实告知**：日志、启动事件、`/admin/api/version` 都要带实际端口，
+    //    否则用户按 8787 连会连不上而不知道为什么（这正是要避免的"静默改行为"）。
+    let (listener, actual_port) = {
+        let mut chosen = None;
+        let mut last_err = None;
+        for offset in 0..=PORT_FALLBACK_TRIES {
+            let p = port.saturating_add(offset);
+            let a = SocketAddr::from(([127, 0, 0, 1], p));
+            match rt.block_on(async { tokio::net::TcpListener::bind(a).await }) {
+                Ok(l) => {
+                    chosen = Some(l);
+                    if offset > 0 {
+                        warn!(
+                            "main: port {port} unavailable (in use), falling back to {p} \
+                             (requested PORT={port}, actually listening on {p})"
+                        );
+                    }
+                    break;
+                }
+                Err(e) => {
+                    let in_use = e.kind() == std::io::ErrorKind::AddrInUse;
+                    if offset == 0 && !in_use {
+                        // 非"被占用"的错误（地址非法/权限不足）→ 立即报错，不顺延。
+                        show_error(&format!(
+                            "{}: {e}\n\n{}",
+                            crate::i18n::startup_error("bind"),
+                            crate::i18n::startup_bind_hint()
+                        ));
+                        std::process::exit(1);
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        match chosen {
+            // 先取实际端口再交出 listener（`l` 一旦 move 就走不了 local_addr）。
+            Some(l) => {
+                let p = l.local_addr().map(|a| a.port()).unwrap_or(port);
+                (l, p)
+            }
+            None => {
+                show_error(&format!(
+                    "{}: {}\n\n{}",
+                    crate::i18n::startup_error("bind"),
+                    last_err.map(|e| e.to_string()).unwrap_or_default(),
+                    crate::i18n::startup_bind_hint()
+                ));
+                std::process::exit(1);
+            }
+        }
+    };
+    if actual_port != port {
+        // 落一条**事件台账**：用户排查"为什么面板地址变了"时，这里就是答案
+        // （与"出问题得自己找"相对的：软件主动说清楚它做了什么）。
+        events::note(
+            events::EventKind::PortFallback,
+            "",
+            &format!(
+                "请求的端口 {port} 已被占用，已改用 {actual_port}（面板地址 http://127.0.0.1:{actual_port}/admin）"
+            ),
+        );
+    }
     // 台账里留一条"进程启动": 它既是分界线 (哪些事件属于哪一次运行), 也让用户
     // 打开面板时台账必定**不是空的** —— 空的台账会让"这个功能是不是没工作"没法判断。
+    // ⚠️ 报告**实际**监听端口（可能与 PORT 不同, 见上方顺延逻辑）。
     events::note(
         events::EventKind::Started,
         "",
-        &format!("{} 已启动，监听 {}", crate::version::build_info(), addr),
+        &format!(
+            "{} 已启动，监听 127.0.0.1:{}",
+            crate::version::build_info(),
+            actual_port
+        ),
     );
-
-    // ── 绑定端口并启动 Axum ──
-    let listener = rt.block_on(async {
-        tokio::net::TcpListener::bind(addr).await
-    }).unwrap_or_else(|e| {
-        show_error(&format!("{}: {e}\n\n{}", crate::i18n::startup_error("bind"), crate::i18n::startup_bind_hint()));
-        std::process::exit(1);
-    });
+    if actual_port != port {
+        info!(
+            "{} — listening on http://127.0.0.1:{} (PORT={port} was in use; \
+             set PORT to pin a specific port)",
+            crate::version::build_info(),
+            actual_port
+        );
+    } else {
+        info!(
+            "{} — listening on http://127.0.0.1:{}",
+            crate::version::build_info(),
+            actual_port
+        );
+    }
 
     rt.spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -1138,22 +1231,50 @@ mod tests {
 async fn handle_models(
     State(state): State<AppState>,
 ) -> axum::Json<serde_json::Value> {
-    // 能力表（拉取时从上游目录采集，如 buddy 的 reasoning.supportedEfforts）。
-    // 没有的供应商/模型一律**不下发该字段**，不做猜测 —— 客户端据此渲染档位选择器时，
-    // 缺失就退化成"自行输入"，而错报会让客户端渲染出上游会拒绝的档位。
-    let meta = crate::providers::fetched_meta_snapshot().await;
+    // 能力表有两个来源，**按优先级合并**（2026-10-11 接上第二个来源）：
+    //  ① `FETCHED_META`（拉取模型时从**上游自己的目录**采集，如 buddy 的 `/v3/config`）——
+    //     最权威（上游自己声明的），但**只在点过「拉取模型」后才有**；
+    //  ② **models.dev**（公开库，按模型名归一化匹配）——覆盖面广（实测 4/4 命中），
+    //     随启动预热，不需要用户做任何事。
+    //
+    // ⚠️ 为什么必须补 ②：原先只查 ①，而 ① 在真实配置下**恒为空**（680 个模型里
+    // 带 `context_window` 的是 **0 个**）—— 也就是这段下发代码**从来没生效过**。
+    // 客户端（若它读这些字段）看到的是"所有模型都没有上下文限制"，比不给更糟。
+    //
+    // 缺失一律**不下发该字段**，不做猜测 —— 客户端据此渲染档位选择器时，
+    // 缺失会退化成"自行输入"，而错报会让客户端渲染出上游会拒绝的值。
+    let fetched = crate::providers::fetched_meta_snapshot().await;
+    // 一次读锁内把两样东西都取成 owned 值，随后即可放锁（避免持锁跨 await 去查 models.dev）。
+    let (ids, upstream_names) = {
+        let registry = state.registry.read().await;
+        let ids: Vec<String> = registry.model_ids().into_iter().map(String::from).collect();
+        let names: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                registry
+                    .lookup(id)
+                    .and_then(|e| e.model.upstream_model.clone())
+                    .unwrap_or_else(|| id.to_string())
+            })
+            .collect();
+        (ids, names)
+    };
+    let dev = state
+        .model_meta
+        .resolve_many(&state.client, &upstream_names)
+        .await;
+
     let registry = state.registry.read().await;
-    let data: Vec<serde_json::Value> = registry
-        .model_ids()
-        .into_iter()
+    let data: Vec<serde_json::Value> = ids
+        .iter()
         .map(|id| {
-            // 中转 ID（供应商/上游ID）反查上游 ID 拿能力；模型级显式声明优先。
             let entry = registry.lookup(id);
             let upstream = entry
                 .as_ref()
                 .and_then(|e| e.model.upstream_model.clone())
                 .unwrap_or_else(|| id.to_string());
-            let m = meta.get(&upstream);
+            let m = fetched.get(&upstream);
+            let dev_m = dev.get(&upstream).and_then(|x| x.as_ref());
             let explicit = entry.as_ref().and_then(|e| e.model.supported_efforts.clone());
             let mut obj = serde_json::json!({
                 "id": id,
@@ -1162,18 +1283,39 @@ async fn handle_models(
             });
             if let Some(o) = obj.as_object_mut() {
                 // 档位: 模型级显式声明 > 上游目录采集值。都没有则不下发。
+                // ⚠️ models.dev **不提供**档位信息（它不是上游能力声明），故不参与此项。
                 if let Some(efforts) = explicit.or_else(|| m.and_then(|x| x.supported_efforts.clone()))
                 {
                     o.insert("supported_efforts".into(), serde_json::json!(efforts));
                 }
-                if let Some(v) = m.and_then(|x| x.context_window) {
+                // 上下文/输出: 上游目录优先（上游自己说的），缺失回落 models.dev。
+                if let Some(v) = m
+                    .and_then(|x| x.context_window)
+                    .or_else(|| dev_m.and_then(|x| x.context))
+                {
                     o.insert("context_window".into(), serde_json::json!(v));
                 }
-                if let Some(v) = m.and_then(|x| x.max_output_tokens) {
+                if let Some(v) = m
+                    .and_then(|x| x.max_output_tokens)
+                    .or_else(|| dev_m.and_then(|x| x.output))
+                {
                     o.insert("max_output_tokens".into(), serde_json::json!(v));
                 }
                 if let Some(v) = m.and_then(|x| x.can_disable_thinking) {
                     o.insert("can_disable_thinking".into(), serde_json::json!(v));
+                }
+                // 下面两项**只有 models.dev 有**（上游目录不声明模态能力）。
+                // 用途: 客户端据此判断能不能发图 / 该不该开推理。
+                if let Some(d) = dev_m {
+                    if d.vision {
+                        o.insert("supports_vision".into(), serde_json::json!(true));
+                    }
+                    if d.reasoning {
+                        o.insert("supports_reasoning".into(), serde_json::json!(true));
+                    }
+                    if d.tool_call {
+                        o.insert("supports_tool_call".into(), serde_json::json!(true));
+                    }
                 }
             }
             obj

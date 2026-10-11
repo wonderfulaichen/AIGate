@@ -99,6 +99,8 @@ function dashboard() {  return {
     degradations: {},
     // 事件台账 (关键事件时间线, 最新在最前)
     events: [],
+    // 用量热力图 (逐日 token, 来自日级 rollup; null = 未拉取)
+    heatmap: null,
     // 连接参数 (运行时可调): 流空闲超时秒 / 重试次数 / 重试退避基数毫秒
     streamTimeoutSecs: 120,
     retryMax: 1,

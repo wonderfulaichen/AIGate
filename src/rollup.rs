@@ -400,6 +400,38 @@ impl RollupBook {
         days.range(start..=end).map(|(_, d)| d.clone()).collect()
     }
 
+    /// 取 `[start, end]` 内**每一天**的 token 总量，返回 `(day_start, prompt+completion)`。
+    ///
+    /// 供「用量热力图」用（2026-10-11 对标 dsh-our-free-model 新增）。
+    /// **逐日补齐**：区间内没有数据的那天也要出现（值为 0），否则热力图会把空格
+    /// 误画成"相邻两天连在一起"，看起来像日期错位 —— 日历类视图必须是**连续**的。
+    ///
+    /// 与 `days_between` 的分工：那个返回原始 `DailyRollup`（含 entries，供明细用），
+    /// 这个只返回热力图需要的两个数，避免把整颗聚合树传到前端。
+    pub fn daily_token_series(&self, start: u64, end: u64) -> Vec<(u64, u64)> {
+        const DAY: u64 = 86_400;
+        if start > end {
+            return Vec::new();
+        }
+        let days = lock_days(&self.days);
+        let mut out = Vec::new();
+        let mut d = start;
+        while d <= end {
+            let total = days
+                .get(&d)
+                .map(|r| {
+                    r.entries
+                        .iter()
+                        .map(|e| e.prompt_tokens + e.completion_tokens)
+                        .sum::<u64>()
+                })
+                .unwrap_or(0);
+            out.push((d, total));
+            d = d.saturating_add(DAY);
+        }
+        out
+    }
+
     fn serialize(&self) -> String {
         let days = self.days.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = String::with_capacity(4096);

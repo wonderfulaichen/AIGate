@@ -1788,7 +1788,20 @@ pub async fn api_providers_test(
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            if code == 401 || code == 403 {
+            // 分级判据（2026-10-11 对标 dsh-our-free-model 后细化）：
+            //   · 401/403        → 端点活着、只是密钥不对（**可达**，不是"供应商挂了"）
+            //   · 其余 <500      → 可达（404 说明 /models 路径不存在，但主机是活的）
+            //   · **429**        → **可达**：限流恰恰证明上游在正常工作，把它算成故障
+            //                      会让用户以为供应商坏了（实测最容易误判的一类）
+            //   · 5xx            → 服务端故障（唯一该报"错误"的一组）
+            // 这个分层是"不要把没把握的事说成结论"的应用：连得上 ≠ 正常，但连得上也
+            // 不等于故障 —— 两者要分开说，不能让用户去猜。
+            let body = resp.text().await.unwrap_or_default();
+            if code == 429 {
+                // 顺带把上游的限流文案带回去（它常写明何时恢复），比只说"429"有用。
+                let snippet = crate::i18n::snip(&body, 160).replace('\n', " ");
+                format!("rate-limited (429){}{}", if snippet.is_empty() { "" } else { ": " }, snippet)
+            } else if code == 401 || code == 403 {
                 "ok".to_string()
             } else if code < 500 {
                 "ok".to_string()
@@ -1799,8 +1812,13 @@ pub async fn api_providers_test(
         Err(e) => format!("unreachable: {e}"),
     };
     let latency_ms = start.elapsed().as_millis() as u64;
+    // ⚠️ `success` 的语义是**"上游可达"**（这个接口测的是连通性，不是"上游健康"）。
+    // 429 归为可达（见上方判据）—— 若把它算成 success=false，用户会以为"供应商坏了"。
+    // 真正不可达/故障时 status 以 `error` / `unreachable` 开头。
+    let reachable = !(status.starts_with("error") || status.starts_with("unreachable"));
     Json(serde_json::json!({
-        "success": status == "ok",
+        "success": reachable,
+        "reachable": reachable,
         "status": status,
         "latency_ms": latency_ms,
     }))
@@ -2964,6 +2982,43 @@ pub async fn api_degradations() -> Json<serde_json::Value> {
 /// —— 埋点绝不能因为自身出错而破坏转发。
 pub fn note_event(kind: crate::events::EventKind, subject: &str, detail: &str) {
     crate::events::note(kind, subject, detail);
+}
+
+/// GET /admin/api/heatmap — 最近 `weeks` 周的**逐日 token 总量**（用量热力图数据源）。
+///
+/// 为什么由后端算而不是前端拉 119 天趋势：前端趋势窗口最大只到 `1y` 且按天/月聚合
+/// **只覆盖日志文件窗口**；而日级 rollup 是**跨日志滚动窗口的持久化账本**
+/// （见 `rollup.rs` 模块文档）—— 热力图要看"长期规律"，必须用 rollup。
+///
+/// 口径与其它统计一致：`prompt_tokens + completion_tokens`（不含省量，省量另有口径）。
+/// **逐日补齐零值**：区间内没请求的那天也返回 0，日历视图才不会错位。
+pub async fn api_heatmap(
+    State(state): State<super::proxy::AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    // 周数上限：17 周 ≈ 一个季度的 GitHub 风格视图；给上限防止一次拉一年。
+    let weeks = q
+        .get("weeks")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(17)
+        .clamp(1, 53);
+    let Some(book) = state.log_buffer.rollup() else {
+        return Json(serde_json::json!({ "days": [], "weeks": weeks, "total_tokens": 0 }));
+    };
+    // 起点对齐到**本地日的 0 点**，再往前推 (weeks*7 - 1) 天 —— 与 rollup 的 day_start 一致。
+    let now = now_ts();
+    let today = (tz_day_index(now) as u64) * 86_400 - TZ_OFFSET_SECS as u64;
+    let start = today.saturating_sub((weeks * 7 - 1) * 86_400);
+    let series = book.daily_token_series(start, today);
+    let total: u64 = series.iter().map(|(_, t)| *t).sum();
+    Json(serde_json::json!({
+        "days": series
+            .into_iter()
+            .map(|(d, t)| serde_json::json!({ "day_start": d, "tokens": t }))
+            .collect::<Vec<_>>(),
+        "weeks": weeks,
+        "total_tokens": total,
+    }))
 }
 
 /// GET /admin/api/events — 事件台账 (最近 `limit` 条, 时间倒序).
