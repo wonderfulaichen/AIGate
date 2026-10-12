@@ -46,10 +46,12 @@
        prov._testResult = null;
        prov._errOpen = false;
        try {
-         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint})});
+         // 带上 name: 后端据此用**真实密钥**测（这样"密钥对不对"才在被测项里）。
+         // 不传 name 时后端退回假密钥探活, 并在结果里标 key_checked=false。
+         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint,name:prov.name})});
          if(r.ok) prov._testResult = await r.json();
-         else prov._testResult = {success:false,status:t('request_failed'),latency_ms:0};
-       } catch(e){ prov._testResult = {success:false,status:t('network_error'),latency_ms:0}; }
+         else prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('request_failed'),latency_ms:0};
+       } catch(e){ prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('network_error'),latency_ms:0}; }
        const result=prov._testResult||{};
        // 仅更新连通性状态; circuit 字段由 fetchHealth 从 breakers 同步, 避免被覆盖成 'closed' 导致重置按钮消失.
        const current=this.health.find(h=>h.provider===prov.name);
@@ -57,6 +59,13 @@
        prov._testing = false;
        // 测试完成后刷新健康数据, 确保 circuit 状态与后端 breakers 一致.
        await this.fetchHealth();
+     },
+     // 环节前缀: 结果横幅首要展示"哪一环"（用户明确要求报错看得出环节）。
+     // 后端给 stage/stage_text; 老接口没这字段时返回空串（不显示前缀）。
+     testStage(s){
+       const r = s||{};
+       if(!r.stage) return '';
+       return '[' + (r.stage_text || t('stage_'+r.stage) || r.stage) + '] ';
      },
      // 测试错误展示: 首行截断 96 字 (参照 new-api channel-actions), 点击展开全文 + 复制.
      testErrFirst(s){ const str=String(s||'').split('\n')[0]; return str.length>96?str.slice(0,96)+'…':str; },

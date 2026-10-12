@@ -45,7 +45,7 @@
     <template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span class="txs tm" x-text="t('health_na')"></span></template>
     <template x-if="prov._testResult && !prov._testResult.success">
       <div style="margin-top:4px;max-width:210px">
-        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen"><span x-show="testStage(prov._testResult)" style="font-weight:600" x-text="testStage(prov._testResult)"></span><span x-text="testErrFirst(prov._testResult.status)"></span></div>
         <template x-if="prov._errOpen">
           <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
             <div x-text="prov._testResult.status"></div>
@@ -123,7 +123,7 @@
     </div>
     <template x-if="prov._testResult && !prov._testResult.success">
       <div style="margin-top:6px">
-        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen" x-text="testErrFirst(prov._testResult.status)"></div>
+        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click="prov._errOpen=!prov._errOpen"><span x-show="testStage(prov._testResult)" style="font-weight:600" x-text="testStage(prov._testResult)"></span><span x-text="testErrFirst(prov._testResult.status)"></span></div>
         <template x-if="prov._errOpen">
           <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
             <div x-text="prov._testResult.status"></div>

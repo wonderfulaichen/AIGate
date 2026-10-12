@@ -1829,60 +1829,178 @@ pub struct HealthEntry {
     circuit_text: String,
 }
 
-/// POST /admin/api/providers/test — 测试单个供应商连通性.
+/// POST /admin/api/providers/test 的请求体.
 #[derive(serde::Deserialize)]
 pub struct TestProviderReq {
-    endpoint: String,
+    pub endpoint: String,
+    /// 供应商名 —— 给了才用**真实密钥**测（这样"密钥对不对"才是被测项之一）。
+    /// 旧调用方不传时退回假密钥探活（`key_checked: false`，结论里如实标注）。
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
+/// POST /admin/api/providers/test — 分阶段探测单个供应商，**并用真实密钥**。
+///
+/// 为什么改成这样（2026-10-12，用户报「测试失败」但看不出哪里坏了）：
+/// 旧实现拿**假密钥** `Bearer probe` 只探 `/models`，于是它：
+///   ① 原理上**测不出密钥对不对**（假密钥当然 401，被判成"可达"就过去了）；
+///   ② 一个笼统的失败无法区分"连不上 / 密钥错 / 被上游边缘防护拦 / 模型无权限"——
+///      而这几类的处置完全不同。实测事故：上游被 Cloudflare 拦返回
+///      `403 error code: 1010`，被按状态码翻译成「模型无权限」，把排查方向带偏。
+///
+/// 现在按四个环节依次探测，**每一步给出结论**（哪一环坏了就停在那一环）：
+///   ① `key`      本机凭据（缺失/为空 → 还没到网络就结束）
+///   ② `connect`  连得上吗（DNS/TCP/TLS：请求能否发出）
+///   ③ `edge`     上游边缘防护（Cloudflare 1010/1020 / 挑战页 → 不是密钥问题）
+///   ④ `upstream` 上游应用层应答（200 可用 / 401 密钥无效 / 403 权限或额度 / 429 限流 …）
+///
+/// 判据分层（沿用 2026-10-11 对标 dsh 时定的口径，别退回"一票否决"）：
+/// **可达 ≠ 健康**，也 ≠ 故障。401/403/429 都说明上游在正常工作（只是凭据或策略问题），
+/// 只有连不上与 5xx 才是"供应商故障"。
 pub async fn api_providers_test(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<TestProviderReq>,
 ) -> Json<serde_json::Value> {
     let start = std::time::Instant::now();
-    let base_url = payload.endpoint.replace("/chat/completions", "/models");
-    let status = match state
+    let endpoint = payload.endpoint.clone();
+    let models_url = endpoint.replace("/chat/completions", "/models");
+
+    // ① 凭据环节：优先用**该供应商的真实密钥**（这样"密钥对不对"才是被测项之一）。
+    //    未给 name（或找不到）时退回旧的假密钥探活，并在结论里说明"未校验密钥"。
+    let stage;
+    let detail;
+    let reachable;
+    let mut key_checked = false;
+    let mut key: Option<String> = None;
+    if let Some(n) = payload.name.as_deref().filter(|s| !s.is_empty()) {
+        let found = {
+            let registry = state.registry.read().await;
+            registry
+                .providers()
+                .into_iter()
+                .find(|p| p.name == n)
+        };
+        if let Some(provider) = found {
+            match state
+                .registry
+                .read()
+                .await
+                .api_key(&provider, &state.key_store, Some(&state.accounts), &state.client)
+                .await
+            {
+                Ok((k, _)) => {
+                    if k.trim().is_empty() {
+                        // 凭据为空 → 请求发出去也必然被拒，如实停在本环节
+                        let ms = start.elapsed().as_millis() as u64;
+                        return Json(serde_json::json!({
+                            "success": false,
+                            "reachable": false,
+                            "stage": "key",
+                            "stage_text": crate::i18n::stage_label("key"),
+                            "status": crate::i18n::msg_provider_key_missing(),
+                            "key_checked": false,
+                            "latency_ms": ms,
+                        }));
+                    }
+                    key = Some(k);
+                    key_checked = true;
+                }
+                Err(e) => {
+                    // 凭据链彻底取不到 (无面板值/无环境变量/无默认值) —— 与"取到空值"同一处境：
+                    // 请求还没发出,**无法判断上游可达性**。原样返回 `e` 会给用户一句英文技术串
+                    // (`API key not set: provider 'x' has no panel key...`), 说清处境才好处置。
+                    let ms = start.elapsed().as_millis() as u64;
+                    return Json(serde_json::json!({
+                        "success": false,
+                        "reachable": false,
+                        "stage": "key",
+                        "stage_text": crate::i18n::stage_label("key"),
+                        "status": format!("{}\n({e})", crate::i18n::msg_provider_key_missing()),
+                        "key_checked": false,
+                        "latency_ms": ms,
+                    }));
+                }
+            }
+        }
+    }
+    let auth = key.as_deref().unwrap_or("probe");
+
+    // ②③④ 连接 → 边缘 → 上游：一次 GET /models 就能分层，因为"连不上"与"被拦"
+    //        在错误类型/响应体上完全不同。
+    match state
         .client
-        .get(&base_url)
-        .header("Authorization", "Bearer probe")
+        .get(&models_url)
+        .header("Authorization", format!("Bearer {auth}"))
         .timeout(Duration::from_secs(8))
         .send()
         .await
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            // 分级判据（2026-10-11 对标 dsh-our-free-model 后细化）：
-            //   · 401/403        → 端点活着、只是密钥不对（**可达**，不是"供应商挂了"）
-            //   · 其余 <500      → 可达（404 说明 /models 路径不存在，但主机是活的）
-            //   · **429**        → **可达**：限流恰恰证明上游在正常工作，把它算成故障
-            //                      会让用户以为供应商坏了（实测最容易误判的一类）
-            //   · 5xx            → 服务端故障（唯一该报"错误"的一组）
-            // 这个分层是"不要把没把握的事说成结论"的应用：连得上 ≠ 正常，但连得上也
-            // 不等于故障 —— 两者要分开说，不能让用户去猜。
             let body = resp.text().await.unwrap_or_default();
-            if code == 429 {
-                // 顺带把上游的限流文案带回去（它常写明何时恢复），比只说"429"有用。
+            // ③ 边缘拦截：响应体带 Cloudflare 特征 → 归因到边缘环节，别按状态码乱猜。
+            if let Some(hint) = crate::i18n::edge_block_hint(code, &body) {
+                stage = "edge";
+                detail = format!("{code}{hint}");
+                reachable = false;
+            } else if code == 429 {
+                // 限流恰恰证明上游在正常工作 —— 归上游环节，且明说"不是故障"。
+                stage = "upstream";
                 let snippet = crate::i18n::snip(&body, 160).replace('\n', " ");
-                format!("rate-limited (429){}{}", if snippet.is_empty() { "" } else { ": " }, snippet)
-            } else if code == 401 || code == 403 {
-                "ok".to_string()
+                detail = format!(
+                    "rate-limited (429){}{}",
+                    if snippet.is_empty() { "" } else { ": " },
+                    snippet
+                );
+                reachable = true;
+            } else if code == 401 {
+                // ③ 密钥/认证：这是"密钥对不对"的直接答案。
+                stage = "upstream";
+                let snippet = crate::i18n::snip(&body, 200).replace('\n', " ");
+                detail = format!(
+                    "401{}{}",
+                    if snippet.is_empty() { "" } else { ": " },
+                    snippet
+                );
+                reachable = true;
+            } else if code == 403 {
+                // 403 可能来自边缘（已在上面拦下）或应用层策略/额度 —— 此处是应用层。
+                stage = "upstream";
+                let snippet = crate::i18n::snip(&body, 200).replace('\n', " ");
+                detail = format!(
+                    "403{}{}",
+                    if snippet.is_empty() { "" } else { ": " },
+                    snippet
+                );
+                reachable = true;
             } else if code < 500 {
-                "ok".to_string()
+                // 404 说明 /models 路径不存在，但主机是活的 → 可达。
+                stage = "upstream";
+                detail = format!("ok ({code})");
+                reachable = true;
             } else {
-                format!("error {code}")
+                stage = "upstream";
+                detail = format!("error {code}");
+                reachable = false;
             }
         }
-        Err(e) => format!("unreachable: {e}"),
-    };
+        Err(e) => {
+            // ② 连接环节：请求根本没到达上游（DNS/连接/TLS/超时）。
+            stage = "connect";
+            detail = format!("unreachable: {e}");
+            reachable = false;
+        }
+    }
     let latency_ms = start.elapsed().as_millis() as u64;
-    // ⚠️ `success` 的语义是**"上游可达"**（这个接口测的是连通性，不是"上游健康"）。
-    // 429 归为可达（见上方判据）—— 若把它算成 success=false，用户会以为"供应商坏了"。
-    // 真正不可达/故障时 status 以 `error` / `unreachable` 开头。
-    let reachable = !(status.starts_with("error") || status.starts_with("unreachable"));
     Json(serde_json::json!({
         "success": reachable,
         "reachable": reachable,
-        "status": status,
+        // 环节与它的中文名：面板首要展示这两个字段（用户要求"看得出哪个环节"）
+        "stage": stage,
+        "stage_text": crate::i18n::stage_label(stage),
+        "status": detail,
+        // 是否真的用真实密钥校验过（false = 没给 name / 找不到，只做了连通性探活）
+        "key_checked": key_checked,
         "latency_ms": latency_ms,
     }))
 }

@@ -245,6 +245,9 @@ const I18N = {
     'empty_recall_title': '暂无留存内容', 'empty_recall_desc': '开启「降级可回取」后，被移除的推理链与工具输出会保存在这里', 'empty_recall_cta': '关闭，去开启',
     'saved': '已保存', 'save_failed': '保存失败', 'network_error': '网络错误', 'logout_failed': '登出失败', 'health_ok': '正常', 'health_err': '异常', 'health_na': '未检测', 'test_connection': '测试连接', 'testing': '测试中...', 'saving': '保存中...', 'search_models': '搜索模型 ID 或上游模型名...', 'unsaved_confirm': '有未保存的供应商配置，切换将丢失改动，是否继续？', 'meta_loading': '加载模型信息...', 'meta_unavailable': '暂无公开模型信息', 'request_failed': '请求失败', 'fetch_failed': '拉取失败', 'confirm_discard_draft': '有未保存的供应商改动，刷新/拉取模型会用文件覆盖当前表单并丢弃它们。是否继续？',
     'nav_aria': '主导航', 'unsaved_changes': '未保存', 'unit_ms': '毫秒',
+    // 测试结果的「环节」标签 (后端 stage 字段 → 中文名; 用户要求报错看得出哪个环节)
+    'stage_key': '本机凭据', 'stage_connect': '网络连接', 'stage_edge': '上游边缘防护', 'stage_upstream': '上游服务', 'stage_local': '本网关',
+    'test_key_unchecked': '（此次未用真实密钥校验 —— 仅测了连通性）',
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日','hero_scope_today_hint': '主数字为今日口径；折线为统计窗口口径', 'window_span_days': '最近 {0} 天', 
     'errors_only': '错误 {0}', 
@@ -559,6 +562,8 @@ const I18N = {
     'empty_recall_title': 'Nothing retained yet', 'empty_recall_desc': 'Enable Recall to keep stripped reasoning chains and tool output here', 'empty_recall_cta': 'Close and enable',
     'saved': 'Saved', 'save_failed': 'Save failed', 'network_error': 'Network error', 'logout_failed': 'Sign-out failed', 'health_ok': 'Healthy', 'health_err': 'Error', 'health_na': 'Not checked', 'test_connection': 'Test connection', 'testing': 'Testing...', 'saving': 'Saving...', 'search_models': 'Search model ID or upstream model...', 'unsaved_confirm': 'You have unsaved provider changes. Switching tabs will discard them. Continue?', 'meta_loading': 'Loading model info...', 'meta_unavailable': 'No public model metadata', 'request_failed': 'Request failed', 'fetch_failed': 'Fetch failed', 'confirm_discard_draft': 'You have unsaved provider changes. Refresh/fetch will overwrite the form from disk and discard them. Continue?',
     'nav_aria': 'Main navigation', 'unsaved_changes': 'Unsaved', 'unit_ms': 'ms',
+    'stage_key': 'local credentials', 'stage_connect': 'network connection', 'stage_edge': 'upstream edge protection', 'stage_upstream': 'upstream service', 'stage_local': 'this gateway',
+    'test_key_unchecked': '(key was NOT verified this time - connectivity only)',
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today','hero_scope_today_hint': 'Numbers are for today; the sparkline covers the stats window', 'window_span_days': 'last {0}d', 
     'errors_only': '{0} errors', 

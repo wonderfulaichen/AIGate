@@ -5325,6 +5325,11 @@ fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_
 ///       或 "408 请求超时（上游处理超时...）: request timeout (HTTP Status: 408)"
 fn format_upstream_error(status: u16, err_body: &str) -> String {
     let base = format_upstream_error_base(status, err_body);
+    // 边缘/WAF 拦截优先说明 —— 否则 403 会被按状态码说成"模型无权限"，把排查引偏。
+    // 判据见 i18n::edge_block_hint（Cloudflare 1010/1020 纯文本码 + HTML 挑战页）。
+    if let Some(hint) = crate::i18n::edge_block_hint(status, err_body) {
+        return format!("{base}{hint}");
+    }
     // FreeTierError (OpenCode 免费层的客户端来源限制) 追加可行动提示 ——
     // 该 403 与"额度用尽/权限不足"完全不同: 重试/升级/换 key 均无效, 只能换模型/供应商.
     // 不追加的话用户会照着"API 密钥无效"的方向白排查 (实测报障即如此).

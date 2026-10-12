@@ -40,9 +40,13 @@
             <div style="margin-bottom:12px">
               <div :style="'padding:8px 12px;border-radius:var(--rm);font-size:var(--fs-12);display:flex;align-items:center;gap:8px;'+(drawerProv._testResult.success?'background:var(--ok-bg-soft);color:var(--ok);border:1px solid var(--ok-bd-soft)':'background:var(--err-bg-soft);color:var(--err);border:1px solid var(--err-bd-soft)')">
                 <span x-text="drawerProv._testResult.success?'✓':'✗'"></span>
+                <!-- 环节标签在前: 用户要求"报错要能看出哪个环节" -->
+                <span x-show="testStage(drawerProv._testResult)" style="flex:none;font-weight:600;opacity:.95" x-text="testStage(drawerProv._testResult)"></span>
                 <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" :title="drawerProv._testResult.success?'':t('err_view_full')" @click="!drawerProv._testResult.success&&(drawerProv._errOpen=!drawerProv._errOpen)" x-text="drawerProv._testResult.success?drawerProv._testResult.status:testErrFirst(drawerProv._testResult.status)"></span>
                 <span style="flex:none;opacity:.7" x-text="drawerProv._testResult.latency_ms+'ms'"></span>
               </div>
+              <!-- 未用真实密钥校验时如实标注 (不传 name 的老路径 = 只探连通性) -->
+              <div x-show="drawerProv._testResult.key_checked===false" class="txs tm" style="margin-top:4px" x-text="t('test_key_unchecked')"></div>
               <template x-if="!drawerProv._testResult.success && drawerProv._errOpen">
                 <div style="margin-top:6px;padding:8px 12px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);font-size:var(--fs-11);color:var(--err-fg);white-space:pre-wrap;word-break:break-all">
                   <div x-text="drawerProv._testResult.status"></div>

@@ -77,6 +77,95 @@ pub fn pick(zh: &'static str, en: &'static str) -> &'static str {
     }
 }
 
+/// 识别**边缘/WAF 拦截**并给出正确归因（否则会被当成"模型无权限"，把排查引偏）。
+///
+/// 为什么需要（2026-10-12 实测事故）：上游 `joule.xmzf.space` 被 Cloudflare 拦时返回
+/// `403` + 纯文本 `error code: 1010`。网关按状态码翻译成「权限不足（无权访问该模型或功能）」
+/// —— 用户因此去查模型权限/套餐，而真实原因是**该 IP 被边缘防护拦下**（同一把密钥在拦截
+/// 之前打 `/v1/models` 是 200、部分模型也能正常出字，即鉴权本身是通的）。
+///
+/// Cloudflare 的两个码含义不同，不可混说：
+///   · `1010` = **客户端签名被封**（浏览器完整性校验失败，非交互客户端常被误伤）
+///   · `1020` = **访问规则命中**（该站点对当前来源启用了访问策略）
+/// 这两类都是**上游侧边缘策略**，不是密钥、不是模型权限，重试/换 key 通常都无效。
+///
+/// 判据用原文特征子串（上游把码塞在纯文本里，位置不固定）；HTML 挑战页同样识别。
+pub fn edge_block_hint(status: u16, body: &str) -> Option<String> {
+    if status != 403 && status != 429 && status != 503 {
+        return None;
+    }
+    let lower = body.to_ascii_lowercase();
+    // Cloudflare 的纯数码
+    let code = if lower.contains("error code: 1010") || lower.contains("error code:1010") || lower.contains("code 1010") {
+        Some("1010")
+    } else if lower.contains("error code: 1020") || lower.contains("error code:1020") || lower.contains("code 1020") {
+        Some("1020")
+    } else {
+        None
+    };
+    // Cloudflare 的 HTML 挑战/拦截页特征（"Attention Required!" 是 1020 页的标题）
+    let html_challenge = lower.contains("cf-error-details")
+        || lower.contains("just a moment")
+        || lower.contains("attention required")
+        || (lower.contains("cloudflare") && lower.contains("<html"));
+    if code.is_none() && !html_challenge {
+        return None;
+    }
+    let which = match code {
+        Some(c) => format!("Cloudflare {c}"),
+        None => "Cloudflare 拦截页".to_string(),
+    };
+    let detail = match code {
+        Some("1010") => match current_lang() {
+            Lang::Zh => "边缘防护判定客户端签名异常（浏览器完整性校验未通过），非交互式客户端常被误伤".to_string(),
+            Lang::En => "edge protection rejected the client signature (browser integrity check failed); non-interactive clients are commonly caught by this".to_string(),
+        },
+        Some("1020") => match current_lang() {
+            Lang::Zh => "站点访问规则命中了当前来源（对该来源启用了访问策略）".to_string(),
+            Lang::En => "the site's access rule matched this source (access policy enabled for it)".to_string(),
+        },
+        _ => match current_lang() {
+            Lang::Zh => "边缘防护返回了拦截页，未进入上游应用层".to_string(),
+            Lang::En => "edge protection returned a block page; the request never reached the upstream app".to_string(),
+        },
+    };
+    let head = match current_lang() {
+        Lang::Zh => format!(
+            "（环节：**上游边缘防护**拦下，不是密钥或模型权限问题 —— {which}：{detail}。"
+        ),
+        Lang::En => format!(
+            "(stage: blocked by **upstream edge protection**, not a key/model-permission problem - {which}: {detail}. "
+        ),
+    };
+    let tail = pick(
+        "该 IP 已被拦，重试与换 key 通常都无效；可稍后重试、换网络出口，或联系上游。实测同一密钥在拦截前是正常的）",
+        "retries and key changes usually do not help; wait, change egress IP, or contact the provider. Measured: the same key worked before the block.)",
+    );
+    Some(format!("{head}{tail}"))
+}
+
+/// 把**失败发生的环节**说清楚（用户明确要求：报错要能看出是哪个环节的问题）。
+///
+/// 环节分层（从近到远）：
+///   · `key`      —— 本机凭据缺失/为空（请求还没发出去）
+///   · `connect`  —— 连不上上游（DNS/连接/TLS，请求没到达）
+///   · `edge`     —— 上游边缘防护/WAF 拦下（到达了但没进应用层）
+///   · `upstream` —— 上游应用层应答了错误（状态码 + 它自己的原因）
+///   · `local`    —— 网关自身（熔断/配置/转换）
+///
+/// 为什么值得单列：同一个"403"在这些环节下含义完全不同、动作也完全不同
+/// （补 key / 换网络 / 等一等 / 换模型 / 改配置）—— 不区分就只能靠猜。
+pub fn stage_label(stage: &str) -> &'static str {
+    match stage {
+        "key" => pick("本机凭据", "local credentials"),
+        "connect" => pick("网络连接", "network connection"),
+        "edge" => pick("上游边缘防护", "upstream edge protection"),
+        "upstream" => pick("上游服务", "upstream service"),
+        "local" => pick("本网关", "this gateway"),
+        _ => pick("未知环节", "unknown stage"),
+    }
+}
+
 /// 4xx 且请求体很大时的**追加提示**（否则返回空串，不干扰原文案）。
 ///
 /// 为什么需要：400 的状态码说明写的是"模型不支持、参数缺失或格式错误"——那是**猜测**，
@@ -489,6 +578,17 @@ pub fn msg_provider_not_found(name: &str) -> String {
     fmt_msg!("未找到供应商: {}", "Provider not found: {}", name)
 }
 
+/// 「测试」走到凭据环节就发现没有可用密钥 —— 如实说"还没发出去"，别报成网络问题.
+pub fn msg_provider_key_missing() -> String {
+    pick(
+        "该供应商未配置可用密钥（面板密钥框为空、环境变量未设置、也没有默认值）—— \
+         请求还没发出去，所以**无法判断上游是否可达**。请先填密钥再测。",
+        "No usable key for this provider (panel key empty, env var unset, no default) - the \
+         request was never sent, so upstream reachability is **unknown**. Fill in the key first.",
+    )
+    .to_string()
+}
+
 /// 未找到指定的留存条目 (id 不存在或已被 FIFO 淘汰).
 pub fn msg_recall_not_found(id: &str) -> String {
     fmt_msg!(
@@ -672,5 +772,72 @@ mod tests {
         // 实测那条 400 的请求体为 2361624 字节 -> 应显示 2.3 MB
         let h2 = oversize_hint(2_361_624);
         assert!(h2.contains("2.3 MB"), "2361624 字节应显示 2.3 MB: {h2}");
+    }
+
+    /// 边缘拦截归因：实测事故是上游返回 `403 error code: 1010`（Cloudflare 客户端签名被封），
+    /// 而旧实现按状态码翻成「权限不足（无权访问该模型或功能）」→ 用户去查模型权限/套餐，
+    /// 真实原因（IP 被边缘防护拦）被完全掩盖。这条回归锁住"能否识别并正确归因"。
+    #[test]
+    fn edge_block_hint_recognizes_cloudflare_codes() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+        set_current_lang(Lang::Zh);
+        // 实测原文形态 (纯文本, 码塞在正文里)
+        let h = edge_block_hint(403, "error code: 1010\n").expect("1010 应被识别");
+        assert!(h.contains("边缘防护"), "应归因到边缘环节: {h}");
+        assert!(h.contains("1010"), "应点名具体码: {h}");
+        assert!(h.contains("不是密钥或模型权限问题"), "应明确排除密钥/权限方向: {h}");
+        // 无空格写法同样命中
+        assert!(edge_block_hint(403, "error code:1010").is_some());
+        assert!(edge_block_hint(403, "error code: 1010").is_some());
+        // 1020 = 访问规则命中 (与 1010 的成因不同, 不可混说)
+        let h2 = edge_block_hint(403, "error code: 1020").unwrap();
+        assert!(h2.contains("1020") && h2.contains("访问规则"), "{h2}");
+        // HTML 挑战页 (无数码) 也识别
+        assert!(edge_block_hint(503, "<html><head><title>Attention Required! | Cloudflare</title>").is_some());
+        assert!(edge_block_hint(403, "just a moment...").is_some());
+    }
+
+    /// 不得误报：普通应用层 403（真的权限/额度问题）不能被打成"边缘拦截"。
+    #[test]
+    fn edge_block_hint_ignores_ordinary_errors() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+        assert!(edge_block_hint(403, r#"{"error":{"message":"Insufficient account balance"}}"#).is_none());
+        assert!(edge_block_hint(403, r#"{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}"#).is_none());
+        assert!(edge_block_hint(403, r#"{"error":{"message":"no access to this model"}}"#).is_none());
+        assert!(edge_block_hint(400, "bad request").is_none());
+        // 非拦截类的状态码不进入该判定 (2xx/404/500 等)
+        assert!(edge_block_hint(200, "error code: 1010").is_none());
+        assert!(edge_block_hint(404, "error code: 1010").is_none());
+        // 提到 cloudflare 但不像拦截页/码 → 不误报
+        assert!(edge_block_hint(403, "upstream is behind cloudflare").is_none());
+    }
+
+    /// 环节标签齐全 —— 面板按 stage 取中文名, 缺一项就会显示成裸 key。
+    #[test]
+    fn stage_labels_cover_all_stages() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+        set_current_lang(Lang::Zh);
+        for s in ["key", "connect", "edge", "upstream", "local"] {
+            let l = stage_label(s);
+            assert!(!l.is_empty() && l != "未知环节", "{s} 应有专属标签, 实得 {l}");
+            assert!(!l.starts_with("stage_"), "{s} 不得回落成裸 key");
+        }
+        assert_eq!(stage_label("nonsense"), "未知环节");
+        // 英文侧同样不得回落
+        set_current_lang(Lang::En);
+        assert_eq!(stage_label("edge"), "upstream edge protection");
+        assert_eq!(stage_label("nonsense"), "unknown stage");
+        set_current_lang(Lang::Zh);
+    }
+
+    /// 凭据缺失的文案必须说清"请求还没发出去"，否则会被当成网络问题排查。
+    #[test]
+    fn key_missing_message_says_request_not_sent() {
+        let _g = I18N_TEST_LOCK.lock().unwrap();
+        set_current_lang(Lang::Zh);
+        let m = msg_provider_key_missing();
+        assert!(m.contains("密钥"), "{m}");
+        assert!(m.contains("还没发出去"), "应说明请求未发出: {m}");
+        assert!(m.contains("无法判断"), "应说明可达性未知: {m}");
     }
 }
