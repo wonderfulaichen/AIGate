@@ -3244,7 +3244,20 @@ pub async fn api_events(
         })
         .unwrap_or_default();
     items.truncate(limit);
-    Json(serde_json::json!({ "events": items, "total": items.len() }))
+    // `unread` = 未读告警数 (托盘红点的同一数据源)。刻意**不**在本接口里顺手 ack ——
+    // 面板 WebView 隐藏到托盘后仍在轮询本接口, 轮询 ≠ 用户看过; 确认只发生在
+    // 「打开面板窗口」(main.rs 托盘点击/菜单) 或显式 POST /admin/api/events/ack。
+    Json(serde_json::json!({
+        "events": items,
+        "total": items.len(),
+        "unread": crate::notify::unread(),
+    }))
+}
+
+/// POST /admin/api/events/ack — 确认已读 (清托盘红点)。
+pub async fn api_events_ack() -> Json<serde_json::Value> {
+    crate::notify::ack();
+    Json(serde_json::json!({ "ok": true, "unread": 0 }))
 }
 
 /// POST /admin/api/events/clear — 清空台账 (面板"清空"按钮).

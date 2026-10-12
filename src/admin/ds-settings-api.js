@@ -52,7 +52,18 @@
     async fetchEvents() {
       try {
         const r = await fetch('/admin/api/events?limit=100', { headers: authHeaders() });
-        if (r.ok) this.events = (await r.json()).events || [];
+        if (r.ok) {
+          const d = await r.json();
+          this.events = d.events || [];
+          // 未读告警数 (托盘红点的同一数据源)。
+          //
+          // ⚠️ **不在这里做确认 (ack)** —— 权威的确认在**原生侧**(main.rs 事件循环:
+          // 窗口可见即 ack)。原因: WebView 隐藏到托盘后**仍会轮询本接口**, 若靠前端
+          // 判断"用户是否在看"就必须依赖 `visibilityState`, 而那是个 WebView 行为假设 ——
+          // 一旦隐藏后仍报 visible, 红点会在用户没看的情况下被清掉, 正是要解决的「挂后台不知道」。
+          // 原生侧用 `window.is_visible()` 是权威值, 不依赖任何 WebView 行为。
+          this.eventsUnread = d.unread || 0;
+        }
       } catch (e) {}
     },
     async clearEvents() {

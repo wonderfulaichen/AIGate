@@ -58,6 +58,7 @@ mod seen_version;
 mod model_meta;
 mod recall;
 mod events;
+mod notify;
 mod provider_catalog;
 mod presets;
 
@@ -448,6 +449,39 @@ fn make_icon_rgba() -> Vec<u8> {
     pixels
 }
 
+/// 带**红点**的托盘图标（有未读告警时用）：在品牌标右上角叠一个红点 + 白描边。
+///
+/// 白描边是刻意的：托盘背景在深色/浅色任务栏下都可能出现，纯红点在深色下会糊掉，
+/// 白描边保证两种主题下都醒目。位置取右上角 (25.5, 6.5) —— 品牌标的门框在中偏左，
+/// 右上角是空的，不会盖住图案本身（那会让"有告警"和"图标换了"混淆）。
+fn make_icon_rgba_alert() -> Vec<u8> {
+    let mut pixels = make_icon_rgba();
+    let (cx, cy) = (25.5f32, 6.5f32);
+    let (r_red, r_white) = (5.0f32, 7.0f32);
+    for y in 0..32u32 {
+        for x in 0..32u32 {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            let d = (dx * dx + dy * dy).sqrt();
+            let idx = ((y * 32 + x) * 4) as usize;
+            if d <= r_red {
+                // 红点本体 (不透明)
+                pixels[idx] = 230;
+                pixels[idx + 1] = 57;
+                pixels[idx + 2] = 70;
+                pixels[idx + 3] = 255;
+            } else if d <= r_white {
+                // 白描边 (不透明)
+                pixels[idx] = 255;
+                pixels[idx + 1] = 255;
+                pixels[idx + 2] = 255;
+                pixels[idx + 3] = 255;
+            }
+        }
+    }
+    pixels
+}
+
 // ─── 系统托盘 ───
 
 /// 托盘相关句柄.
@@ -459,12 +493,18 @@ struct TrayHandles {
     show_item: MenuItem,
     console_item: CheckMenuItem,
     quit_item: MenuItem,
+    /// 常态图标 (无未读告警).
+    icon_normal: tray_icon::Icon,
+    /// 带红点的图标 (有未读告警).
+    icon_alert: tray_icon::Icon,
 }
 
 /// 创建系统托盘及右键菜单.
 fn setup_tray() -> TrayHandles {
-    let rgba = make_icon_rgba();
-    let icon = tray_icon::Icon::from_rgba(rgba, 32, 32).expect("创建托盘图标失败");
+    let icon_normal =
+        tray_icon::Icon::from_rgba(make_icon_rgba(), 32, 32).expect("创建托盘图标失败");
+    let icon_alert =
+        tray_icon::Icon::from_rgba(make_icon_rgba_alert(), 32, 32).expect("创建托盘告警图标失败");
 
     let menu = Menu::new();
 
@@ -479,7 +519,7 @@ fn setup_tray() -> TrayHandles {
     menu.append(&quit_item).ok();
 
     let tray = tray_icon::TrayIconBuilder::new()
-        .with_icon(icon)
+        .with_icon(icon_normal.clone())
         .with_menu(Box::new(menu))
         .with_tooltip(&format!("AIGate {}", crate::version::VERSION))
         .build()
@@ -488,7 +528,16 @@ fn setup_tray() -> TrayHandles {
     let event_rx = tray_icon::TrayIconEvent::receiver().clone();
     let menu_rx = tray_icon::menu::MenuEvent::receiver().clone();
 
-    TrayHandles { _tray: tray, _event_rx: event_rx, menu_rx, show_item, console_item, quit_item }
+    TrayHandles {
+        _tray: tray,
+        _event_rx: event_rx,
+        menu_rx,
+        show_item,
+        console_item,
+        quit_item,
+        icon_normal,
+        icon_alert,
+    }
 }
 
 // ─── 控制台窗口 (Windows) ───
@@ -803,6 +852,7 @@ fn main() {
         .route("/admin/api/degradations", get(admin::api_degradations))
         // 事件台账 (2026-10-11): 关键事件的时间线 + 清空.
         .route("/admin/api/events", get(admin::api_events))
+        .route("/admin/api/events/ack", post(admin::api_events_ack))
         .route("/admin/api/events/clear", post(admin::api_events_clear))
         // 用量热力图 (2026-10-11): 逐日 token 总量, 数据源是日级 rollup (跨日志滚动窗口).
         .route("/admin/api/heatmap", get(admin::api_heatmap))
@@ -1030,6 +1080,7 @@ fn main() {
     // ── 事件循环 ──
     let mut last_tooltip_update = Instant::now();
     let mut tooltip_version = String::new();
+    let mut tray_alert_active = false;
     let _ = event_loop.run(move |event, elwt| {
         // 用 WaitUntil 替代 Wait: Wait 在没有窗口/托盘事件时永久阻塞, 事件循环体不执行,
         // 导致下方 tooltip 定时更新代码永不运行 (用户最小化到托盘后悬停看到的永远是初始文本).
@@ -1045,6 +1096,9 @@ fn main() {
                 // 打开主窗口
                 window.set_visible(true);
                 let _ = window.focus_window();
+                // 用户来面板了 → 红点确认已读 (未读语义 = "没在面板窗口里看过")
+                crate::notify::ack();
+                let _ = handles._tray.set_icon(Some(handles.icon_normal.clone()));
             } else if id == handles.console_item.id().0 {
                 // 切换控制台显示/隐藏
                 let hidden = handles.console_item.is_checked();
@@ -1066,8 +1120,32 @@ fn main() {
                 ClickType::Left | ClickType::Double => {
                     window.set_visible(true);
                     let _ = window.focus_window();
+                    // 用户来面板了 → 红点确认已读
+                    crate::notify::ack();
+                    let _ = handles._tray.set_icon(Some(handles.icon_normal.clone()));
                 }
                 _ => {}
+            }
+        }
+
+        // ── 托盘红点轮询 (2026-10-12: 报错通知) ──
+        // 与 tooltip 同一个唤醒周期 (1-10s): 有未读告警 → 带红点图标, 否则常态图标。
+        // 只在状态**变化**时 set_icon, 不每轮重设 (无谓的 IPC)。
+        // 气球弹窗由 events::note → notify::on_event 即时触发, 不走这条轮询路径 ——
+        // 红点最多晚 10s 出现, 气球是即时的, 两者冗余设计 (杀软拦了气球还有红点)。
+        //
+        // ⚠️ **不在这里按"窗口可见"自动确认** —— 那样面板开着时红点永不亮 (用户把面板
+        // 留在另一个显示器、事件就被静默确认了)。确认只发生在**用户显式动作**:
+        // 托盘点击 / 菜单「显示面板」/ 窗口重获焦点 (见下方 match 分支)。
+        {
+            let want_alert = crate::notify::unread() > 0;
+            if want_alert != tray_alert_active {
+                tray_alert_active = want_alert;
+                let icon = if want_alert { &handles.icon_alert } else { &handles.icon_normal };
+                if let Err(e) = handles._tray.set_icon(Some(icon.clone())) {
+                    // 红点画不上去不能影响主流程: 气球已弹过, 记一笔即可。
+                    tracing::warn!("notify: failed to set tray alert icon: {e}");
+                }
             }
         }
 
@@ -1079,6 +1157,11 @@ fn main() {
             if config.enabled {
                 let stats = compute_realtime_stats_sync(&state_for_shutdown.log_buffer);
                 let mut lines = vec![format!("AIGate v{}", crate::version::VERSION), "━━━━━━━━━━━━━".to_string()];
+                // 未读告警数置顶显示 —— 悬停托盘即可看到"有几个问题", 不必点开面板。
+                let unread = crate::notify::unread();
+                if unread > 0 {
+                    lines.push(format!("⚠ 未读告警: {unread} 个 (打开面板查看)"));
+                }
                 if config.metrics.requests_per_second {
                     lines.push(format!("请求速度: {:.1} req/s", stats.requests_per_second));
                 }
@@ -1114,6 +1197,15 @@ fn main() {
                 WindowEvent::CloseRequested => {
                     // 关闭窗口 → 最小化到托盘, 不退出
                     window.set_visible(false);
+                }
+                WindowEvent::Focused(true) => {
+                    // 窗口重获焦点 = 用户回来看面板 → 红点确认已读。
+                    // (打开路径在托盘点击/菜单处已 ack; 这里覆盖"窗口一直开着, 用户切回来"的情况)
+                    if crate::notify::unread() > 0 {
+                        crate::notify::ack();
+                        let _ = handles._tray.set_icon(Some(handles.icon_normal.clone()));
+                        tray_alert_active = false;
+                    }
                 }
                 WindowEvent::Resized(size) => {
                     // 修复: winit 0.29 + wry 0.38 在 Windows 上, 双击标题栏从最大化恢复时

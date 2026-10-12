@@ -97,6 +97,36 @@ impl EventKind {
             EventKind::BreakerOpen | EventKind::BreakerReset | EventKind::AccountDead => "err",
         }
     }
+
+    /// 是否点亮**托盘红点** (通知模块, 2026-10-12): 任何未读的错误/警告。
+    ///
+    /// 与 `severity` 的差异是刻意的:
+    ///   · `BreakerReset` / `ProvidersReloaded` 是**用户自己刚做的操作** ——
+    ///     通知自己刚做的事是噪音, 不点红点;
+    ///   · `BreakerHalfOpen` 是恢复过程的中间态, 随后必有 Closed(恢复) 或重新 Open ——
+    ///     单独亮红点会制造"到底好了没"的困惑。
+    pub fn dot(self) -> bool {
+        matches!(
+            self,
+            EventKind::BreakerOpen
+                | EventKind::AccountDead
+                | EventKind::UpstreamFailing
+                | EventKind::QuotaLow
+                | EventKind::PortFallback
+        )
+    }
+
+    /// 是否**弹气球** (用户 2026-10-12 拍板): 错误级(系统成因) + 额度将尽。
+    ///
+    /// 额度将尽虽是 warn 级, 但用户明确要求弹 ——「不然我无法及时切换模型」。
+    /// `UpstreamFailing` (预警) 不弹: 它随后大概率升级成 BreakerOpen(弹),
+    /// 预警就弹会把"可能要坏"当"已经坏了"报。
+    pub fn balloon(self) -> bool {
+        matches!(
+            self,
+            EventKind::BreakerOpen | EventKind::AccountDead | EventKind::QuotaLow
+        )
+    }
 }
 
 /// 一条事件.
@@ -168,10 +198,13 @@ impl EventLog {
         Self { inner: Arc::new(Mutex::new(dq)), file_path }
     }
 
-    /// 记一条事件 (合并同窗重复 + 落盘).
+    /// 记一条事件 (合并同窗重复 + 落盘)。
+    ///
+    /// 返回 `true` = 记了一条**新**事件; `false` = 与上一条合并（同故障余波）。
+    /// 通知模块据此只对新事件响铃 —— 合并的重复若也弹，一个持续故障会在冷却窗外连环弹。
     ///
     /// 失败静默: **埋点自身绝不能影响转发** —— 与 `note_degradation` 同一原则。
-    pub fn record(&self, kind: EventKind, subject: &str, detail: &str) {
+    pub fn record(&self, kind: EventKind, subject: &str, detail: &str) -> bool {
         let ev = Event { ts: crate::admin::now_ts(), kind, subject: subject.to_string(), detail: detail.to_string(), count: 1 };
         let line = serde_json::to_string(&ev).ok();
         let mut merged = false;
@@ -210,6 +243,7 @@ impl EventLog {
                 }
             }
         }
+        !merged
     }
 
     /// 最近 `n` 条 (时间正序, 最新的在最后) —— 面板拿到后自行倒序展示.
@@ -249,13 +283,18 @@ pub fn install(log: Arc<EventLog>) -> bool {
 /// 未安装时**静默丢弃** —— 埋点不能因为"台账还没起来"就让调用方处理错误;
 /// 单测与工具路径 (不起完整进程) 就走这条路。
 pub fn note(kind: EventKind, subject: &str, detail: &str) {
-    if let Some(l) = LEDGER.get() {
-        l.record(kind, subject, detail);
-    }
+    // 通知只对**新事件**触发 (record 返回 false = 与上一条合并的同故障余波).
+    let fresh = match LEDGER.get() {
+        Some(l) => l.record(kind, subject, detail),
+        None => false,
+    };
     // 同时落一条日志: 计数只说"有", 日志说"何时" —— 与 note_degradation 同一口径.
     match kind.severity() {
         "err" => tracing::warn!("event: {} [{}] {}", kind.as_str(), subject, detail),
         _ => tracing::info!("event: {} [{}] {}", kind.as_str(), subject, detail),
+    }
+    if fresh {
+        crate::notify::on_event(kind, subject, detail);
     }
 }
 

@@ -1112,6 +1112,58 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-12 轮 ⑥：后台报错通知 —— 托盘红点 + 气球弹窗（用户要求）
+
+**用户原话**：「我认为我们软件应该加个报错通知，不然我软件挂后台都不知道有没有问题。」
+上一轮（10-11）做了事件台账解决"查得到"，但那是**拉取式**（要主动开面板）。这次补**推送式**。
+
+**先核实技术边界再让用户选形式**（避免又空转）：
+- `tray-icon 0.13` **没有通知 API**（查过源码，上轮也确认过）→ 气泡不能直接用它弹；
+- 托盘图标是**程序化绘制**的（`main.rs::make_icon_rgba`）→ 红点零新依赖可行；
+- 事件台账已有三档严重度 → 通知数据源现成，只缺"主动推出来"这一段。
+
+用户选定：**红点 + 气球弹窗**、**错误级 + 额度将尽都弹**（额度将尽虽是 warn 级，
+用户明确要弹：「不然我无法及时切换模型」）。
+
+**实现（新模块 `src/notify.rs`，零新依赖）**：
+- **红点**：托盘图标右上角叠红点 + 白描边（`make_icon_rgba_alert`）。白描边保证深/浅色任务栏
+  都醒目；位置取右上角避开品牌标本身（否则"有告警"和"图标换了"混淆）。
+- **气球**：由**系统自带 PowerShell**（WinForms `NotifyIcon.ShowBalloonTip`）承载 ——
+  每次弹一个短命进程（约 1s 启动，存活 ~12s）。标题/正文走**环境变量**（零引号地狱，
+  中文 Unicode 原生）；脚本固定串，不向命令行插任何用户数据。
+- **零新依赖的理由**：`tray-icon` 无通知 API；真 Toast 需加 `windows` crate，用户此前
+  明确过"不加新依赖"，故选 PowerShell 承载。
+- **已知限制（如实记录）**：个别杀软会拦短命 PowerShell → 气球没了但**红点仍在**（两层冗余）；
+  气球不进通知中心（那是 WinRT Toast 能力）。
+- **分级**（`EventKind::dot()` / `balloon()`，用户拍板）：
+  - 气球：`BreakerOpen` / `AccountDead`（错误级）+ `QuotaLow`；
+  - 红点：任何未读错误/警告（含 `UpstreamFailing` 预警、`PortFallback`）；
+  - **不通知**：用户自己触发的（`BreakerReset` / `ProvidersReloaded`）与恢复类/启动/中间态 ——
+    通知自己刚做的动作是噪音。
+- **未读语义**：`unread` 计数（`AtomicU64`）是红点唯一数据源。**确认 = 用户显式动作**
+  （托盘点击 / 菜单「显示面板」/ 窗口重获焦点）。
+  ⚠️ **刻意不按"窗口可见"自动确认**：那样面板留在另一个显示器时红点永不亮 ——
+  一开始我写成 `window.is_visible()` 即 ack，探针立刻抓出 `unread-after-breaker=0`
+  （GUI 实例窗口可见 → 事件一发生就被静默确认）。**探针救了这个 UX 坑**。
+- **合并/冷却语义**：`EventLog::record` 现返回"是否为新事件"（合并的余波不通知）；
+  气球另有 30s 全局冷却（防不同事件连环弹）。台账 60s 合并窗不变。
+- **测试接缝** `AIGATE_NOTIFY_SCRIPT`：指向一个 `.cmd` 代替 PowerShell，每次弹追加一行
+  `title|body` 到固定文件 —— 探针据此断言"弹了几次、内容是什么"（同 `AIGATE_BUDDY_ENDPOINT`
+  哲学：没接缝就测不到的路径必须留接缝）。⚠️ 该 `.cmd` 经控制台代码页（GBK）写中文，
+  探针读 marker 要按 GBK 解码 —— 乱码只在这条接缝上，真气球走 env var 是 Unicode 原生。
+- **面板 API**：`/admin/api/events` 返回 `unread` 字段；新增 `POST /admin/api/events/ack` 清零。
+  前端 `fetchEvents` 存 `eventsUnread`（**不在前端做确认** —— WebView 隐藏后仍轮询，
+  靠 `visibilityState` 判断"用户在看"不可靠，权威确认在原生侧）。
+
+**验证**：**358 单测**（+3：分级表钉住用户决策 / unread 计数与 ack / 冷却节流）·
+新探针 `probe_notify.py` **9/9**（判据 = 接缝记录的气球标题/正文 + unread 计数 +
+合并余波不重复弹 + 手动重置不弹 + ack 清零；**牙齿已验证**：摘掉 `on_event` 触发 →
+`breaker-open-balloon-fired` 与 `unread-after-breaker` 立刻红）·
+门禁（parts 38 件 / i18n 751 键 / balance / 主题三道）·
+回归 event_ledger / port_fallback / auth_header 8 / stage_report 13 / unregistered 15 /
+buddy_credits_login 11 全绿（`e2e_record_count` 单跑 PASS，批量那次是探针间端口残留冲突）·
+CHANGELOG 重建并 `cl_dump` 实测烤入。
+
 ### 🆕 10-12 轮 ⑤：报错与「测试」说明**哪个环节**出问题（用户要求）
 
 **用户原话**：「我建议我们软件测试和报错应该显示是哪个环节出问题了。」

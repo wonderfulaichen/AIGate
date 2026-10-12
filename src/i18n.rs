@@ -225,9 +225,28 @@ pub fn freetier_hint() -> &'static str {
     }
 }
 
-/// 按**字符边界**截断到最多 `max` 字节 (日志/诊断用的防 panic 截断).
+/// 气球通知的事件名 —— 与前端 i18n 的 `event_<kind>` 同口径。
 ///
-/// 为什么必须存在: `&s[..s.len().min(n)]` 在 n 落进多字节字符中间时**直接 panic** ——
+/// 为什么在后端而不是复用前端的键：气球由**网关进程**弹（PowerShell 子进程），
+/// 面板根本不在链路上。改这里的文案不影响前端（前端有自己的表）。
+pub fn notify_kind_name(kind: crate::events::EventKind) -> &'static str {
+    match kind {
+        crate::events::EventKind::BreakerOpen => pick("供应商熔断", "Provider circuit opened"),
+        crate::events::EventKind::BreakerClosed => pick("熔断恢复", "Circuit recovered"),
+        crate::events::EventKind::BreakerHalfOpen => pick("熔断试探中", "Circuit probing"),
+        crate::events::EventKind::BreakerReset => pick("熔断已重置", "Circuit reset"),
+        crate::events::EventKind::UpstreamFailing => pick("上游连续失败", "Upstream failing"),
+        crate::events::EventKind::UpstreamRecovered => pick("上游已恢复", "Upstream recovered"),
+        crate::events::EventKind::QuotaLow => pick("额度将尽", "Quota running low"),
+        crate::events::EventKind::AccountDead => pick("账号失效", "Account invalidated"),
+        crate::events::EventKind::ProvidersReloaded => pick("配置已重载", "Config reloaded"),
+        crate::events::EventKind::Started => pick("已启动", "Started"),
+        crate::events::EventKind::PortFallback => pick("端口已顺延", "Port moved"),
+    }
+}
+
+/// 按**字符边界**截断到最多 `max` 字节 (日志/诊断用的防 panic 截断).
+////// 为什么必须存在: `&s[..s.len().min(n)]` 在 n 落进多字节字符中间时**直接 panic** ——
 /// 实机事故 (2026-10-01, e2e_buddy_proxy ④ 抓出): 上游 400 错误体含中文 displayTips,
 /// 截 500 处切进「一」的中间, axum 任务当场崩溃, 客户端只见连接被重置/挂死。
 /// recall.rs 的 `floor_char_boundary` 是同一教训的前一次落地 (那里需要 index, 这里要 &str).
