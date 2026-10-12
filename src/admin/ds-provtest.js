@@ -40,7 +40,7 @@
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a'); a.href=url; a.download=prov.name+'-models.csv'; a.click(); URL.revokeObjectURL(url);
       },
-      async testProvider(pi) {
+      async testProvider(pi, recover) {
        const prov = this.providersFormData[pi];
        prov._testing = true;
        prov._testResult = null;
@@ -48,11 +48,19 @@
        try {
          // 带上 name: 后端据此用**真实密钥**测（这样"密钥对不对"才在被测项里）。
          // 不传 name 时后端退回假密钥探活, 并在结果里标 key_checked=false。
-         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),body:JSON.stringify({endpoint:prov.endpoint,name:prov.name})});
+         // recover=true（「测试并恢复」）: 测试成功后顺手关熔断 —— 由用户显式触发,
+         // 因为"上游通了"这个证据是他自己看到的判断, 不做成自动行为。
+         const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),
+           body:JSON.stringify({endpoint:prov.endpoint,name:prov.name,recover:!!recover})});
          if(r.ok) prov._testResult = await r.json();
          else prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('request_failed'),latency_ms:0};
        } catch(e){ prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('network_error'),latency_ms:0}; }
        const result=prov._testResult||{};
+       // 「测试并恢复」成功 → 明说熔断已关 (把用户点它的目的与结果对上)
+       if(result.recovered){
+         toast(t('test_recovered'), 'ok');
+         await this.fetchHealth();
+       }
        // 仅更新连通性状态; circuit 字段由 fetchHealth 从 breakers 同步, 避免被覆盖成 'closed' 导致重置按钮消失.
        const current=this.health.find(h=>h.provider===prov.name);
        if(current){ current.status_level=result.success?'ok':'error'; current.status_text=result.status||''; current.latency_ms=result.latency_ms||0; }

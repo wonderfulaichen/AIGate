@@ -33,6 +33,11 @@
               <template x-if="!drawerProv._testing"><span>⚡ <span x-text="t('test_connection')"></span></span></template>
               <template x-if="drawerProv._testing"><span class="spin" style="margin-right:6px"></span><span x-text="t('testing')"></span></template>
             </button>
+            <!-- 「测试并恢复」: 仅熔断已断开时出现。测试本身不碰熔断(隔离),
+                 这个按钮是**人看到证据后**显式决定关熔断 —— 不是自动行为。 -->
+            <button x-show="healthOf(drawerProv.name)==='err'" class="btn btn-p" style="font-size:var(--fs-11);white-space:nowrap" :disabled="drawerProv._testing" :title="t('test_recover_hint')" @click="testProvider(providersFormData.indexOf(drawerProv), true)">
+              <span x-text="t('test_recover')"></span>
+            </button>
           </div>
           <div class="sec-body">
             <!-- Test result -->

@@ -130,7 +130,15 @@ impl Config {
             breaker: CircuitBreakerConfig {
                 failure_threshold: env_u32("BREAKER_FAILURE_THRESHOLD", 4),
                 success_threshold: env_u32("BREAKER_SUCCESS_THRESHOLD", 2),
-                timeout: Duration::from_secs(env_u64("BREAKER_TIMEOUT_SECS", 60)),
+                // ⚠️ **冷却 60 → 180 秒**（2026-10-12 用户报障「一出错 buddy/workbuddy
+                // 就连不上」后的调整）。原值 60s 太短，造成两个实测问题：
+                //  ① 上游还没恢复就放探测 → 探测失败 → 又开 → **反复振荡**，
+                //     用户侧表现是"一直连不上"（而不是"隔几分钟能试一次"）；
+                //  ② 探测名额只放 1 个，振荡期间真实流量全被挡在 503。
+                // 阈值不动（4 次失败 / 60% 错误率）—— 那是保护上游的必要判据，
+                // 改松了会让故障供应商继续被打。想提速恢复可调小：
+                //   BREAKER_TIMEOUT_SECS=60（单号供应商/自建上游场景）。
+                timeout: Duration::from_secs(env_u64("BREAKER_TIMEOUT_SECS", 180)),
                 error_rate_threshold: env_f64("BREAKER_ERROR_RATE", 0.6),
                 min_requests: env_u32("BREAKER_MIN_REQUESTS", 10),
             },

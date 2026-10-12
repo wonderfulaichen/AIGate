@@ -1837,6 +1837,37 @@ pub struct TestProviderReq {
     /// 旧调用方不传时退回假密钥探活（`key_checked: false`，结论里如实标注）。
     #[serde(default)]
     pub name: Option<String>,
+    /// 测试通过后**顺手关掉该供应商的熔断**（面板「测试并恢复」按钮）。
+    ///
+    /// 只在测试成功时生效；测试失败不关（没证据就不要动状态）。
+    /// 返回额外的 `recover: true` / `recovered: true` 让面板提示"熔断已恢复"。
+    ///
+    /// ⚠️ 用 `Option<bool>` 而不是 `bool`: `#[serde(default)]` 会让**缺省**字段变成
+    /// `false`，但对**显式 `null`** 不生效（bool 不接受 null，直接解析失败）。
+    /// 前端旧版本可能发 `recover: null`，那与"没发"同义 —— 用 Option 把两者都收成 None。
+    #[serde(default)]
+    pub recover: Option<bool>,
+}
+
+/// POST /admin/api/providers/test 的响应体.
+///
+/// 为什么抽成结构体而不是 `json!`: 字段名一旦写错（或漏写），前端拿到的是 `undefined`
+/// 且**没有任何报错** —— 本项目反复吃过这个亏（camelCase 静默丢失、`_static_formats`…）。
+/// 结构体让编译器与单测同时把住形状，加字段也比 `json!` 更难漏。
+#[derive(serde::Serialize)]
+pub struct TestProviderResp {
+    pub success: bool,
+    pub reachable: bool,
+    /// 失败发生在哪一环: `key` / `connect` / `edge` / `upstream` / `local`.
+    pub stage: &'static str,
+    /// 环节的中文名（面板直接显示）。
+    pub stage_text: &'static str,
+    pub status: String,
+    /// 是否真的用真实密钥校验过（false = 没给 name / 找不到，只做了连通性探活）。
+    pub key_checked: bool,
+    pub latency_ms: u64,
+    /// 是否顺手关了熔断（仅 `recover=true` 且测试成功时）。
+    pub recovered: bool,
 }
 
 /// POST /admin/api/providers/test — 分阶段探测单个供应商，**并用真实密钥**。
@@ -1857,6 +1888,21 @@ pub struct TestProviderReq {
 /// 判据分层（沿用 2026-10-11 对标 dsh 时定的口径，别退回"一票否决"）：
 /// **可达 ≠ 健康**，也 ≠ 故障。401/403/429 都说明上游在正常工作（只是凭据或策略问题），
 /// 只有连不上与 5xx 才是"供应商故障"。
+///
+/// ⛔ **刻意与熔断完全隔离**（2026-10-12 用户报障后的设计约束，别改回去）：
+/// 本接口既**不读**熔断状态、也**不写**熔断结果。三条理由：
+/// ① 测的是"此刻通不通"，不是"供应商该不该被熔断" —— 一次测试的成败不该左右
+///    故障判据（那是连续失败/错误率的事）；
+/// ② 熔断开着时若不让测，就没法判断"恢复没有"；而若把测试失败记进熔断，
+///    用户多点几次「测试」就能把好供应商打到 Open（熔断本意是保护上游，不是保护按钮）；
+/// ③ 探测名额（HalfOpen）只应给真实流量用 —— 测试若占用名额，会把正在恢复的探测挤掉。
+///
+/// 唯一例外是 `recover: true`（面板「测试并恢复」）：**用户已看到上游通了**这个证据后，
+/// 由他显式决定关熔断。这是人的判断，不是自动行为 —— 自动关的风险是上游只好了几秒，
+/// 熔断立刻又被真实流量打开，反复振荡。
+///
+/// 失败也不会污染熔断：否则一次 `unreachable`（本机断网/DNS 故障）就能把供应商打进 Open，
+/// 而它自己好着 —— 实测用户就是这样遇到 buddy/workbuddy"突然连不上"的。
 pub async fn api_providers_test(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<TestProviderReq>,
@@ -1992,17 +2038,37 @@ pub async fn api_providers_test(
         }
     }
     let latency_ms = start.elapsed().as_millis() as u64;
-    Json(serde_json::json!({
-        "success": reachable,
-        "reachable": reachable,
+    // 「测试并恢复」：用户已看到"通"的证据，由他显式决定关熔断。
+    // 只在**测试成功**时做；失败不动状态。走后端手动重置同一条路（写台账）。
+    let mut recovered = false;
+    if reachable && payload.recover.unwrap_or(false) {
+        if let Some(n) = payload.name.as_deref().filter(|s| !s.is_empty()) {
+            let mut g = state.breakers.lock().unwrap();
+            if let Some(cb) = g.get_mut(&n.to_string()) {
+                if cb.peek_state() != crate::circuit_breaker::CircuitState::Closed {
+                    cb.force_close();
+                    let moves = cb.take_transitions();
+                    drop(g);
+                    super::proxy::report_transitions(&n.to_string(), moves);
+                    recovered = true;
+                }
+            }
+        }
+    }
+    Json(serde_json::to_value(TestProviderResp {
+        success: reachable,
+        reachable,
         // 环节与它的中文名：面板首要展示这两个字段（用户要求"看得出哪个环节"）
-        "stage": stage,
-        "stage_text": crate::i18n::stage_label(stage),
-        "status": detail,
+        stage,
+        stage_text: crate::i18n::stage_label(stage),
+        status: detail,
         // 是否真的用真实密钥校验过（false = 没给 name / 找不到，只做了连通性探活）
-        "key_checked": key_checked,
-        "latency_ms": latency_ms,
-    }))
+        key_checked,
+        latency_ms,
+        // 是否顺手关了熔断（仅 recover=true 且测试成功时）
+        recovered,
+    })
+    .unwrap_or_else(|_| serde_json::json!({ "error": "serialize failed" })))
 }
 
 /// POST /admin/api/providers/:name/fetch-models
@@ -5552,6 +5618,61 @@ fn prev_bucket(ts: u64, granularity: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「测试」与熔断的隔离契约（2026-10-12 用户报障后立，防回归）。
+    ///
+    /// 背景：用户报「一出错 buddy/workbuddy 就连接失败」，而 `unreachable` 来自测试按钮。
+    /// 结论不是"测试把熔断写坏了"（它从不写熔断），而是**测试失败会与真实流量叠加**，
+    /// 叠加后的连续失败把供应商打进 Open。修复把测试彻底隔出去：它只出报告，
+    /// 唯一例外是用户显式 `recover=true`（"测试并恢复"按钮）。
+    ///
+    /// 这条锁住**默认值**：`recover` 缺省 false。否则老前端一次成功的测试
+    /// 就会顺手关掉熔断 —— 那是把人的判断变成自动行为，正是本次要避免的。
+    #[test]
+    fn test_provider_req_defaults_to_no_recover() {
+        // 旧调用方只发 endpoint + name（frontend 没更新前也这样发）
+        let r: TestProviderReq = serde_json::from_str(
+            r#"{"endpoint":"https://x/v1/chat/completions","name":"mock"}"#,
+        )
+        .expect("应能解析");
+        // 缺省 / null 都等于"不恢复"（None）。unwrap_or 只在 None 时取值：
+        // 断言写成 `!= Some(true)` 更直白 —— 它覆盖 None、Some(false) 两种"不恢复"。
+        assert_ne!(r.recover, Some(true), "缺省不得恢复熔断");
+        assert_eq!(r.name.as_deref(), Some("mock"));
+
+        // 显式 null 也要回落默认（json 里写 null 与缺省同义）
+        let r2: TestProviderReq = serde_json::from_str(
+            r#"{"endpoint":"https://x/v1/chat/completions","recover":null}"#,
+        )
+        .expect("null 应解析为默认");
+        assert_ne!(r2.recover, Some(true), "null 不得当成 true");
+
+        // 显式 true 才能恢复
+        let r3: TestProviderReq =
+            serde_json::from_str(r#"{"endpoint":"x","recover":true}"#).expect("应能解析");
+        assert!(r3.recover.unwrap_or(false));
+    }
+
+    /// 响应形状必须**总带** `recovered`（false 也算）—— 前端据此决定要不要提示
+    /// "熔断已恢复"，字段缺失会被读成 `undefined` 而**不报错**（本项目的老坑）。
+    #[test]
+    fn test_provider_response_always_carries_recovered() {
+        let v = serde_json::to_value(TestProviderResp {
+            success: true,
+            reachable: true,
+            stage: "upstream",
+            stage_text: "上游服务",
+            status: "ok".to_string(),
+            key_checked: true,
+            latency_ms: 12,
+            recovered: false,
+        })
+        .expect("序列化应成功");
+        assert_eq!(v["recovered"], false, "recovered 键必须存在");
+        assert_eq!(v["stage"], "upstream");
+        assert_eq!(v["stage_text"], "上游服务");
+        assert_eq!(v["key_checked"], true);
+    }
 
     /// 前端按 JS 习惯发 camelCase (`costQueries`), 后端结构体是 snake_case 字段 ——
     /// 缺 `#[serde(rename_all = "camelCase")]` 时该字段会被**静默**当作缺失
