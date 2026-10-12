@@ -42,6 +42,13 @@
       <div class="panel-takeaway" x-show="heatmapTakeaway" x-text="heatmapTakeaway"></div>
     </div></div>
 
+    <!-- 省量审计面板: 2026-10-12 修复 —— 0f6c06f 轮加热力图时误删了本面板的开启结构
+         (标题行与 pnl / pnl-b 包裹), 只留下内容与末尾既有的闭合标签, 导致:
+         ① 审计内容失去面板与标题, 成了散落在热力图与 TTFT 之间的裸卡片;
+         ② 那 2 个失去配对的闭合标签正是 balance.py 报的 page-analytics div:-2。
+         现按 75290c5 原样还原开启行, 末尾既有的闭合标签正好配对 pnl-b 与 pnl。
+         ⚠️ 本注释刻意不写任何字面量 div 标签 —— balance.py 用正则计数, 会被注释里的标签骗到。 -->
+    <div class="pnl mb4"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('audit_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
           <div x-show="auditAppliedSegs.length" class="prop-bar"><template x-for="sg in auditAppliedSegs" :key="sg.k"><span :style="'flex-grow:'+Math.max(sg.v,1)+';background:'+sg.color" :title="sg.label+' '+fmtT(sg.v)"></span></template></div>
