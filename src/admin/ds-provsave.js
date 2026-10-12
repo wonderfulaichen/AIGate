@@ -160,6 +160,7 @@
               api_key_default: p.api_key_default||undefined,
               // 账号形式凭据 (auth.mode=account): 透传保存. 不带 auth 的供应商本字段为
               // undefined → JSON.stringify 自动省略, 不会给存量配置塞空字段.
+              // 同一段也承载鉴权头声明 (auth.header / auth.prefix, 非标准鉴权的供应商).
               auth: p.auth||undefined,
               // 内置预设标记与停用态: 同样只在有值时落盘 (preset 受保护, 见 api_providers_save).
               preset: p.preset||undefined,

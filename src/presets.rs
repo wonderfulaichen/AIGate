@@ -87,6 +87,9 @@ impl PresetProvider {
                     expires_in_path: "data.expiresIn".to_string(),
                 }),
                 expiry_margin_secs: 3600,
+                // 鉴权头缺省 (Authorization: Bearer) —— 账号型产品都用标准头
+                header: None,
+                prefix: None,
             }),
             _ => None,
         }

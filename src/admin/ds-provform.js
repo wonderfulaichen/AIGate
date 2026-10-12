@@ -49,6 +49,12 @@
                   _keyMsg: '',
                   _keyOk: false,
                   _fetching: false,
+                  // 鉴权头草稿 (auth.header / auth.prefix)。留空 = 缺省 Authorization: Bearer。
+                  // 用**两个**草稿而非直接 x-model 到 auth.header/prefix 的原因:
+                  //   "没写" 与 "显式空串(无前缀)" 在 JSON 里必须能区分 —— 输入框只能给空串,
+                  //   直接绑定会把「没填」写成一堆显式空值, 保存后污染 providers.json。
+                  _authHeader: (p.auth && p.auth.header) || '',
+                  _authPrefix: (p.auth && p.auth.prefix) || '',
                 models: Object.entries(p.models||{}).map(([id, cfg]) => ({
                   model_id: id,
                   upstream_model: cfg.upstream_model||'',

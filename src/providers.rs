@@ -343,6 +343,79 @@ pub struct AuthConfig {
     /// 到期前多少秒触发续期 (与 CodeArts 插件一致: 1 小时).
     #[serde(default = "auth_expiry_margin_default")]
     pub expiry_margin_secs: u64,
+    /// **密钥写进哪个请求头** (缺省 `Authorization`)。
+    ///
+    /// 为什么需要它（2026-10-12）：本项目原先把 `Authorization: Bearer <key>` 写死在
+    /// 七个发 key 的点上（转发 ×2 / 拉取模型 / 协议探测 / 余额 ×2 / 续期）。于是
+    /// **鉴权头不叫 `Authorization`、或不用 `Bearer ` 前缀**的供应商只能把密钥硬编码进
+    /// `headers` 静态表 —— 那是"把密钥写进配置文件"，会入库、会被面板回显，不可接受。
+    ///
+    /// 声明式表达（**不是按域名猜**）：猜错的表现是 401，比显式声明更难查；这与项目里
+    /// 「可用集为空 = 不知道，不静默改协议」是同一条纪律。
+    ///
+    /// 实测形态举例：Anthropic 官方 `x-api-key`（无前缀）、Azure OpenAI `api-key`（无前缀）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// 密钥前缀（含分隔空格），缺省 `"Bearer "`。**空串 = 只放 key 本身**（x-api-key 类）。
+    ///
+    /// 只有显式写了空串才不加前缀 —— 用 `Option` 区分"没写"（用默认 Bearer）与
+    /// "写了空串"（不加前缀），否则会把 x-api-key 类误加成 `Bearer sk-...`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+}
+
+/// `auth.header` 的缺省值（不写字段时的行为，与参数化之前**逐字节一致**）。
+pub const DEFAULT_AUTH_HEADER: &str = "Authorization";
+/// `auth.prefix` 的缺省值（含分隔空格）。
+pub const DEFAULT_AUTH_PREFIX: &str = "Bearer ";
+
+impl AuthConfig {
+    /// 生效的鉴权头名（缺省 `Authorization`）。
+    pub fn header_name(&self) -> &str {
+        self.header
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_AUTH_HEADER)
+    }
+
+    /// 生效的前缀（缺省 `"Bearer "`；显式空串 = 无前缀）。
+    pub fn prefix_value(&self) -> &str {
+        self.prefix.as_deref().unwrap_or(DEFAULT_AUTH_PREFIX)
+    }
+}
+
+/// 构造一条**鉴权头** `(头名, 头值)` —— 全部发 key 的路径都走它，别再各自写 `Bearer`。
+///
+/// `auth` 为 `None`（旧配置 / 静态 key 供应商）时 = `Authorization: Bearer <key>`，
+/// 与参数化之前完全相同。
+pub fn auth_header_pair(auth: Option<&AuthConfig>, key: &str) -> (String, String) {
+    match auth {
+        Some(a) => (
+            a.header_name().to_string(),
+            format!("{}{key}", a.prefix_value()),
+        ),
+        None => (
+            DEFAULT_AUTH_HEADER.to_string(),
+            format!("{DEFAULT_AUTH_PREFIX}{key}"),
+        ),
+    }
+}
+
+/// 把鉴权头挂到 reqwest 请求上（四个辅助路径共用；成功返回请求本身）。
+///
+/// `key` 为空时不挂 —— 与既有各处 `if !key.is_empty()` 的行为一致
+/// （Zen 的 `public` 等无鉴权站点）。
+pub fn with_auth_header(
+    req: reqwest::RequestBuilder,
+    auth: Option<&AuthConfig>,
+    key: &str,
+) -> reqwest::RequestBuilder {
+    if key.is_empty() {
+        return req;
+    }
+    let (name, value) = auth_header_pair(auth, key);
+    req.header(name, value)
 }
 
 /// 单个供应商的配置.
@@ -923,9 +996,8 @@ pub async fn probe_protocols(
     ) -> Option<u16> {
         for method in [reqwest::Method::HEAD, reqwest::Method::GET] {
             let mut req = client.request(method.clone(), url);
-            if !key.is_empty() {
-                req = req.header("Authorization", format!("Bearer {key}"));
-            }
+            // 鉴权头按 provider.auth 声明 (缺省 Authorization: Bearer)
+            req = with_auth_header(req, provider.auth.as_ref(), key);
             // Anthropic 端点要求版本头
             req = req.header("anthropic-version", "2023-06-01");
             if let Some(headers) = &provider.headers {
@@ -1019,9 +1091,8 @@ pub async fn fetch_models_from_upstream(
         }
     };
     let mut req = client.get(&models_url);
-    if !key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {key}"));
-    }
+    // 鉴权头按 provider.auth 声明 (缺省 Authorization: Bearer)
+    req = with_auth_header(req, provider.auth.as_ref(), key);
     if let Some(headers) = &provider.headers {
         for (k, v) in headers {
             req = req.header(k, v);
@@ -1062,9 +1133,8 @@ async fn fetch_buddy_models(
     let base = crate::presets::login_endpoint_of(provider.preset.as_deref().unwrap_or("buddy"))
         .unwrap_or_else(|| "https://copilot.tencent.com".to_string());
     let mut req = client.get(format!("{}/v3/config", base.trim_end_matches('/')));
-    if !key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {key}"));
-    }
+    // 鉴权头按 provider.auth 声明 (缺省 Authorization: Bearer)
+    req = with_auth_header(req, provider.auth.as_ref(), key);
     if let Some(headers) = &provider.headers {
         for (k, v) in headers {
             req = req.header(k, v);
@@ -1357,6 +1427,90 @@ mod tests {
         let reg = ProviderRegistry::from_str(SAMPLE_JSON).unwrap();
         let entry = reg.lookup("free-model").unwrap();
         assert_eq!(entry.provider.api_key_default.as_deref(), Some("public"));
+    }
+
+    /// 鉴权头声明的**默认行为必须与参数化之前逐字节一致** —— 这是本次改动的安全底线:
+    /// 存量 8 家供应商 (含在跑的 Joule) 都没写 `auth.header/prefix`, 必须仍是
+    /// `Authorization: Bearer <key>`。若这条挂了, 等于把所有现存配置改坏。
+    #[test]
+    fn auth_header_defaults_match_legacy_bearer() {
+        // 无 auth 段 (静态 key 供应商, 最常见)
+        assert_eq!(
+            auth_header_pair(None, "sk-abc"),
+            ("Authorization".to_string(), "Bearer sk-abc".to_string())
+        );
+        // 有 auth 段但没写 header/prefix (account 型: buddy / workbuddy)
+        let plain = AuthConfig::default();
+        assert_eq!(
+            auth_header_pair(Some(&plain), "sk-abc"),
+            ("Authorization".to_string(), "Bearer sk-abc".to_string())
+        );
+        // 声明了 mode 也一样 —— mode 不参与头构造
+        let acct = AuthConfig { mode: AuthMode::Account, ..Default::default() };
+        assert_eq!(
+            auth_header_pair(Some(&acct), "tok"),
+            ("Authorization".to_string(), "Bearer tok".to_string())
+        );
+    }
+
+    /// 非标准鉴权头: 自定义头名 + 无前缀 (Anthropic `x-api-key` / Azure `api-key` 形态)。
+    #[test]
+    fn auth_header_supports_custom_header_and_empty_prefix() {
+        // x-api-key 无前缀
+        let xk = AuthConfig { header: Some("x-api-key".into()), prefix: Some(String::new()), ..Default::default() };
+        assert_eq!(
+            auth_header_pair(Some(&xk), "sk-ant-1"),
+            ("x-api-key".to_string(), "sk-ant-1".to_string())
+        );
+        // Azure api-key 无前缀
+        let az = AuthConfig { header: Some("api-key".into()), prefix: Some(String::new()), ..Default::default() };
+        assert_eq!(auth_header_pair(Some(&az), "k"), ("api-key".to_string(), "k".to_string()));
+        // 自定义头 + 自定义前缀 (含空格照原样)
+        let cp = AuthConfig { header: Some("X-Token".into()), prefix: Some("Token ".into()), ..Default::default() };
+        assert_eq!(auth_header_pair(Some(&cp), "t"), ("X-Token".to_string(), "Token t".to_string()));
+        // 只写 header 不写 prefix → 前缀回落 Bearer (不会静默变成裸 key)
+        let ho = AuthConfig { header: Some("X-K".into()), prefix: None, ..Default::default() };
+        assert_eq!(auth_header_pair(Some(&ho), "t"), ("X-K".to_string(), "Bearer t".to_string()));
+        // 空白头名视为未写 → 回落 Authorization (防手抖写出空格头名)
+        let blank = AuthConfig { header: Some("   ".into()), prefix: None, ..Default::default() };
+        assert_eq!(auth_header_pair(Some(&blank), "t"), ("Authorization".to_string(), "Bearer t".to_string()));
+    }
+
+    /// 空 key 不挂鉴权头 (Zen 的 `public` 等无鉴权站点) —— 与各处原有的
+    /// `if !key.is_empty()` 行为一致, 不得因为换成构造器而多挂一个空 Bearer。
+    #[test]
+    fn with_auth_header_skips_empty_key() {
+        let c = reqwest::Client::new();
+        let a = AuthConfig { header: Some("x-api-key".into()), prefix: Some(String::new()), ..Default::default() };
+        let req = with_auth_header(c.get("http://127.0.0.1:9/x"), Some(&a), "");
+        assert!(req.build().unwrap().headers().is_empty(), "空 key 不应挂任何头");
+        let req2 = with_auth_header(c.get("http://127.0.0.1:9/x"), Some(&a), "k");
+        assert_eq!(req2.build().unwrap().headers().get("x-api-key").unwrap(), "k");
+    }
+
+    /// `auth` 段的 JSON 形态: 缺省字段可省, 解析后等价于默认值 (旧 providers.json 不受影响)。
+    #[test]
+    fn auth_config_json_roundtrip_keeps_defaults() {
+        let p: ProviderConfig = serde_json::from_str(
+            r#"{"name":"joule","endpoint":"https://joule.xmzf.space/v1/chat/completions",
+                "api_key_env":"JOULE_KEY","models":{}}"#,
+        )
+        .unwrap();
+        assert!(p.auth.is_none(), "无 auth 段 → None (与旧配置行为相同)");
+
+        let p2: ProviderConfig = serde_json::from_str(
+            r#"{"name":"anth","endpoint":"https://api.anthropic.com/v1/messages",
+                "api_key_env":"ANTH_KEY","models":{},
+                "auth":{"mode":"api_key","header":"x-api-key","prefix":""}}"#,
+        )
+        .unwrap();
+        let a = p2.auth.as_ref().unwrap();
+        assert_eq!(a.header_name(), "x-api-key");
+        assert_eq!(a.prefix_value(), "");
+        // 序列化回写: 保持声明值 (面板保存链要原样带回)
+        let back = serde_json::to_value(&p2).unwrap();
+        assert_eq!(back["auth"]["header"], "x-api-key");
+        assert_eq!(back["auth"]["prefix"], "");
     }
 
     #[test]

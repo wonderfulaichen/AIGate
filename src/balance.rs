@@ -528,8 +528,9 @@ impl BalanceManager {
         for p in account_query {
             let Some(cfg) = provider_configs.get(&p) else { continue };
             let Some(ep) = cfg.balance_endpoint.clone() else { continue };
+            let auth = cfg.auth.clone();
             let b = self
-                .query_account_quotas(client, accounts, &p, &ep)
+                .query_account_quotas(client, accounts, &p, &ep, auth.as_ref())
                 .await;
             if b.error.is_none() {
                 let mut cache = self.api_cache.write().await;
@@ -539,11 +540,15 @@ impl BalanceManager {
         }
 
         for ((endpoint, api_key), providers) in grouped {
-            // 通用 GET + Bearer (buddy 已在上面单独处理, 不会进入本分支).
+            // 通用 GET + 鉴权头 (buddy 已在上面单独处理, 不会进入本分支).
             let cfg = ProviderBalanceConfig {
                 balance_endpoint: Some(endpoint),
                 api_key,
                 preset: None,
+                // 分组键只带 (endpoint, api_key), 但同组供应商共用一个上游 → auth 取首个即可.
+                auth: provider_configs
+                    .get(&providers[0])
+                    .and_then(|c| c.auth.clone()),
             };
             let balance = self.query_provider_balance(client, &providers[0], &cfg).await;
             // 仅以首个供应商名打日志; 结果会复制到同组所有供应商.
@@ -588,16 +593,17 @@ impl BalanceManager {
 
         if let Some(endpoint) = &config.balance_endpoint {
             info!(target: "balance", "查询余额: provider='{}' endpoint={}", provider_name, endpoint);
-            match client
-                .get(endpoint)
-                .header("Authorization", format!("Bearer {}", config.api_key))
-                // DeepSeek 等供应商余额接口要求 Accept: application/json (官方示例明确携带),
-                // 缺省 reqwest 仅发 Accept: */*, 可能被拒 (406/非 JSON).
-                .header("Accept", "application/json")
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-            {
+            // 鉴权头按 auth 声明 (缺省 Authorization: Bearer) —— 与转发路径同源
+            let req = crate::providers::with_auth_header(
+                client.get(endpoint),
+                config.auth.as_ref(),
+                &config.api_key,
+            )
+            // DeepSeek 等供应商余额接口要求 Accept: application/json (官方示例明确携带),
+            // 缺省 reqwest 仅发 Accept: */*, 可能被拒 (406/非 JSON).
+            .header("Accept", "application/json")
+            .timeout(std::time::Duration::from_secs(10));
+            match req.send().await {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
@@ -696,6 +702,10 @@ pub struct ProviderBalanceConfig {
     /// 内置预设标记 (如 "buddy") — 无 balance_endpoint 也可走预设专属余额实现.
     #[serde(default)]
     pub preset: Option<String>,
+    /// 鉴权头声明 (缺省 `Authorization: Bearer`) —— 余额查询与转发用**同一份**
+    /// `auth` 段, 否则非标准鉴权头的供应商会出现"对话通、余额查不了"的半通状态.
+    #[serde(default)]
+    pub auth: Option<crate::providers::AuthConfig>,
 }
 
 /// buddy 预设的积分查询在查询队列里的伪端点 (分派到 [`BalanceManager::query_buddy_credits`]).
@@ -849,6 +859,7 @@ impl BalanceManager {
         accounts: &crate::accounts::AccountStore,
         provider: &str,
         endpoint: &str,
+        auth: Option<&crate::providers::AuthConfig>,
     ) -> BalanceInfo {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -875,7 +886,7 @@ impl BalanceManager {
         for acct in &list {
             // 用该账号自己的 token 查询 (这才是"这个号还剩多少"的正确凭据).
             match self
-                .query_generic_balance_with_token(client, endpoint, &acct.access_token)
+                .query_generic_balance_with_token(client, endpoint, &acct.access_token, auth)
                 .await
             {
                 Ok((remain, exp, prog)) => {
@@ -927,16 +938,17 @@ impl BalanceManager {
         info
     }
 
-    /// 通用余额端点查询 (GET + Bearer), 返回 `(剩余额度, 最近重置窗口, 本窗口进度)`.
+    /// 通用余额端点查询 (GET + 鉴权头, 缺省 Bearer), 返回 `(剩余额度, 最近重置窗口, 本窗口进度)`.
+    ///
+    /// `auth` = 供应商的鉴权头声明 (逐账号查询时与转发同一份), 缺省 `Authorization: Bearer`.
     async fn query_generic_balance_with_token(
         &self,
         client: &reqwest::Client,
         endpoint: &str,
         token: &str,
+        auth: Option<&crate::providers::AuthConfig>,
     ) -> Result<(f64, Option<(u64, f64)>, Option<QuotaProgress>), String> {
-        let resp = client
-            .get(endpoint)
-            .header("Authorization", format!("Bearer {token}"))
+        let resp = crate::providers::with_auth_header(client.get(endpoint), auth, token)
             .header("Accept", "application/json")
             .timeout(std::time::Duration::from_secs(10))
             .send()

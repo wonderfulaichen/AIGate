@@ -32,6 +32,9 @@ const I18N = {
     
     
     'balance_endpoint_label': '余额查询 API', 'balance_endpoint_ph': '如 https://api.deepseek.com/user/balance',
+    'auth_header_label': '鉴权头名', 'auth_header_ph': '缺省 Authorization',
+    'auth_prefix_label': '鉴权前缀', 'auth_prefix_ph': '缺省 Bearer（自定义头留空 = 不带前缀）',
+    'auth_header_hint': '非标准鉴权的上游填这里（如 Anthropic 的 x-api-key、Azure 的 api-key）。留空即 Authorization: Bearer，与现在一样；密钥仍从上面的密钥框读取，不会写进配置文件。',
     'tbl.strip_reasoning': '剥离推理链',
     'strip_toolcall_reasoning_hint': '逐模型设置：剥离「带工具调用的历史推理链」，省量可观（见分析页省量审计，实测占输入 38.5%）。但约束因上游而异 —— Anthropic 的 thinking 块与 tool_use 必须并存、DeepSeek reasoner 亦要求两者同在，剥掉会 400。中转供应商同一名下混有多种协议，因此请逐个模型确认后再勾选，并观察错误率。',
     
@@ -348,6 +351,9 @@ const I18N = {
     
     
     'balance_endpoint_label': 'Balance Query API', 'balance_endpoint_ph': 'e.g. https://api.deepseek.com/user/balance',
+    'auth_header_label': 'Auth header name', 'auth_header_ph': 'default: Authorization',
+    'auth_prefix_label': 'Auth prefix', 'auth_prefix_ph': 'default: Bearer (blank + custom header = no prefix)',
+    'auth_header_hint': 'For upstreams with non-standard auth (Anthropic x-api-key, Azure api-key ...). Blank keeps Authorization: Bearer. The key still comes from the key box above and is never written to the config file.',
     'tbl.strip_reasoning': 'Strip reasoning',
     'strip_toolcall_reasoning_hint': 'Per-model: strips the historical reasoning chain attached to tool calls, saving a lot of input (see the savings audit on the Analytics page; measured at 38.5% of input). The constraints differ per upstream — Anthropic requires thinking blocks and tool_use to coexist, and DeepSeek reasoner likewise requires both, so stripping them returns 400. A single relay provider may mix several protocols under one name, so confirm model by model before ticking this box and watch the error rate.',
     

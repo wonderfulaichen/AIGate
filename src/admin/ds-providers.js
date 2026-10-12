@@ -197,9 +197,40 @@
       if(prov._filter===undefined) prov._filter='';
       if(prov._brandFilter===undefined) prov._brandFilter='';
       if(prov._effFilter===undefined) prov._effFilter='';
+      // 鉴权头草稿随抽屉打开回填 (来自已保存的 auth.header / auth.prefix)。
+      // 直接用 `|| ''` 无法区分"没写"与"显式空串", 但那正是这两个草稿的职责:
+      // 空草稿 = 未声明, 由下面的 setter 决定写什么进 auth。
+      if(prov._authHeader===undefined) prov._authHeader=(prov.auth&&prov.auth.header)||'';
+      if(prov._authPrefix===undefined) prov._authPrefix=(prov.auth&&prov.auth.prefix)||'';
       try { this.drawerAdvOpen = localStorage.getItem('aigate_drawer_adv') === '1'; } catch(e) {}
       if (!this.drawerProv) this._lastFocus = document.activeElement; // 记录触发按钮, 关闭时归还
       this.drawerProv=prov;
+    },
+    // ── 鉴权头声明 (auth.header / auth.prefix) ──
+    // 语义 (与后端 AuthConfig::header_name / prefix_value 对齐):
+    //   header 留空        → 不写字段 (缺省 Authorization)
+    //   header 填了        → 写字段
+    //   prefix 留空 + 头仍是缺省 Authorization → 不写字段 (标准 Bearer 形态)
+    //   prefix 留空 + 头是自定义             → 写**显式空串** (x-api-key / api-key 都不带前缀)
+    //   这条规则是为了消掉输入框的固有歧义: 用户填了 x-api-key 却没法输入"无前缀",
+    //   若写成 Bearer 会被上游拒; 而自定义头配非 Bearer 前缀是极少数 (可用还原默认兜底)。
+    setAuthHeader(v){
+      const p=this.drawerProv; if(!p) return;
+      const val=String(v||'').trim();
+      p.auth=p.auth||{mode:'api_key'};
+      if(val) p.auth.header=val; else delete p.auth.header;
+      this.setAuthPrefix(p._authPrefix); // 头名变了 → 前缀规则跟着重算
+    },
+    setAuthPrefix(v){
+      const p=this.drawerProv; if(!p) return;
+      const val=String(v||'');
+      p.auth=p.auth||{mode:'api_key'};
+      const hdr=String(p.auth.header||'').trim();
+      if(val) { p.auth.prefix=val; }
+      else if(hdr && hdr.toLowerCase()!=='authorization') { p.auth.prefix=''; } // 自定义头 + 无前缀
+      else { delete p.auth.prefix; }                                          // 缺省头 → 用默认 Bearer
+      // 清空到"什么都没声明"时, 把空的 auth 段整个去掉 (避免写进 providers.json 一个空对象)
+      if(!p.auth.header && p.auth.prefix===undefined && (p.auth.mode||'api_key')==='api_key' && !p.auth.refresh) delete p.auth;
     },
     // ── 抽屉分节完成度 (参照 new-api channel-mutate-drawer 精简版) ──
     // basic=名称+endpoint; key=已保存 Key; models=存在已填上游 ID 的模型 (与接入引导同口径).

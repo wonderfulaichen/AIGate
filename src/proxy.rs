@@ -754,11 +754,20 @@ pub async fn chat_completions(
     // 6. 构造转发请求 — 过滤客户端 headers, 只保留标准 headers,
     //    避免非标准 headers (如 x-ide-type) 导致 upstream 拒绝服务.
     let mut req_headers = filter_headers(&headers);
-    req_headers.insert(
-        HeaderName::from_static("authorization"),
-        HeaderValue::from_str(&format!("Bearer {key}"))
-            .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?,
-    );
+    // 鉴权头由 provider.auth 声明 (缺省 = Authorization: Bearer, 与旧行为一致).
+    // 见 `providers::auth_header_pair` —— 非标准头名/无前缀的供应商在这里表达, 不再需要硬编码.
+    //
+    // ⚠️ key 为空时**不挂头**: 旧写法无条件 `format!("Bearer {key}")`, 空 key 会发出
+    // `Authorization: Bearer ` (带尾空格的空值) —— 对无鉴权的本地上游 (ollama/lmstudio 类,
+    // 配 api_key_default: "") 是一个无谓的坏头。不发比发空值诚实。
+    if !key.is_empty() {
+        let (hn, hv) = crate::providers::auth_header_pair(provider.auth.as_ref(), &key);
+        let name = HeaderName::from_bytes(hn.as_bytes())
+            .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        let value = HeaderValue::from_str(&hv)
+            .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        req_headers.insert(name, value);
+    }
     // 注入供应商配置的额外 headers
     if let Some(extra) = &provider.headers {
         for (k, v) in extra {
@@ -833,9 +842,13 @@ pub async fn chat_completions(
                         )
                         .await
                         {
-                            if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {tok}")) {
-                                req_headers
-                                    .insert(HeaderName::from_static("authorization"), hv);
+                            // 换号后重挂鉴权头 —— 头名/前缀同样由 provider.auth 决定
+                            let (hn, hv) = crate::providers::auth_header_pair(provider.auth.as_ref(), &tok);
+                            if let (Ok(name), Ok(value)) = (
+                                HeaderName::from_bytes(hn.as_bytes()),
+                                HeaderValue::from_str(&hv),
+                            ) {
+                                req_headers.insert(name, value);
                                 tried_accounts.push(cur);
                                 account_id = Some(id);
                                 continue; // 用新账号重发
@@ -1621,13 +1634,17 @@ async fn relay_native_passthrough(
         .and_then(|v| v.get("stream").and_then(|x| x.as_bool()))
         == Some(true);
 
-    // 转发头: 过滤客户端头 + Bearer 鉴权 + 供应商额外头 (如 anthropic-version).
+    // 转发头: 过滤客户端头 + 鉴权头 (由 provider.auth 声明) + 供应商额外头 (如 anthropic-version).
     let mut req_headers = filter_headers(&headers);
-    req_headers.insert(
-        HeaderName::from_static("authorization"),
-        HeaderValue::from_str(&format!("Bearer {key}"))
-            .map_err(|e| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?,
-    );
+    // key 为空时不挂头 (理由同 chat 路径: 不发空 Bearer)
+    if !key.is_empty() {
+        let (hn, hv) = crate::providers::auth_header_pair(provider.auth.as_ref(), &key);
+        let name = HeaderName::from_bytes(hn.as_bytes())
+            .map_err(|e| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        let value = HeaderValue::from_str(&hv)
+            .map_err(|e| anthropic_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        req_headers.insert(name, value);
+    }
     if let Some(extra) = &provider.headers {
         for (k, val) in extra {
             if let (Ok(name), Ok(hv)) = (
@@ -1687,9 +1704,13 @@ async fn relay_native_passthrough(
                         )
                         .await
                         {
-                            if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {tok}")) {
-                                req_headers
-                                    .insert(HeaderName::from_static("authorization"), hv);
+                            // 换号后重挂鉴权头 —— 头名/前缀同样由 provider.auth 决定
+                            let (hn, hv) = crate::providers::auth_header_pair(provider.auth.as_ref(), &tok);
+                            if let (Ok(name), Ok(value)) = (
+                                HeaderName::from_bytes(hn.as_bytes()),
+                                HeaderValue::from_str(&hv),
+                            ) {
+                                req_headers.insert(name, value);
                                 tried_accounts.push(cur);
                                 account_id = Some(id);
                                 continue; // 用新账号重发

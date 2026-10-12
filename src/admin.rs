@@ -2519,6 +2519,8 @@ pub async fn api_balance(
                 balance_endpoint: config.balance_endpoint.clone(),
                 api_key,
                 preset: config.preset.clone(),
+                // 鉴权头声明随转发同一份 —— 非标准头供应商的余额查询才不会掉队.
+                auth: config.auth.clone(),
             },
         );
     }
