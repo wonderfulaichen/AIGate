@@ -267,10 +267,25 @@ fn append_diag_log(base: &std::path::Path, msg: &str) {
 
 // ─── 管理面板 API 鉴权中间件 ───
 
-/// 管理 API 鉴权: 配置 AIGATE_ADMIN_TOKEN 后, 要求请求头携带
-/// `Authorization: Bearer <token>`, 否则返回 401; 未配置则直接放行.
+/// 管理 API 鉴权。
 ///
-/// 本地桌面窗口 (WebView) 由 admin_page 注入同一令牌, 面板功能不受影响.
+/// **2026-10-12 改默认值（对标 dsh-our-free-model 的安全口径）**：原先"配置
+/// `AIGATE_ADMIN_TOKEN` 才校验，未配置则**完全放行**。实测那样意味着：
+/// 任何能访问 `127.0.0.1:8787` 的进程/页面，都不带凭据就能读到账号昵称、余额、
+/// 以及 `/admin/api/providers` 里**原样回吐的真实 JWT**（该接口本身另有脱敏缺口
+/// 见 HANDOFF §7）。而本机浏览器里任意一个页面发个 fetch 就能拿到。
+///
+/// dsh 的做法（README「安全与隐私」）：本机 Key **由 crypto 运行时生成**、`timingSafeEqual`
+/// 比对、存 0600 文件；/"与 "/health 为存活探针，先于 Key 检查应答，**但只回答"是否在线"**,
+/// 拿模型清单仍需 Key；把监听改到可路由接口被直接拒绝。
+/// 本项目的取舍（**用户 2026-10-12 选定「默认要 token」**）：
+///   ① `AIGATE_ADMIN_TOKEN` 未设置时**自动生成一个随机 token**，写进
+///      `data/.admin_token`（0600），面板由 `admin_page` 注入同一个值 ——
+///      原窗口（WebView）无感，外部无凭据访问一律 401。要显式关掉可设
+///      `AIGATE_OPEN_ADMIN=1`（此时回到旧行为，风险自负）。
+///   ② `/health` **不鉴权**，但只回答固定 `ok` 两个字符（存活探针用途），
+///      不泄露版本/配置（与 dsh 同口径：先应答"是否在线"，其余全要 Key）。
+///   ③ 显式配了 `AIGATE_ADMIN_TOKEN` 时沿用配置值。
 async fn require_admin_token(
     State(state): State<AppState>,
     req: Request<Body>,
@@ -809,6 +824,8 @@ fn main() {
         .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
         .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));
+    // `admin_token` 现在默认一定有值（未配置时自动生成并落盘 data/.admin_token），
+    // 所以这个分支几乎总是进；保留条件判断是为了 `AIGATE_OPEN_ADMIN=1`（显式不鉴权）能生效。
     if config.admin_token.is_some() {
         admin_api = admin_api.layer(middleware::from_fn_with_state(state.clone(), require_admin_token));
     }
@@ -821,6 +838,8 @@ fn main() {
         .route("/v1/messages/count_tokens", post(proxy::count_tokens))
         .route("/v1/responses", post(proxy::responses_completions))
         .route("/v1/models", get(handle_models))
+        // 存活探针：**故意不鉴权**（探活需要），但只回答固定 `ok`
+        // —— 不泄露版本/配置（dsh 同口径：先应答"是否在线"，其余全要 Key）。
         .route("/health", get(|| async { "ok" }))
         .route("/admin", get(admin::admin_page))
         .route("/admin/static/:file", get(admin::admin_static))

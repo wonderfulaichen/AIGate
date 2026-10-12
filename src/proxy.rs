@@ -99,6 +99,43 @@ pub struct AppState {
 /// 熔断器表类型别名.
 pub type BreakerMap = Arc<Mutex<HashMap<String, CircuitBreaker>>>;
 
+/// 判断"本流是否只产出了调用方未声明的工具调用"；返回未声明的工具名清单（拼接好的字符串）。
+///
+/// 三条全满足才算：
+///  ① **产出过**工具调用（`emitted_tool_names` 非空）；
+///  ② 客户端**声明过** tools（`client_tool_names` 是 `Some`）——未采集不判；
+///  ③ **没有任何可见正文**（`content_empty`）——正文 + 附带调用仍是有效回答。
+///
+/// 注意差集方向：产出里有**客户端没声明**的工具。反过来（客户端声明了但模型没用）
+/// 完全正常，不是缺陷。
+///
+/// 为什么值得专门做（对标 dsh-our-free-model 的同一个假成功）：模型调了调用方从未声明的
+/// 工具时，那轮对调用方毫无意义，而旧实现以 `200 · 错误 —` 收尾 —— 用户看到"成功"。
+/// 它举的场景是压缩器自己追加的 `[full diff: ...]` 提示让模型去调调用方没有的工具。
+pub fn detect_unregistered_tool_only(
+    emitted: &std::collections::HashSet<String>,
+    client: &Option<std::collections::HashSet<String>>,
+    content_empty: bool,
+) -> Option<String> {
+    if !content_empty || emitted.is_empty() {
+        return None;
+    }
+    let declared = client.as_ref()?;
+    let mut unregistered: Vec<&String> = emitted.iter().filter(|n| !declared.contains(*n)).collect();
+    if unregistered.is_empty() {
+        return None;
+    }
+    unregistered.sort();
+    let mut names = String::new();
+    for (i, n) in unregistered.iter().enumerate() {
+        if i > 0 {
+            names.push_str("、");
+        }
+        names.push_str(n.as_str());
+    }
+    Some(names)
+}
+
 /// 查询某供应商是否允许发送请求 (会消费 HalfOpen 的探测名额).
 ///
 /// 返回 false 表示熔断处于 Open, 或 HalfOpen 下探测名额已占用,
@@ -861,7 +898,11 @@ pub async fn chat_completions(
         let err_body = upstream.text().await.unwrap_or_default();
         warn!(
             "proxy: upstream {upstream_status} for {endpoint}: {err}",
-            err = &err_body[..err_body.len().min(500)]
+            // ⚠️ 必须走 i18n::snip —— 旧写法 `&err_body[..min(500)]` 截进汉字中间会
+            // panic (2026-10-12 e2e_buddy_proxy ④ 实机复现: "end byte index 500 is not
+            // a char boundary; it is inside '一'"), 网关任务暴毙、客户端只见连接重置。
+            // 10-01 那轮修了同型的几处, 这两处是漏网的。
+            err = crate::i18n::snip(&err_body, 500)
         );
         // 诊断: 上游点名 messages.N.content 时, 把该条消息的结构打出来.
         // 客户端 (如 CodeBuddy) 发的多模态 parts 形态各异, 上游会对某些 content 结构
@@ -1069,6 +1110,9 @@ pub async fn chat_completions(
         cont_max,
         cont_ctx,
         effort,
+        // 客户端声明的工具名（原始请求体的 `tools[].function.name`）。
+        // 见 `extract_client_tool_names`：None = 未采集，此时不做"未声明工具"判定。
+        extract_client_tool_names_from_bytes(&bytes),
     );
     Ok(resp)
 }
@@ -1693,7 +1737,8 @@ async fn relay_native_passthrough(
 
     if upstream_status >= 400 {
         let err_body = upstream.text().await.unwrap_or_default();
-        warn!("{tag}: upstream {upstream_status}: {}", &err_body[..err_body.len().min(500)]);
+        // i18n::snip 而非 `&err_body[..min(500)]`: 中文错误体截进汉字中间会 panic (同 chat 路径)
+        warn!("{tag}: upstream {upstream_status}: {}", crate::i18n::snip(&err_body, 500));
         report_breaker(&state.breakers, &provider_name, upstream_status < 500);
         let mut err_msg = format_upstream_error(upstream_status, &err_body);
         // 同上: 大请求体的 4xx 补实测原因提示
@@ -2426,6 +2471,37 @@ fn chunk_has_payload(b: &[u8]) -> bool {
     })
 }
 
+/// 从客户端**原始请求体**里取工具名集合（`tools[].function.name`）。
+///
+/// 返回 `None` = **未采集**：不解析或没有 `tools` 字段。此时**不做**"模型调了未声明的工具"
+/// 判定 —— 因为"采集不到"与"确实没声明"不是一回事（宁可漏报，不可误报）。典型漏采场景：
+/// 入口是 Anthropic `/v1/messages`，而本函数只认 OpenAI 形态。
+///
+/// 为什么值得专门做（对标 dsh-our-free-model 的"假成功"修复）：一侧只产出调用方
+/// **从未声明**的工具调用时，旧实现以干净的空成功收尾 —— 界面上 `200 · 错误 —`，
+/// 而那个工具调用对调用方毫无意义。
+pub fn extract_client_tool_names_from_bytes(body: &[u8]) -> Option<std::collections::HashSet<String>> {
+    extract_client_tool_names(&serde_json::from_slice::<serde_json::Value>(body).ok()?)
+}
+
+/// 从已解析的请求体取工具名集合；没有 `tools` 数组时返回 `None`（未采集）。
+pub fn extract_client_tool_names(body: &serde_json::Value) -> Option<std::collections::HashSet<String>> {
+    let arr = body.get("tools").and_then(|t| t.as_array())?;
+    let mut out = std::collections::HashSet::new();
+    for t in arr {
+        if let Some(n) = t
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|n| n.as_str())
+        {
+            if !n.is_empty() {
+                out.insert(n.to_string());
+            }
+        }
+    }
+    Some(out)
+}
+
 /// SSE keepalive 注入间隔: 上游静默期间每 15s 向客户端发一条 ": keepalive" 注释帧.
 /// SSE 规范 (whatwg) 定义冒号开头的行为注释, 所有标准客户端忽略之, 不污染正文.
 const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -2451,6 +2527,8 @@ fn stream_response_with_tokens(
     auto_continue_max: u32,
     cont_ctx: Option<ContinuationCtx>,
     effort: Option<String>,
+    // 客户端在原始请求体里声明过的工具名；None = 未采集（不做"未声明工具"判定）。
+    client_tool_names: Option<std::collections::HashSet<String>>,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -2522,6 +2600,8 @@ fn stream_response_with_tokens(
             tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names,
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -2776,7 +2856,6 @@ struct TokenStream {
     /// 这个是**上游权威值**. 用途是给 gen_speed 剔除思考 —— 见 [`RequestLog::reasoning_tokens`].
     tokens_reasoning: u32,
     /// 本流是否解析到上游上报的 usage.
-    ///
     /// 用于区分「实测」与「估算/未上报」: 上游没给 usage 时 token 是本地按文本长度估的
     /// (或直接为 0), 二者若显示成同一个数字, 估算值看起来就和实测一样精确.
     /// 判据取"是否见过 usage 对象"而非"token 是否非零" —— 上报了 usage 但输出确为 0
@@ -2784,6 +2863,13 @@ struct TokenStream {
     usage_seen: bool,
     /// 本流是否输出过 tool_calls delta: 半截工具调用 JSON 无法安全续写, 触发即禁用续写.
     emitted_tool_calls: bool,
+    /// 本流**实际产出过的工具名**集合 (含客户端未声明的那些)。
+    /// 与 `client_tool_names` 的差集即为"模型调了调用方没注册的工具"。
+    emitted_tool_names: std::collections::HashSet<String>,
+    /// 客户端在**原始请求体**里声明过的工具名集合 (未声明过 tools 则为空集)。
+    /// `Option::None` = **未采集** (非 tools 入口 / 解析失败)，此时不做"未声明工具"判定，
+    /// 避免把 Anthropic 入口的转换后形态误判成"没声明"（宁可漏报，不可误报）。
+    client_tool_names: Option<std::collections::HashSet<String>>,
     /// 进行中的续写请求 future.
     cont_pending: Option<Pin<Box<dyn Future<Output = Result<reqwest::Response, String>> + Send>>>,
     /// 当前段序号 (0=原始响应, ≥1=第 N 次续写的响应段): usage 记账口径切换 (覆盖→累加).
@@ -3099,6 +3185,20 @@ impl TokenStream {
                     // (半截 arguments JSON 无法安全拼接, 续写会产生损坏的工具调用).
                     if delta.get("tool_calls").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
                         self.emitted_tool_calls = true;
+                        // 记下本流**实际产出的工具名**，供收尾时判断"模型调了调用方没声明的工具"
+                        // （dsh-our-free-model 明确处理过这个假成功：一轮只产出调用方从未声明的
+                        //  工具调用时，过去以干净的空成功收尾，现在如实报告；它举的场景是压缩器
+                        //  自己追加的 `[full diff: ...]` 提示让模型去调调用方没有的工具）。
+                        // 我方同理：客户端没声明的工具调用对它毫无意义，界面上却是"成功、无错误"。
+                        if let Some(arr) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                            for tc in arr {
+                                if let Some(name) = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()) {
+                                    if !name.is_empty() {
+                                        self.emitted_tool_names.insert(name.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
                     // 首次出现增量文本即记录首 token 时刻 (用于首 token 延迟 / 纯生成速度计算).
                     if has_token && self.first_token_at.is_none() {
@@ -3526,7 +3626,7 @@ impl Stream for TokenStream {
                         // 客户端实际收到的是 200 + finish_reason=length (流式响应头早已发出),
                         // 记 502 会让「成功率」把"答不完"算作失败, 与事实不符.
                         let mut len_truncated = false;
-                        let err_for_log: Option<String> = if this.loop_aborted {
+                        let mut err_for_log: Option<String> = if this.loop_aborted {
                             Some("model loop detected, stream truncated by AIGate".to_string())
                         } else if let Some(note) = this.cont_fail_note.clone() {
                             Some(format!("{note}（已输出 {} tok / 输入 {} tok）", ct, pt))
@@ -3600,6 +3700,37 @@ impl Stream for TokenStream {
                                 .filter(|f| f == "error")
                                 .map(|f| format!("finish_reason={f}"))
                         };
+                        // ── 「假成功」检测（2026-10-12，对标 dsh-our-free-model）──
+                        // 模型调了**调用方从未声明**的工具时，那一轮对调用方毫无意义，
+                        // 但旧实现以 `200 · 错误 —` 收尾 —— 用户看到的是"成功"。
+                        // 判据要同时满足两条才算：
+                        //   ① 本流产出过工具调用，且**没有任何可见正文**（否则是正文+附带调用，
+                        //      那类调用对调用方仍有用）；
+                        //   ② 客户端**声明过** tools（未采集则不判，见 extract_client_tool_names）。
+                        let unregistered = detect_unregistered_tool_only(
+                            &this.emitted_tool_names,
+                            &this.client_tool_names,
+                            this.accumulated_content.is_empty(),
+                        );
+                        if let Some(names) = unregistered {
+                            let detail = format!(
+                                "模型调用了调用方未声明的工具（{}），本轮对调用方无效；\
+                                 若刚启用了会在请求里附加提示的优化项，可尝试关闭它",
+                                names
+                            );
+                            warn!(
+                                "proxy: unregistered-tools-only response (model={}, provider={}, tools={:?})",
+                                this.log_buffer.as_ref().map(|ld| ld.model.as_str()).unwrap_or("?"),
+                                this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or("?"),
+                                names
+                            );
+                            crate::admin::note_degradation(
+                                crate::admin::Degradation::UpstreamUnregisteredTools,
+                            );
+                            // 归到"有错误文案"一路 → 记 502 并标红（如实，不是伪装成功）。
+                            err_for_log = Some(detail);
+                            len_truncated = false;
+                        }
                         if let Some(mut ld) = this.log_buffer.take() {
                             ld.response_body_len = this.response_bytes;
                             // 首 token 延迟必须在 async 块外计算 (this 是 &mut 不能跨线程), 仅持有一个 Copy 的 Option<u64> 进 spawn.
@@ -5292,6 +5423,80 @@ fn translate_sse_error(val: &serde_json::Value) -> Option<(String, String)> {
 mod tests {
     use super::*;
     use crate::providers::ModelConfig;
+    use std::collections::HashSet;
+
+    fn hs(xs: &[&str]) -> HashSet<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn detect_unregistered_tool_only_requires_all_three() {
+        let declared = Some(hs(&["Read", "Write"]));
+        // ① 完整命中: 只产出未声明的工具、无正文 → 命中
+        assert_eq!(
+            detect_unregistered_tool_only(&hs(&["Bash"]), &declared, true).as_deref(),
+            Some("Bash")
+        );
+        // ② 有可见正文 → 不判 (正文+附带调用仍是有效回答)
+        assert_eq!(detect_unregistered_tool_only(&hs(&["Bash"]), &declared, false), None);
+        // ③ 没有产出过工具 → 不判
+        assert_eq!(detect_unregistered_tool_only(&HashSet::new(), &declared, true), None);
+        // ④ 客户端未声明过 tools (未采集) → 不判
+        assert_eq!(detect_unregistered_tool_only(&hs(&["Bash"]), &None, true), None);
+        // ⑤ 客户端声明了空数组 (采集到但为空) → 判
+        assert_eq!(
+            detect_unregistered_tool_only(&hs(&["Bash"]), &Some(HashSet::new()), true).as_deref(),
+            Some("Bash")
+        );
+    }
+
+    #[test]
+    fn detect_unregistered_tool_only_ignores_declared_tools() {
+        let declared = Some(hs(&["Read", "Write"]));
+        // 全部已声明 → 不判
+        assert_eq!(detect_unregistered_tool_only(&hs(&["Read"]), &declared, true), None);
+        // 混合: 只报未声明的那些, 且已声明的不出现在文案里
+        assert_eq!(
+            detect_unregistered_tool_only(&hs(&["Read", "Bash", "Grep"]), &declared, true).as_deref(),
+            Some("Bash、Grep")
+        );
+    }
+
+    #[test]
+    fn extract_client_tool_names_marks_absent_as_unknown() {
+        // 没有 tools → None (未采集), 不是空集 —— 这两者必须能区分
+        assert_eq!(extract_client_tool_names(&serde_json::json!({})), None);
+        // 有空数组 → Some(空) (采集到, 且确实没声明)
+        assert!(extract_client_tool_names(&serde_json::json!({"tools": []}))
+            .unwrap()
+            .is_empty());
+        // 正常形态: function.name
+        assert_eq!(
+            extract_client_tool_names(&serde_json::json!({"tools":[
+                {"function":{"name":"Read"}},{"function":{"name":"Read"}}]}))
+            .unwrap(),
+            hs(&["Read"])
+        );
+        // 残缺形态 (无 function 层) 不 panic, 只是收不到名字
+        assert!(extract_client_tool_names(&serde_json::json!({"tools":[{"name":"Read"}]}))
+            .unwrap()
+            .is_empty());
+        // 空字符串名字不入集合
+        assert!(extract_client_tool_names(&serde_json::json!({"tools":[{"function":{"name":""}}]}))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn extract_client_tool_names_from_bytes_handles_broken_body() {
+        assert_eq!(extract_client_tool_names_from_bytes(b"not json"), None);
+        assert_eq!(extract_client_tool_names_from_bytes(b""), None);
+        assert_eq!(
+            extract_client_tool_names_from_bytes(br#"{"tools":[{"function":{"name":"Write"}}]}"#)
+                .unwrap(),
+            hs(&["Write"])
+        );
+    }
 
     /// 回归 (2026-10-08 用户报障「延迟 365s / 首字 —/ 输出 0」):
     /// **保活注释帧不得重置空闲计时器**.
@@ -6368,7 +6573,9 @@ mod tests {
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
-            usage_seen: false, emitted_tool_calls: false, cont_pending: None,
+            usage_seen: false, emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names: None, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
@@ -6457,6 +6664,8 @@ mod tests {
             tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names: None,
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -6520,7 +6729,9 @@ mod tests {
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
-            usage_seen: false, emitted_tool_calls: false, cont_pending: None,
+            usage_seen: false, emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names: None, cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
@@ -6649,6 +6860,8 @@ mod tests {
             tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names: None,
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -6742,6 +6955,8 @@ mod tests {
             tokens_reasoning: 0,
             usage_seen: false,
             emitted_tool_calls: false,
+            emitted_tool_names: std::collections::HashSet::new(),
+            client_tool_names: None,
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,

@@ -1603,8 +1603,26 @@ async fn login_profile_for(
             .and_then(|p| p.preset.clone())
             .unwrap_or_else(|| name.to_string())
     };
-    crate::presets::login_profile_of(&preset_id)
-        .unwrap_or_else(crate::accounts::LoginProfile::buddy_default)
+    let mut profile = crate::presets::login_profile_of(&preset_id)
+        .unwrap_or_else(crate::accounts::LoginProfile::buddy_default);
+    // 测试接缝: `AIGATE_BUDDY_ENDPOINT` (见 accounts.rs::buddy_endpoint)。
+    //
+    // ⚠️ 修复一处回归 (2026-10-12, e2e_buddy_login_multi 轮询超时暴露): WorkBuddy 接入轮
+    // 把登录端点参数化进 LoginProfile 后, 预设条目 (preset=buddy) 直接用预设目录里的
+    // 官方域名 —— 接缝只在**无预设回落**里生效, 等于被绕过。没有它, "浏览器登录会不会
+    // 覆盖前一个账号" 这类回归就无法在 mock 上测到 (正是 2026-10-07 漏掉真 bug 的原因)。
+    //
+    // 只对**国内版 (codebuddy)** 生效: WorkBuddy 国际版的 profile 不能被它重定向 ——
+    // 那是另一个区的端点, 重定向到国内 mock 会把"国际版登录"测成假绿。
+    if profile.product_code == "codebuddy" {
+        if let Ok(ep) = std::env::var("AIGATE_BUDDY_ENDPOINT") {
+            let ep = ep.trim().to_string();
+            if !ep.is_empty() {
+                profile.endpoint = ep;
+            }
+        }
+    }
+    profile
 }
 
 /// POST /admin/api/accounts/login/status `{name}` — 浏览器登录进度
@@ -2975,6 +2993,10 @@ pub enum Degradation {
     /// 上游错误响应体解析失败 → 原样透传给客户端 (未翻译). **可达**: 上游可能返回
     /// 非 JSON 错误页 (网关 502 HTML 等), 此时按协议翻译失败, 只能原样透传.
     UpstreamErrorParseFailed,
+    /// 整轮只产出**调用方未声明的工具调用**（2026-10-12，对标 dsh-our-free-model
+    /// 的假成功修复）。上层会把该轮记成 502 并标红 —— 否则面板显示 `200 · 错误 —`，
+    /// 而那一轮对调用方毫无意义（它没法执行一个自己没注册的工具）。
+    UpstreamUnregisteredTools,
 }
 
 impl Degradation {
@@ -2982,6 +3004,7 @@ impl Degradation {
     fn key(self) -> &'static str {
         match self {
             Degradation::UpstreamErrorParseFailed => "upstream_error_parse_failed",
+            Degradation::UpstreamUnregisteredTools => "upstream_unregistered_tools",
         }
     }
 }
@@ -3008,7 +3031,10 @@ pub fn degradation_counts() -> serde_json::Value {
     let g = DEGRADATIONS.lock().ok();
     let m = g.as_ref().and_then(|x| x.as_ref());
     let mut out = serde_json::Map::new();
-    for k in [Degradation::UpstreamErrorParseFailed] {
+    for k in [
+        Degradation::UpstreamErrorParseFailed,
+        Degradation::UpstreamUnregisteredTools,
+    ] {
         let n = m.and_then(|x| x.get(k.key()).copied()).unwrap_or(0);
         out.insert(k.key().to_string(), serde_json::json!(n));
     }

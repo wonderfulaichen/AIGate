@@ -7,7 +7,7 @@
      (已用完但更早到期的包不得被选中)
   ③ 无到期时间时两字段为空 (前端不显示过期行)
 """
-import json, os, shutil, subprocess, sys, threading, time, urllib.request
+import io, json, os, shutil, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -67,8 +67,17 @@ proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
 
 def req(path, data=None, method=None):
     body = json.dumps(data).encode() if data is not None else None
+    # /admin/api/* 的 Bearer (2026-10-12 起); token 由隔离实例生成在 data/.admin_token
+    hdrs = {"content-type": "application/json"} if body else {}
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"),
+                      encoding="utf-8", errors="replace").read().strip()
+        if tok:
+            hdrs["Authorization"] = "Bearer " + tok
+    except Exception:
+        pass
     r = urllib.request.Request(f"http://127.0.0.1:{PG}{path}", data=body, method=method,
-                               headers={"content-type": "application/json"} if body else {})
+                               headers=hdrs)
     try:
         with urllib.request.urlopen(r, timeout=15) as resp:
             return resp.status, resp.read().decode("utf-8", "replace")

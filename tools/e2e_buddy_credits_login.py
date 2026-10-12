@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 import urllib.error
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -26,8 +27,13 @@ ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_credits")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG = 8990
 
-cred = json.load(open(os.path.join(tempfile.gettempdir(), "cb_plain.json"), encoding="utf-8"))
-tok = cred["auth"]["accessToken"]
+# 凭据: 账号化之后在网关的 data/accounts.json; cb_plain.json 早已不存在 (兜底保留)
+from buddycred import load_buddy_cred
+cred, cred_src = load_buddy_cred()
+if not cred:
+    raise SystemExit("找不到 buddy 凭据 (data/accounts.json 或 %TEMP%\\cb_plain.json)")
+tok = cred["access_token"]
+print("凭据: %s" % cred_src)
 
 PASS, FAIL = [], []
 def ck(name, ok, detail=""):
@@ -49,8 +55,8 @@ json.dump({"providers": [
      "models": {}},
 ]}, open(os.path.join(ISO, "providers.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 # buddy 播种真实账号 (积分查询凭据); buddy2 故意不播种 → 验友好错误
-json.dump({"buddy": {"access_token": tok, "refresh_token": cred["auth"].get("refreshToken"),
-                     "expires_at": int(cred["auth"]["expiresAt"] // 1000), "dead": False}},
+json.dump({"buddy": {"access_token": tok, "refresh_token": cred.get("refresh_token"),
+                     "expires_at": cred.get("expires_at"), "dead": False}},
           open(os.path.join(ISO, "data", "accounts.json"), "w", encoding="utf-8"))
 
 env = dict(os.environ)
@@ -63,7 +69,9 @@ def req(path, data=None, method=None, timeout=20):
     body = json.dumps(data).encode() if data is not None else None
     r = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path), data=body,
                                method=method,
-                               headers={"content-type": "application/json"} if body else {})
+                               headers={"content-type": "application/json",
+                                        **admin_auth(os.path.join(ISO, "data"))} if body
+                               else admin_auth(os.path.join(ISO, "data")))
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, resp.read().decode("utf-8", "replace")

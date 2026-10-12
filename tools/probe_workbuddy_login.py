@@ -27,6 +27,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,7 +49,9 @@ def api(path, method="GET", body=None, timeout=25):
     req = urllib.request.Request(
         "http://127.0.0.1:%d%s" % (PG, path),
         data=(json.dumps(body).encode() if body is not None else None),
-        headers={"content-type": "application/json"}, method=method)
+        headers={"content-type": "application/json",
+                 **admin_auth(os.path.join(ISO, "data"))},  # /admin/api/* 的 Bearer (2026-10-12 起)
+        method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8", "replace"))

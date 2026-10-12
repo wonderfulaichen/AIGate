@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Dump 完整 changelog JSON 到文件, 供逐字 diff。用法: cl_dump.py <exe> <out.json>"""
-import json, os, shutil, subprocess, sys, time, urllib.request
+import json, os, shutil, subprocess, sys, time, urllib.request, io
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根 —— 本脚本在 tools/ 下, 上溯两级
@@ -20,10 +20,17 @@ env.update(PORT=str(PORT), AIGATE_DATA_DIR=os.path.join(ISO, "data"),
 p = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
+    def _auth():
+        try:
+            tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+        except Exception:
+            return {}
+        return {"Authorization": "Bearer " + tok} if tok else {}
     for _ in range(60):
         try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/admin/api/changelog" % PORT,
-                                        timeout=5) as r:
+            with urllib.request.urlopen(urllib.request.Request(
+                    "http://127.0.0.1:%d/admin/api/changelog" % PORT, headers=_auth()),
+                    timeout=5) as r:
                 raw = r.read().decode("utf-8", "replace")
             with open(out, "w", encoding="utf-8") as f:
                 f.write(raw)

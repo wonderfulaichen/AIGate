@@ -68,7 +68,8 @@ def send(msgs, extra_top=None):
 try:
     for _ in range(60):
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{PG}/admin/api/version", timeout=2).read(); break
+            # 就绪探测用免鉴权的 /health (/admin/api/* 现在要 Bearer)
+            urllib.request.urlopen(f"http://127.0.0.1:{PG}/health", timeout=2).read(); break
         except Exception: time.sleep(0.5)
     else:
         raise SystemExit("实例未就绪")

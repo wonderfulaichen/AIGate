@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """对比两份 exe 烤入的 CHANGELOG 条目数 —— 判断部署版是否缺最新修复的记录。"""
-import json, os, shutil, subprocess, sys, time, urllib.request
+import io, json, os, shutil, subprocess, sys, time, urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根 —— 本脚本在 tools/ 下, 上溯两级
@@ -23,8 +23,14 @@ def probe(exe, tag):
     try:
         for _ in range(60):
             try:
-                with urllib.request.urlopen("http://127.0.0.1:%d/admin/api/changelog" % PORT,
-                                            timeout=3) as r:
+                # /admin/api/* 自 2026-10-12 起要 Bearer; token 由隔离实例生成在 data/.admin_token
+                tok = io.open(os.path.join(ISO, "data", ".admin_token"),
+                              encoding="utf-8", errors="replace").read().strip()
+                req = urllib.request.Request("http://127.0.0.1:%d/admin/api/changelog" % PORT,
+                                             timeout=3)
+                if tok:
+                    req.add_header("Authorization", "Bearer " + tok)
+                with urllib.request.urlopen(req, timeout=3) as r:
                     d = json.loads(r.read().decode("utf-8", "replace"))
                     vs = d.get("versions", d if isinstance(d, list) else [])
                     if vs:

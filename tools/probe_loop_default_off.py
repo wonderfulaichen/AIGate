@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -127,7 +128,8 @@ try:
        "含 length? %s" % ('"length"' in txt))
 
     logs = json.loads(urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=5" % PG), timeout=20
+        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=5" % PG,
+                               headers=admin_auth(os.path.join(ISO, "data"))), timeout=20
     ).read().decode("utf-8"))
     rows = logs.get("logs") if isinstance(logs, dict) else logs
     row = (rows or [{}])[0]

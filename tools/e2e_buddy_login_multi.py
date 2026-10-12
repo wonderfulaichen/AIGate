@@ -16,6 +16,7 @@ mock 扮演官方端点:
   ④ 落盘 accounts.json 是数组且两个 token 都在 (凭据不丢)
 """
 import base64, io, json, os, shutil, subprocess, sys, threading, time, urllib.parse, urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -101,7 +102,9 @@ proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
 def api(path, data=None):
     body = json.dumps(data).encode() if data is not None else None
     r = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path), data=body,
-                               headers={"content-type": "application/json"} if body else {})
+                               headers={"content-type": "application/json",
+                                        **admin_auth(os.path.join(ISO, "data"))} if body
+                               else admin_auth(os.path.join(ISO, "data")))
     with urllib.request.urlopen(r, timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8", "replace") or "{}")
 
@@ -116,14 +119,17 @@ def browser_login_once():
     """走完整浏览器登录: start → 轮询 status 到 ok."""
     d = api("/admin/api/accounts/login/start", {"name": "buddyz"})
     assert "auth_url" in d, d
+    last = None
     for _ in range(30):
         time.sleep(1)
         s = api("/admin/api/accounts/login/status", {"name": "buddyz"})
+        last = s
         if s.get("status") == "ok":
             return d["auth_url"]
         if s.get("status") == "failed":
             raise AssertionError("登录失败: %s" % s)
-    raise AssertionError("登录轮询超时")
+    # 超时必须回显最后一次状态 —— 否则"轮询超时"四个字没法定位是没回包还是回了 pending
+    raise AssertionError("登录轮询超时 (末次 status: %s)" % json.dumps(last, ensure_ascii=False))
 
 try:
     for _ in range(60):

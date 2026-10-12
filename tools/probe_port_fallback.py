@@ -75,9 +75,16 @@ def wait_port(p, timeout=25):
 
 
 def events():
+    # /admin/api/* 要求 Bearer (2026-10-12 起), token 由隔离实例生成在 data/.admin_token
     try:
-        with urllib.request.urlopen("http://127.0.0.1:%d/admin/api/events?limit=20" % (BASE + 1),
-                                    timeout=10) as r:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        tok = ""
+    req = urllib.request.Request("http://127.0.0.1:%d/admin/api/events?limit=20" % (BASE + 1))
+    if tok:
+        req.add_header("Authorization", "Bearer " + tok)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode("utf-8", "replace")).get("events") or []
     except Exception:
         return []

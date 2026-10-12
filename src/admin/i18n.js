@@ -157,7 +157,7 @@ const I18N = {
     'tool_trunc_keep': '单条工具输出保留前', 'tool_trunc_unit': '字节', 'tool_trunc_note': '建议 32KB（32768）。设得过小会丢失工具返回的关键内容；被截断时会在原文末尾留下 "truncated N bytes" 标记，便于识别',
     'tool_trunc_confirm': '开启后单条超长工具输出会被截断（有损，会影响模型看到的工具结果）。可同时开启「降级可回取」以便事后核查被截内容。确认开启？',
     'degrade_title': '静默降级次数', 'degrade_note': '计数解析失败导致"优化/翻译未生效"的次数（进程级，重启清零）—— 这类失败请求会照常转发，只是省量或错误翻译没生效，容易与"这次确实没什么可省"混淆',
-    'degrade_upstream_error_parse_failed': '上游错误体解析失败', 'degrade_ok': '无降级记录', 
+    'degrade_upstream_error_parse_failed': '上游错误体解析失败', 'degrade_upstream_unregistered_tools': '模型只调了客户端未声明的工具', 'degrade_ok': '无降级记录', 
     // ── 用量热力图 (2026-10-11) ──
     // 措辞纪律: 0 在这里的含义是"那天确实没有请求"(日级账本每天都有记录),
     // 而"无数据"是"我们没测到" —— 日历上必须区别对待, 故文案说"没有请求"而非"无数据"。
@@ -474,7 +474,7 @@ const I18N = {
     'tool_trunc_keep': 'Keep first', 'tool_trunc_unit': 'bytes of each tool output', 'tool_trunc_note': '32KB (32768) is a reasonable default. Too small loses key tool output; a "truncated N bytes" marker is left at the cut point so it is identifiable',
     'tool_trunc_confirm': 'Enabling this truncates oversized tool output (lossy; it changes what the model sees). Consider also enabling Recall to inspect what was removed. Enable?',
     'degrade_title': 'Silent degradations', 'degrade_note': 'Counts of parse failures that silently skipped optimization/translation (process-wide, resets on restart). Such requests are forwarded anyway, so savings or error translation just did not apply - easily mistaken for "nothing to save this time"',
-    'degrade_upstream_error_parse_failed': 'Upstream error parse failed', 'degrade_ok': 'No degradations recorded',
+    'degrade_upstream_error_parse_failed': 'Upstream error parse failed', 'degrade_upstream_unregistered_tools': 'Model only called tools the client never declared', 'degrade_ok': 'No degradations recorded',
     // ── Usage heatmap (2026-10-11) ──
     // Wording: 0 here means "no requests that day" (the daily ledger has an entry for every day),
     // which is different from "not measured" — the calendar must distinguish them.

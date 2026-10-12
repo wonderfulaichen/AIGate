@@ -145,9 +145,20 @@ def stream(model, read_secs=None):
     return ""
 
 
+def _auth():
+    """每次调用都重读 admin token：隔离实例启动时才创建 data/.admin_token，
+    导入期读一次会拿到空（/admin/api/* 现已整体要求 Bearer，见 main.rs::require_admin_token）。"""
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        return {}
+    return {"Authorization": "Bearer " + tok} if tok else {}
+
+
 def recs():
     raw = urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=50" % PG), timeout=20
+        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=50" % PG,
+                                headers=_auth()), timeout=20
     ).read().decode("utf-8")
     j = json.loads(raw)
     return j if isinstance(j, list) else (j.get("logs") or [])

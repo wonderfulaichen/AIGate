@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,14 +42,17 @@ def ck(name, cond, detail=""):
 
 
 def get(path, timeout=60):
-    with urllib.request.urlopen("http://127.0.0.1:%d%s" % (PG, path), timeout=timeout) as r:
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path),
+                                 headers=admin_auth(os.path.join(ISO, "data")))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
 def post(path, payload, timeout=90):
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path),
                                  data=json.dumps(payload).encode(),
-                                 headers={"content-type": "application/json"})
+                                 headers={"content-type": "application/json",
+                                          **admin_auth(os.path.join(ISO, "data"))})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 

@@ -15,6 +15,7 @@
   ③ 请求记录: status/model/effort 落盘, 思考强度展示链正确
   ④ 非流式 → 上游 400 的诚实透传 (已知限制的固化: 记录存在且带 11101 语义)
 """
+import io
 import json
 import os
 import shutil
@@ -30,17 +31,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ISO = os.path.join(ROOT, ".openbitfun", "tmp", "iso_buddy")
 EXE = os.path.join(ROOT, "target", "release", "AIGate.exe")
 PG = 8997
-CRED = os.path.join(tempfile.gettempdir(), "cb_plain.json")
-
-if not os.path.exists(CRED):
-    raise SystemExit(f"缺凭据 {CRED} —— 先跑会话内的解密步骤 (gcm_open.py)")
-cred = json.load(open(CRED, encoding="utf-8"))
-tok = cred["auth"]["accessToken"]
-exp_ms = int(cred["auth"].get("expiresAt") or 0)
-left_days = (exp_ms / 1000 - time.time()) / 86400
-print(f"凭据: token len={len(tok)} 有效期剩 {left_days:.0f} 天")
-if left_days < 1:
-    raise SystemExit("token 已过期/即将过期, 先重新登录 CodeBuddy CN IDE")
+# 凭据: 账号化之后在网关的 data/accounts.json; cb_plain.json 早已不存在 (兜底保留)
+from buddycred import load_buddy_cred
+cred, cred_src = load_buddy_cred()
+if not cred:
+    raise SystemExit("找不到 buddy 凭据 (data/accounts.json 或 %TEMP%\\cb_plain.json)")
+tok = cred["access_token"]
+exp_sec = int(cred.get("expires_at") or 0)
+left_days = ((exp_sec - time.time()) / 86400) if exp_sec else None
+print(f"凭据: {cred_src}  token len={len(tok)}"
+      + (f" 有效期剩 {left_days:.0f} 天" if left_days is not None else " 有效期不可知"))
+if left_days is not None and left_days < 1:
+    raise SystemExit("token 已过期/即将过期, 先在面板上重新登录 buddy")
 
 HEADERS = {
     "X-Domain": "copilot.tencent.com",
@@ -124,7 +126,16 @@ def read_sse(resp, limit=4000):
 
 
 def logs():
-    return json.loads(urllib.request.urlopen(BASE + "/admin/api/logs", timeout=20)
+    # /admin/api/* 的 Bearer (2026-10-12 起); token 由隔离实例生成在 data/.admin_token
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"),
+                      encoding="utf-8", errors="replace").read().strip()
+    except Exception:
+        tok = ""
+    req = urllib.request.Request(BASE + "/admin/api/logs")
+    if tok:
+        req.add_header("Authorization", "Bearer " + tok)
+    return json.loads(urllib.request.urlopen(req, timeout=20)
                       .read().decode("utf-8"))
 
 

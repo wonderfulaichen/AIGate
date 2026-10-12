@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -153,7 +154,8 @@ try:
     ck("①b 客户端收到 [DONE]", "[DONE]" in loop_body)
 
     logs = json.loads(urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=10" % PG), timeout=20
+        urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=10" % PG,
+                               headers=admin_auth(os.path.join(ISO, "data"))), timeout=20
     ).read().decode("utf-8"))
     rows = logs.get("logs") if isinstance(logs, dict) else logs
     print("   记录 %d 条:" % len(rows or []))

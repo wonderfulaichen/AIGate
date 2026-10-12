@@ -33,6 +33,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -165,13 +166,15 @@ def post(content, delay_ms=0, stream=True):
         return e.code
 
 
-def stats():
+def stats(data_dir=None):
     return json.loads(urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/stats" % PG), timeout=20).read().decode("utf-8"))
+        urllib.request.Request("http://127.0.0.1:%d/admin/api/stats" % PG,
+                               headers=admin_auth(data_dir or os.path.join(ISO, "data"))),
+        timeout=20).read().decode("utf-8"))
 
 
-def ttft():
-    return (stats().get("ttft") or {})
+def ttft(data_dir=None):
+    return (stats(data_dir).get("ttft") or {})
 
 
 try:
@@ -273,7 +276,8 @@ try:
                 break
             except Exception:
                 time.sleep(0.5)
-        t5 = ttft()
+        # iso2 是**独立数据目录** → 它的 token 在 iso2/data/.admin_token, 不能沿用 ISO 的
+        t5 = ttft(os.path.join(iso2, "data"))
         check("⑪ 无样本时 avg_ms 为 null (前端显示「—」而非 0ms)",
               t5.get("samples") == 0 and t5.get("avg_ms") is None,
               "samples=%s avg_ms=%s" % (t5.get("samples"), t5.get("avg_ms")))

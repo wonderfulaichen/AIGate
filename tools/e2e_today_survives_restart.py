@@ -97,8 +97,16 @@ def post(i):
 
 
 def today():
-    st = json.loads(urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/stats" % PG), timeout=20).read().decode("utf-8"))
+    # /admin/api/* 自 2026-10-12 起整体要求 Bearer (main.rs::require_admin_token)。
+    # 隔离实例启动时才生成 data/.admin_token, 故**每次调用都重读** ——
+    # 导入期读一次会拿到空, 被 401 打回 (e2e_accounts.py 踩过同一个坑)。
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        tok = ""
+    hdrs = {"Authorization": "Bearer " + tok} if tok else {}
+    req = urllib.request.Request("http://127.0.0.1:%d/admin/api/stats" % PG, headers=hdrs)
+    st = json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
     return ((st.get("session") or {}).get("today") or {}).get("requests"), st.get("today_requests")
 
 

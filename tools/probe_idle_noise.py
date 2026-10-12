@@ -15,7 +15,7 @@
 本探针: mock 上游持续发送**空 delta 帧**(带 role / 空 choices), 间隔远小于空闲超时,
 但不含任何 content; 观察网关多久才放弃、以及记录的 error 文案说了什么.
 """
-import json, os, shutil, subprocess, sys, threading, time, urllib.request
+import io, json, os, shutil, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -84,7 +84,16 @@ proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
 
 def api(path):
     try:
-        with urllib.request.urlopen("http://127.0.0.1:%d%s" % (PG, path), timeout=10) as r:
+        # /admin/api/* 的 Bearer (2026-10-12 起); token 由隔离实例生成在 data/.admin_token
+        try:
+            tok = io.open(os.path.join(ISO, "data", ".admin_token"),
+                          encoding="utf-8", errors="replace").read().strip()
+        except Exception:
+            tok = ""
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path))
+        if tok:
+            req.add_header("Authorization", "Bearer " + tok)
+        with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode("utf-8", "replace") or "{}")
     except Exception as e:
         return {"_err": str(e)}

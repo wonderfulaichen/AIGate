@@ -117,10 +117,16 @@ impl Config {
             stream_idle_timeout_secs: env_u64("STREAM_IDLE_TIMEOUT_SECS", 120),
             retry_max: env_u32("RETRY_MAX", 1),
             retry_backoff_ms: env_u64("RETRY_BACKOFF_MS", 200),
-            admin_token: env::var("AIGATE_ADMIN_TOKEN")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
+            // 管理面板令牌。
+            //
+            // ⚠️ **2026-10-12 起默认一定有值**（对标 dsh-our-free-model 的安全口径，
+            // 用户选定「默认要 token」）：未显式配置时自动生成随机 token 并写进
+            // `data/.admin_token`，由管理面板页面注入给本窗口的 WebView 使用 ——
+            // 外部无凭据访问 `/admin/api/*` 一律 401。
+            // （旧行为"未配置 = 完全放行"意味着同机任意进程/页面不带凭据就能读到
+            //  账号、余额、以及 providers 接口里原样回吐的密钥。）
+            // 想回到旧的"不鉴权"：设 `AIGATE_OPEN_ADMIN=1`（风险自负）。
+            admin_token: parse_admin_token(),
             breaker: CircuitBreakerConfig {
                 failure_threshold: env_u32("BREAKER_FAILURE_THRESHOLD", 4),
                 success_threshold: env_u32("BREAKER_SUCCESS_THRESHOLD", 2),
@@ -233,6 +239,67 @@ fn parse_cache_persist_path() -> Option<PathBuf> {
         "1" | "true" | "yes" => Some(PathBuf::from("data/response_cache.json")),
         _ => Some(PathBuf::from(raw)),
     }
+}
+
+/// 解析管理面板令牌（`admin_token`）。
+///
+/// 优先级：
+/// 1. 显式 `AIGATE_ADMIN_TOKEN`（非空）→ 用它；
+/// 2. `AIGATE_OPEN_ADMIN=1` → `None`（不鉴权，等价旧行为，风险自负）；
+/// 3. 否则**生成随机 token** 并落盘 `data/.admin_token`（复用已有的那个）。
+///
+/// 为什么默认随机而不是"不鉴权"：见 `Config::admin_token` 字段注释与
+/// `main.rs::require_admin_token`。要点是"本机面板仍可用、外部无凭据不得入内"。
+fn parse_admin_token() -> Option<String> {
+    let configured = env::var("AIGATE_ADMIN_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if configured.is_some() {
+        return configured;
+    }
+    if env_bool("AIGATE_OPEN_ADMIN", false) {
+        return None;
+    }
+    Some(resolve_or_create_admin_token())
+}
+
+/// 读取或新建 `data/.admin_token`（权限尽量 0600）。
+fn resolve_or_create_admin_token() -> String {
+    let path = std::path::Path::new("data").join(".admin_token");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let t = existing.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    // 随机 token：用进程地址熵 + 时间 + 一个计数器混合，再十六进制化。
+    // 故意不引第三方 crate（本项目单 exe 零外部依赖的交付形态）。
+    let mut seed = format!(
+        "{:p}|{:?}|{}",
+        &path,
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default(),
+        std::process::id(),
+    );
+    let mut out = String::with_capacity(48);
+    while out.len() < 48 {
+        seed = format!("{seed}#{}", seed.len());
+        // 简易混合：FNV-1a
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in seed.as_bytes() {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        out.push_str(&format!("{h:016x}"));
+    }
+    out.truncate(48);
+    let _ = std::fs::create_dir_all("data");
+    // 写盘失败不影响运行（本进程内仍用这个值，面板注入同一个值即可）。
+    let tmp = std::path::Path::new("data").join(".admin_token.new");
+    if std::fs::write(&tmp, out.as_bytes()).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+    out
 }
 
 /// 加载当前目录下的 .env 文件.

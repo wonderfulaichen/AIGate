@@ -209,7 +209,7 @@ const { chromium } = require('playwright');
     const rows = Array.from(m.querySelectorAll('.acct-row')).map(r => {
       const t = r.innerText || '';
       return { identity: (t.match(/(甲甲甲|乙乙乙)/) || [])[0] || '',
-               active: t.includes('使用中'), has_promote: t.includes('设为当前账号') };
+               active: t.includes('使用中'), has_promote: t.includes('设为首选') };
     });
     return {
       open: true,
@@ -219,7 +219,8 @@ const { chromium } = require('playwright');
       has_add_more: txt.includes('再添加一个账号'),
       has_identity: (m.innerText||'').includes('甲甲甲') && ((m.querySelector('[title*=aaaa1111]')||{}).title||'').includes('aaaa1111'),
       rows: Array.from(m.querySelectorAll('button'))
-        .filter(x => (x.textContent || '').trim() === '登出').length,
+        // 「登出」按钮实际文案是「登出此账号」(i18n logout_this) —— 用 includes, 别用全等
+        .filter(x => (x.textContent || '').includes('登出')).length,
     };
   });
 
@@ -262,14 +263,14 @@ const { chromium } = require('playwright');
     if (!m) return { open: false };
     return { open: true, rows: Array.from(m.querySelectorAll('.acct-row')).map(r => r.innerText || '') };
   });
-  // 点第一行的「设为当前账号」? 这里点**第二行**的 (把 #2 切成当前)
+  // 点第二行的「设为首选」(把 #2 切成当前) —— 按钮文案 10-08 轮从「设为当前账号」改为「设为首选」
   await p.evaluate(() => {
     const m = Array.from(document.querySelectorAll('.modal-overlay-add'))
       .find(x => getComputedStyle(x).display !== 'none' && (x.innerText || '').includes('账号登录'));
     if (!m) return;
     const rows = Array.from(m.querySelectorAll('.acct-row'));
     const r = rows[1];
-    const btn = r && Array.from(r.querySelectorAll('button')).find(b => (b.textContent || '').includes('设为当前账号'));
+    const btn = r && Array.from(r.querySelectorAll('button')).find(b => (b.textContent || '').includes('设为首选'));
     if (btn) btn.click();
   });
   await p.waitForTimeout(700);
@@ -299,7 +300,8 @@ try:
     # 等实例就绪
     for _ in range(60):
         try:
-            urllib.request.urlopen("http://127.0.0.1:%d/admin/api/version" % PG, timeout=2)
+            # 就绪探测用**免鉴权**的 /health (它只回答是否在线); /admin/api/* 现在要 Bearer
+            urllib.request.urlopen("http://127.0.0.1:%d/health" % PG, timeout=2)
             break
         except Exception:
             time.sleep(0.5)

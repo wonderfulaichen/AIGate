@@ -111,14 +111,24 @@ proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def _auth():
+    """每次调用都重读 token：隔离实例启动时才创建 data/.admin_token，
+    导入期读一次会拿到空（当年这个探针就是因此被 401 打回）。"""
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        return {}
+    return {"Authorization": "Bearer " + tok} if tok else {}
+
+
 def logs():
-    req = urllib.request.Request("http://127.0.0.1:%d/admin/api/logs" % PG)
+    req = urllib.request.Request("http://127.0.0.1:%d/admin/api/logs" % PG, headers=_auth())
     return json.loads(urllib.request.urlopen(req, timeout=20).read().decode("utf-8"))
 
 
 def post(path, body, timeout=30):
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path), data=json.dumps(body).encode(),
-                                 headers={"content-type": "application/json"})
+                                 headers={"content-type": "application/json", **_auth()})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read()
@@ -130,7 +140,7 @@ def post(path, body, timeout=30):
 
 def post_raw(path, raw, timeout=30):
     req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path), data=raw,
-                                 headers={"content-type": "application/json"})
+                                 headers={"content-type": "application/json", **_auth()})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read()

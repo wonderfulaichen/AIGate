@@ -105,6 +105,19 @@ srv_a = make_mock("alpha", PA)
 srv_b = make_mock("beta", PB)
 
 
+def cache_stat():
+    """读 /admin/api/cache —— 2026-10-12 起要 Bearer, token 由隔离实例生成在 data/.admin_token"""
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"),
+                      encoding="utf-8", errors="replace").read().strip()
+    except Exception:
+        tok = ""
+    req = urllib.request.Request("http://127.0.0.1:%d/admin/api/cache" % PG)
+    if tok:
+        req.add_header("Authorization", "Bearer " + tok)
+    return json.loads(urllib.request.urlopen(req, timeout=10).read())
+
+
 def start_iso(cache_on):
     if os.path.isdir(ISO):
         shutil.rmtree(ISO, ignore_errors=True)
@@ -169,7 +182,7 @@ try:
         ck("① alpha 拿到自己的上游答案", ok_a, "HTTP %s" % st1)
         ck("① ★beta 拿到**自己**的上游答案 (未串成 alpha 的)", ok_b,
            "beta 得到 %s" % ("FROM-ALPHA ← 串了!" if "FROM-ALPHA" in t2 else t2[:80]))
-        hit = json.loads(urllib.request.urlopen("http://127.0.0.1:%d/admin/api/cache" % PG, timeout=10).read())
+        hit = cache_stat()
         print("  缓存统计: hits=%d misses=%d entries=%d" % (hit["hits"], hit["misses"], hit["entries"]))
     finally:
         proc.terminate()
@@ -270,7 +283,7 @@ try:
         ck("④ 6 个并发流式请求各自拿到**自己**的答案 (无串扰)",
            not bad, "; ".join(bad) if bad else "全部 HTTP 200 且回显=自己的标记")
         # 流式不应产生缓存命中 (设计: 流式不缓存)
-        hit = json.loads(urllib.request.urlopen("http://127.0.0.1:%d/admin/api/cache" % PG, timeout=10).read())
+        hit = cache_stat()
         ck("④ 流式未参与缓存 (hits 应为 0)", hit["hits"] == 0,
            "hits=%d entries=%d 上游收到 %d 次" % (hit["hits"], hit["entries"], HITS["alpha"]))
     finally:

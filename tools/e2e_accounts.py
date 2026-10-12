@@ -115,11 +115,22 @@ def ck(name, ok, detail=""):
     print(("PASS " if ok else "FAIL ") + name + ((" | " + str(detail)) if detail else ""))
 
 
+def _auth():
+    """每次调用都重读 admin token：隔离实例启动时才创建 data/.admin_token，
+    导入期读一次会拿到空（/admin/api/* 现已整体要求 Bearer，见 main.rs::require_admin_token）。"""
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        return {}
+    return {"Authorization": "Bearer " + tok} if tok else {}
+
+
 def req(path, data=None, method=None, timeout=15):
     body = json.dumps(data).encode() if data is not None else None
+    h = {"content-type": "application/json"} if body else {}
+    h.update(_auth())
     r = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path), data=body,
-                               method=method,
-                               headers={"content-type": "application/json"} if body else {})
+                               method=method, headers=h)
     try:
         with urllib.request.urlopen(r, timeout=timeout) as resp:
             return resp.status, resp.read().decode("utf-8", "replace")

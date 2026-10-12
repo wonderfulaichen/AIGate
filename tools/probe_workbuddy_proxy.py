@@ -197,7 +197,15 @@ try:
     # ④ end_reason
     time.sleep(1.0)
     try:
-        raw = urllib.request.urlopen("http://127.0.0.1:%d/admin/api/logs?limit=5" % PG, timeout=20).read().decode()
+        # /admin/api/* 要求 Bearer (2026-10-12 起), token 由隔离实例生成在 data/.admin_token
+        try:
+            _tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+        except Exception:
+            _tok = ""
+        _req = urllib.request.Request("http://127.0.0.1:%d/admin/api/logs?limit=5" % PG)
+        if _tok:
+            _req.add_header("Authorization", "Bearer " + _tok)
+        raw = urllib.request.urlopen(_req, timeout=20).read().decode()
         j = json.loads(raw)
         rows = j if isinstance(j, list) else (j.get("logs") or [])
         wb = [r for r in rows if r.get("provider") == "workbuddy"]

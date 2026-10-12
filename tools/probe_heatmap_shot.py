@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -91,8 +92,9 @@ try:
         sys.exit(1)
 
     print("=== 用量热力图: 后端口径 ===\n")
-    d = json.loads(urllib.request.urlopen(
-        "http://127.0.0.1:%d/admin/api/heatmap?weeks=17" % PG, timeout=20).read())
+    d = json.loads(urllib.request.urlopen(urllib.request.Request(
+        "http://127.0.0.1:%d/admin/api/heatmap?weeks=17" % PG,
+        headers=admin_auth(os.path.join(ISO, "data"))), timeout=20).read())
     days = d.get("days") or []
     print("  返回天数:", len(days), " 周数:", d.get("weeks"), " 合计:", d.get("total_tokens"))
     ck("① 逐日补齐: 天数 == weeks*7", len(days) == 17 * 7, "实得 %d" % len(days))

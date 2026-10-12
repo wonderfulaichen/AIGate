@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from adminauth import headers as admin_auth  # /admin/api/* 的 Bearer (2026-10-12 起)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -134,7 +135,8 @@ def call(timeout=15):
 
 def events():
     raw = urllib.request.urlopen(
-        urllib.request.Request("http://127.0.0.1:%d/admin/api/events?limit=200" % PG), timeout=20
+        urllib.request.Request("http://127.0.0.1:%d/admin/api/events?limit=200" % PG,
+                               headers=admin_auth(os.path.join(ISO, "data"))), timeout=20
     ).read().decode("utf-8")
     return json.loads(raw).get("events") or []
 

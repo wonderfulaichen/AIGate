@@ -84,7 +84,8 @@ def chat(model, extra_headers=None):
 try:
     for _ in range(60):
         try:
-            urllib.request.urlopen("http://127.0.0.1:%d/admin/api/version" % PG, timeout=2).read(); break
+            # 就绪探测用**免鉴权**的 /health (它只回答是否在线); /admin/api/* 现在要 Bearer
+            urllib.request.urlopen("http://127.0.0.1:%d/health" % PG, timeout=2).read(); break
         except Exception: time.sleep(0.5)
     else:
         raise SystemExit("实例未就绪")

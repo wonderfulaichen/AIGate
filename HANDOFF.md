@@ -155,13 +155,18 @@
 
 ## 2. 立刻要做的事（按优先级）
 
-> 🔎 **接手先看这里（2026-10-11 更新）**
+> 🔎 **接手先看这里（2026-10-12 更新）**
 >
-> **状态**：工作区干净（本轮提交后），`HEAD` 见 `git log -1`，版本 **0.7.2**，
-> `cargo test --release` **326 绿**，`cargo build` 零警告，门禁全过
-> （parts 38 件 / i18n **716 键** / balance / test_brands 47 / fmt_rules / pages / 主题三道 /
+> **状态**：版本 **0.7.2**，`cargo test --release` **347 绿**，`cargo build` 零警告，门禁全过
+> （parts 38 件 / i18n **740 键** / balance / test_brands 47 / fmt_rules / pages / 主题三道 /
 > **verify_logo 五部分**）。
 > 构建份哈希见 §3.3（**每次构建都会变，引用前重新测**）。
+>
+> 🆕 **10-12 轮 ③（最新，见 §8 顶节）**：① 假成功检测（模型只调客户端未声明的工具 →
+> 记 502 标红，不再伪装成功）② **`/admin/api/*` 默认鉴权**（未配置 token 自动生成随机值，
+> 同机任意进程不再能白读账号/余额/凭据；`AIGATE_OPEN_ADMIN=1` 回回旧行为）③ 中文错误体
+> 切片 panic 二次复发修复（10-01 漏了两处 warn 日志路径）④ 工具链 20+ 探针接 Bearer。
+> ⚠️ 部署份落后于构建份更多了 —— 按 §6 红线由用户自行换 exe。
 >
 > 🆕 **出问题先看概览页「最近发生的事」**（2026-10-11 新增）：熔断开合、上游连续失败、
 > 额度将尽、账号作废等关键事件都带**原因**记在这里（落盘 `data/events.jsonl`，跨重启保留）。
@@ -553,11 +558,20 @@ python tools/shoot_deck.py 2             # 演示文稿第 3 页
 |---|---|
 | `e2e_record_count.py` | 记录条数一致性 **13 形态**（含流式/断连/并发去重/非法 JSON）+ 思考强度三例采集与展示链 |
 | `e2e_today_survives_restart.py` | 「今日」KPI 跨进程重启不归零、继续累加 |
-| `e2e_buddy_proxy.py` | 反代 CodeBuddy 四组断言：穿网关流式 / tool_call id 回填 / 记录+effort / 11101 固化（凭据读 `%TEMP%\cb_plain.json`，见 §8） |
+| `e2e_buddy_proxy.py` | 反代 CodeBuddy 四组断言：穿网关流式 / tool_call id 回填 / 记录+effort / 11101 固化（凭据经 `buddycred`：`data/accounts.json` 优先、`%TEMP%\cb_plain.json` 兜底） |
 | `e2e_accounts.py` | **账号化** 13 断言：状态 API 脱敏 / 强制续期（mock 收 X-Refresh-Token、落盘、expires_at 推进）/ 转发账号 token 优先 / key 链回归 / 401→dead 且回落 key 链不中断 / 非账号供应商拒绝续期 |
 | `e2e_presets.py` | **内置预设** 17 断言：预设目录下发 / 删 preset 条目被后端拒绝且文件未污染 / disabled→模型 404 条目保留（改回恢复）/ 登录落盘+脱敏 / 非账号供应商拒绝登录 / 登出删除 |
 | `probe_presets_ui.py` | **无头实测新前端**（隔离实例）：预设弹窗渲染/去重禁用态、卡片内置徽章+登录/停用按钮+删除置灰、登录弹窗提交→按钮变「重新登录」、零 pageerror |
 | `probe_records_rows.py` | 无头打开记录页数实际渲染行数（区分「网关没记」vs「前端没显示」） |
+
+**10-12 新增（假成功 / panic 回归）+ 两个公共 helper**：
+
+| 脚本 | 用途 |
+|---|---|
+| `probe_unregistered_tools.py` | **假成功检测 15 断言**：只调未声明工具+无正文 → 记 502 点名工具；有正文/已声明/未采集/正常流四组不误伤；上游实收名单未被改写；降级计数。牙齿 = 摘掉采集接线即红 |
+| `probe_cn400_no_panic.py` | **中文错误体切片 panic 回归 10 断言**：mock 400 +「498 ASCII+一」崩溃形状打 chat 非流式/流式/Anthropic 直通三路径，判据 = 400 透传不重置 + 进程存活 + 无 panic + 记录落盘 |
+| `adminauth.py` | 公共 helper：`headers(data_dir)` → `/admin/api/*` 的 Bearer 头（**调用时**读 `data/.admin_token`，新探针统一用它） |
+| `buddycred.py` | 公共 helper：`load_buddy_cred()` → buddy 真实凭据两级来源（`data/accounts.json` 优先，`%TEMP%\cb_plain.json` 兜底） |
 
 ### 4.4 演示文稿生成
 
@@ -1097,6 +1111,88 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 ---
 
 ## 8. 各轮做了什么，便于判断现状
+
+### 🆕 10-12 轮 ③：假成功检测 + 管理接口默认鉴权 + 中文切片 panic 二次复发（四件事）
+
+上一轮（登录弹窗 / 供应商提示）收尾时被中断的两件半成品在本轮完成，另修两个真 bug。
+
+**① 「假成功」检测落地（对标 dsh-our-free-model，上轮中断于此）**
+
+- 场景：模型整轮只调用**客户端从未声明**的工具、无任何可见正文 → 旧实现以
+  `200 · 错误 —` 收尾，界面显示成功，而那一轮对调用方毫无意义。
+- 判据三条全满足才记 502 + 错误文案点名工具名：产出过工具调用 + 无可见正文 +
+  客户端**声明过** tools（`extract_client_tool_names` 返回 `Option`：`None` = 未采集
+  **不判**（宁漏勿误），空集 = 采集到且确实没声明）。
+- 接线：`TokenStream` 收集 `emitted_tool_names`（从 tool_calls delta 取名），
+  流收尾时与 `client_tool_names` 求差集；同时注册降级计数 `upstream_unregistered_tools`
+  （i18n zh/en 各一键，分析页「静默降级」行可见）。
+- 探针 `tools/probe_unregistered_tools.py` **15 断言**（5 场景 + 对照组不误伤 +
+  上游实收名单未被改写 + 降级计数）。**有牙齿**：临时摘掉采集接线 → ① 的两条断言
+  立刻红（status 回 200、文案消失），恢复后全绿。
+- ⚠️ **原生直通路径（Anthropic / Responses 入口）不做此判定**：`NativeTapStream`
+  转发的是上游协议原生帧，客户端声明的工具名形态各异、且直通承诺"逐字节保真不加工" ——
+  当前范围只覆盖 chat 管线（含 Anthropic/Responses 转 chat 的路径）。要扩到直通需
+  另做协议级的工具名采集，别在 tap 流里盲猜。
+
+**② `/admin/api/*` 默认鉴权（用户选定「默认要 token」）**
+
+- 旧默认「未配置 `AIGATE_ADMIN_TOKEN` 就完全放行」= 同机任意进程/页面不带凭据即可读
+  账号、余额、以及 `/admin/api/providers` 里原样回吐的凭据。新默认：自动生成随机 token
+  落盘 `data/.admin_token`（0600），`admin_page` 注入同一值 —— 本窗口面板无感，外部 401。
+  显式配置沿用配置值；`AIGATE_OPEN_ADMIN=1` 回到旧行为（风险自负）。
+- `/health` 保持免鉴权但只回固定 `ok`（存活探针不泄露版本/配置）。
+- **工具链连带大修**（这是本轮工作量最大的部分）：`/admin/api/*` 突然要 Bearer 后，
+  **20+ 个探针/取证脚本**会 401 假失败。逐个接线：
+  - 新增 `tools/adminauth.py::headers(data_dir)`（**调用时**读 token —— 导入期读会拿到空，
+    `e2e_accounts.py` 当年踩过）；`tools/buddycred.py::load_buddy_cred()`（buddy 真实凭据
+    两级来源：`data/accounts.json` → `%TEMP%\cb_plain.json` 兜底）。
+  - 只做「等实例就绪」的探测改用**免鉴权** `/health`（trim_pairing / strip_edge /
+    strip_semantics / opencode_headers / presets_ui）；取数的接 Bearer（today / ttft /
+    event_ledger / gen_speed / idle_noise / loop×2 / heatmap / models_capabilities /
+    buddy 系列 / changelog ×2 / ver_probe / cl_probe / port_fallback …）。
+- **顺带修掉的四个探针真问题**（全是这次接线时暴露的）：
+  1. `e2e_today_survives_restart` 直接 401 崩掉（没接鉴权）；
+  2. `e2e_changelog` 断言"首个版本 == 0.7.0"早已过时（现为 0.7.2）→ 改为对齐
+     `Cargo.toml` 版本号 + 内容抽查改查**全库 blob**（早期内容随节点下移仍应可解析）；
+  3. `probe_presets_ui` 两条断言还在找旧文案「设为当前账号」「登出」全等 —— UI 在多账号轮
+     已改为「设为首选」「登出此账号」→ 改 `includes`；修后 **23/23**；
+  4. `AIGATE_BUDDY_ENDPOINT` 测试接缝被 WorkBuddy 接入轮**静默绕过**：
+     登录端点参数化进 `LoginProfile` 后预设条目直接用官方域名，接缝只剩无预设回落里生效
+     → `e2e_buddy_login_multi` 轮询超时（auth_url 指向真实官方域而不是 mock）。
+     修在 `admin.rs::login_profile_for`：接缝只对 `product_code=="codebuddy"` 生效
+     （**不能把 WorkBuddy 国际区重定向**，那是另一个区，重定向会把"国际版登录"测成假绿）。
+
+**③ 中文错误体切片 panic 二次复发（10-01 修过同型，这次是两处漏网）**
+
+- `e2e_buddy_proxy` ④ 实机复现：`AIGate panic: end byte index 500 is not a char
+  boundary; it is inside '一'` —— 客户端只见"连接被重置"，记录页什么都没有。
+- 漏网两处：`proxy.rs` 上游 4xx 写日志的直切（chat 管线 + 原生直通各一处
+  `&err_body[..min(500)]`）—— 10-01 那轮修的是错误文案路径，**warn 日志路径漏了**。
+  统一改走 `i18n::snip`。
+- 新探针 `tools/probe_cn400_no_panic.py` **10 断言**：mock 上游 400 + 中文错误体
+  （498 ASCII +「一」的崩溃形状）打 chat 非流式 / chat 流式 / Anthropic 直通三条路径，
+  判据 = 400 透传不重置 + 进程存活 + stderr 无 panic + 记录落盘。
+- **教训**：`snip` 的单测只能保住函数本身，**保不住调用点** —— 同型切片只要还有人
+  手写就会复发。新增切片一律走 `i18n::snip`（全文扫描确认其余切点安全：
+  `line_buf[..pos]` 是字节 + ASCII 换行符定位、`recall` 走 `floor_char_boundary`）。
+
+**④ 探针维护纪律（本轮批量实践）**
+
+- 探针断言**不能写死会前进的东西**：版本号（改对齐 `Cargo.toml`）、UI 文案（用 `includes`
+  且改文案时同步探针）；超时分支**必须回显末次状态**（"轮询超时"四个字没法定位）。
+
+**验证**：**347 单测**（326 → 347，含本轮新增的假成功/接线/回归测试）· 构建零警告 ·
+门禁（parts 38 件 / i18n **740 键** / balance / 主题三道）· 新探针 `probe_unregistered_tools`
+15/15（含牙齿验证）+ `probe_cn400_no_panic` 10/10 · 回归：`e2e_buddy_login_multi` 9/9、
+`e2e_buddy_credits_login` 11/11、`e2e_buddy_proxy` 四组、`e2e_record_count` 13 形态、
+`e2e_finish_norm` 5/5、`probe_presets_ui` 23/23、`e2e_changelog` PASS、
+`probe_event_ledger`、`e2e_ttft_history`、`probe_loop_default_off`、
+`probe_loop_truncation_visible`、`probe_gen_speed_reasoning`、`probe_idle_noise` 4/4、
+`probe_trim_pairing`、`probe_strip_edge`、`probe_strip_semantics`、`probe_models_capabilities`、
+`probe_heatmap_shot`、`probe_port_fallback`、`probe_opencode_headers`、
+`e2e_today_survives_restart` 全绿。
+⚠️ `probe_workbuddy_login` ①② 过（Bearer 接线生效）、③ 需人工浏览器授权（环境性质）；
+`probe_workbuddy_proxy` 依赖 ③ 的产物，未跑。
 
 ### 🆕 10-12 轮 ②：供应商页「提示写了却永远不显示」—— 一次交互摩擦审计的产物
 
