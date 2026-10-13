@@ -394,9 +394,19 @@
       // 这样被拦截时 `opened` 才可靠为 null，走提示分支；同时后端报错时也能把窗口关掉。
       const win = window.open('about:blank', '_blank');
       try{
-        const r=await fetch('/admin/api/accounts/login/start',{method:'POST',headers:authHeaders(),
-          body:JSON.stringify({name:this.loginProv})});
-        const d=await r.json();
+        // ⚠️ **必须带超时**（2026-10-12 用户报障「workbuddy 一出问题就必须重启」）：
+        // 这个 fetch 原先是裸的 —— 后端若卡住（如续期闸门被占、上游无响应），
+        // 它会一直挂着，弹窗永远转圈，看起来"软件坏了只能重启"。
+        // 后端那侧已修（独立超时 + 不排队），这里再加一道前端保险：
+        // 超时后明确报错并复位，用户能立刻重试，不必重启。
+        const ac = new AbortController();
+        const to = setTimeout(() => ac.abort(), 20000);
+        let d;
+        try{
+          const r=await fetch('/admin/api/accounts/login/start',{method:'POST',headers:authHeaders(),
+            body:JSON.stringify({name:this.loginProv}), signal:ac.signal});
+          d=await r.json();
+        } finally { clearTimeout(to); }
         if(d.error){
           // 后端拒绝（如"不是账号形式"）: 关掉占位窗口，别留一个空白标签页。
           try { if (win) win.close(); } catch(e) {}
@@ -440,7 +450,9 @@
         }, 2000);
       }catch(e){
         try { if (win) win.close(); } catch(err) {}
-        this.loginMsg=t('network_error');
+        // 超时（AbortError）要单独说 —— 它意味着"后端没在 20s 内回应"，
+        // 处置与普通网络错误不同（网络错误可重试；超时往往说明后端正忙/卡住）。
+        this.loginMsg = (e && e.name==='AbortError') ? t('login_start_timeout') : t('network_error');
       }
       finally{ this.loginBusy=false; }
     },

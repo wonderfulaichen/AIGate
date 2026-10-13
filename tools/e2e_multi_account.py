@@ -6,7 +6,7 @@
 场景: 一个账号型供应商 buddyx, 账号池 2 个 (T1 优先, T2 备用); mock 上游对 T1 返回 401,
 对 T2 返回 200 —— 用来验证网关在 401 时**换号重试**, 客户端最终仍拿到 200.
 """
-import json, os, shutil, subprocess, sys, threading, time, urllib.request
+import io, json, os, shutil, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -76,8 +76,16 @@ proc = subprocess.Popen([os.path.join(ISO, "AIGate.exe")], cwd=ISO, env=env,
 
 def api(path, data=None):
     body = json.dumps(data).encode() if data is not None else None
-    r = urllib.request.Request(f"http://127.0.0.1:{PG}{path}", data=body,
-                               headers={"content-type": "application/json"} if body else {})
+    # /admin/api/* 自 2026-10-12 起要 Bearer; token 由隔离实例生成在 data/.admin_token
+    # (上一轮批量接线时漏了这个探针 —— 表现是 "实例未就绪", 而被误当成实例起不来)。
+    try:
+        tok = io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        tok = ""
+    hdrs = {"content-type": "application/json"} if body else {}
+    if tok:
+        hdrs["Authorization"] = "Bearer " + tok
+    r = urllib.request.Request(f"http://127.0.0.1:{PG}{path}", data=body, headers=hdrs)
     try:
         with urllib.request.urlopen(r, timeout=20) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8", "replace") or "{}")

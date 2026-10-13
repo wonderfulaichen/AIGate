@@ -696,7 +696,25 @@ pub async fn refresh_account(
 ) -> Result<AccountEntry, String> {
     // 串行化 + 拿锁后复查: 另一个任务可能刚续完 → 此时既未过期也不在 margin 内 → 直接返回,
     // 不重复 POST (与调用方判断"需要续期"的口径保持一致: 过期 或 临期 margin 内).
-    let _gate = store.refresh_gate.lock().await;
+    //
+    // ⚠️ 本闸门**只应保护"检查-续期-写回"这段状态机**, 不该把整个网络往返圈进来太久 ——
+    // 它在转发路径上被每个请求调用 (见 pick_account), 一旦卡住, 转发与登录一起停摆,
+    // 用户侧表现是"必须重启软件" (2026-10-12 用户报障的根因)。
+    //
+    // 双保险（两层都必须有）：
+    //  ① 下面那个 `send()` 带独立短超时（8s）—— 缩短"持锁时长"的上界；
+    //  ② 这里用 `try_lock` 而非无限 `lock()` —— 即使前一个续期因为任何原因仍卡着
+    //     （DNS 黑洞、TLS 半开、未来某次改动又漏了超时），**新请求也不会无限排队**，
+    //     而是立刻失败并走调用方的降级路径（过期→试下一个号/回落 key 链；临期→用旧值）。
+    //     这一条是"进程内状态卡死必须重启"的根治：闸门再也不会永久堵住整条链路。
+    let _gate = match store.refresh_gate.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Err(
+                "续期闸门被占用（另一个续期正在进行），本次跳过续期以免排队阻塞转发".to_string(),
+            );
+        }
+    };
     let entry = store
         .get_by_id(provider, account_id)
         .await
@@ -721,7 +739,26 @@ pub async fn refresh_account(
     for (k, v) in &rc.headers {
         req = req.header(k.as_str(), v.replace("{refresh_token}", rt));
     }
-    let resp = req.send().await.map_err(|e| format!("网络错误: {e}"))?;
+    // ⚠️ **必须设独立超时**（2026-10-12 修用户报障「workbuddy 一出问题就必须重启」）：
+    // 续期请求走的是全局 client，不带 timeout 时会继承 `request_timeout_secs`（默认 660s）。
+    // 而本函数持有 refresh_gate 跨这个 await —— 一次挂起的续期就能把闸门锁死 11 分钟，
+    // 期间**所有**转发请求（都经 pick_account → 这里）与登录流程全部排队等它，
+    // 用户看到的正是"用不了，只能重启"。续期是短小的控制面请求，8s 足够；
+    // 超时失败不置 dead（见下方判断：非 400/401/403 不置），下周期自然会重试。
+    const REFRESH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+    let resp = req
+        .timeout(REFRESH_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| {
+            // timeout 与网络错误分开说：前者通常是上游慢/挂，后者是本机网络 ——
+            // 排查方向不同（本项目的错误文案纪律）。
+            if e.is_timeout() {
+                format!("续期请求超时（{}s）: {e}", REFRESH_TIMEOUT.as_secs())
+            } else {
+                format!("网络错误: {e}")
+            }
+        })?;
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     let v: serde_json::Value =
@@ -1075,6 +1112,62 @@ fn urlencode(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::providers::{AuthMode, ProviderConfig, RefreshConfig};
+
+    /// **续期闸门不得永久堵住调用方**（2026-10-12 用户报障「workbuddy 一出问题就必须重启」）。
+    ///
+    /// 故障链：`pick_account`（每个转发请求都走）→ `refresh_account` → 持 `refresh_gate`
+    /// 跨一个 HTTP 往返。原实现两处缺陷叠加：
+    ///   ① 那个 `send()` 没有独立超时 → 继承全局 client 的 660s；
+    ///   ② 闸门用无限 `lock()` → 一个新请求会一直排队等它。
+    /// 结果：一次挂起的续期锁死所有转发与登录，用户只能重启进程。
+    ///
+    /// 本测试锁住修复后的**行为契约**：闸门被占用时，`refresh_account` **立刻返回 Err**
+    /// （而不是排队），让调用方走降级路径（过期→试下一个号/回落 key 链；临期→用旧值）。
+    #[tokio::test]
+    async fn refresh_gate_does_not_block_when_already_held() {
+        let dir = std::env::temp_dir().join(format!("aigate_gate_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = AccountStore::new(dir.to_str().unwrap());
+        store
+            .add(
+                "buddy",
+                AccountEntry {
+                    id: String::new(),
+                    label: None,
+                    identity: None,
+                    access_token: "T".into(),
+                    refresh_token: Some("RT".into()),
+                    // 已过期 → refresh_account 会走到"需要续期"那一步
+                    expires_at: Some(1),
+                    dead: false,
+                    cooldown_until: None,
+                    updated_at: None,
+                },
+            )
+            .await;
+
+        // 模拟"另一个续期正在飞"：手动占住闸门
+        let held = store.refresh_gate.clone();
+        let guard = held.lock().await;
+
+        let client = reqwest::Client::new();
+        let t0 = std::time::Instant::now();
+        let r = refresh_account(&client, &rc(), "buddy", "x", &store, 3600).await;
+        let elapsed = t0.elapsed();
+
+        // 必须是**立刻**失败，而不是排队等闸门 —— 这是"不再卡死"的判据。
+        assert!(r.is_err(), "闸门被占时不应成功");
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "必须立即返回（实耗 {elapsed:?}）—— 排队就等于回到'必须重启'的老毛病"
+        );
+        let msg = r.unwrap_err();
+        assert!(msg.contains("闸门"), "错误应说明是闸门占用: {msg}");
+
+        drop(guard); // 放锁后可再次尝试（不验证网络，只验证不再被卡）
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn rc() -> RefreshConfig {
         // buddy 实测形态 (2026-10-01): data.accessToken / data.refreshToken / data.expiresIn

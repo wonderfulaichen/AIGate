@@ -251,6 +251,7 @@ const I18N = {
     // 「测试并恢复」: 测试与熔断刻意隔离, 恢复由用户看到"通"之后显式决定
     'test_recover': '测试并恢复', 'test_recover_hint': '测试通过后关掉该供应商的熔断（仅在你确认上游已恢复时点它）',
     'test_recovered': '已关掉该供应商的熔断',
+    'login_start_timeout': '启动登录超时（后端 20 秒未响应）—— 上游或网关可能正忙，请稍后重试；若持续如此，查看「最近发生的事」',
     'dashboard_title': '概览', 'dashboard_subtitle': '服务状态、使用概览和快速接入',
     'usage_glance': '用量概览', 'usage_glance_desc': '监控余额、用量和请求量', 'today_label': '今日','hero_scope_today_hint': '主数字为今日口径；折线为统计窗口口径', 'window_span_days': '最近 {0} 天', 
     'errors_only': '错误 {0}', 
@@ -569,6 +570,7 @@ const I18N = {
     'test_key_unchecked': '(key was NOT verified this time - connectivity only)',
     'test_recover': 'Test & recover', 'test_recover_hint': 'Test connection, then close this provider\'s circuit breaker on success (only after you confirm the upstream is back)',
     'test_recovered': 'Circuit breaker for this provider has been closed',
+    'login_start_timeout': 'Login start timed out (backend did not respond in 20s) - the gateway or upstream may be busy; retry shortly, and check "Recent events" if it persists',
     'dashboard_title': 'Overview', 'dashboard_subtitle': 'Service status, usage at a glance, and quick access',
     'usage_glance': 'Usage at a glance', 'usage_glance_desc': 'Monitor balance, usage, and requests', 'today_label': 'Today','hero_scope_today_hint': 'Numbers are for today; the sparkline covers the stats window', 'window_span_days': 'last {0}d', 
     'errors_only': '{0} errors', 
