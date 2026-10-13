@@ -163,6 +163,10 @@ mod tests {
         // 红点: 任何未读错误/警告 (含预警与端口顺延)
         assert!(EventKind::UpstreamFailing.dot());
         assert!(EventKind::PortFallback.dot());
+        // 上游中途断流 (2026-10-13): 供应商不稳的直接证据 → 点红点,
+        // 但**不弹气球** —— 它不是"已不可用"(那是熔断/账号作废), 混弹会让气球变噪音。
+        assert!(EventKind::UpstreamCut.dot(), "上游断流该点亮红点");
+        assert!(!EventKind::UpstreamCut.balloon(), "上游断流不弹气球");
         // 用户自己触发的: 两样都不给 (通知自己刚做的操作是噪音)
         assert!(!EventKind::BreakerReset.dot());
         assert!(!EventKind::BreakerReset.balloon());

@@ -1112,6 +1112,42 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-13 轮：拆开「上游断流」与「空闲超时」+ 断流进事件台账（用户报 502 截图）
+
+**用户报障**：一张 502 记录详情截图 —— **首字 15.7s / 总延迟 39.6s**，
+结束方式「空闲超时 / 上游连接错误」，错误详情
+`UnexpectedEof: unexpected EOF during chunk size line`。
+
+**判断（靠数字证伪，不靠猜）**：空闲超时默认 **120 秒**，而这条 **39.6 秒**就结束
+→ **不可能是空闲超时**。是上游 `cpa.arrowomega.org` 在生成中途**强行断开连接**
+（HTTP 分块传输连块长度都没写完）。**上游侧问题，网关已如实记 502。**
+
+**但记录本身有真缺陷（本次修）**：`IdleError::Inner`（上游断流）与 `IdleError::Idle`
+（真空闲超时）**共用一个 `error_closed` 标志** → `end_reason` 只能报含糊的 `idle`，
+面板文案成了「空闲超时 / 上游连接错误」，**用户只能从延迟数字反推是哪一种** ——
+这正是本项目"报错要说清环节"红线要防的。
+
+**修法**：
+1. 新增 `error_closed_by_upstream`（用 `downcast_ref::<IdleError<reqwest::Error>>()`
+   保住装箱前的类型信息），`end_reason` 拆成 **`upstream_cut`** / `idle` 两档；
+   `end_idle` 文案收窄为「空闲超时（上游太久没吐数据）」。
+2. **新增 `UpstreamCut` 事件**（warn 级，进台账 + 点托盘红点）：它是"供应商不稳"的
+   直接证据，此前面板只有一条 502。**不弹气球** —— 它不是"已不可用"（那是熔断/账号作废），
+   混弹会让气球变噪音。**只对上游断流报，不对空闲超时报**（后者常是本机/上游慢）。
+3. 顺带：前端 `eventLabel` 漏了 `port_fallback` 映射 → 台账里显示成裸 `port_fallback`。
+
+**探针踩坑（值得记）**：`probe_upstream_cut.py` 第一版用 `shutdown()` 关连接来模拟断流，
+**探针如实报回 `end_reason=eof`** —— 因为 reqwest 把优雅 FIN 当作"流正常结束"。
+改用 `SO_LINGER=0` 强制 **RST** 后才复刻出真实的 `UnexpectedEof`。
+**教训**：模拟"上游断流"必须用 RST，优雅关闭在 HTTP 客户端看来是正常结束。
+
+**验证**：**362 单测**（+1 `idle_error_classifies_upstream_cause`，且
+`end_reason_classifies_who_stopped_the_stream` 扩了两种成因；**牙齿已验证**：
+把成因信息丢掉 → 单测 + 探针各红 2 条）· 新探针 `probe_upstream_cut.py` **8/8**
+（含"空闲超时不得记成断流"的对照 + 正常流对照组）· 回归 `probe_notify` 9/9 /
+`probe_unregistered_tools` 15/15 / `probe_stage_report` 13/13 / `probe_stream_end_reason` ·
+门禁（parts / i18n **757 键** / balance）· CHANGELOG 重建并 `cl_dump` 实测烤入。
+
 ### 🆕 10-12 轮 ⑨：修复「账号一出问题就必须重启软件」（续期闸门被挂死）
 
 **用户报障**：「workbuddy 一旦熔断或者其他问题，就无法再次使用。**必须重启软件才可以**。」

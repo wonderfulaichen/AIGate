@@ -236,6 +236,7 @@ pub fn notify_kind_name(kind: crate::events::EventKind) -> &'static str {
         crate::events::EventKind::BreakerHalfOpen => pick("熔断试探中", "Circuit probing"),
         crate::events::EventKind::BreakerReset => pick("熔断已重置", "Circuit reset"),
         crate::events::EventKind::UpstreamFailing => pick("上游连续失败", "Upstream failing"),
+        crate::events::EventKind::UpstreamCut => pick("上游中途断流", "Upstream cut mid-stream"),
         crate::events::EventKind::UpstreamRecovered => pick("上游已恢复", "Upstream recovered"),
         crate::events::EventKind::QuotaLow => pick("额度将尽", "Quota running low"),
         crate::events::EventKind::AccountDead => pick("账号失效", "Account invalidated"),

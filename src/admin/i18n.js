@@ -94,7 +94,7 @@ const I18N = {
     'end_length': '输出额度用尽被截断 (length)', 'end_content_filter': '上游按内容策略拦截 (content_filter)',
     'end_done': '上游只发了结束标记, 未说明原因', 'end_eof': '上游连接断开, 未发终止帧',
     'end_loop': '网关按死循环截断', 'end_abort': '客户端中途断开',
-    'end_idle': '空闲超时 / 上游连接错误', 'end_error_event': '上游返回错误事件',
+    'end_idle': '空闲超时（上游太久没吐数据）', 'end_error_event': '上游返回错误事件',
     'end_cache': '本地缓存回放 (未请求上游)',
     // ── 首字延迟 (TTFT) ──
     // 措辞纪律: "无样本"必须显示「—」而非 0ms (0ms 在物理上不成立, 会被读成"瞬间响应").
@@ -180,6 +180,8 @@ const I18N = {
     'events_takeaway_ok': '近期事件均为正常状态变化，无需处理。',
     'ev_breaker_open': '熔断已打开', 'ev_breaker_closed': '熔断已恢复', 'ev_breaker_half_open': '熔断转入试探',
     'ev_breaker_reset': '熔断被手动重置', 'ev_upstream_failing': '上游连续失败', 'ev_upstream_recovered': '上游已恢复响应',
+    'ev_upstream_cut': '上游中途断流',
+    'end_upstream_cut': '上游中途断流（非空闲超时）',
     'ev_quota_low': '额度将尽', 'ev_account_dead': '账号已作废', 'ev_providers_reloaded': '配置已重载',
     'ev_started': '服务已启动', 'ev_port_fallback': '端口被占用，已顺延',
     'conn_params_label': '连接参数', 'idle_timeout_label': '流空闲超时', 'retry_max_label': '瞬态失败重试次数', 'retry_backoff_label': '重试退避基数',
@@ -420,7 +422,7 @@ const I18N = {
     'end_length': 'Cut off by output limit (length)', 'end_content_filter': 'Blocked by upstream content policy (content_filter)',
     'end_done': 'Upstream sent only its end marker, gave no reason', 'end_eof': 'Upstream closed with no terminator',
     'end_loop': 'Truncated by the gateway loop guard', 'end_abort': 'Client aborted mid-stream',
-    'end_idle': 'Idle timeout / upstream connection error', 'end_error_event': 'Upstream error event',
+    'end_idle': 'Idle timeout (upstream stopped sending)', 'end_error_event': 'Upstream error event',
     'end_cache': 'Replayed from local cache (no upstream call)',
     // ── Time to first token (TTFT) ──
     // Wording rule: "no samples" must render as an em dash, never 0ms (0ms is physically
@@ -505,6 +507,8 @@ const I18N = {
     'events_takeaway_ok': 'Recent events are all normal state changes; nothing to do.',
     'ev_breaker_open': 'Breaker opened', 'ev_breaker_closed': 'Breaker recovered', 'ev_breaker_half_open': 'Breaker probing',
     'ev_breaker_reset': 'Breaker reset manually', 'ev_upstream_failing': 'Upstream failing repeatedly', 'ev_upstream_recovered': 'Upstream responding again',
+    'ev_upstream_cut': 'Upstream cut mid-stream',
+    'end_upstream_cut': 'Upstream cut mid-stream (not an idle timeout)',
     'ev_quota_low': 'Quota running low', 'ev_account_dead': 'Account invalidated', 'ev_providers_reloaded': 'Config reloaded',
     'ev_started': 'Service started', 'ev_port_fallback': 'Port in use, fell back',
     'conn_params_label': 'Connection parameters', 'idle_timeout_label': 'Stream idle timeout', 'retry_max_label': 'Transient retry count', 'retry_backoff_label': 'Retry backoff base',

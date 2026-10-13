@@ -52,6 +52,15 @@ pub enum EventKind {
     AccountDead,
     /// 配置热重载 (用户改了 providers.json).
     ProvidersReloaded,
+    /// **上游在生成中途断开连接**（2026-10-13）。
+    ///
+    /// 为什么单列一类: 它与 `UpstreamFailing`（连续失败→熔断路径）不同 ——
+    /// 那是"打不通/一直失败"，这是"**打通过、正在出字，然后被中途掐断**"
+    /// （实测形态：`UnexpectedEof: unexpected EOF during chunk size line`，
+    /// 首字已出但流被截断）。前者熔断能兜住，后者熔断兜不住（它算一次 502 失败，
+    /// 但单次不成阈值）—— 用户侧看到的是"回答答一半就没了"，而面板此前只有一条 502。
+    /// 只对**上游断流**报，不对"真空闲超时"报（后者常是本机/上游慢，不是供应商故障）。
+    UpstreamCut,
     /// 进程启动 —— 台账的"分界线", 便于分辨"这条是重启前还是重启后".
     Started,
     /// **端口被占用, 已顺延到别的端口**（2026-10-11）。
@@ -71,6 +80,7 @@ impl EventKind {
             EventKind::BreakerReset => "breaker_reset",
             EventKind::UpstreamFailing => "upstream_failing",
             EventKind::UpstreamRecovered => "upstream_recovered",
+            EventKind::UpstreamCut => "upstream_cut",
             EventKind::QuotaLow => "quota_low",
             EventKind::AccountDead => "account_dead",
             EventKind::ProvidersReloaded => "providers_reloaded",
@@ -90,6 +100,7 @@ impl EventKind {
             EventKind::BreakerClosed | EventKind::UpstreamRecovered | EventKind::Started => "ok",
             EventKind::BreakerHalfOpen
             | EventKind::UpstreamFailing
+            | EventKind::UpstreamCut
             | EventKind::QuotaLow
             | EventKind::ProvidersReloaded
             // 端口顺延是"提醒"级: 一切可用, 只是地址变了 —— 用户该知道, 但不必紧张。
@@ -111,6 +122,8 @@ impl EventKind {
             EventKind::BreakerOpen
                 | EventKind::AccountDead
                 | EventKind::UpstreamFailing
+                // 上游中途断流 = 供应商不稳的直接证据, 该点亮红点让用户看见。
+                | EventKind::UpstreamCut
                 | EventKind::QuotaLow
                 | EventKind::PortFallback
         )

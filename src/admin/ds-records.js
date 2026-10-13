@@ -40,6 +40,9 @@
         length: 'end_length', content_filter: 'end_content_filter',
         done: 'end_done', eof: 'end_eof', loop: 'end_loop', abort: 'end_abort',
         idle: 'end_idle', error_event: 'end_error_event', cache: 'end_cache',
+        // 上游中途断流（2026-10-13）：原先与 idle 合并成一句含糊的
+        // 「空闲超时 / 上游连接错误」，用户只能从延迟数字反推是哪一种。
+        upstream_cut: 'end_upstream_cut',
       };
       const key = map[k];
       // 未知取值照实显示: 上游可能报出新枚举, 吞掉它就等于把线索埋了。

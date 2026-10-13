@@ -88,8 +88,12 @@
         breaker_open: 'ev_breaker_open', breaker_closed: 'ev_breaker_closed',
         breaker_half_open: 'ev_breaker_half_open', breaker_reset: 'ev_breaker_reset',
         upstream_failing: 'ev_upstream_failing', upstream_recovered: 'ev_upstream_recovered',
+        // 上游中途断流 (2026-10-13): 与"连续失败"不同 —— 它是"打通了、正在出字、被掐断"。
+        upstream_cut: 'ev_upstream_cut',
         quota_low: 'ev_quota_low', account_dead: 'ev_account_dead',
         providers_reloaded: 'ev_providers_reloaded', started: 'ev_started',
+        // 端口顺延原先漏在表外 → 显示成裸 `port_fallback`（本项目的老坑：漏一个键就露原文）。
+        port_fallback: 'ev_port_fallback',
       };
       const k = map[kind];
       return k ? t(k) : (kind || '');

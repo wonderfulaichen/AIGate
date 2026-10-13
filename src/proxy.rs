@@ -2419,6 +2419,18 @@ enum IdleError<E> {
     Idle,
 }
 
+impl<E> IdleError<E> {
+    /// 这次收尾是**上游断流**（true）还是**真正的空闲超时**（false）。
+    ///
+    /// 为什么需要它（2026-10-13 用户报障）：两者原先共用一个 `error_closed` 标志 →
+    /// `end_reason` 只能报含糊的 `idle`，面板显示「空闲超时 / 上游连接错误」。
+    /// 而那条记录首字 15.7s、总延迟 39.6s，空闲超时是 120s —— 明显不是空闲超时。
+    /// 让用户从延迟数字反推是哪一种，违背"报错要说清环节"。
+    fn is_upstream_error(&self) -> bool {
+        matches!(self, IdleError::Inner(_))
+    }
+}
+
 impl<E: std::fmt::Display> std::fmt::Display for IdleError<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2591,6 +2603,7 @@ fn stream_response_with_tokens(
         },
         loop_aborted: false,
         error_closed: false,
+        error_closed_by_upstream: false,
         stream_errored: false,
         pending_error_sse: None,
         finish_reason: None,
@@ -2801,6 +2814,15 @@ struct TokenStream {
     loop_aborted: bool,
     /// 已因上游错误/空闲超时而兜底结束 (已发 [DONE]); 防止下次 poll 重复发/继续 poll 上游.
     error_closed: bool,
+    /// 上面那次兜底收尾**具体是哪种**：`true` = 上游连接错误（断流/协议错），
+    /// `false` = 真正的空闲超时（上游没断，只是太久没吐数据）。
+    ///
+    /// 为什么要分开（2026-10-13 用户报障）：两者原先共用一个 `error_closed` 标志 →
+    /// `end_reason` 只能报 `idle`，面板文案是含糊的「空闲超时 / 上游连接错误」。
+    /// 而实测那条记录**首字 15.7s、总延迟 39.6s**，空闲超时默认 120s ——
+    /// 根本不可能是空闲超时，是上游 `UnexpectedEof` 中途断流。
+    /// 让用户自己从延迟数字去推是哪一种，正是"报错要说清环节"的红线。
+    error_closed_by_upstream: bool,
     /// 流内检测到上游 SSE 错误事件 (HTTP 200 + error 事件), 等待改写成中文.
     stream_errored: bool,
     /// 改写后的中文 SSE 错误事件 JSON (不含 "data: " 前缀), 待转发一次.
@@ -3304,7 +3326,11 @@ impl TokenStream {
             return Some("error_event".to_string());
         }
         if self.error_closed {
-            return Some("idle".to_string());
+            // 分两种（2026-10-13）：上游断流 vs 真空闲超时。原先合并成 `idle`，
+            // 面板只能显示含糊的「空闲超时 / 上游连接错误」。
+            return Some(
+                if self.error_closed_by_upstream { "upstream_cut" } else { "idle" }.to_string(),
+            );
         }
         if let Some(fr) = &self.last_finish_reason {
             return Some(fr.clone());
@@ -3597,6 +3623,26 @@ impl Stream for TokenStream {
                     warn!("proxy: upstream stream ended (idle timeout or error): {e:?}");
                     this.done = true;
                     this.error_closed = true;
+                    // 分辨这一档到底是哪一种（2026-10-13）：两者原先共用 error_closed，
+                    // end_reason 只能报含糊的 `idle`。用 downcast 保住类型信息 ——
+                    // 装箱前是 `IdleError::Inner`（上游断流/协议错）还是 `IdleError::Idle`（真空闲）。
+                    this.error_closed_by_upstream = e
+                        .downcast_ref::<IdleError<reqwest::Error>>()
+                        .map(|ie| ie.is_upstream_error())
+                        .unwrap_or(false);
+                    // 上游断流是**供应商不稳**的信号，值得进事件台账（用户已开红点+气球）。
+                    // 只对"上游断流"报，不对"空闲超时"报 —— 后者常是本机/上游慢，
+                    // 不是供应商故障；混报会让预警变成噪音（本项目反复强调的分级纪律）。
+                    if this.error_closed_by_upstream {
+                        crate::admin::note_event(
+                            crate::events::EventKind::UpstreamCut,
+                            this.log_buffer.as_ref().map(|ld| ld.provider.as_str()).unwrap_or(""),
+                            &format!(
+                                "上游在生成中途断开连接（非网关截断）：{}",
+                                crate::i18n::snip(&format!("{e}"), 160)
+                            ),
+                        );
+                    }
                     // 上游断连 / 空闲超时兜底: 响应多半不完整 (本就不参与缓存, 仅记录错误).
                     if let Some(ld) = this.log_buffer.take() {
                         // 先把错误信息格式化为 String (Send) 再进入 spawn, 否则 E 不 Send 会让 future 无法跨线程.
@@ -6590,7 +6636,7 @@ mod tests {
             done: false, tokens_pt: 0, tokens_ct: 0,
             tokens_cache_hit: 0, tokens_cache_miss: 0, tokens_cache_creation: 0,
             response_bytes: 0,
-            loop_guard: None, loop_aborted: false, error_closed: false, stream_errored: false,
+            loop_guard: None, loop_aborted: false, error_closed: false, error_closed_by_upstream: false, stream_errored: false,
             pending_error_sse: None, finish_reason: None, clean_finish: false,
             last_finish_reason: None, saw_done: false, errored_msg: None,
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
@@ -6644,14 +6690,47 @@ mod tests {
         ts.loop_aborted = true;
         assert_eq!(ts.end_reason().as_deref(), Some("loop"));
 
-        // ⑦ 上游 SSE error 事件 / 空闲超时兜底, 各占一码.
+        // ⑦ 上游 SSE error 事件 → error_event.
         let mut ts = mk();
         ts.stream_errored = true;
         assert_eq!(ts.end_reason().as_deref(), Some("error_event"));
 
+        // ⑧ **兜底收尾必须区分两种成因**（2026-10-13 用户报障）：
+        //    两者原先共用一个 error_closed → 都报含糊的 `idle`，面板文案是
+        //    「空闲超时 / 上游连接错误」。而实测那条记录首字 15.7s、总延迟 39.6s，
+        //    空闲超时是 120s —— 明显是上游断流。让用户从延迟数字反推违背"说清环节"。
         let mut ts = mk();
         ts.error_closed = true;
-        assert_eq!(ts.end_reason().as_deref(), Some("idle"));
+        ts.error_closed_by_upstream = false;
+        assert_eq!(ts.end_reason().as_deref(), Some("idle"), "真空闲超时报 idle");
+
+        let mut ts = mk();
+        ts.error_closed = true;
+        ts.error_closed_by_upstream = true;
+        assert_eq!(
+            ts.end_reason().as_deref(),
+            Some("upstream_cut"),
+            "上游断流必须与空闲超时区分开（否则用户只能猜）"
+        );
+
+        let mut ts = mk();
+        ts.error_closed = true;
+        ts.error_closed_by_upstream = true;
+        assert_eq!(
+            ts.end_reason().as_deref(),
+            Some("upstream_cut"),
+            "上游断流必须与空闲超时区分开（否则用户只能猜）"
+        );
+    }
+
+    /// `IdleError::is_upstream_error` 的成因判定（装箱前的类型信息）。
+    /// 用 `IdleError<&str>` 避开构造 reqwest::Error 的麻烦（泛型已足够验证语义）。
+    #[test]
+    fn idle_error_classifies_upstream_cause() {
+        let inner: IdleError<&str> = IdleError::Inner("boom");
+        assert!(inner.is_upstream_error(), "Inner = 上游断流/协议错");
+        let idle: IdleError<&str> = IdleError::Idle;
+        assert!(!idle.is_upstream_error(), "Idle = 真空闲超时");
     }
 
     /// 流式: parse_sse_chunk 解析 SSE 事件中的 cache 命中/未命中 (外层 usage 与 choices[0].usage 内层).
@@ -6669,6 +6748,7 @@ mod tests {
             loop_guard: None,
             loop_aborted: false,
             error_closed: false,
+            error_closed_by_upstream: false,
             stream_errored: false,
             pending_error_sse: None,
             finish_reason: None,
@@ -6746,7 +6826,7 @@ mod tests {
             done: false, tokens_pt: 0, tokens_ct: 0,
             tokens_cache_hit: 0, tokens_cache_miss: 0, tokens_cache_creation: 0,
             response_bytes: 0,   // 稍后设置
-            loop_guard: None, loop_aborted: false, error_closed: false, stream_errored: false,
+            loop_guard: None, loop_aborted: false, error_closed: false, error_closed_by_upstream: false, stream_errored: false,
             pending_error_sse: None, finish_reason: None, clean_finish: false, errored_msg: None,
             last_finish_reason: None, saw_done: false,
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
@@ -6865,6 +6945,7 @@ mod tests {
             loop_guard: None,
             loop_aborted: false,
             error_closed: false,
+            error_closed_by_upstream: false,
             stream_errored: false,
             pending_error_sse: None,
             finish_reason: None,
@@ -6960,6 +7041,7 @@ mod tests {
             loop_guard: None,
             loop_aborted: false,
             error_closed: false,
+            error_closed_by_upstream: false,
             stream_errored: false,
             pending_error_sse: None,
             finish_reason: None,
