@@ -94,6 +94,9 @@ pub struct AppState {
     /// 同一 AIGate 实例的所有请求共享此 ID — 中转无用户/会话层, 进程级足够让
     /// 上游「同一来源的连续请求」走 cache / 路由优化.
     pub instance_session: Arc<String>,
+    /// 会话/轮次关联表 (方案 F): 给每条请求标上"属于哪个会话的第几轮"。
+    /// 只存 会话键→轮次计数, 不存任何请求内容 (见 `crate::traces`)。
+    pub sessions: crate::traces::SessionTracker,
 }
 
 /// 熔断器表类型别名.
@@ -427,6 +430,15 @@ pub async fn chat_completions(
     let provider = route.provider.clone(); // 保存 provider 用于后续 headers 和 api_key
     drop(route); // 释放读锁
 
+    // ── 会话/轮次归属 (方案 F, 2026-10-13) ──
+    // 在**入口**取一次, 之后所有记录点共用同一份 (失败路径也带得上 ——
+    // 「这一轮的第 3 次调用失败了」与"这是孤立一条失败"排查价值完全不同)。
+    // 只读请求头与请求体的结构, 不读内容 (见 crate::traces 模块文档)。
+    // 解析失败 (调用方上游已校验过 body 合法, 这里是双保险) → 空归属, 不影响转发。
+    let session_ref = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map(|parsed| crate::traces::classify_session(&headers, &parsed, &state.sessions))
+        .unwrap_or_default();
+
     // 端点取值 (供应商级): 缺省用供应商 endpoint.
     let mut endpoint = provider.endpoint.clone();
 
@@ -723,6 +735,7 @@ pub async fn chat_completions(
                         &state, key,
                         &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
                         start, strip_saved_tokens, trim_saved_tokens,
+                        session_ref.clone(),
                     ).await {
                         return Ok(resp);
                     }
@@ -746,6 +759,7 @@ pub async fn chat_completions(
             &state, key,
             &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
             start, strip_saved_tokens, trim_saved_tokens,
+            session_ref.clone(),
         ).await {
             return Ok(resp);
         }
@@ -1024,6 +1038,8 @@ pub async fn chat_completions(
                         None,
                         // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
                         crate::admin::StageTimings::default(),
+                        // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
+                        session_ref.clone(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1077,6 +1093,8 @@ pub async fn chat_completions(
                         None,
                         // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
                         crate::admin::StageTimings::default(),
+                        // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
+                        session_ref.clone(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1130,6 +1148,8 @@ pub async fn chat_completions(
         // 客户端声明的工具名（原始请求体的 `tools[].function.name`）。
         // 见 `extract_client_tool_names`：None = 未采集，此时不做"未声明工具"判定。
         extract_client_tool_names_from_bytes(&bytes),
+        // 会话/轮次归属 (方案 F): 入口已采集, 直接带下去。
+        session_ref,
     );
     Ok(resp)
 }
@@ -1554,6 +1574,11 @@ async fn relay_native_passthrough(
     start: std::time::Instant,
     proto: NativeProto,
 ) -> Result<Response, Response> {
+    // 会话/轮次归属 (方案 F): 直通路径也要有 —— 否则从 Anthropic / Responses 入口进来的
+    // 请求会在会话链上"消失", 面板看到断链。口径与 chat_completions 完全一致。
+    let session_ref = serde_json::from_slice::<serde_json::Value>(&body)
+        .map(|parsed| crate::traces::classify_session(&headers, &parsed, &state.sessions))
+        .unwrap_or_default();
     // 端点: 优先供应商独立协议端点, 否则改写 /chat/completions → /messages | /responses.
     let endpoint = proto.resolve_endpoint(&provider);
     let tag = proto.log_tag();
@@ -1814,6 +1839,8 @@ async fn relay_native_passthrough(
             None,
             // 原生直通非流式: 无流式阶段时刻 → 未采集.
             crate::admin::StageTimings::default(),
+            // 会话归属已在函数入口采集 (直通路径不断链)。
+            session_ref.clone(),
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -1832,6 +1859,7 @@ async fn relay_native_passthrough(
         start,
         strip_saved_tokens,
         effort,
+        session_ref,
     );
     let mut resp = Response::builder()
         .status(status)
@@ -1935,6 +1963,8 @@ struct NativeTapStream {
     truncated: bool,
     /// 本次生效的思考强度 (见 [`effort_native`]), 流结束记账时写入日志.
     effort: Option<String>,
+    /// 会话/轮次归属 (方案 F): 入口采集一次, 收尾记账时带上。
+    session: crate::traces::SessionRef,
 }
 
 impl NativeTapStream {
@@ -1949,6 +1979,7 @@ impl NativeTapStream {
         start: std::time::Instant,
         strip_saved_tokens: u32,
         effort: Option<String>,
+        session: crate::traces::SessionRef,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -1973,6 +2004,7 @@ impl NativeTapStream {
             truncated: false,
             strip_saved_tokens,
             effort,
+            session,
         }
     }
 
@@ -2121,6 +2153,8 @@ impl Stream for NativeTapStream {
                     // 原生直通流式: 网关只透传字节、不解析阶段 → 未采集 (展示为 "—").
                     // 这是**如实**的: 直通路径不拆解模型阶段, 给 0 会是假数。
                     let stages = crate::admin::StageTimings::default();
+                    // 会话归属: 直通路径不断链 (入口已采集)。
+                    let sess = self.session.clone();
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
@@ -2129,6 +2163,7 @@ impl Stream for NativeTapStream {
                             usage_missing(prompt, output), effort_copy,
                             end_reason,
                             stages,
+                            sess,
                         ).await;
                     });
                 }
@@ -2572,6 +2607,8 @@ fn stream_response_with_tokens(
     effort: Option<String>,
     // 客户端在原始请求体里声明过的工具名；None = 未采集（不做"未声明工具"判定）。
     client_tool_names: Option<std::collections::HashSet<String>>,
+    // 会话/轮次归属 (方案 F): 入口采集一次, 三条收尾路径共用。
+    session: crate::traces::SessionRef,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -2672,6 +2709,7 @@ fn stream_response_with_tokens(
                 trim_saved_tokens,
                 audit,
                 response_body_len: 0,
+                session,
             }),
     };
 
@@ -2709,6 +2747,7 @@ async fn try_replay_cache(
     start: std::time::Instant,
     strip_saved: u32,
     trim_saved: u32,
+    session: crate::traces::SessionRef,
 ) -> Option<Response> {
     let (cached, stored_usage) = state.cache.get(key)?;
     // 命中回放的 token 统计优先用缓存时回填的精确 usage; 无精确值时退回从缓存体解析.
@@ -2764,6 +2803,8 @@ async fn try_replay_cache(
         Some("cache".to_string()),
         // 缓存回放没有流式阶段时刻 → 未采集 (展示为 "—", 不是 0).
         crate::admin::StageTimings::default(),
+        // 缓存命中也要留在会话链上 (调用方已采集好归属)。
+        session,
     )
     .await;
     Some(serve_cached(&cached))
@@ -2785,6 +2826,8 @@ struct TokenLogData {
     trim_saved_tokens: u32,
     /// 省量审计 (只读统计): 随日志落盘, 供面板「省量审计」聚合展示.
     audit: TokenAudit,
+    /// 会话/轮次归属 (方案 F): 入口采集一次, 三条收尾路径 (结束/失败/Drop) 共用。
+    session: crate::traces::SessionRef,
 }
 
 /// 装箱后的上游字节流错误: 生产为 IdleError<reqwest::Error>, 测试可注入任意 Error.
@@ -3456,6 +3499,8 @@ impl TokenStream {
         // 阶段耗时同理: 失败路径也可能已经产出了内容 (上游中途断流最常见),
         // 此刻采集到的阶段时刻照样有效 —— 用户正是靠它判断"时间花在哪"。
         let stages = self.stage_timings();
+        // 会话归属从 ld 里取 (owned) —— 失败的那一跳也要挂在会话链上。
+        let sess = ld.session.clone();
         tokio::spawn(async move {
             let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
@@ -3483,6 +3528,7 @@ impl TokenStream {
                 usage_estimated, effort,
                 end_reason,
                 stages,
+                sess,
             )
             .await;
         });
@@ -3908,6 +3954,8 @@ impl Stream for TokenStream {
                             let end_reason = this.end_reason();
                             // 阶段耗时 (方案 F「时间去哪了」): 同样在 spawn 前取 owned.
                             let stages = this.stage_timings();
+                            // 会话归属从 ld 取 (owned) —— 正常收尾的那一跳也挂在会话链上。
+                            let sess = ld.session.clone();
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3918,6 +3966,7 @@ impl Stream for TokenStream {
                                     usage_estimated, effort,
                                     end_reason,
                                     stages,
+                                    sess,
                                 ).await;
                             });
                         }
@@ -4069,6 +4118,8 @@ impl Drop for TokenStream {
         };
         // 阶段耗时 (方案 F): Drop 路径同样可能已经产出了内容, 此刻采集照样有效。
         let stages = self.stage_timings();
+        // 会话归属 (方案 F): Drop 也要挂在会话链上 —— 客户端取消的那一跳同样是会话的一部分。
+        let sess = ld.session.clone();
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -4079,6 +4130,7 @@ impl Drop for TokenStream {
                 usage_estimated, effort,
                 end_reason,
                 stages,
+                sess,
             ).await;
         });
     }

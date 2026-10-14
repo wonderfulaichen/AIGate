@@ -237,6 +237,13 @@ pub struct RequestLog {
     /// 只有**流式**路径采集得到; 非流式 / 缓存回放 / 失败路径为 None (见 [`StageTimings`])。
     #[serde(default)]
     pub stages: StageTimings,
+    /// **会话/轮次归属** (2026-10-13 方案 F): 本条请求属于哪个会话的第几轮、回报了上轮的
+    /// 哪些 tool_call。空 = 未识别 (见 [`crate::traces::SessionRef`])。
+    ///
+    /// 面板据此把多条请求串成"这一轮 Agent 做了什么" —— 这是单请求视角的记录里
+    /// 一直缺失的东西 (此前只能手工翻日志拼接)。旧日志无此字段 → 空结构。
+    #[serde(default)]
+    pub session: crate::traces::SessionRef,
 }
 
 #[inline]
@@ -695,6 +702,8 @@ pub async fn record_request(
         end_reason: None,
         // 失败路径无流式阶段时刻, 未采集 → 整块 None (展示为 "—", 不是 0).
         stages: StageTimings::default(),
+        // 失败路径 (解析失败/路由失败) 不进会话关联 —— 那时连请求体都没解析完。
+        session: crate::traces::SessionRef::default(),
     };
     log_buffer.push(log).await;
 }
@@ -731,6 +740,8 @@ pub async fn record_request_with_tokens(
     end_reason: Option<String>,
     // 阶段耗时拆分 (见 [`StageTimings`]); 仅流式路径采集, 其余传 default (整块 None).
     stages: StageTimings,
+    // 会话/轮次归属 (见 [`crate::traces::SessionRef`]); 无法识别时传 default (空结构)。
+    session: crate::traces::SessionRef,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -758,6 +769,7 @@ pub async fn record_request_with_tokens(
         effort,
         end_reason,
         stages,
+        session,
     )
     .await;
 }
@@ -796,6 +808,8 @@ pub async fn record_request_with_tokens_status(
     end_reason: Option<String>,
     // 阶段耗时拆分 (见 [`StageTimings`]); 仅流式路径采集, 其余传 default (整块 None).
     stages: StageTimings,
+    // 会话/轮次归属 (见 [`crate::traces::SessionRef`]); 无法识别时传 default (空结构)。
+    session: crate::traces::SessionRef,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -831,6 +845,7 @@ pub async fn record_request_with_tokens_status(
         effort,
         end_reason,
         stages,
+        session,
     };
     log_buffer.push(log).await;
 }
@@ -2301,6 +2316,7 @@ pub async fn api_mock(
             upstream_model: None,
             end_reason: None,
             stages: StageTimings::default(),
+            session: crate::traces::SessionRef::default(),
         });
     }
 
@@ -2345,6 +2361,7 @@ pub async fn api_mock(
             upstream_model: None,
             end_reason: None,
             stages: StageTimings::default(),
+            session: crate::traces::SessionRef::default(),
         });
     }
 
@@ -2591,6 +2608,7 @@ mod changelog_tests {
             audit_dup_block_count: 0, strip_toolcall_saved_tokens: 0, audit_observed: false,
             price: None, usage_estimated: false, seq: 0, effort: None, end_reason: None,
             stages: StageTimings::default(),
+            session: crate::traces::SessionRef::default(),
         };
         let logs = vec![
             // 正常请求
@@ -5897,6 +5915,7 @@ mod tests {
             upstream_model: None,
             end_reason: None,
             stages: StageTimings::default(),
+            session: crate::traces::SessionRef::default(),
         }
     }
 

@@ -517,6 +517,7 @@ mod tests {
             end_reason: None,
             // 阶段耗时与 rollup 统计无关 (只用于面板「时间去哪了」) → 未采集。
             stages: Default::default(),
+            session: Default::default(),
         }
     }
 

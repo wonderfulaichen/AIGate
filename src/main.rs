@@ -59,6 +59,7 @@ mod model_meta;
 mod recall;
 mod events;
 mod notify;
+mod traces;
 mod provider_catalog;
 mod presets;
 
@@ -776,6 +777,7 @@ fn main() {
         key_store: keys::KeyStore::new(&resolved_data_dir, &providers_snapshot),
         accounts: crate::accounts::AccountStore::new(&resolved_data_dir),
         login_sessions: Default::default(),
+        sessions: crate::traces::SessionTracker::new(),
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
         ),
