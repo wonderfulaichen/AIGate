@@ -295,6 +295,27 @@
     },
     get ttftHasData() { return this.ttftSummary.samples > 0; },
 
+    // ─── 时间去哪了 (窗口级, 方案 F 2026-10-13) ───
+    // 与单条记录详情的「时间去哪了」同口径、同配色 (waiting=灰 / reasoning=紫 / output=蓝 / tool=绿)。
+    // ⚠️ 平均用 **Σ毫秒 ÷ 样本数** 逐段求 (不是对各请求的速率取平均 —— 那会让长尾权重被抹平,
+    //    与 gen_speed_of「Σtoken÷Σ秒」同一条口径纪律)。
+    // ⚠️ 未采集的样本不计入样本数: 于是"有首字样本 100、有正文样本 60"是可能且如实的。
+    get stageSummary() { return (this.stats && this.stats.stage_summary) || {}; },
+    get stageHasData() { return (this.stageSummary.waiting_samples || 0) > 0; },
+    get stageWinRows() {
+      const s = this.stageSummary;
+      const mk = (k, key, sumKey, nKey, color) => {
+        const n = s[nKey] || 0;
+        return { k, label: t(key), n, avg: n > 0 ? Math.round((s[sumKey] || 0) / n) : null, color };
+      };
+      return [
+        mk('waiting', 'stage_waiting', 'waiting_sum_ms', 'waiting_samples', 'var(--muted)'),
+        mk('reasoning', 'stage_reasoning', 'reasoning_sum_ms', 'reasoning_samples', 'var(--secondary)'),
+        mk('output', 'stage_output', 'output_sum_ms', 'output_samples', 'var(--accent)'),
+        mk('tool', 'stage_tool_call', 'tool_call_sum_ms', 'tool_call_samples', 'var(--ok)'),
+      ];
+    },
+
     // ─── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ───
     //
     // 数据来自 `/admin/api/heatmap`（后端按日级 rollup 逐日补齐），前端只负责画格子。

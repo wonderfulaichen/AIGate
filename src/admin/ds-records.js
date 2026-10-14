@@ -48,6 +48,46 @@
       // 未知取值照实显示: 上游可能报出新枚举, 吞掉它就等于把线索埋了。
       return key ? t(key) : k;
     },
+    // ── 「时间去哪了」(方案 F, 2026-10-13) ──
+    // 四段耗时拆分。与「结束方式」同一口径: 未采集显示 "—", 不显示 0ms。
+    // 只有流式路径采集得到 (非流式/缓存回放/原生直通为整块 null)。
+    _stageSegs(log) {
+      const s = (log && log.stages) || {};
+      return [
+        { k: 'waiting', label: t('stage_waiting'), v: s.waiting_first_ms, color: 'var(--muted)' },
+        { k: 'reasoning', label: t('stage_reasoning'), v: s.reasoning_ms, color: 'var(--secondary)' },
+        { k: 'output', label: t('stage_output'), v: s.output_ms, color: 'var(--accent)' },
+        { k: 'tool', label: t('stage_tool_call'), v: s.tool_call_ms, color: 'var(--ok)' },
+      ];
+    },
+    hasStageData(log) {
+      return this._stageSegs(log).some(s => s.v != null);
+    },
+    // 堆叠比例条: 只把**已采集**的段按比例铺开。全部未采集时不画 (外层 x-show 已挡住)。
+    // 复用现有 `.prop-bar` 样式 (分段比例条, 与分析页同形), 不新增 CSS。
+    stageBarHtml(log) {
+      const segs = this._stageSegs(log).filter(s => s.v != null);
+      const total = segs.reduce((a, s) => a + Math.max(0, Number(s.v) || 0), 0);
+      if (!segs.length || total <= 0) return '<span class="empty"></span>';
+      return segs.map(s => {
+        const pct = Math.max(0, Number(s.v) || 0) / total * 100;
+        return '<span style="flex-grow:' + Math.max(pct, 0.5).toFixed(2) + ';background:' + s.color + '" title="'
+          + s.label + ' ' + fmtMs(s.v) + '"></span>';
+      }).join('');
+    },
+    stageLegendHtml(log) {
+      return this._stageSegs(log).map(s => {
+        // 未采集的段照实显示 "—" 并压暗 —— 不写 0, 也不隐藏 (隐藏会让用户以为该段不存在)。
+        const missing = s.v == null;
+        const val = missing ? '—' : fmtMs(s.v);
+        const style = 'display:inline-flex;align-items:center;gap:5px'
+          + (missing ? ';opacity:.55' : '');
+        const dot = 'width:7px;height:7px;border-radius:var(--rs);flex:0 0 7px;background:'
+          + (missing ? 'var(--muted)' : s.color);
+        return '<span style="' + style + '"><i style="' + dot + '"></i>' + s.label
+          + ' <b class="mono">' + val + '</b></span>';
+      }).join('');
+    },
     get filteredLogs() {
       let r = this.logs;
       if (this.logProviderFilter) r = r.filter(l=>l.provider===this.logProviderFilter);

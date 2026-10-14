@@ -38,5 +38,14 @@
             <span x-text="t('saved_trim')+' '+fmtT((selectedLog.saved_breakdown||{}).trim||0)"></span>
             <span x-text="t('saved_resp')+' '+fmtT((selectedLog.saved_breakdown||{}).resp_cache||0)"></span>
           </div>
-        </div></div><template x-if="selectedLog.error"><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.error')"></div><div class="log-detail-val" :style="'color:'+(selectedLog.status===499?'var(--warn-fg)':'var(--err)')" x-text="selectedLog.error"></div></div></template></div></div></div></div></template>
+        </div></div><template x-if="selectedLog.error"><div class="log-detail-item" style="grid-column:1/-1"><div class="log-detail-key" x-text="t('detail.error')"></div><div class="log-detail-val" :style="'color:'+(selectedLog.status===499?'var(--warn-fg)':'var(--err)')" x-text="selectedLog.error"></div></div></template>
+        <!-- ── 时间去哪了 (方案 F, 2026-10-13) ──
+             四段耗时拆分: 等首字 / 思考 / 正文 / 生成工具调用。
+             ⚠️ 未采集显示 "—" 而不是 0ms (非流式/缓存回放/原生直通拿不到这些时刻) ——
+             与项目一贯口径一致: 无数据不得伪装成测得为 0。 -->
+        <div class="log-detail-item" style="grid-column:1/-1" x-show="hasStageData(selectedLog)"><div class="log-detail-key" x-text="t('stages_title')"></div><div class="log-detail-val">
+          <div class="prop-bar" x-html="stageBarHtml(selectedLog)"></div>
+          <div class="txs tm" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:10px" x-html="stageLegendHtml(selectedLog)"></div>
+          <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('stages_note')"></div>
+        </div></div></div></div></div></div></template>
 </div>

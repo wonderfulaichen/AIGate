@@ -515,6 +515,8 @@ mod tests {
             first_token_ms: None,
             upstream_model: Some(upstream.to_string()),
             end_reason: None,
+            // 阶段耗时与 rollup 统计无关 (只用于面板「时间去哪了」) → 未采集。
+            stages: Default::default(),
         }
     }
 

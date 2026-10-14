@@ -48,6 +48,46 @@ pub struct RealtimeStats {
     pub timestamp: u64,
 }
 
+/// **一次流式请求的阶段耗时拆分** (2026-10-13 方案 F「时间去哪了」的数据源).
+///
+/// 为什么需要: 记录里只有 `latency_ms` (总耗时) 与 `first_token_ms` (首字延迟) 两个数,
+/// 回答不了"时间到底花在哪" —— 而这是反复排查「跑一会就停」「延迟 365s」「上游断流」
+/// 时最常问的问题。四段划分与 Astra 的链路追踪同口径 (可观测性对标):
+///
+///   · `waiting_first_ms`  = 请求开始 → 第一个增量内容 (排队 + 上游思考到首字)
+///   · `reasoning_ms`      = 首字 → 第一个**可见正文** (纯思考阶段; 无思考时为 0)
+///   · `output_ms`         = 正文产出阶段 (首段正文 → 结束)
+///   · `tool_call_ms`      = 生成工具调用参数阶段 (与正文可能交替, 按累计)
+///
+/// ⚠️ **未采集 ≠ 0**: 非流式 / 缓存回放 / 失败路径拿不到这些时刻, 整块为 `None`。
+/// 展示层必须显示 "—" 而不是 0 (本项目一贯口径: 无数据不得伪装成测得为 0)。
+/// 各段之和 **不要求**等于 `latency_ms` —— 上游可能在两段之间发空 delta / 保活帧,
+/// 强制自洽只会制造假数。
+#[derive(Debug, Clone, Copy, Default, Serialize, serde::Deserialize)]
+pub struct StageTimings {
+    #[serde(default)]
+    pub waiting_first_ms: Option<u64>,
+    #[serde(default)]
+    pub reasoning_ms: Option<u64>,
+    #[serde(default)]
+    pub output_ms: Option<u64>,
+    #[serde(default)]
+    pub tool_call_ms: Option<u64>,
+}
+
+impl StageTimings {
+    /// 是否**完全没有**采集到 (整块 None) —— 展示层据此显示 "—" 而非 0。
+    ///
+    /// 前端也用它做同样的判断 (字段全 null 即未采集), 这里保留给 Rust 侧与单测。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_absent(&self) -> bool {
+        self.waiting_first_ms.is_none()
+            && self.reasoning_ms.is_none()
+            && self.output_ms.is_none()
+            && self.tool_call_ms.is_none()
+    }
+}
+
 /// 单条请求日志.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RequestLog {
@@ -169,8 +209,7 @@ pub struct RequestLog {
     pub effort: Option<String>,
     /// 本轮流**为什么结束** —— 回答"输出跑到一半就停了, 是谁停的".
     ///
-    /// 取值分两类, 刻意不混成一类:
-    ///   · **上游报的 `finish_reason` 原值**: `stop` / `tool_calls` / `length` /
+    /// 取值分两类, 刻意不混成一类:    ///   · **上游报的 `finish_reason` 原值**: `stop` / `tool_calls` / `length` /
     ///     `content_filter` / … —— 即"上游明确交代了它为什么停";
     ///   · **网关侧的形态码** (上游没说或说不出时):
     ///     `done`  = 上游只发了 `[DONE]`, **从未给过 finish_reason** (它没说自己为什么停);
@@ -192,6 +231,12 @@ pub struct RequestLog {
     /// 前者是模型自己说完了, 后者是上游没交代就收了尾。
     #[serde(default)]
     pub end_reason: Option<String>,
+    /// **阶段耗时拆分** (2026-10-13 方案 F「时间去哪了」): 等首字 / 思考 / 正文 / 工具调用 四段。
+    ///
+    /// 旧记录无此字段 → `Default::default()` (整块 None = 未采集), 面板显示 "—"。
+    /// 只有**流式**路径采集得到; 非流式 / 缓存回放 / 失败路径为 None (见 [`StageTimings`])。
+    #[serde(default)]
+    pub stages: StageTimings,
 }
 
 #[inline]
@@ -648,6 +693,8 @@ pub async fn record_request(
         effort: None,
         // 失败路径不解析流内的结束信号, 未采集 → None (展示为 "—").
         end_reason: None,
+        // 失败路径无流式阶段时刻, 未采集 → 整块 None (展示为 "—", 不是 0).
+        stages: StageTimings::default(),
     };
     log_buffer.push(log).await;
 }
@@ -682,6 +729,8 @@ pub async fn record_request_with_tokens(
     effort: Option<String>,
     // 本轮流"为什么结束" (见 [`RequestLog::end_reason`]); None = 未采集.
     end_reason: Option<String>,
+    // 阶段耗时拆分 (见 [`StageTimings`]); 仅流式路径采集, 其余传 default (整块 None).
+    stages: StageTimings,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -708,6 +757,7 @@ pub async fn record_request_with_tokens(
         usage_estimated,
         effort,
         end_reason,
+        stages,
     )
     .await;
 }
@@ -744,6 +794,8 @@ pub async fn record_request_with_tokens_status(
     effort: Option<String>,
     // 本轮流"为什么结束" (见 [`RequestLog::end_reason`]); None = 未采集.
     end_reason: Option<String>,
+    // 阶段耗时拆分 (见 [`StageTimings`]); 仅流式路径采集, 其余传 default (整块 None).
+    stages: StageTimings,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -778,6 +830,7 @@ pub async fn record_request_with_tokens_status(
         seq: 0,
         effort,
         end_reason,
+        stages,
     };
     log_buffer.push(log).await;
 }
@@ -2247,6 +2300,7 @@ pub async fn api_mock(
             first_token_ms: None,
             upstream_model: None,
             end_reason: None,
+            stages: StageTimings::default(),
         });
     }
 
@@ -2290,6 +2344,7 @@ pub async fn api_mock(
             first_token_ms: None,
             upstream_model: None,
             end_reason: None,
+            stages: StageTimings::default(),
         });
     }
 
@@ -2535,6 +2590,7 @@ mod changelog_tests {
             audit_exempt_reasoning_tokens: 0, audit_dup_block_tokens: 0,
             audit_dup_block_count: 0, strip_toolcall_saved_tokens: 0, audit_observed: false,
             price: None, usage_estimated: false, seq: 0, effort: None, end_reason: None,
+            stages: StageTimings::default(),
         };
         let logs = vec![
             // 正常请求
@@ -3874,6 +3930,60 @@ pub struct UsageStats {
     pub window_minutes: f64,
     /// 当前统计窗口的可读来源说明.
     pub source_window: String,
+    /// **阶段耗时汇总** (2026-10-13 方案 F「时间去哪了」): 把每次流式请求的四段耗时
+    /// 聚合成可读的「时间花在哪」。未采集的样本不计入 (面板显示 "—" 而非 0)。
+    #[serde(default)]
+    pub stage_summary: StageSummary,
+}
+
+/// **阶段耗时汇总** (方案 F「时间去哪了」的窗口级数据源).
+///
+/// 为什么需要汇总而不只给单条: 用户问的是"这一段时间时间花在哪", 不是"这一条请求"。
+/// 各段用 **Σtoken/Σ秒** 同口径累加 (与 `gen_speed_of` 一致, 不对各请求速率取平均 ——
+/// 取平均会让长尾请求的权重被抹平, 正是 dsh 那个 2941 tok/s 假读数的成因)。
+///
+/// ⚠️ `samples` 只数**真的采集到该段**的请求; 未采集 (非流式/缓存回放/直通) 不计入。
+/// 于是"有首字样本 100 条、有正文样本 60 条"是可能且如实的 —— 不是每条流都有正文。
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct StageSummary {
+    /// 采集到首字时刻的样本数.
+    pub waiting_samples: usize,
+    /// Σ「等首字」毫秒.
+    pub waiting_sum_ms: u64,
+    /// 采集到思考/正文分界的样本数 (无思考的模型首块即正文, 思考段 = 0, 仍计入).
+    pub reasoning_samples: usize,
+    /// Σ「思考」毫秒.
+    pub reasoning_sum_ms: u64,
+    /// 采集到正文段的样本数.
+    pub output_samples: usize,
+    /// Σ「正文」毫秒.
+    pub output_sum_ms: u64,
+    /// 真的产出过工具调用的样本数.
+    pub tool_call_samples: usize,
+    /// Σ「生成工具调用」毫秒.
+    pub tool_call_sum_ms: u64,
+}
+
+impl StageSummary {
+    /// 并入一条记录的阶段耗时 (只并入采集到的段)。
+    pub fn absorb(&mut self, s: &crate::admin::StageTimings) {
+        if let Some(v) = s.waiting_first_ms {
+            self.waiting_samples += 1;
+            self.waiting_sum_ms += v as u64;
+        }
+        if let Some(v) = s.reasoning_ms {
+            self.reasoning_samples += 1;
+            self.reasoning_sum_ms += v as u64;
+        }
+        if let Some(v) = s.output_ms {
+            self.output_samples += 1;
+            self.output_sum_ms += v as u64;
+        }
+        if let Some(v) = s.tool_call_ms {
+            self.tool_call_samples += 1;
+            self.tool_call_sum_ms += v as u64;
+        }
+    }
 }
 
 fn stats_range_seconds(range: &str) -> Option<u64> {
@@ -4690,6 +4800,13 @@ fn compute_stats(
     // Top 5 模型
     let top_models: Vec<ModelStats> = per_model.iter().take(5).cloned().collect();
 
+    // 阶段耗时汇总 (方案 F「时间去哪了」): 逐条并入采集到的段,
+    // 未采集的记录 (非流式/缓存回放/原生直通) 不计入 → 面板显示 "—" 而非 0。
+    let mut stage_summary = StageSummary::default();
+    for log in logs {
+        stage_summary.absorb(&log.stages);
+    }
+
     UsageStats {
         total_requests: total,
         success_count,
@@ -4754,6 +4871,7 @@ fn compute_stats(
         window_end: now_ts(),
         window_minutes: 1.0,
         source_window: "当前运行日志窗口".to_string(),
+        stage_summary,
     }
 }
 
@@ -5625,6 +5743,49 @@ fn prev_bucket(ts: u64, granularity: &str) -> u64 {
 mod tests {
     use super::*;
 
+    /// **方案 F「时间去哪了」的口径契约**（2026-10-13）：未采集必须是 `None`，不是 0。
+    ///
+    /// 为什么钉住: 面板靠"四段全 None"决定显示 "—"；若未采集被写成 0，用户会读到
+    /// "等首字 0ms" 这种假数 —— 与本项目反复强调的「无数据不得伪装成测得为 0」冲突。
+    #[test]
+    fn stage_timings_absent_is_none_not_zero() {
+        let d = StageTimings::default();
+        assert!(d.is_absent(), "默认值应判为未采集");
+        assert_eq!(d.waiting_first_ms, None, "未采集是 None, 不是 Some(0)");
+        let one = StageTimings { waiting_first_ms: Some(5), ..Default::default() };
+        assert!(!one.is_absent(), "有一段被采集就不再是'未采集'");
+    }
+
+    /// 汇总只并入**采集到的**段 —— 未采集的样本不得虚增样本数。
+    #[test]
+    fn stage_summary_absorbs_only_collected_segments() {
+        let mut s = StageSummary::default();
+        // 一条完整流式: 四段俱全
+        s.absorb(&StageTimings {
+            waiting_first_ms: Some(100),
+            reasoning_ms: Some(200),
+            output_ms: Some(300),
+            tool_call_ms: Some(40),
+        });
+        // 一条非流式: 整块未采集 → 一条都不该并入
+        s.absorb(&StageTimings::default());
+        // 一条纯思考流: 有首字与思考, 但从未出正文 → output 段未采集
+        s.absorb(&StageTimings {
+            waiting_first_ms: Some(50),
+            reasoning_ms: Some(10),
+            output_ms: None,
+            tool_call_ms: None,
+        });
+        assert_eq!(s.waiting_samples, 2, "只有两条采集到首字时刻");
+        assert_eq!(s.waiting_sum_ms, 150);
+        assert_eq!(s.reasoning_samples, 2);
+        assert_eq!(s.reasoning_sum_ms, 210);
+        assert_eq!(s.output_samples, 1, "非流式那条不得计入正文样本");
+        assert_eq!(s.output_sum_ms, 300);
+        assert_eq!(s.tool_call_samples, 1);
+        assert_eq!(s.tool_call_sum_ms, 40);
+    }
+
     /// 「测试」与熔断的隔离契约（2026-10-12 用户报障后立，防回归）。
     ///
     /// 背景：用户报「一出错 buddy/workbuddy 就连接失败」，而 `unreachable` 来自测试按钮。
@@ -5735,6 +5896,7 @@ mod tests {
             first_token_ms: None,
             upstream_model: None,
             end_reason: None,
+            stages: StageTimings::default(),
         }
     }
 

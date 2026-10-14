@@ -90,6 +90,11 @@ const I18N = {
     // 措辞纪律: 缺字段 = **未采集** → 显示「—」, 不得猜成"正常结束"
     // (那等于把正待排查的停止洗白成正常, 用户就再也查不出来了).
     'detail.end_reason': '结束方式',
+    // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
+    'stages_title': '时间去哪了', 'stages_note': '四段耗时来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必等于总耗时 —— 上游可能在段间发空帧。',
+    'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
+    'stages_win_desc': '窗口内流式请求的平均阶段耗时 —— 看"时间主要花在哪一段"，而不是只看总延迟',
+    'stages_samples': '{0} 条采样', 'stages_n_samples': '{0} 条采样',
     'end_stop': '模型正常结束 (stop)', 'end_tool_calls': '转入工具调用 (tool_calls)',
     'end_length': '输出额度用尽被截断 (length)', 'end_content_filter': '上游按内容策略拦截 (content_filter)',
     'end_done': '上游只发了结束标记, 未说明原因', 'end_eof': '上游连接断开, 未发终止帧',
@@ -418,6 +423,10 @@ const I18N = {
     // Wording rule: a missing field means NOT COLLECTED, so it renders as an em dash —
     // never guess "finished normally" (that would launder an unexplained stop into a healthy one).
     'detail.end_reason': 'Ended by',
+    'stages_title': 'Where the time went', 'stages_note': 'Four-stage split is collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
+    'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
+    'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',
+    'stages_samples': '{0} sampled', 'stages_n_samples': '{0} sampled',
     'end_stop': 'Model finished normally (stop)', 'end_tool_calls': 'Tool call (tool_calls)',
     'end_length': 'Cut off by output limit (length)', 'end_content_filter': 'Blocked by upstream content policy (content_filter)',
     'end_done': 'Upstream sent only its end marker, gave no reason', 'end_eof': 'Upstream closed with no terminator',

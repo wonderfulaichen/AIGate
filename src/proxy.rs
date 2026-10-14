@@ -1022,6 +1022,8 @@ pub async fn chat_completions(
                         usage_missing(pt, ct), effort.clone(),
                         // 非流式路径未采集结束形态 (展示为 "—").
                         None,
+                        // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
+                        crate::admin::StageTimings::default(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1073,6 +1075,8 @@ pub async fn chat_completions(
                         usage_missing(pt, ct), effort.clone(),
                         // 非流式路径未采集结束形态 (展示为 "—").
                         None,
+                        // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
+                        crate::admin::StageTimings::default(),
                     ).await;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
@@ -1808,6 +1812,8 @@ async fn relay_native_passthrough(
             usage_missing(pt, ct), effort,
             // 非流式路径未采集结束形态 (展示为 "—").
             None,
+            // 原生直通非流式: 无流式阶段时刻 → 未采集.
+            crate::admin::StageTimings::default(),
         ).await;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
@@ -2112,6 +2118,9 @@ impl Stream for NativeTapStream {
                     // 结束原因: 本路径只在"按 max_output_tokens 截断"时能确定原因, 其余形态
                     // 未采集 (None = 未采集, 展示为 "—")。
                     let end_reason = self.truncated.then(|| "length".to_string());
+                    // 原生直通流式: 网关只透传字节、不解析阶段 → 未采集 (展示为 "—").
+                    // 这是**如实**的: 直通路径不拆解模型阶段, 给 0 会是假数。
+                    let stages = crate::admin::StageTimings::default();
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
@@ -2119,6 +2128,7 @@ impl Stream for NativeTapStream {
                             trunc_note,
                             usage_missing(prompt, output), effort_copy,
                             end_reason,
+                            stages,
                         ).await;
                     });
                 }
@@ -2605,8 +2615,7 @@ fn stream_response_with_tokens(
         error_closed: false,
         error_closed_by_upstream: false,
         stream_errored: false,
-        pending_error_sse: None,
-        finish_reason: None,
+        pending_error_sse: None,        finish_reason: None,
         clean_finish: false,
         last_finish_reason: None,
         saw_done: false,
@@ -2615,6 +2624,9 @@ fn stream_response_with_tokens(
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            stage_t_first_visible: None,
+            stage_t_last_data: None,
+            stage_tool_call_ms: 0,
             anthropic_conv: if anthropic && !responses {
                 Some(crate::anthropic::AnthropicStreamConv::new())
             } else {
@@ -2750,6 +2762,8 @@ async fn try_replay_cache(
         None,
         // 结束原因: 根本没打上游, 是本地缓存回放 —— 单列一码, 免得与"上游停的"混为一谈.
         Some("cache".to_string()),
+        // 缓存回放没有流式阶段时刻 → 未采集 (展示为 "—", 不是 0).
+        crate::admin::StageTimings::default(),
     )
     .await;
     Some(serve_cached(&cached))
@@ -2865,6 +2879,19 @@ struct TokenStream {
     /// 首 token 时刻 (Instant): 第一次收到增量文本内容 (content/reasoning) 的时间,
     /// 用于计算首 token 延迟 = 此刻 - 请求开始. 仅流式吐字时记录.
     first_token_at: Option<std::time::Instant>,
+    /// **阶段耗时采集** (2026-10-13 方案 F「时间去哪了」): 四个关键时刻, 流结束时合成
+    /// [`crate::admin::StageTimings`]。只存 `Instant` 取值 (纳秒级、零 I/O), 不给热路径加负担。
+    ///
+    /// - `t_reasoning_start` 首字时刻 (与 `first_token_at` 同期, 单独存是为了可读)
+    /// - `t_first_visible`   第一段**可见正文**到达时刻 (思考→正文的分界)
+    /// - `t_output_end`      最后一段正文/工具参数到达时刻 (用最后数据块近似)
+    /// - `tool_call_ms_acc`  生成工具参数的累计毫秒 (与正文可能交替, 见字段说明)
+    ///
+    /// ⚠️ 各段之和**不要求**等于 `latency_ms`: 上游可能在两段之间发空 delta / 保活帧,
+    /// 强制自洽只会制造假数 (本项目一贯口径: 宁可留白, 不可编圆)。
+    stage_t_first_visible: Option<std::time::Instant>,
+    stage_t_last_data: Option<std::time::Instant>,
+    stage_tool_call_ms: u64,
     /// Anthropic /messages 模式: 非 None 时, 上游 SSE (event:/data: 行) 经此转换器
     /// 翻译为 OpenAI 格式 payload 再走统一处理 (usage/loop_guard/归一化发射全部复用).
     anthropic_conv: Option<crate::anthropic::AnthropicStreamConv>,
@@ -3228,6 +3255,9 @@ impl TokenStream {
                     // (半截 arguments JSON 无法安全拼接, 续写会产生损坏的工具调用).
                     if delta.get("tool_calls").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
                         self.emitted_tool_calls = true;
+                        // 阶段耗时采集 (方案 F「时间去哪了」): 本块含工具调用参数增量 →
+                        // 记"最后数据块"时刻, 供收尾时算「生成工具调用」段 (与正文交替时按最后一块近似)。
+                        self.stage_t_last_data = Some(std::time::Instant::now());
                         // 记下本流**实际产出的工具名**，供收尾时判断"模型调了调用方没声明的工具"
                         // （dsh-our-free-model 明确处理过这个假成功：一轮只产出调用方从未声明的
                         //  工具调用时，过去以干净的空成功收尾，现在如实报告；它举的场景是压缩器
@@ -3246,6 +3276,24 @@ impl TokenStream {
                     // 首次出现增量文本即记录首 token 时刻 (用于首 token 延迟 / 纯生成速度计算).
                     if has_token && self.first_token_at.is_none() {
                         self.first_token_at = Some(std::time::Instant::now());
+                    }
+                    // ── 阶段耗时采集 (2026-10-13 方案 F「时间去哪了」) ──
+                    // 三行都是纳秒级 `Instant` 取值 + 一次 Option 判断, 零 I/O、无锁,
+                    // 不给转发热路径加可测开销 (与 first_token_at 同量级)。
+                    //
+                    // ① 第一段**可见正文** → 思考/正文分界 (此前到的全是 reasoning)。
+                    //    无思考的模型首块即正文, 此时 reasoning 段为 0 (不是"未采集")。
+                    // ② 任何带内容的块都刷新"最后数据块"时刻 (含工具参数增量)。
+                    let has_visible = delta
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| !s.is_empty())
+                        .unwrap_or(false);
+                    if has_visible {
+                        if self.stage_t_first_visible.is_none() {
+                            self.stage_t_first_visible = Some(std::time::Instant::now());
+                        }
+                        self.stage_t_last_data = Some(std::time::Instant::now());
                     }
                 }
                 // 诊断: 捕获非正常的 finish_reason (error/length/content_filter 等).
@@ -3341,6 +3389,49 @@ impl TokenStream {
         Some("eof".to_string())
     }
 
+    /// **合成阶段耗时** (2026-10-13 方案 F「时间去哪了」).
+    ///
+    /// 四段划分与 Astra 链路追踪同口径 (可观测性对标):
+    ///   `waiting_first` 等首字 · `reasoning` 思考 · `output` 正文 · `tool_call` 生成工具调用
+    ///
+    /// ⚠️ **未采集 ≠ 0**: `first_token_at` 为 None (非流式/失败/缓存回放) 时整块返回
+    /// default (四段全 None), 面板显示 "—"。本项目口径: 无数据不得伪装成测得为 0。
+    ///
+    /// ⚠️ 各段之和**不要求**等于 `latency_ms` —— 上游可能在两段之间发空 delta / 保活帧,
+    /// 强制自洽只会制造假数。`tool_call` 段刻意记 0 而非 None 当**确有工具调用但无独立
+    /// 计时**时不好区分, 故用「有没有工具调用」决定它是 0 还是 None (见下).
+    fn stage_timings(&self) -> crate::admin::StageTimings {
+        let Some(t0) = self.first_token_at else {
+            // 完全没采集到首字时刻 → 四段全 None (未采集), 不是 0.
+            return crate::admin::StageTimings::default();
+        };
+        let waiting = Some(t0.elapsed().as_millis() as u64);
+        // 思考段 = 首字 → 第一段可见正文。
+        //
+        // ⚠️ **没有可见正文时是 None, 不是 0**: 该段从未结束 (缺"正文开始"这个边界),
+        // 时长按定义就是未定义。报 0 会变成"假精确" —— 纯思考流 (finish_reason=length、
+        // 全程 reasoning) 实际把整段时间都花在思考上, 却显示"思考 0ms"。
+        // 反过来, 无思考的模型首块即正文 → `first_visible` 与 `first_token` 几乎同期,
+        // 于是测得一个真实的≈0 (那才是"确实没思考"), 与本项目"无数据 ≠ 0"的口径一致。
+        let reasoning = self
+            .stage_t_first_visible
+            .map(|t1| t1.saturating_duration_since(t0).as_millis() as u64);
+        // 正文段 = 第一段正文 → 最后数据块; 从未有正文 → None (未采集, 不是 0).
+        let output = match (self.stage_t_first_visible, self.stage_t_last_data) {
+            (Some(a), Some(b)) => Some(b.saturating_duration_since(a).as_millis() as u64),
+            _ => None,
+        };
+        // 工具调用段: 只有**真的产出过工具调用**才给值 (0 = 有调用但无独立计时;
+        // 没有调用时给 None, 免得面板显示一个没有意义的 "0ms")。
+        let tool_call = self.emitted_tool_calls.then_some(self.stage_tool_call_ms);
+        crate::admin::StageTimings {
+            waiting_first_ms: waiting,
+            reasoning_ms: reasoning,
+            output_ms: output,
+            tool_call_ms: tool_call,
+        }
+    }
+
     /// 流异常终止时写日志: 保留已解析到的 token / 首 token 延迟, 并按真实失败状态码记录.
     ///
     /// 原实现在这两条分支上用 `record_request`, 一律记 status=200 且 token 全 0 ——
@@ -3362,6 +3453,9 @@ impl TokenStream {
             .map(|t| t.duration_since(ld.start).as_millis() as u64);
         // 结束原因也要在 spawn 前取成 owned (self 不可跨线程借用).
         let end_reason = self.end_reason();
+        // 阶段耗时同理: 失败路径也可能已经产出了内容 (上游中途断流最常见),
+        // 此刻采集到的阶段时刻照样有效 —— 用户正是靠它判断"时间花在哪"。
+        let stages = self.stage_timings();
         tokio::spawn(async move {
             let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
@@ -3388,6 +3482,7 @@ impl TokenStream {
                 Some(err),
                 usage_estimated, effort,
                 end_reason,
+                stages,
             )
             .await;
         });
@@ -3811,6 +3906,8 @@ impl Stream for TokenStream {
                             let effort = ld.effort.clone();
                             // 结束原因同上必须在 async 块外取 (this 是 &mut).
                             let end_reason = this.end_reason();
+                            // 阶段耗时 (方案 F「时间去哪了」): 同样在 spawn 前取 owned.
+                            let stages = this.stage_timings();
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3820,6 +3917,7 @@ impl Stream for TokenStream {
                                     err_for_log,
                                     usage_estimated, effort,
                                     end_reason,
+                                    stages,
                                 ).await;
                             });
                         }
@@ -3969,6 +4067,8 @@ impl Drop for TokenStream {
         } else {
             self.end_reason()
         };
+        // 阶段耗时 (方案 F): Drop 路径同样可能已经产出了内容, 此刻采集照样有效。
+        let stages = self.stage_timings();
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -3978,6 +4078,7 @@ impl Drop for TokenStream {
                 if err.is_empty() { None } else { Some(err) },
                 usage_estimated, effort,
                 end_reason,
+                stages,
             ).await;
         });
     }
@@ -6641,6 +6742,7 @@ mod tests {
             last_finish_reason: None, saw_done: false, errored_msg: None,
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
             out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
+            stage_t_first_visible: None, stage_t_last_data: None, stage_tool_call_ms: 0,
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
@@ -6761,6 +6863,9 @@ mod tests {
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            stage_t_first_visible: None,
+            stage_t_last_data: None,
+            stage_tool_call_ms: 0,
             anthropic_conv: None,
             responses_conv: None,
             cont_ctx: None,
@@ -6831,6 +6936,7 @@ mod tests {
             last_finish_reason: None, saw_done: false,
             keepalive: None, recent_lines: std::collections::VecDeque::new(),
             out_buf: Vec::new(), line_buf: Vec::new(), first_token_at: None,
+            stage_t_first_visible: None, stage_t_last_data: None, stage_tool_call_ms: 0,
             anthropic_conv: None, responses_conv: None, cont_ctx: None, cont_left: 0,
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
@@ -6958,6 +7064,9 @@ mod tests {
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            stage_t_first_visible: None,
+            stage_t_last_data: None,
+            stage_tool_call_ms: 0,
             anthropic_conv: None,
             responses_conv: None,
             cont_ctx: None,
@@ -7053,6 +7162,9 @@ mod tests {
             out_buf: Vec::new(),
             line_buf: Vec::new(),
             first_token_at: None,
+            stage_t_first_visible: None,
+            stage_t_last_data: None,
+            stage_tool_call_ms: 0,
             anthropic_conv: None,
             responses_conv: None,
             recent_lines: std::collections::VecDeque::new(),
