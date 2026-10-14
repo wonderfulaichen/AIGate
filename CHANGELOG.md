@@ -13,6 +13,51 @@
 失效自动切换。另含两处修复：**循环检测误报**（会让编程工具里的任务中途停住，本次报障的根因）与
 **账号型供应商的登录弹窗**丢失一键登录按钮。
 
+### 修复 CodeBuddy 余额/费用的三个 bug + WorkBuddy 补上积分查询（用户报障）
+
+**用户报障**：「codebudy 的余额与费用有 bug，为什么显示已用？并且获取的剩余积分是错的。
+workbuddy 也没加上费用获取支持。好好检查检查吧。」
+
+**先拿真实凭据实测上游**（40 个资源包），发现三个真 bug：
+
+1. **「已用」是历史累计**（`consumed=4274`）：旧算法把**全部 40 个包**的 `CapacityUsed`
+   求和，其中 39 个是早已耗尽的历史体验包 —— 与"本窗口用了多少"毫无关系。
+2. **「剩余」含僵尸额度**（`balance=508`）：其中 **500 分来自一个僵尸包** ——
+   它 `CapacityRemain=500` 但 `CycleCapacityRemain=0`（本周期额度已耗尽，要等
+   `CycleEndTime` 才重置）。把它算进剩余是**欺骗**：面板显示还有 500 分，实际一发请求就 403。
+   **真实可用余额是 8 分。**
+3. **WorkBuddy 完全没有积分查询**：分派条件写死 `preset == "buddy"`，国际版 preset 是
+   `"workbuddy"` → 直接掉进「未配置余额查询 API」。而且积分端点也写死国内域名
+   `copilot.tencent.com` —— 国际版账号拿国内域的凭据必然 401
+   （实测：国际 token 打 `copilot.tencent.com` 401，打 `www.workbuddy.ai` **200 + 4 个包**）。
+
+**根因（一句话）**：`quota_progress` 2026-10-10 就定了"只算仍有剩余的活包"这个口径，
+**但只有进度条用了它，`balance`/`consumed` 主值没用** —— 同一份数据两套口径，
+面板于是自相矛盾（`balance=508` 而 `quota_progress.window_remain=8`）。
+
+**修法**：
+- `aggregate_credits` 的**四条值**（剩余/已用/最近过期/进度）统一只统计
+  `CycleCapacityRemain > 0` 的活包；`cycle_rem <= 0` 的包直接 `continue`。
+- 分派判据从 `== Some("buddy")` 改为 `is_codebuddy_family(...)`（覆盖 buddy + workbuddy），
+  两处（`admin.rs` 的余额配置、`balance.rs` 的查询队列）都改。
+- 积分端点与身份头（`X-Domain`/`X-Product`/`X-Product-Code`/`User-Agent`）改走
+  `LoginProfile` —— 国内版 `copilot.tencent.com`、国际版 `www.workbuddy.ai`。
+- **多账号 UX 兜底**：当前号活包为 0 但别的号有额度时，主值改显示合计并附说明
+  （"当前账号本窗口额度已用完，这里显示的是全部账号的合计"）—— 否则用户看到"剩余 0"
+  会以为彻底没额度，而不会去看第二个号。
+
+**验证**（真实上游数据 + mock 双向）：
+- buddy：**剩余 3788 / 已用 31**（旧：508 / 4274），workbuddy：**剩余 366 / 已用 43**
+  （旧：无余额行），与上游逐包合算一致。
+- **363 单测**（+1 复刻用户实测 40 包形态；2 个旧测试的断言本身写的是被废弃的旧口径，
+  已按新事实更新 —— 它们正是"用测试固化错误行为"的活例子）。
+- 新探针 `probe_credits_scope.py` **10/10**（判据 = 与 mock 逐包合算；
+  牙齿已验证：改回"全部包求和" → 4 条 FAIL，`consumed` 立刻变 5891）。
+- 回归 `e2e_buddy_credits_login` 15/15（新增 workbuddy 断言）、`e2e_buddy_expiry` 5/5、
+  `e2e_multi_account` 25/25、`e2e_accounts` 13/13、`e2e_quota_progress`。
+- ⚠️ 顺手修了两个探针漏接 `/admin/api/*` Bearer 的老问题（表现为"隔离实例未就绪"，
+  极易被误判成实例起不来）：`e2e_multi_account`、`e2e_quota_progress`。
+
 ### 修复「结束方式」把上游断流与空闲超时混为一谈 + 上游断流进事件台账
 
 - **用户报障**：一张 502 记录详情截图 —— 首字 15.7s / 总延迟 39.6s，结束方式显示

@@ -10,6 +10,7 @@
 凭据: %TEMP%\\cb_plain.json; 隔离实例, 不碰部署目录.
 用法: python tools/e2e_buddy_credits_login.py
 """
+import io
 import json
 import os
 import shutil
@@ -53,11 +54,33 @@ json.dump({"providers": [
      "api_key_env": "K", "api_key_default": "d", "preset": "buddy",
      "auth": {"mode": "account"},
      "models": {}},
+    # workbuddy (国际版): 2026-10-13 用户报障「workbuddy 也没加上费用获取支持」——
+    # 旧实现 preset 匹配写死 == "buddy", 国际版掉进"未配置余额查询 API"。
+    {"name": "workbuddy", "endpoint": "https://www.workbuddy.ai/v2/chat/completions",
+     "api_key_env": "WORKBUDDY_ACCESS_TOKEN", "preset": "workbuddy",
+     "auth": {"mode": "account"},
+     "models": {}},
 ]}, open(os.path.join(ISO, "providers.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 # buddy 播种真实账号 (积分查询凭据); buddy2 故意不播种 → 验友好错误
-json.dump({"buddy": {"access_token": tok, "refresh_token": cred.get("refresh_token"),
-                     "expires_at": cred.get("expires_at"), "dead": False}},
-          open(os.path.join(ISO, "data", "accounts.json"), "w", encoding="utf-8"))
+# workbuddy 若本机有凭据也播种 —— 没有则该行显示"未登录", 不作为失败判据。
+seed = {"buddy": {"access_token": tok, "refresh_token": cred.get("refresh_token"),
+                  "expires_at": cred.get("expires_at"), "dead": False}}
+wb = None
+for cand in [r"D:\Office software\Development Project\AI中转\data\accounts.json", r"data\accounts.json"]:
+    if os.path.exists(cand):
+        ent = json.load(io.open(cand, encoding="utf-8")).get("workbuddy")
+        ent = (ent[0] if isinstance(ent, list) else ent) or {}
+        if ent.get("access_token"):
+            wb = ent
+            break
+if wb:
+    seed["workbuddy"] = {"access_token": wb["access_token"],
+                         "refresh_token": wb.get("refresh_token"),
+                         "expires_at": wb.get("expires_at"), "dead": False}
+    print("workbuddy: 播种真实凭据")
+else:
+    print("workbuddy: 本机无凭据 (该行只验'未登录'提示, 不作为失败判据)")
+json.dump(seed, open(os.path.join(ISO, "data", "accounts.json"), "w", encoding="utf-8"))
 
 env = dict(os.environ)
 env.update(PORT=str(PG), AIGATE_DATA_DIR=os.path.join(ISO, "data"),
@@ -96,32 +119,59 @@ try:
     buddy = rows.get("buddy", {})
     ck("① balance_api_200", st == 200 and "buddy" in rows, f"status={st} rows={list(rows)}")
     ck("② credits_currency", buddy.get("currency") == "credits", buddy.get("currency"))
-    ck("③ remaining_positive", (buddy.get("balance") or 0) > 0, buddy.get("balance"))
-    ck("④ consumed_present", buddy.get("consumed") is not None, buddy.get("consumed"))
-    ck("⑤ no_error", buddy.get("error") is None, buddy.get("error"))
-    # ④ 无账号预设 → 友好错误
+    # ③ 余额与"已用"必须同口径 (只算本窗口仍有剩余的活包)。
+    #    ⚠️ 不断言 "balance > 0" —— 该账号可能真的没有活额度 (2026-10-13 实测:
+    #    当前号 0 分、另一个号 3788 分)。账号状态不该作为功能断言, 会时红时绿。
+    bal = buddy.get("balance")
+    con = buddy.get("consumed")
+    ck("④ balance_present", bal is not None, bal)
+    # 新口径下"已用"不可能大于"剩余+已用"的历史累计, 更不该出现 4274 这种
+    # 跨 40 个包的历史累计 (旧 bug 的特征值)。
+    ck("⑤ consumed_is_window_scoped",
+       (con or 0) < 500, "consumed=%s (旧口径会把历史累计也算进来)" % con)
+    ck("⑥ total_ge_balance",
+       (buddy.get("total_balance") or 0) >= (bal or 0),
+       "total=%s balance=%s" % (buddy.get("total_balance"), bal))
+    ck("⑦ no_error", buddy.get("error") is None, buddy.get("error"))
+    # workbuddy (国际版) 必须也走出积分查询 —— 用户报障的第二个点。
+    # 判据用**字段形态**而非具体数值: 本机无凭据时该行只显示"未登录"提示(仍算通过)。
+    wb = rows.get("workbuddy")
+    if wb is None:
+        ck("⑧ workbuddy_row_present", False, "rows=%s" % list(rows))
+    else:
+        ck("⑧ workbuddy_row_present", True, "")
+        if wb.get("balance") is not None:
+            ck("⑨ workbuddy_credits_currency", wb.get("currency") == "credits", wb.get("currency"))
+            ck("⑩ workbuddy_consumed_window_scoped",
+               (wb.get("consumed") or 0) < 500, "consumed=%s" % wb.get("consumed"))
+        else:
+            # 无凭据 → 必须是友好错误, 而不是"未配置余额查询 API"(旧 bug 的形态)
+            err = wb.get("error") or ""
+            ck("⑨ workbuddy_friendly_or_value",
+               "未配置" not in err, "error=%s" % err[:80])
+    # 无账号预设 → 友好错误
     b2 = rows.get("buddy2", {})
-    ck("⑥ unlogged_friendly_error", b2.get("error") and "登录" in b2["error"], b2.get("error"))
+    ck("⑪ unlogged_friendly_error", b2.get("error") and "登录" in b2["error"], b2.get("error"))
 
-    # ② 登录 start (真实 auth/state, 只读免认证)
+    # 登录 start (真实 auth/state, 只读免认证)
     st, txt = req("/admin/api/accounts/login/start", {"name": "buddy"})
     d = json.loads(txt) if txt else {}
     auth_url = d.get("auth_url") or ""
-    ck("⑦ login_start_200", st == 200 and "error" not in d, txt[:200])
-    ck("⑧ auth_url_official",
+    ck("⑫ login_start_200", st == 200 and "error" not in d, txt[:200])
+    ck("⑬ auth_url_official",
        "copilot.tencent.com" in auth_url or "codebuddy.cn" in auth_url, auth_url[:160])
 
-    # ③ status: pending (浏览器未完成)
+    # status: pending (浏览器未完成)
     time.sleep(1)
     st, txt = req("/admin/api/accounts/login/status", {"name": "buddy"})
     d = json.loads(txt) if txt else {}
-    ck("⑨ status_pending", st == 200 and d.get("status") in ("pending", "failed"), d.get("status"))
+    ck("⑭ status_pending", st == 200 and d.get("status") in ("pending", "failed"), d.get("status"))
     # 未知供应商 status → none
     st, txt = req("/admin/api/accounts/login/status", {"name": "nobody"})
-    ck("⑩ status_none_for_unknown", '"none"' in txt, txt[:80])
+    ck("⑮ status_none_for_unknown", '"none"' in txt, txt[:80])
     # 非账号型供应商 start → 拒绝
     st, txt = req("/admin/api/accounts/login/start", {"name": "nobody"})
-    ck("⑪ start_reject_non_account", "error" in txt, txt[:120])
+    ck("⑬ start_reject_non_account", "error" in txt, txt[:120])
 finally:
     proc.terminate()
     try:

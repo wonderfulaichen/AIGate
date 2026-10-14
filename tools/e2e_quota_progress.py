@@ -49,8 +49,22 @@ def ck(name, ok, detail=""):
     print(("  OK   " if ok else "  !!   ") + name + (("  —— " + str(detail)) if detail else ""))
 
 
+def _admin_token():
+    """读隔离实例的 admin token。**每次调用都重读** —— 实例启动时才生成
+    data/.admin_token, 导入期读一次会拿到空 (e2e_accounts.py 踩过的坑)。"""
+    try:
+        return io.open(os.path.join(ISO, "data", ".admin_token"), encoding="utf-8").read().strip()
+    except Exception:
+        return ""
+
+
 def get(path, timeout=25):
-    with urllib.request.urlopen("http://127.0.0.1:%d%s" % (PG, path), timeout=timeout) as r:
+    """打 /admin/api/* —— 2026-10-13 起要 Bearer (旧版漏了, 表现为'隔离实例未就绪')。"""
+    tok = _admin_token()
+    req = urllib.request.Request("http://127.0.0.1:%d%s" % (PG, path))
+    if tok:
+        req.add_header("Authorization", "Bearer " + tok)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status, json.loads(r.read().decode("utf-8"))
 
 
@@ -117,13 +131,29 @@ try:
     ck("① balance_api_200", st == 200 and "buddy" in rows, "rows=%s" % list(rows))
     buddy = rows.get("buddy") or {}
 
+    # ② 先取**原始响应**判断"当前账号有没有活包" —— 进度字段的期望值取决于它。
+    #    (2026-10-13 起新口径: 没有活包 → 进度为 None。旧假设"buddy 一定有进度"
+    #     在账号活包为 0 时会假失败, 而那不是 bug。)
+    arr0 = buddy_raw(tok)
+    live0 = [p for p in (arr0 or []) if float(p.get("CycleCapacityRemain") or 0) > 0]
     prog = buddy.get("quota_progress")
-    ck("② quota_progress 字段存在", prog is not None,
-       "None=上游未给窗口字段或查询失败 (error=%s)" % buddy.get("error"))
-    if not prog:
+    if live0:
+        ck("② 有活包 → 必须有进度", prog is not None,
+           "活跃包 %d 个但进度 None (error=%s)" % (len(live0), buddy.get("error")))
+    else:
+        ck("②b 无活包 → 进度必须是 None (不是 0%)", prog is None,
+           "活跃包 0 个却给了进度: %s" % prog)
+        print("  (当前账号本窗口没有可用额度 —— 进度判据 ③~⑦ 跳过, 但 balance/consumed 口径照验)")
+        # 无活包时余额必须是 0 且不得出现历史累计那种数字
+        ck("②c 无活包 → balance == 0", (buddy.get("balance") or 0) == 0, buddy.get("balance"))
+        ck("②d 无活包 → consumed 不得是历史累计",
+           (buddy.get("consumed") or 0) < 500, buddy.get("consumed"))
         print("\n=== 结果 ===")
-        print("  FAIL —— 未拿到进度 (若账户确实没有带窗口字段的积分包, 请先确认上游响应)")
-        sys.exit(1)
+        if FAIL:
+            print("  FAIL —— %d 条未通过" % len(FAIL))
+            sys.exit(1)
+        print("  PASS —— 无活包时口径诚实 (余额 0 / 无进度 / 已用不是历史累计)")
+        sys.exit(0)
 
     pct = prog.get("used_pct")
     ck("③ used_pct ∈ [0,100]", pct is not None and 0.0 <= float(pct) <= 100.0, pct)
@@ -135,8 +165,8 @@ try:
        "%.2f + %.2f vs %.2f" % (used, rem, size))
 
     # ⑤⑥ 最强判据: 当场合算原始响应, 与网关输出逐字段对照
-    arr = buddy_raw(tok)
-    live = [p for p in (arr or []) if float(p.get("CycleCapacityRemain") or 0) > 0]
+    arr = arr0
+    live = live0
     exp_size = sum(float(p.get("CycleCapacitySize") or p.get("CapacitySize") or 0) for p in live)
     exp_used = sum(float(p.get("CycleCapacityUsed") or p.get("CapacityUsed") or 0) for p in live)
     exp_rem = sum(float(p.get("CycleCapacityRemain") or 0) for p in live)

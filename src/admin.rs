@@ -2684,11 +2684,17 @@ pub async fn api_balance(
     let providers = registry.providers();
     
     // 构建供应商余额配置: 配了 balance_endpoint 的走通用查询;
-    // 内置 buddy 预设无 endpoint 也纳入 (CodeBuddy 积分端点, 凭据走账号).
+    // 内置 buddy/workbuddy 预设无 endpoint 也纳入 (CodeBuddy 积分端点, 凭据走账号).
+    //
+    // ⚠️ 判据必须用 `is_codebuddy_family`（覆盖 buddy **和 workbuddy**），
+    // 不能写死 `== Some("buddy")` —— 2026-10-13 用户报障「workbuddy 也没加上费用获取支持」，
+    // 根因就是那个字面量：国际版 preset 是 "workbuddy"，不匹配 → 直接掉进
+    // “未配置余额查询 API”，面板永远显示 —。
     let mut provider_configs = std::collections::HashMap::new();
     for config in providers {
-        let is_buddy_preset = config.preset.as_deref() == Some("buddy");
-        if config.balance_endpoint.is_none() && !is_buddy_preset {
+        if config.balance_endpoint.is_none()
+            && !crate::presets::is_codebuddy_family(config.preset.as_deref())
+        {
             continue;
         }
         // 获取 API key (面板值 > 环境变量 > 默认值; buddy 账号型由查询器走 accounts.json)

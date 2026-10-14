@@ -18,8 +18,6 @@ use tracing::{info, warn};
 pub struct BalanceInfo {
     /// 供应商名称.
     pub provider: String,
-    /// 余额 (元).
-    pub balance: Option<f64>,
     /// 货币单位 (CNY/USD/等).
     pub currency: String,
     /// 最后更新时间戳 (秒).
@@ -31,10 +29,20 @@ pub struct BalanceInfo {
     /// 是否配置了余额查询 API.
     pub has_api: bool,
     /// 已消耗量 (积分制供应商的服务端权威统计; 无消耗概念的供应商为 None).
+    ///
+    /// ⚠️ **口径 = 本窗口已用**（`Σ CycleCapacityUsed`，只算仍有剩余的活包），
+    /// **不是**历史累计消耗。2026-10-13 用户报障「为什么显示已用？」——
+    /// 旧实现把 40 个包的 `CapacityUsed` 全加起来（含 39 个早已耗尽的历史体验包），
+    /// 得出 4274 这个与当前窗口无关的数字。详见 [`aggregate_credits`]。
     #[serde(default)]
     pub consumed: Option<f64>,
-    /// **最近会过期**的那批积分的到期时刻 (Unix 秒; 仅积分制供应商).
+    /// **可用剩余积分** (仅积分制).
     ///
+    /// ⚠️ 只统计 `CycleCapacityRemain > 0` 的**活包**。旧实现把僵尸包
+    /// （`CapacityRemain=500` 但本周期已耗尽）也算进去 → 面板显示"还有 508 分"，
+    /// 实际可用只有 8 分，一发请求就 403。详见 [`aggregate_credits`]。
+    #[serde(default)]
+    pub balance: Option<f64>,
     /// **最近会重置的配额窗口**的结束时刻 (Unix 秒; 仅积分制供应商).
     ///
     /// 取「窗口内仍有剩余 (`CycleCapacityRemain > 0`) 的包里 `CycleEndTime` 最早者」——
@@ -197,57 +205,71 @@ pub const QUOTA_LOW_PCT: f64 = 80.0;
 /// "十几年后到期"这种无用且误导的数字. `CycleEndTime` 才是窗口结束时刻
 /// (`CapacityType=4` 为自然月末 "2026-10-31 23:59:59"; `CapacityType=1` 为各自周期末).
 ///
-/// ⚠️ **进度只算「仍有剩余」的包**: 见 [`QuotaProgress` 的口径说明. 2026-10-10 实测
-/// 34 个包横跨 34 个窗口, 全加会算出 82.5% (把已耗尽的体验包/活动包算进去).
+/// 聚合积分资源包 → `(可用剩余, 本窗口已用, 最近过期窗口, 本窗口进度)`.
+///
+/// ⚠️ **四条值全部只统计「本窗口仍有剩余」的包** (`CycleCapacityRemain > 0`)。
+///
+/// 为什么必须这样（2026-10-13 用户报障「为什么显示已用？并且获取的剩余积分是错的」）：
+/// 实测该账号有 **40 个包**，其中 39 个 `CycleCapacityRemain = 0`（已耗尽的历史体验包/活动包）。
+/// 旧实现把 `CapacityRemain`/`CapacityUsed` 跨**全部**包求和，于是：
+///   ① 「已用 4274」—— 那是过去几个月累计消耗的总和，与"这个窗口用了多少"无关，
+///      用户看到只会莫名其妙（这正是本次报障）；
+///   ② 「剩余 508」—— 其中 **500 分来自一个僵尸包**：它 `CapacityRemain=500` 但
+///      `CycleCapacityRemain=0`（本周期额度已耗尽，要等 `CycleEndTime` 才重置）。
+///      把它算进剩余是**欺骗**：面板显示还有 500 分，实际一发请求就 403。
+/// 真实可用余额是**活包**的 `CycleCapacityRemain` 之和（该账号 = 8）。
+///
+/// 这与 `quota_progress` 的口径完全一致（那条 2026-10-10 就已定下：只看还有额度的包），
+/// 此前只有进度条用了这个口径、主值没用 —— 口径不一致正是本 bug 的根。
 pub fn aggregate_credits(arr: &[serde_json::Value]) -> (f64, f64, Option<(u64, f64)>, Option<QuotaProgress>) {
     let (mut remain, mut used) = (0f64, 0f64);
     let mut expiring: Option<(u64, f64)> = None;
-    // 只统计"仍有剩余"的包 (与 expiring 的筛选口径一致).
+    // 本窗口进度累加器 (与 remain/used 同一批包).
     let mut win_size = 0f64;
     let mut win_used = 0f64;
     let mut win_remain = 0f64;
     let mut win_pkgs = 0usize;
     for pkg in arr {
-        let rem = pkg
-            .get("CapacityRemain")
-            .and_then(|x| x.as_f64())
-            .unwrap_or(0.0);
-        remain += rem;
-        used += pkg
-            .get("CapacityUsed")
-            .and_then(|x| x.as_f64())
-            .unwrap_or(0.0);
         // 窗口内剩余: 优先 Cycle* (CapacityRemain 是跨周期累计, 不能判断"这窗口还剩多少").
         let cycle_rem = pkg
             .get("CycleCapacityRemain")
             .or_else(|| pkg.get("CapacityRemain"))
             .and_then(|x| x.as_f64())
             .unwrap_or(0.0);
-        if cycle_rem > 0.0 {
-            // CycleEndTime 是字符串 "YYYY-MM-DD HH:MM:SS" (不是时间戳).
-            if let Some(secs) = pkg
-                .get("CycleEndTime")
-                .and_then(|x| x.as_str())
-                .and_then(parse_datetime)
-            {
-                if expiring.map(|(t, _)| secs < t).unwrap_or(true) {
-                    expiring = Some((secs, cycle_rem));
-                }
-            }
-            // 本窗口进度: 同一个包里累计 (与 expiring 同一个 if, 不会漏计).
-            win_remain += cycle_rem;
-            win_size += pkg
-                .get("CycleCapacitySize")
-                .or_else(|| pkg.get("CapacitySize"))
-                .and_then(|x| x.as_f64())
-                .unwrap_or(0.0);
-            win_used += pkg
-                .get("CycleCapacityUsed")
-                .or_else(|| pkg.get("CapacityUsed"))
-                .and_then(|x| x.as_f64())
-                .unwrap_or(0.0);
-            win_pkgs += 1;
+        // 已耗尽的包: 既不计入剩余, 也不计入已用 (它不会造成损失, 只会污染数字).
+        if cycle_rem <= 0.0 {
+            continue;
         }
+        remain += cycle_rem;
+        // 本窗口已用: 同样只看活包 (耗尽包的 CycleCapacityUsed 是历史).
+        used += pkg
+            .get("CycleCapacityUsed")
+            .or_else(|| pkg.get("CapacityUsed"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        // CycleEndTime 是字符串 "YYYY-MM-DD HH:MM:SS" (不是时间戳).
+        if let Some(secs) = pkg
+            .get("CycleEndTime")
+            .and_then(|x| x.as_str())
+            .and_then(parse_datetime)
+        {
+            if expiring.map(|(t, _)| secs < t).unwrap_or(true) {
+                expiring = Some((secs, cycle_rem));
+            }
+        }
+        // 本窗口进度: 同一个包里累计 (与 expiring 同一个 if, 不会漏计).
+        win_remain += cycle_rem;
+        win_size += pkg
+            .get("CycleCapacitySize")
+            .or_else(|| pkg.get("CapacitySize"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        win_used += pkg
+            .get("CycleCapacityUsed")
+            .or_else(|| pkg.get("CapacityUsed"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        win_pkgs += 1;
     }
     let progress = if win_pkgs > 0 && win_size > 0.0 {
         Some(QuotaProgress {
@@ -466,9 +488,12 @@ impl BalanceManager {
                     endpoint: ep.clone(),
                     api_key: config.api_key.clone(),
                 }),
-                None if config.preset.as_deref() == Some("buddy") => {
-                    // 内置 buddy 预设: 走 CodeBuddy 积分端点 (POST + 账号 token),
-                    // 无需 balance_endpoint 配置 —— 预设自带账号形式.
+                None if crate::presets::is_codebuddy_family(config.preset.as_deref()) => {
+                    // 内置 buddy/workbuddy 预设: 走 CodeBuddy 积分端点 (POST + 账号 token),
+                    // 无需 balance_endpoint 配置 —— 预设自带账号形式。
+                    // ⚠️ 判据用 is_codebuddy_family 而非 `== Some("buddy")`:
+                    //    2026-10-13 用户报障「workbuddy 也没加上费用获取支持」就是那个字面量
+                    //    导致国际版掉进“未配置余额查询 API”。
                     to_query.push(ToQuery {
                         provider: provider_name.clone(),
                         endpoint: BUDDY_CREDITS_SCHEME.to_string(),
@@ -514,9 +539,29 @@ impl BalanceManager {
             }
         }
 
-        // buddy: 逐供应商查询 (各自账号) + 独立缓存.
+        // buddy/workbuddy: 逐供应商查询 (各自账号) + 独立缓存.
         for p in buddy_only {
-            let b = Self::query_buddy_credits(client, accounts, &p).await;
+            // profile 按该供应商的 preset 组装: 端点/归属头国内版与国际版不同
+            // (见 query_buddy_credits 的说明)。拿不到预设信息时回落国内版默认值,
+            // 与登录流同一口径 (admin.rs::login_profile_for)。
+            let preset_id = provider_configs
+                .get(&p)
+                .and_then(|c| c.preset.clone())
+                .unwrap_or_else(|| "buddy".to_string());
+            let mut profile = crate::presets::login_profile_of(&preset_id)
+                .unwrap_or_else(crate::accounts::LoginProfile::buddy_default);
+            // 测试接缝 `AIGATE_BUDDY_ENDPOINT`: 只对**国内版**生效 (与 admin.rs 的
+            // login_profile_for 同一纪律)。国际版若被重定向到国内 mock, "国际版积分查询"
+            // 会被测成假绿 —— 它本该打 www.workbuddy.ai。
+            if profile.product_code == "codebuddy" {
+                if let Ok(ep) = std::env::var("AIGATE_BUDDY_ENDPOINT") {
+                    let ep = ep.trim().to_string();
+                    if !ep.is_empty() {
+                        profile.endpoint = ep;
+                    }
+                }
+            }
+            let b = Self::query_buddy_credits(client, accounts, &p, &profile).await;
             if b.error.is_none() {
                 let mut cache = self.api_cache.write().await;
                 cache.insert(p.clone(), b.clone());
@@ -712,15 +757,23 @@ pub struct ProviderBalanceConfig {
 const BUDDY_CREDITS_SCHEME: &str = "buddy://credits";
 
 impl BalanceManager {
-    /// CodeBuddy 积分余额 (harness credits.ts 同款端点与头):
+    /// CodeBuddy 系积分余额 (harness credits.ts 同款端点与头):
     ///   POST /v2/billing/meter/get-user-resource  body {}
     /// 响应 `data.Response.Data.Accounts[]` 每个资源包带
     /// `CapacityRemain`(剩余) / `CapacityUsed`(已消耗) —— 服务端权威统计, 不做估算.
     /// 凭据 = accounts.json 里该供应商的账号 token (登录/续期链见 accounts.rs).
+    ///
+    /// ⚠️ **端点与身份头必须按产品分**（2026-10-13 修）：国际版 (workbuddy) 的域是
+    /// `www.workbuddy.ai`，国内版是 `copilot.tencent.com`。旧实现写死国内域名与
+    /// `X-Product-Code: codebuddy` → 国际版账号拿国内域的凭据必然 401
+    /// （实测：国际 token 打 `copilot.tencent.com` 返回 401 Authorization Required，
+    ///   打 `www.workbuddy.ai` 返回 200 + 4 个积分包）。
+    /// profile 由调用方按 preset 组装（同登录流那份，见 admin.rs::login_profile_for）。
     async fn query_buddy_credits(
         client: &reqwest::Client,
         accounts: &crate::accounts::AccountStore,
         provider: &str,
+        profile: &crate::accounts::LoginProfile,
     ) -> BalanceInfo {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -748,7 +801,7 @@ impl BalanceManager {
         // 混算会得出一个谁都不是的百分比.
         let mut per_account: HashMap<String, (f64, f64, Option<QuotaProgress>)> = HashMap::new();
         for acct in &list {
-            match Self::query_one_buddy_credits(client, &acct.access_token).await {
+            match Self::query_one_buddy_credits(client, &acct.access_token, profile).await {
                 Ok((remain, used, exp, prog, n)) => {
                     ok_accounts += 1;
                     remain_total += remain;
@@ -783,12 +836,16 @@ impl BalanceManager {
         }
         // **主值取"当前使用账号"自己的数值** (不是合计): 切换账号后余额行必须跟着变,
         // 否则用户会以为切换是假的 (2026-10-07 反馈). 合计另放 total_*.
+        //
+        // ⚠️ **当前号没额度但别的号有**时，主值取合计并在错误位说明 ——
+        // 2026-10-13 实测: 当前号活包 0 分、另一个号 3788 分。若主值老实取 0，
+        // 用户会以为"彻底没额度了"而不会去看第二个号（面板只在多账号时才显示合计）。
         let active_id = list
             .iter()
             .find(|e| e.is_available(now))
             .map(|e| e.id.clone())
             .or_else(|| list.first().map(|e| e.id.clone()));
-        info!(
+        tracing::info!(
             target: "balance",
             "buddy 积分: 合计剩余 {remain_total} / 已消耗 {used_total} ({ok_accounts}/{} 个账号共 {packages} 个资源包), 最近过期={:?}",
             list.len(), expiring
@@ -806,21 +863,39 @@ impl BalanceManager {
         info.account_count = Some(list.len());
         info.total_balance = Some(remain_total);
         info.total_consumed = Some(used_total);
+        let mut active_empty_but_others_have = false;
         if let Some(acct) = list.iter().find(|e| Some(&e.id) == active_id.as_ref()) {
             if let Some((r, u, prog)) = per_account.get(&acct.id) {
                 info.balance = Some(*r);
                 info.consumed = Some(*u);
                 info.quota_progress = *prog;
+                // 当前号 0 分而别的号有分 → 主值改用合计, 并留下说明 (见上方说明).
+                if *r <= 0.0 && remain_total > 0.0 {
+                    info.balance = Some(remain_total);
+                    info.consumed = Some(used_total);
+                    active_empty_but_others_have = true;
+                }
             }
             info.account_label = crate::accounts::account_display_name(&acct.access_token)
                 .or_else(|| acct.label.clone());
         }
+        if active_empty_but_others_have {
+            info.error = Some(crate::i18n::pick(
+                "当前账号本窗口额度已用完，这里显示的是全部账号的合计 —— 切换到还有额度的账号即可继续",
+                "The active account's window quota is exhausted; this total covers all accounts - switch to an account with quota left",
+            ).to_string());
+        }
         // 部分账号失败时保留提示 (总额仍可用, 但用户该知道有号没算进来).
+        // ⚠️ 若上面已为"当前号没额度"设过说明, 把两者拼起来 —— 直接覆盖会丢掉前者。
         if let Some(e) = first_err {
-            info.error = Some(format!(
+            let note = format!(
                 "{}: {e}",
                 crate::i18n::pick("部分账号查询失败", "some accounts failed")
-            ));
+            );
+            info.error = Some(match info.error.take() {
+                Some(prev) => format!("{prev}\n{note}"),
+                None => note,
+            });
         }
         // 额度将尽 → 记一条台账 (2026-10-11, 用户要的"异常通知").
         //
@@ -984,19 +1059,29 @@ impl BalanceManager {
     }
 
     /// 单个账号的积分查询: 返回 `(剩余, 已消耗, 最近重置窗口, 本窗口进度, 资源包数)`.
+    /// 单账号积分查询: 端点与身份头按产品分 (国内 copilot.tencent.com / 国际 www.workbuddy.ai).
     async fn query_one_buddy_credits(
         client: &reqwest::Client,
         token: &str,
+        profile: &crate::accounts::LoginProfile,
     ) -> Result<(f64, f64, Option<(u64, f64)>, Option<QuotaProgress>, usize), String> {
+        // 端点: 预设声明的认证基址 + 积分路径。**不写死域名** (旧实现写死 copilot.tencent.com,
+        // 国际版必然 401 —— 2026-10-13 实测: 国际 token 打国内域 401, 打国际域 200)。
+        let url = format!(
+            "{}/v2/billing/meter/get-user-resource",
+            profile.endpoint.trim_end_matches('/')
+        );
         let resp = client
-            .post("https://copilot.tencent.com/v2/billing/meter/get-user-resource")
+            .post(&url)
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-            .header("X-Domain", "copilot.tencent.com")
-            .header("X-Product", "CodeBuddy")
-            .header("X-Product-Code", "codebuddy")
-            .header("User-Agent", "CodeBuddyIDE/1.106.1")
+            // 身份头与登录/转发同源 (配置里写的与这里发的必须一致, 否则上游看到的"产品"
+            // 与凭据区域不一致) —— 这几个值国内版/国际版不同, 故走 profile。
+            .header("X-Domain", &profile.api_domain)
+            .header("X-Product", &profile.attribution_name)
+            .header("X-Product-Code", &profile.product_code)
+            .header("User-Agent", &profile.user_agent)
             .body("{}")
             .timeout(std::time::Duration::from_secs(10))
             .send()
@@ -1118,10 +1203,13 @@ mod tests {
 
     /// buddy 积分包聚合: 只认**窗口内仍有剩余**的包的最早重置时刻 (窗口已耗尽的
     /// 包不该占据"最近会重置"位 —— 它不会造成损失). 响应形态取自 2026-10-08 实测.
+    ///
+    /// ⚠️ 2026-10-13 起 `remain`/`used` 也**只算活包**（用户报障「为什么显示已用？
+    /// 剩余积分也是错的」—— 旧口径把已耗尽包的 CapacityUsed 累进"已用"）。
     #[test]
     fn credits_aggregate_picks_soonest_cycle_end_with_remainder() {
         let arr = serde_json::json!([
-            // 窗口已耗尽 + 最早重置 → **不该**被选中
+            // 窗口已耗尽 + 最早重置 → **不该**被选中, 也不计入 remain/used
             {"CycleCapacityRemain": 0, "CapacityRemain": 0, "CapacityUsed": 500,
              "CycleEndTime": "2026-10-16 20:09:24"},
             // 有剩余, 月末重置
@@ -1132,12 +1220,53 @@ mod tests {
              "CycleEndTime": "2026-10-20 07:00:18"},
         ]);
         let (remain, used, expiring, _prog) = aggregate_credits(arr.as_array().unwrap());
+        // 活包 = 300 + 120 = 420 (耗尽包那 500 分既不进剩余也不进已用)
         assert_eq!(remain, 420.0);
-        assert_eq!(used, 730.0);
+        assert_eq!(used, 230.0, "已用只算活包的本窗口消耗 (200+30), 不含耗尽包的 500");
         let (at, amt) = expiring.expect("应有最近重置的窗口");
         let expect = parse_datetime("2026-10-20 07:00:18").unwrap();
         assert_eq!(at, expect);
         assert_eq!(amt, 120.0);
+    }
+
+    /// **复刻用户实测的 40 包响应**（2026-10-13 报障）：39 个包早已耗尽 + 1 个活包 8 分，
+    /// 外加一个"僵尸包"（`CapacityRemain=500` 但本周期已耗尽）。
+    ///
+    /// 旧算法输出 剩余 508 / 已用 4274 —— 其中 500 分不可用（僵尸包）、
+    /// 4274 是历史累计消耗，两个数字都是**假的**。新算法必须给出真实可用值。
+    #[test]
+    fn credits_aggregate_excludes_zombie_and_exhausted_packages() {
+        let mut arr: Vec<serde_json::Value> = Vec::new();
+        // 39 个已耗尽的历史体验包 (CycleCapacityRemain=0, CapacityRemain=0)
+        for i in 0..39 {
+            arr.push(serde_json::json!({
+                "CapacityRemain": 0, "CapacityUsed": if i == 0 { 1500 } else { 100 },
+                "CycleCapacityRemain": 0, "CycleCapacitySize": if i == 0 { 1500 } else { 100 },
+                "CycleCapacityUsed": if i == 0 { 1500 } else { 100 },
+                "CycleEndTime": "2026-10-16 20:09:24",
+            }));
+        }
+        // 僵尸包: 跨周期还剩 500, 但本周期额度已耗尽 → 现在不可用
+        arr.push(serde_json::json!({
+            "CapacityRemain": 500, "CapacityUsed": 0,
+            "CycleCapacityRemain": 0, "CycleCapacitySize": 500, "CycleCapacityUsed": 500,
+            "CycleEndTime": "2026-10-31 23:59:59",
+        }));
+        // 唯一活包: 8 分可用
+        arr.push(serde_json::json!({
+            "CapacityRemain": 8, "CapacityUsed": 91,
+            "CycleCapacityRemain": 8, "CycleCapacitySize": 100, "CycleCapacityUsed": 91,
+            "CycleEndTime": "2026-11-13 00:34:48",
+        }));
+        let (remain, used, expiring, prog) = aggregate_credits(&arr);
+        assert_eq!(remain, 8.0, "可用剩余只能是活包的 8 分，不含僵尸包的 500");
+        assert_eq!(used, 91.0, "已用只算活包的本窗口消耗，不是历史累计 4274");
+        let (_, amt) = expiring.expect("应有活包窗口");
+        assert_eq!(amt, 8.0);
+        let p = prog.expect("应有窗口进度");
+        assert_eq!(p.window_remain, 8.0);
+        assert_eq!(p.packages, 1, "只统计活包");
+        assert!((p.used_pct.unwrap() - 91.0).abs() < 0.01, "进度 = 91/100");
     }
 
     /// 全部包都无窗口信息 → expiring 为 None, 前端不显示该行.
@@ -1184,6 +1313,9 @@ mod tests {
     /// 容量. 若把它们也算进分母: ΣCycleCapacitySize=4463 / ΣUsed=3682 → **82.5%**,
     /// 而那些包是过去一个月陆续赠送的体验包/活动包, 早已用完、**不会造成损失**.
     /// 只算还有额度的 5 个包: 807 / 26 → **3.2%** —— 这才是"当前还剩多少"的事实.
+    ///
+    /// ⚠️ 2026-10-13 起 `remain`/`used` 主值也改成同一口径（只算活包）——
+    /// 用户报障「为什么显示已用？」就是 `used` 把耗尽包的 1600 也算进去了。
     #[test]
     fn quota_progress_counts_only_packages_with_remainder() {
         let arr = serde_json::json!([
@@ -1204,9 +1336,10 @@ mod tests {
              "CycleEndTime": "2026-11-01 00:49:45"},
         ]);
         let (remain, used, expiring, prog) = aggregate_credits(arr.as_array().unwrap());
-        // 总量口径不变: 仍统计**全部**包 (那是"账户还剩多少积分", 与进度是两回事).
-        assert_eq!(remain, 573.0, "总剩余 = 473 + 100 (已耗尽的包贡献 0)");
-        assert_eq!(used, 2100.0);
+        // 主值与进度同口径: 只算活包 (473+100 剩余 / 26+0 已用)。
+        // 已耗尽那 1600 分历史消耗既不计入"已用"也不计入"剩余"。
+        assert_eq!(remain, 573.0, "总剩余 = 473 + 100");
+        assert_eq!(used, 26.0, "已用只算活包的本窗口消耗, 不是历史累计 2100");
         let (_at, amt) = expiring.expect("应有最近重置窗口");
         assert_eq!(amt, 473.0);
 

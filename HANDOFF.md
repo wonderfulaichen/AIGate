@@ -1112,6 +1112,49 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-13 轮 ②：CodeBuddy 余额/费用三个 bug + WorkBuddy 补积分查询（用户报障）
+
+**用户报障**：「codebudy 的余额与费用有 bug，为什么显示已用？并且获取的剩余积分是错的。
+workbuddy 也没加上费用获取支持。好好检查检查吧。」
+
+**先拿真实凭据实测上游**（40 个资源包，逐包打印），三个真 bug 全部有数据支撑：
+
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 已用 **4274** | 全部 40 个包的 `CapacityUsed` 求和，含 39 个**早已耗尽的历史体验包** |
+| 2 | 剩余 **508** | 含一个**僵尸包**的 500 分（`CapacityRemain=500` 但 `CycleCapacityRemain=0`，本周期已耗尽）→ 面板显示有 500 分，实际一发请求就 403。**真实可用 = 8** |
+| 3 | workbuddy 无积分行 | 分派条件写死 `preset == "buddy"`；且积分端点写死 `copilot.tencent.com`（国际版账号打过去必然 401） |
+
+**一句话根因**：`quota_progress` 在 2026-10-10 就定了"只算活包"的口径，**但只有进度条用了它，
+`balance`/`consumed` 主值没用** → 同一份数据两套口径，面板自相矛盾
+（`balance=508` 而 `quota_progress.window_remain=8`）。
+
+**修法**：
+- `aggregate_credits` 四条值统一只算活包（`cycle_rem <= 0` 直接 continue）；
+- 两处 `preset == "buddy"` 改 `is_codebuddy_family(...)`（admin.rs 余额配置 + balance.rs 查询队列）；
+- 积分端点/身份头改走 `LoginProfile`（国内 `copilot.tencent.com` / 国际 `www.workbuddy.ai`）；
+- 多账号兜底：当前号 0 分但别的号有分时，主值显示合计 + 说明（否则用户以为彻底没额度）。
+
+**验证**（真实上游 + mock 双向）：buddy **3788/31**（旧 508/4274）、
+workbuddy **366/43**（旧：无行），与上游逐包合算一致。
+
+**两个值得记的教训**：
+1. **两个旧单测的断言本身就是被废弃的旧口径**（`used == 2100` / `used == 730` 含耗尽包）。
+   它们是"用测试把错误行为固化下来"的活例子 —— 改口径时必须连测试一起改，
+   否则测试会"保护"bug。
+2. **`balance` 的旧 bug 有隐藏条件**：只有当包**没有** `CycleCapacityRemain` 字段时
+   （纯 `CapacityRemain` 老包），旧算法才会把僵尸额度算进剩余。有 `Cycle*` 时
+   `remain += cycle_rem` 反而碰巧对。所以探针必须两种形态都覆盖（本次 mock 已含）。
+
+**顺带修**：`e2e_multi_account` / `e2e_quota_progress` 两个探针漏接 `/admin/api/*` 的 Bearer
+（表现为"隔离实例未就绪"，**极易被误判成实例起不来** —— 我一开始就差点这么判）。
+
+**验证**：**363 单测**（+1 复刻用户实测 40 包形态）· 新探针 `probe_credits_scope.py` **10/10**
+（牙齿：改回全部包求和 → 4 条 FAIL，`consumed` 变 5891）· 回归 `e2e_buddy_credits_login`
+15/15（新增 workbuddy 断言）/ `e2e_buddy_expiry` 5/5 / `e2e_multi_account` 25/25 /
+`e2e_accounts` 13/13 / `e2e_quota_progress` · 门禁（parts / i18n 757 / balance）·
+CHANGELOG 重建并 `cl_dump` 实测烤入。
+
 ### 🆕 10-13 轮：拆开「上游断流」与「空闲超时」+ 断流进事件台账（用户报 502 截图）
 
 **用户报障**：一张 502 记录详情截图 —— **首字 15.7s / 总延迟 39.6s**，
