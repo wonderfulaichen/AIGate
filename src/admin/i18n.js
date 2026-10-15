@@ -91,7 +91,7 @@ const I18N = {
     // (那等于把正待排查的停止洗白成正常, 用户就再也查不出来了).
     'detail.end_reason': '结束方式',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
-    'stages_title': '时间去哪了', 'stages_note': '四段耗时来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必等于总耗时 —— 上游可能在段间发空帧。',
+    'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
     'stages_win_desc': '窗口内流式请求的平均阶段耗时 —— 看"时间主要花在哪一段"，而不是只看总延迟',
     'stages_samples': '{0} 条采样', 'stages_n_samples': '{0} 条采样',
@@ -99,7 +99,7 @@ const I18N = {
     // 与「时间去哪了」的分工: 那个是**模型侧**四段, 这个是**网关+上游首字节**五段。
     // ⚠️ 措辞纪律: 协议转换未发生 = 「直通」, 不是「—」(那个表示没测到)。
     'gw_title': '网关去程（进门 → 上游响应头）',
-    'gw_note': '五段互不重叠，合计即"进门到上游响应头"。上方「时间去哪了」是客户端视角（含这段去程），两者不可相加。',
+    'gw_note': '五段互不重叠，合计即"进门到上游响应头"。它是上方「客户端视角」第一段（等首字）的内部，两者不可相加。',
     'gw_route': '路由/鉴权', 'gw_guard': '隐私护栏', 'gw_convert': '协议转换',
     'gw_convert_direct': '直通', 'gw_other': '其他网关工作', 'gw_ttfb': '上游首字节',
     'gw_win_title': '网关自身开销', 'gw_own_overhead': '自身开销',
@@ -316,7 +316,7 @@ const I18N = {
     'manage_providers': '管理供应商', 'view_records': '查看请求记录',
     'analytics_title': '模型调用分析', 'analytics_subtitle': '查看当前运行日志窗口内的模型调用、用量和性能',
     'cols_more': '更多列', 'cols_less': '收起列',
-    'perf_split_title': '耗时拆分', 'perf_split_desc': '上行客户端视角（含网关去程），下行网关自身视角；两者不可相加',
+    'perf_axis_title': '请求时间轴', 'perf_axis_desc': '一次请求从进门到出字：客户端四段首尾相接，「等首字」可下钻看网关去程',
     'perf_row_model': '客户端视角（等首字 / 思考 / 正文 / 工具）',
     'perf_row_gateway': '网关视角（进门 → 上游响应头）',
     'gw_topo_prov_n': '共 {0} 家供应商',
@@ -461,14 +461,14 @@ const I18N = {
     // Wording rule: a missing field means NOT COLLECTED, so it renders as an em dash —
     // never guess "finished normally" (that would launder an unexplained stop into a healthy one).
     'detail.end_reason': 'Ended by',
-    'stages_title': 'Where the time went', 'stages_note': 'Four-stage split is collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
+    'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',
     'stages_samples': '{0} sampled', 'stages_n_samples': '{0} sampled',
     // ── Gateway inbound path (2026-10-15, modeled on Astra-Gate) ──
     // Wording rule: no protocol conversion happened => "Direct", not "-" (which means not collected).
     'gw_title': 'Gateway inbound (entry -> upstream headers)',
-    'gw_note': 'The five segments do not overlap; together they are "entry to upstream response headers". "Where the time went" above is the client view (it includes this inbound path) - do not add them up.',
+    'gw_note': 'The five segments do not overlap; together they are "entry to upstream response headers". This is the inside of the first client-view segment (TTFT); do not add them together.',
     'gw_route': 'Routing/auth', 'gw_guard': 'Privacy guard', 'gw_convert': 'Protocol conversion',
     'gw_convert_direct': 'Direct', 'gw_other': 'Other gateway work', 'gw_ttfb': 'Upstream first byte',
     'gw_win_title': 'Gateway own overhead', 'gw_own_overhead': 'Own overhead',
@@ -675,7 +675,7 @@ const I18N = {
     'manage_providers': 'Manage providers', 'view_records': 'View request logs',
     'analytics_title': 'Model call analytics', 'analytics_subtitle': 'Model calls, usage, and performance in the current log window',
     'cols_more': 'More columns', 'cols_less': 'Fewer columns',
-    'perf_split_title': 'Time breakdown', 'perf_split_desc': 'Top row is the client view (includes the gateway leg); bottom row is the gateway view. They are not additive',
+    'perf_axis_title': 'Request timeline', 'perf_axis_desc': 'One request from entry to first output: the four client segments are contiguous, and \'wait for first token\' drills down into the gateway leg',
     'perf_row_model': 'Client view (TTFT / thinking / output / tools)',
     'perf_row_gateway': 'Gateway view (entry → upstream headers)',
     'gw_topo_prov_n': '{0} providers',

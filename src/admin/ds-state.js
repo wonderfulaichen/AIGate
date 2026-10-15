@@ -65,8 +65,9 @@ function dashboard() {  return {
     // 这些卡回答的是"出问题时才问"的问题 (省量审计 / 网关自身开销 / 链路拓扑),
     // 日常看用量不该占屏高; 收起后标题与关键结论仍可见, 点开才铺明细。
     auditExpanded: false,
-    gwStageExpanded: false,
-    gwTopoExpanded: false,
+    // 2026-10-16 三卡合并为一张「请求时间轴」后, 网关开销/拓扑不再各自折叠
+    // (它们现在是同一张卡里的下钻区块与收尾块), 故 gwStageExpanded/gwTopoExpanded 已删。
+    // 删掉而不是留着: 没人读的状态变量就是死代码 (本项目已清理过一批同类预留字段)。
     // 主题: 'dark' (默认) | 'light' | 'system'. 只改 <html class="light">, 视觉全部由
     // base.css 的 token 层响应 (见 html.light 块); 首帧类名由 head.html 内联脚本先写好,
     // 故不会先闪一下暗色。品牌 logo 与图表数据系列色不随主题变。

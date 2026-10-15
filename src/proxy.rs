@@ -3706,7 +3706,11 @@ impl TokenStream {
     /// ⚠️ 各段之和**不要求**等于 `latency_ms` —— 上游可能在两段之间发空 delta / 保活帧,
     /// 强制自洽只会制造假数。`tool_call` 段刻意记 0 而非 None 当**确有工具调用但无独立
     /// 计时**时不好区分, 故用「有没有工具调用」决定它是 0 还是 None (见下).
-    fn stage_timings(&self) -> crate::admin::StageTimings {
+    ///
+    /// `req_start`: 本请求的起点 (`ld.start`)。**必须由调用方传入** —— 三条收尾路径
+    /// 都已把 `log_buffer` 取走 (`take()`), 从 `self` 上取不到, 之前那版回退成
+    /// `t0` 自己 → 算出恒为 0 的"等首字"。
+    fn stage_timings(&self, req_start: std::time::Instant) -> crate::admin::StageTimings {
         // 网关侧阶段 (route/guard/convert/ttfb/overhead) 由 handler 采集, 与是否流式无关,
         // 这里以它为基, 再把流内采集的**模型侧**四段填进去 (2026-10-15)。
         let mut st = self.gateway_stages;
@@ -3715,7 +3719,15 @@ impl TokenStream {
             // 网关侧照常保留 (它不依赖首字)。
             return st;
         };
-        st.waiting_first_ms = Some(t0.elapsed().as_millis() as u64);
+        // 「等首字」= 请求开始 → 首字, 即**真正的首字延迟 (TTFT)**。
+        //
+        // ⚠️ 2026-10-16 修: 此处原为 `t0.elapsed()`, 而本函数是在**流结束时**调用的 ——
+        //    `t0.elapsed()` 得到的是「首字 → 流结束」, 不是「请求 → 首字」。于是面板上
+        //    标着「等首字」的那一段画的其实是首字**之后**的时长 (实测 2917 条里
+        //    14/14 与 `latency − first_token_ms` 吻合, 与真正的 TTFT 只有 1 条吻合)。
+        //    这不仅标签错, 还让四段无法拼成一条连续时间轴 —— 而"把一条请求的时间轴拆开看"
+        //    正是这个功能存在的理由。改为从请求起点起算。
+        st.waiting_first_ms = Some(t0.duration_since(req_start).as_millis() as u64);
         // 思考段 = 首字 → 第一段可见正文。
         //
         // ⚠️ **没有可见正文时是 None, 不是 0**: 该段从未结束 (缺"正文开始"这个边界),
@@ -3760,7 +3772,7 @@ impl TokenStream {
         let end_reason = self.end_reason();
         // 阶段耗时同理: 失败路径也可能已经产出了内容 (上游中途断流最常见),
         // 此刻采集到的阶段时刻照样有效 —— 用户正是靠它判断"时间花在哪"。
-        let stages = self.stage_timings();
+        let stages = self.stage_timings(ld.start);
         // 会话归属从 ld 里取 (owned) —— 失败的那一跳也要挂在会话链上。
         let sess = ld.session.clone();
         tokio::spawn(async move {
@@ -4220,7 +4232,7 @@ impl Stream for TokenStream {
                             // 结束原因同上必须在 async 块外取 (this 是 &mut).
                             let end_reason = this.end_reason();
                             // 阶段耗时 (方案 F「时间去哪了」): 同样在 spawn 前取 owned.
-                            let stages = this.stage_timings();
+                            let stages = this.stage_timings(ld.start);
                             // 会话归属从 ld 取 (owned) —— 正常收尾的那一跳也挂在会话链上。
                             let sess = ld.session.clone();
                             tokio::spawn(async move {
@@ -4386,7 +4398,7 @@ impl Drop for TokenStream {
             self.end_reason()
         };
         // 阶段耗时 (方案 F): Drop 路径同样可能已经产出了内容, 此刻采集照样有效。
-        let stages = self.stage_timings();
+        let stages = self.stage_timings(ld.start);
         // 会话归属 (方案 F): Drop 也要挂在会话链上 —— 客户端取消的那一跳同样是会话的一部分。
         let sess = ld.session.clone();
         tokio::spawn(async move {

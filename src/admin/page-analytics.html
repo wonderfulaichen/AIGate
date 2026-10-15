@@ -108,38 +108,46 @@
       </div>
     </div></div>
     <!-- 首字延迟 (TTFT): 先看"等多久才出字", 再看分布 —— 均值会被长尾拉平, 只看均值会误判 -->
-    <div class="pnl mb4" x-show="analyticsTab==='perf'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('ttft_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('ttft_subtitle')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:12px">
-      <template x-if="!ttftHasData"><div class="empty-state" style="padding:8px 0"><div class="empty-t" x-text="t('ttft_no_data')"></div><div class="empty-d" x-text="t('ttft_no_data_hint')"></div></div></template>
-      <template x-if="ttftHasData">
-        <div style="display:flex;flex-direction:column;gap:12px">
-          <div style="display:flex;gap:20px;flex-wrap:wrap">
-            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:140px"><span class="txs tm" x-text="t('ttft_avg')"></span><span class="txsm mono fw6" style="color:var(--accent)" x-text="ttftAvgText"></span></div>
-            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:120px"><span class="txs tm" x-text="t('ttft_p50')"></span><span class="txsm mono fw6" x-text="ttftP50Text"></span></div>
-            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:120px"><span class="txs tm" x-text="t('ttft_p90')"></span><span class="txsm mono fw6" :style="ttftSummary.p90Ms>=10000?'color:var(--warn)':''" x-text="ttftP90Text"></span></div>
-          </div>
-          <div class="txs tm" x-text="t('ttft_approx_hint')"></div>
-          <div style="border-top:1px solid var(--border);padding-top:10px">
-            <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('ttft_dist_title')"></div>
-            <div class="prop-bar"><template x-for="r in ttftSummary.rows" :key="r.k"><span :style="'flex-grow:'+Math.max(r.v,1)+';background:'+r.color" :title="r.label+' · '+r.v+' · '+fmtPct(r.pct)"></span></template></div>
-            <div class="prop-legend"><template x-for="r in ttftSummary.rows" :key="r.k"><span><i :style="'background:'+r.color"></i><span x-text="r.label"></span><span class="mono" x-text="r.v"></span></span></template></div>
-            <div class="txs tm" style="margin-top:4px" x-text="t('ttft_dist_desc')"></div>
-          </div>
-          <div class="panel-takeaway" x-show="ttftTakeaway" x-text="ttftTakeaway"></div>
-          <div x-show="ttftSlowCount>0" class="txs" style="color:var(--warn)" x-text="t('ttft_slow_hint',ttftSlowCount)"></div>
+    <!-- ── 请求时间轴 (2026-10-16 由三张卡合并为一张) ──
+         用户: "明显那些都可以合并到拓扑图啊" —— 洞察是对的, 而且比"合并卡片"更本质:
+         首字延迟 / 各阶段耗时 / 网关开销 / 拓扑描述的是**同一条时间轴的同一个东西**,
+         一次请求从进门到出字。四张平铺时用户得自己知道谁包含谁; 现在层级显式表达:
+           ① 总时长与首字延迟 (头条)
+           ② 客户端四段 (等首字/思考/正文/工具) —— 首尾相接, 合计 ≈ 总时长
+           ③ 「等首字」下钻: 网关去程五段 —— 它是 ② 第一段的**内部**, 不是并列项
+           ④ 首字延迟分布 + 拓扑三跳 (收尾两块)
+         ⚠️ 前提是 ② 的第一段必须是**真正的首字延迟**; 此前它记的是"首字之后"的时长
+            (proxy.rs::stage_timings 的 t0.elapsed() bug, 本轮已修), 否则拼不成连续轴。 -->
+    <div class="pnl mb4" x-show="analyticsTab==='perf'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('perf_axis_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('perf_axis_desc')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:18px">
+      <template x-if="!ttftHasData && !stageHasData && !gwStageHasData"><div class="empty-state" style="padding:8px 0"><div class="empty-t" x-text="t('ttft_no_data')"></div><div class="empty-d" x-text="t('ttft_no_data_hint')"></div></div></template>
+
+      <!-- ① 头条: 总时长 / 首字延迟 / p50 / p90 -->
+      <div x-show="ttftHasData" style="display:flex;gap:20px;flex-wrap:wrap">
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:140px"><span class="txs tm" x-text="t('ttft_avg')"></span><span class="txsm mono fw6" style="color:var(--accent)" x-text="ttftAvgText"></span></div>
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:120px"><span class="txs tm" x-text="t('ttft_p50')"></span><span class="txsm mono fw6" x-text="ttftP50Text"></span></div>
+        <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:120px"><span class="txs tm" x-text="t('ttft_p90')"></span><span class="txsm mono fw6" :style="ttftSummary.p90Ms>=10000?'color:var(--warn)':''" x-text="ttftP90Text"></span></div>
+      </div>
+
+      <!-- ③ 「等首字」的下钻: 网关去程五段 (它是 ② 第一段的内部, 故缩进 + 左边线) -->
+      <div x-show="gwStageHasData" style="border-left:2px solid var(--border);padding-left:14px;margin-left:2px">
+        <div class="fb" style="margin-bottom:8px"><span class="txs tm" x-text="t('perf_row_gateway')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',(gwStageSummary.overhead||{}).samples||0)"></span></div>
+        <div class="prop-bar"><template x-for="s in gwStageWinRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
+          <template x-for="s in gwStageWinRows" :key="s.k">
+            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:110px">
+              <span class="txs tm" x-text="s.label"></span>
+              <span class="txsm mono fw6" :style="s.avg==null?'opacity:.5;color:var(--muted)':('color:'+s.color)" x-text="msText(s.avg)"></span>
+              <span class="txs tm" x-show="s.p95!=null" x-text="'p95 '+msText(s.p95)"></span>
+            </div>
+          </template>
         </div>
-      </template>
-    </div></div>
-    <!-- ── 时间去哪了 (窗口级, 方案 F 2026-10-13) ──
-         把窗口内每次流式请求的四段耗时聚合, 回答"这段时间时间花在哪"。
-         两个口径要点: ① 各段用 Σ毫秒/样本数 求平均 (不平均各请求的速率 —— 长尾会被抹平);
-         ② 未采集的样本不计入 (非流式/缓存回放/原生直通拿不到阶段时刻) → 显示 "—" 而非 0。 -->
-    <!-- ── 耗时拆分: 客户端视角 + 网关视角 (2026-10-16 由两张卡合并) ──
-         原本「时间去哪了」与「网关自身开销」是两张结构完全相同的卡 (各一条分段比例条 +
-         每段一个数值块), 只是模型侧/网关侧之分。合并后一次看到两侧, 对比关系更清楚,
-         也省掉一套标题/留白/说明。两侧口径不同, 故各自保留一行小字说明。 -->
-    <div class="pnl mb4" x-show="analyticsTab==='perf'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('perf_split_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('perf_split_desc')"></div></div></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:16px">
+        <div class="txs tm" style="color:var(--muted);margin-top:8px" x-text="t('gw_note')"></div>
+        <div class="txs tm" style="color:var(--muted)" x-text="t('gw_direct_note')"></div>
+      </div>
+
+      <!-- ② 客户端四段: 首尾相接 (合计 ≈ 总时长) -->
       <div x-show="stageHasData">
-        <div class="fb" style="margin-bottom:8px"><span class="txs tm" x-text="t('perf_row_model')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',stageSummary.waiting_samples||0)"></span></div>
+        <div class="fb" style="margin-bottom:8px"><span class="txs fw7" style="color:var(--fg)" x-text="t('perf_row_model')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',stageSummary.waiting_samples||0)"></span></div>
         <div class="prop-bar"><template x-for="s in stageWinRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
         <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
           <template x-for="s in stageWinRows" :key="s.k">
@@ -152,45 +160,37 @@
         </div>
         <div class="txs tm" style="color:var(--muted);margin-top:8px" x-text="t('stages_note')"></div>
       </div>
-      <div x-show="gwStageHasData" style="border-top:1px solid var(--border);padding-top:14px">
-        <div class="fb" style="margin-bottom:8px"><span class="txs tm" x-text="t('perf_row_gateway')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',(gwStageSummary.overhead||{}).samples||0)"></span></div>
-        <div class="prop-bar"><template x-for="s in gwStageWinRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
-        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-          <template x-for="s in gwStageWinRows" :key="s.k">
-            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:110px">
-              <span class="txs tm" x-text="s.label"></span>
-              <span class="txsm mono fw6" :style="s.avg==null?'opacity:.5;color:var(--muted)':('color:'+s.color)" x-text="msText(s.avg)"></span>
-              <span class="txs tm" x-show="s.p95!=null" x-text="'p95 '+msText(s.p95)"></span>
-              <span class="txs tm" x-show="s.avg!=null" x-text="t('stages_n_samples',s.n)"></span>
-            </div>
-          </template>
-        </div>
-        <div class="txs tm" style="color:var(--muted);margin-top:8px" x-text="t('gw_note')"></div>
-        <div class="txs tm" style="color:var(--muted)" x-text="t('gw_direct_note')"></div>
+
+      <!-- ④ 收尾两块: 首字延迟分布 + 拓扑三跳 -->
+      <div x-show="ttftHasData" style="border-top:1px solid var(--border);padding-top:14px">
+        <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('ttft_dist_title')"></div>
+        <div class="prop-bar"><template x-for="r in ttftSummary.rows" :key="r.k"><span :style="'flex-grow:'+Math.max(r.v,1)+';background:'+r.color" :title="r.label+' · '+r.v+' · '+fmtPct(r.pct)"></span></template></div>
+        <div class="prop-legend"><template x-for="r in ttftSummary.rows" :key="r.k"><span><i :style="'background:'+r.color"></i><span x-text="r.label"></span><span class="mono" x-text="r.v"></span></span></template></div>
+        <div class="txs tm" style="margin-top:4px" x-text="t('ttft_dist_desc')"></div>
+        <div class="panel-takeaway" x-show="ttftTakeaway" x-text="ttftTakeaway"></div>
+        <div x-show="ttftSlowCount>0" class="txs" style="color:var(--warn)" x-text="t('ttft_slow_hint',ttftSlowCount)"></div>
       </div>
-    </div></div>
-    <!-- ── 链路拓扑 (简化版, 2026-10-15; 2026-10-16 精简) ──
-         客户端 → 网关 → 提供商。**只留链式耗时对比** (哪一跳慢): 客户端量/错误/成功率 →
-         网关(自身开销 p95 / 上游首字节 p95) → 提供商。
-         逐提供商的 请求/错误/429 原样列在这里过 —— 那三项在「供应商性能」表里逐列已有
-         (同一份 per_provider), 重复一遍只是把表读第二遍, 故改为计数 + 指向该表。 -->
-    <div class="pnl mb4" x-show="analyticsTab==='perf' && (stats.total_requests||0)>0"><div class="pnl-h" style="cursor:pointer;user-select:none" @click="gwTopoExpanded=!gwTopoExpanded" role="button" :aria-expanded="gwTopoExpanded"><div><span class="pnl-ht" style="display:inline-flex;align-items:center;gap:6px"><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;transform:rotate('+(gwTopoExpanded?90:0)+'deg);color:var(--muted);font-size:var(--fs-11)'">▸</span><span x-text="t('gw_topo_title')"></span></span><div class="txs tm" style="margin-top:3px" x-text="t('gw_topo_desc')"></div></div></div><div class="pnl-b" x-show="gwTopoExpanded" style="display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
-        <div class="ov-secondary-item" style="min-width:180px">
+
+      <div x-show="(stats.total_requests||0)>0" style="border-top:1px solid var(--border);padding-top:14px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div class="ov-secondary-item" style="min-width:170px">
           <div class="txs tm" x-text="t('gw_topo_client')"></div>
           <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_requests')+' '+(stats.total_requests||0)"></div>
           <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_errors')+' '+(stats.error_count||0)"></div>
           <div class="txs tm" style="margin-top:2px" x-text="t('success_rate')+' '+((stats.total_requests||0)?fmtPct(((stats.total_requests-(stats.error_count||0))/(stats.total_requests))*100):'—')"></div>
         </div>
         <span aria-hidden="true" style="color:var(--muted);align-self:center">→</span>
-        <div class="ov-secondary-item" style="min-width:180px">
+        <div class="ov-secondary-item" style="min-width:170px">
           <div class="txs tm" x-text="t('gw_topo_gateway')"></div>
           <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_own')+' '+(gwOverheadP95==null?'—':('p95 '+msText(gwOverheadP95)))"></div>
           <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_upstream')+' '+(gwTtfbP95==null?'—':('p95 '+msText(gwTtfbP95)))"></div>
         </div>
-        <span aria-hidden="true" style="color:var(--muted);align-self:center">→</span><div class="ov-secondary-item" style="min-width:200px;flex:1"><div class="txs tm" x-text="t('gw_topo_providers')"></div><div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_prov_n',(stats.per_provider||[]).length)"></div><div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_prov_hint')"></div></div>
+        <span aria-hidden="true" style="color:var(--muted);align-self:center">→</span>
+        <div class="ov-secondary-item" style="min-width:190px;flex:1">
+          <div class="txs tm" x-text="t('gw_topo_providers')"></div>
+          <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_prov_n',(stats.per_provider||[]).length)"></div>
+          <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_prov_hint')"></div>
+        </div>
       </div>
-      <div class="txs tm" style="color:var(--muted)" x-text="t('gw_topo_note')"></div>
     </div></div>
     <div class="pnl mb4" x-show="analyticsTab==='overview'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:280px"><!-- 环图与排名原本是两张卡、同一份 per_model 数据 (2026-10-16 合并)：
                    占比数字与条形各占一列纯属重复 —— 现在条形本身就是占比的可视化，
