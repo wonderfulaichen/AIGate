@@ -69,6 +69,8 @@ const { chromium } = require('playwright');
       // 末两列 = 省量 / 已省金额
       savedTokens: rows.map(r => r.cells[r.cells.length - 2]),
       savedFees: rows.map(r => r.cells[r.cells.length - 1]),
+      // 「输入 Tokens（原始 → 实发）」= 第 8 列 (索引 7)
+      inOutCols: rows.map(r => r.cells[7]),
       bodyText: (table.innerText || '').replace(/\n+/g, ' | ').slice(0, 600),
     };
   });
@@ -114,7 +116,9 @@ except Exception:
     sys.exit(1)
 
 fails = []
+NCHK = [0]
 def ck(cond, msg):
+    NCHK[0] += 1
     print(("  OK   " if cond else "  FAIL ") + msg)
     if not cond:
         fails.append(msg)
@@ -140,6 +144,18 @@ ck(any(x == "—" for x in fees), "存在「—」金额 (不计费模型没有�
 ck(any(x not in ("—", "", "¥0.00") for x in fees), "存在真实金额: %s" % fees[:6])
 ck(all(("K" in x or "M" in x or x in ("0", "—", "")) for x in toks),
    "省量列用 K/M 缩写: %s" % toks[:6])
+# ── 「输入 Tokens（原始 → 实发）」列 (2026-10-16 用户: 要看处理前的总数) ──
+ino = d.get("inOutCols") or []
+ck(any("输入" in h and "原始" in h and "实发" in h for h in heads),
+   "表头含「输入 Tokens（原始 → 实发）」: %s" % [h for h in heads if "输入" in h])
+ck(all("→" in (x or "") for x in ino if x),
+   "每行输入列都给出 原始 → 实发 两个数: %s" % ino[:4])
+ck(any("省" in (x or "") and "%" in (x or "") for x in ino),
+   "输入列含省量占比 (只看绝对量看不出比例): %s" % ino[:4])
+# 省量为 0 的那行 (第 5 行, 索引 4) 必须仍显示 原始 → 实发 (两个数相等),
+# 而不是显示 "—" —— "确实没省"与"没采集"是两回事。
+ck(bool(ino[4]) and "—" not in (ino[4] or ""),
+   "未省的那行照实显示 (不写成 —): %r" % (ino[4] if len(ino) > 4 else None))
 # 负例: 无数据时不画假 0
 ck(not (e.get("errs") or []), "空场景无表达式异常: %s" % e.get("errs"))
 ck(all("优化省" not in (row or "") for row in (e.get("rows") or [])),
@@ -154,5 +170,5 @@ for r in rows[:3]:
 print("\n== 表体文本 ==")
 print("   " + str(d.get("bodyText"))[:400])
 
-print("\n%s (13 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", len(fails)))
+print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
 sys.exit(1 if fails else 0)

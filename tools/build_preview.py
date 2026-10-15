@@ -77,6 +77,12 @@ STUB = r"""<script>
                  today_optimization_saved_tokens: (14 - i * 2) * 210,
                  optimization_saved_fee: i === 4 ? 0 : (14 - i * 2) * 0.11,
                  billing: i !== 4, free: i === 4,
+                 // 「输入 Tokens（原始 → 实发）」列 (2026-10-16): 原始 = 实发 + 省量。
+                 // 第 4 个模型刻意让省量为 0 → 原始 == 实发 (验证"确实没省"也能如实显示,
+                 // 而不是显示 "—" 让人误以为没采集)。
+                 total_prompt_tokens_before: (14 - i * 2) * 820 + (i === 4 ? 0 : (14 - i * 2) * 4100),
+                 req_bytes_before: (14 - i * 2) * 3300,
+                 req_bytes_after: (14 - i * 2) * 2600,
                  ttft_avg_ms: 280 + i * 90, ttft_samples: Math.max(1, 14 - i * 2) };
       }) : [],
       per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, rate_limited: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23 },

@@ -3636,6 +3636,30 @@ pub struct ModelStats {
     /// 由调用方从注册表预计算 free_ids 传入, 组内任一中转 ID 命中即标记.
     pub free: bool,
     // ── 优化省量 (2026-10-16 补: 此前只有供应商表有, 模型明细缺 → 用户问"省了多少"答不上来) ──
+    /// **处理前**的输入 token 总数 = `total_prompt_tokens + optimization_saved_tokens`。
+    ///
+    /// 为什么要这个数 (2026-10-16 用户):「我建议你把我们的处理前的token总数也显示出来,
+    /// 不然我无法知道到底有没有省。」
+    /// 光有"省了多少"看不出比例 —— 省 1 万 token 在 100 万的请求里是 1%, 在 2 万的是 50%。
+    /// 有了它, `原始 → 实发` 两个数并列, 省没省一眼可判, 不必再跟上游对账
+    /// (而且跟上游**本来就对不上**: 上游看到的永远是实发值, 详见 `req_bytes` 的注释)。
+    ///
+    /// 口径: 省量本身就是"发往上游前被移除的输入 token 估算", 故直接相加即得原始值。
+    /// **免费/月套餐模型同样有这个数** (它衡量的是体积, 与计费无关)。
+    #[serde(default)]
+    pub total_prompt_tokens_before: u64,
+    /// **处理前**的请求体字节总数 = `req_bytes + (省量 × 4)`。
+    ///
+    /// 与 `total_prompt_tokens_before` 的区别: 这个由**实测字节**还原 (实发字节 + 被移除字节),
+    /// 那个由 token 估算还原。两个都给是因为它们回答不同问题:
+    /// 前者"体积省了多少"(实测), 后者"模型侧输入省了多少 token"(估算)。
+    /// 注意**不**用累计 `req_bytes_orig` —— 旧记录没有该字段 (记 0), 相加会被稀释成假数。
+    #[serde(default)]
+    pub req_bytes_before: u64,
+    /// 本统计窗口该模型累计的**实测**实发请求体字节 (`Σ req_bytes`)。
+    /// 与 `req_bytes_before` 配对给出体积缩减率; 0 = 该窗口内没有带此字段的记录 (旧 exe 写的日志)。
+    #[serde(default)]
+    pub req_bytes_after: u64,
     /// 本统计窗口该模型累计优化省下的输入 token (剥离推理链 + 历史裁剪 + 响应缓存命中).
     /// 口径与全局 `total_opt_saved_tokens` 一致, 只是粒度落到"供应商/上游模型";
     /// 长跨度查询时 rollup 合并的**历史天**也计入 (同全局口径)。
@@ -4887,6 +4911,22 @@ fn compute_stats(
                 .iter()
                 .map(|l| (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64)
                 .sum();
+            // ── 处理前 vs 实发 (2026-10-16 用户: "把处理前的 token 总数也显示出来, 不然我
+            //    无法知道到底有没有省") ──
+            // token 侧: 省量本身就是"发往上游前被移除的输入 token", 故 原始 = 实发 + 省量。
+            // 字节侧: 用**实测**实发字节 + 被移除字节(省量×4) 还原, 不用累计 req_bytes_orig ——
+            //          旧记录没有该字段(记 0), 相加会被稀释成假数。
+            let req_after: u64 = logs.iter().map(|l| l.req_bytes as u64).sum();
+            let req_before: u64 = logs
+                .iter()
+                .map(|l| {
+                    let removed = (l.strip_saved_tokens as u64
+                        + l.trim_saved_tokens as u64
+                        + l.resp_cache_saved_tokens as u64)
+                        * 4;
+                    l.req_bytes as u64 + removed
+                })
+                .sum();
             let opt_saved_fee: f64 = if free {
                 0.0
             } else {
@@ -4940,6 +4980,9 @@ fn compute_stats(
                 price,
                 free,
                 billing,
+                total_prompt_tokens_before: pt + opt_saved_tokens,
+                req_bytes_before: req_before,
+                req_bytes_after: req_after,
                 optimization_saved_tokens: opt_saved_tokens,
                 optimization_saved_fee: opt_saved_fee,
             }
@@ -5422,6 +5465,10 @@ fn merge_rollup_days(
                 m.total_cache_miss_tokens += e.cache_miss_tokens;
                 m.optimization_saved_tokens += e_saved;
                 m.optimization_saved_fee += e_saved_fee;
+                // 处理前的 token 总数: 与日志侧同口径 (实发 + 被移除), 历史天照常累加。
+                // 字节侧**不动** —— rollup 条目没存字节, 硬算会把比率稀释成假数;
+                // 前端在 req_bytes_after==0 时显示 "—" (那是诚实的"该来源没这个数")。
+                m.total_prompt_tokens_before += e.prompt_tokens + e_saved;
                 m.gen_output_tokens += e.gen_output_tokens;
                 m.gen_time_sum_ms += e.gen_time_sum_ms;
                 m.gen_speed = if m.gen_time_sum_ms > 0 {
@@ -5487,6 +5534,10 @@ fn merge_rollup_days(
                     price,
                     free: entry_free,
                     billing: !entry_free,
+                    total_prompt_tokens_before: e.prompt_tokens + e_saved,
+                    // rollup 无字节数据 → 0 (前端显示 "—"), 不编造。
+                    req_bytes_before: 0,
+                    req_bytes_after: 0,
                     optimization_saved_tokens: e_saved,
                     optimization_saved_fee: e_saved_fee,
                 });

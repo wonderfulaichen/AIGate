@@ -141,6 +141,36 @@
       const a = Number((log || {}).req_bytes || 0), o = Number((log || {}).req_bytes_orig || 0);
       return (o && a && o > a) ? (o - a) : 0;
     },
+    // ── 模型明细「处理前 / 实发」列 (2026-10-16) ──
+    // 用户原话:「我建议你把我们的处理前的token总数也显示出来，不然我无法知道到底有没有省。」
+    // 只给"省了多少"看不出比例 —— 省 1 万在 100 万的请求里是 1%, 在 2 万的是 50%。
+    // 故输入列并排给「原始 / 实发」两个数 + 省量百分比。
+    //
+    // 未采集判据: total_prompt_tokens_before 为 0 时说明该来源没有省量数据
+    // (极旧记录 / rollup 合并的历史天) → 显示 "—" 而不是把实发值当原始的重复一遍。
+    modelTokensBeforeText(m) {
+      const b = Number((m || {}).total_prompt_tokens_before || 0);
+      if (!b) return '—';
+      return this.fmtT(b);
+    },
+    modelTokensAfterText(m) {
+      const a = Number((m || {}).total_prompt_tokens || 0);
+      return this.fmtT(a);
+    },
+    // 省量占原始的比例 (%)。原始为 0 或省量为 0 → 空串 (不显示 "省 0%" 这种噪声)。
+    modelSavedPct(m, k) {
+      const before = Number((m || {}).total_prompt_tokens_before || 0);
+      const saved = Number((m || {})[k || 'optimization_saved_tokens'] || 0);
+      if (!before || !saved) return '';
+      return (saved / before * 100).toFixed(1) + '%';
+    },
+    // 实发占原始的比例 —— 与"省量占比"互补, 给不惯看百分号的人一个直接读数。
+    modelSentPct(m) {
+      const before = Number((m || {}).total_prompt_tokens_before || 0);
+      const after = Number((m || {}).total_prompt_tokens || 0);
+      if (!before) return '';
+      return (after / before * 100).toFixed(1) + '%';
+    },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).
     providerLogo(p) {
       return window.providerLogo(p);
