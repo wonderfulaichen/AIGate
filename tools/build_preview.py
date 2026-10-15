@@ -86,14 +86,41 @@ STUB = r"""<script>
                  total_prompt_tokens_before: (14 - i * 2) * 820 + (i === 4 ? 0 : (14 - i * 2) * 4100),
                  req_bytes_before: (14 - i * 2) * 3300,
                  req_bytes_after: (14 - i * 2) * 2600,
+                 // 逐节点阶段耗时 (2026-10-16): 每行**各不相同** —— 用来验证时间轴切节点后
+                 // 数字真的变 (若各节点都显示全局值, 就是"全部混在一起"换个地方重演)。
+                 // 刻意让 up-a 快、up-d 慢 (等首字 220 vs 940), 一眼能看出区分。
+                 stage_summary: { waiting_samples: 10 - i, waiting_sum_ms: (10 - i) * (220 + i * 180),
+                                  reasoning_samples: 10 - i, reasoning_sum_ms: (10 - i) * (30 + i * 25),
+                                  output_samples: 10 - i, output_sum_ms: (10 - i) * (300 + i * 90),
+                                  tool_call_samples: i, tool_call_sum_ms: i * 40 },
+                 gateway_stages: {
+                   route: { samples: 10 - i, avg_ms: 2 + i, p50_ms: 2, p95_ms: 6 },
+                   guard: { samples: 10 - i, avg_ms: 0.4, p50_ms: 0, p95_ms: 3 },
+                   convert: { samples: i, avg_ms: 1, p50_ms: 1, p95_ms: 4 },
+                   upstream_ttfb: { samples: 10 - i, avg_ms: 300 + i * 140, p50_ms: 280, p95_ms: 900 + i * 60 },
+                   overhead: { samples: 10 - i, avg_ms: 4 + i * 2, p50_ms: 4, p95_ms: 15 },
+                 },
                  ttft_avg_ms: 280 + i * 90, ttft_samples: Math.max(1, 14 - i * 2) };
       }) : [],
-      per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, rate_limited: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23 },
-                         { provider: 'provB', requests: 12, errors: 1, rate_limited: 2, avg_latency_ms: 940, total_prompt_tokens: 12 * 800, total_completion_tokens: 12 * 260, total_cost: 0.61 },
-                         { provider: 'provC', requests: 6, errors: 0, rate_limited: 0, avg_latency_ms: 1180, total_prompt_tokens: 6 * 800, total_completion_tokens: 6 * 260, total_cost: 0.28 }] : [],
+      per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, rate_limited: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23,
+                           stage_summary: { waiting_samples: 20, waiting_sum_ms: 20 * 310, reasoning_samples: 20, reasoning_sum_ms: 20 * 55, output_samples: 20, output_sum_ms: 20 * 390, tool_call_samples: 2, tool_call_sum_ms: 80 },
+                           gateway_stages: { route: { samples: 20, avg_ms: 3, p50_ms: 3, p95_ms: 7 }, guard: { samples: 20, avg_ms: 0.4, p50_ms: 0, p95_ms: 3 }, convert: { samples: 2, avg_ms: 1, p50_ms: 1, p95_ms: 3 }, upstream_ttfb: { samples: 20, avg_ms: 400, p50_ms: 380, p95_ms: 950 }, overhead: { samples: 20, avg_ms: 6, p50_ms: 5, p95_ms: 18 } } },
+                         { provider: 'provB', requests: 12, errors: 1, rate_limited: 2, avg_latency_ms: 940, total_prompt_tokens: 12 * 800, total_completion_tokens: 12 * 260, total_cost: 0.61,
+                           stage_summary: { waiting_samples: 10, waiting_sum_ms: 10 * 720, reasoning_samples: 10, reasoning_sum_ms: 10 * 140, output_samples: 10, output_sum_ms: 10 * 520, tool_call_samples: 1, tool_call_sum_ms: 30 },
+                           gateway_stages: { route: { samples: 10, avg_ms: 5, p50_ms: 5, p95_ms: 12 }, guard: { samples: 10, avg_ms: 0.4, p50_ms: 0, p95_ms: 3 }, convert: { samples: 1, avg_ms: 2, p50_ms: 2, p95_ms: 2 }, upstream_ttfb: { samples: 10, avg_ms: 880, p50_ms: 820, p95_ms: 1600 }, overhead: { samples: 10, avg_ms: 12, p50_ms: 11, p95_ms: 30 } } },
+                         { provider: 'provC', requests: 6, errors: 0, rate_limited: 0, avg_latency_ms: 1180, total_prompt_tokens: 6 * 800, total_completion_tokens: 6 * 260, total_cost: 0.28,
+                           stage_summary: { waiting_samples: 5, waiting_sum_ms: 5 * 1100, reasoning_samples: 5, reasoning_sum_ms: 5 * 210, output_samples: 5, output_sum_ms: 5 * 640, tool_call_samples: 0, tool_call_sum_ms: 0 },
+                           gateway_stages: { route: { samples: 5, avg_ms: 7, p50_ms: 7, p95_ms: 14 }, guard: { samples: 5, avg_ms: 0.4, p50_ms: 0, p95_ms: 3 }, convert: { samples: 0, avg_ms: null, p50_ms: null, p95_ms: null }, upstream_ttfb: { samples: 5, avg_ms: 1350, p50_ms: 1300, p95_ms: 2400 }, overhead: { samples: 5, avg_ms: 19, p50_ms: 18, p95_ms: 42 } } }] : [],
       error_count: n ? 3 : 0,
       // 网关侧阶段 (2026-10-15): 面板「网关自身开销」+ 链路拓扑节点的数据源。
       // 各段都带 samples/avg/p50/p95 —— 缺 samples 时面板会判为"无样本"而不显示。
+      // 全局阶段汇总 (供时间轴"全部（混合）"档): 刻意让等首字均值落在各节点之间
+      // (220 与 940 的中间 ≈ 500), 用来说明"全局会把慢的稀释掉"。
+      stage_summary: n ? {
+        waiting_samples: 35, waiting_sum_ms: 35 * 500,
+        reasoning_samples: 35, reasoning_sum_ms: 35 * 95,
+        output_samples: 35, output_sum_ms: 35 * 430,
+        tool_call_samples: 3, tool_call_sum_ms: 110 } : {},
       gateway_stages: n ? {
         route: { samples: 42, avg_ms: 2.4, p50_ms: 2, p95_ms: 6 },
         // guard 均值刻意给 0.4ms (Math.round → 0): 用来验证"实测 0 显示 0ms"而不是 "—"。

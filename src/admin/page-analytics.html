@@ -118,7 +118,7 @@
            ④ 首字延迟分布 + 拓扑三跳 (收尾两块)
          ⚠️ 前提是 ② 的第一段必须是**真正的首字延迟**; 此前它记的是"首字之后"的时长
             (proxy.rs::stage_timings 的 t0.elapsed() bug, 本轮已修), 否则拼不成连续轴。 -->
-    <div class="pnl mb4" x-show="analyticsTab==='perf'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('perf_axis_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('perf_axis_desc')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:18px">
+    <div class="pnl mb4" x-show="analyticsTab==='perf'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('perf_axis_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('perf_axis_desc')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="an-filter" style="border-top:1px solid var(--border)"><span class="txs tm" x-text="t('perf_axis_pick')"></span><div class="seg" style="flex-wrap:wrap"><span class="seg-i" :class="{'a':!axisNode}" @click="axisNode=null" x-text="t('perf_axis_all')"></span><template x-for="n in axisNodes" :key="n.provider+'/'+(n.model||'')"><span class="seg-i" :class="{'a':axisNode&&axisNode.provider===n.provider&&axisNode.model===n.model}" @click="axisNode={provider:n.provider,model:n.model}" x-text="n.label"></span></template></div></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:18px">
       <template x-if="!ttftHasData && !stageHasData && !gwStageHasData"><div class="empty-state" style="padding:8px 0"><div class="empty-t" x-text="t('ttft_no_data')"></div><div class="empty-d" x-text="t('ttft_no_data_hint')"></div></div></template>
 
       <!-- ① 头条: 总时长 / 首字延迟 / p50 / p90 -->
@@ -129,11 +129,26 @@
       </div>
 
       <!-- ③ 「等首字」的下钻: 网关去程五段 (它是 ② 第一段的内部, 故缩进 + 左边线) -->
-      <div x-show="gwStageHasData" style="border-left:2px solid var(--border);padding-left:14px;margin-left:2px">
-        <div class="fb" style="margin-bottom:8px"><span class="txs tm" x-text="t('perf_row_gateway')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',(gwStageSummary.overhead||{}).samples||0)"></span></div>
-        <div class="prop-bar"><template x-for="s in gwStageWinRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
+      <div x-show="stageHasData">
+        <div class="fb" style="margin-bottom:8px"><span class="txs fw7" style="color:var(--fg)" x-text="t('perf_row_model')"></span><span class="txs tm" style="margin-left:auto" x-text="t('perf_axis_node',axisNodeLabel)+' · '+t('stages_samples',axisStageRows.reduce((a,x)=>Math.max(a,x.n||0),0))"></span></div>
+        <div class="prop-bar"><template x-for="s in axisStageRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
         <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-          <template x-for="s in gwStageWinRows" :key="s.k">
+          <template x-for="s in axisStageRows" :key="s.k">
+            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:110px">
+              <span class="txs tm" x-text="s.label"></span>
+              <span class="txsm mono fw6" :style="s.avg==null?'opacity:.5;color:var(--muted)':('color:'+s.color)" x-text="msText(s.avg)"></span>
+              <span class="txs tm" x-show="s.avg!=null" x-text="t('stages_n_samples',s.n)"></span>
+            </div>
+          </template>
+        </div>
+        <div class="txs tm" style="color:var(--muted);margin-top:8px" x-text="t('stages_note')"></div>
+      </div>
+
+      <div x-show="gwStageHasData" style="border-left:2px solid var(--border);padding-left:14px;margin-left:2px">
+        <div class="fb" style="margin-bottom:8px"><span class="txs tm" x-text="t('perf_row_gateway')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',axisGwRows.reduce((a,x)=>Math.max(a,x.n||0),0))"></span></div>
+        <div class="prop-bar"><template x-for="s in axisGwRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
+          <template x-for="s in axisGwRows" :key="s.k">
             <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:110px">
               <span class="txs tm" x-text="s.label"></span>
               <span class="txsm mono fw6" :style="s.avg==null?'opacity:.5;color:var(--muted)':('color:'+s.color)" x-text="msText(s.avg)"></span>
@@ -146,21 +161,6 @@
       </div>
 
       <!-- ② 客户端四段: 首尾相接 (合计 ≈ 总时长) -->
-      <div x-show="stageHasData">
-        <div class="fb" style="margin-bottom:8px"><span class="txs fw7" style="color:var(--fg)" x-text="t('perf_row_model')"></span><span class="txs tm" style="margin-left:auto" x-text="t('stages_samples',stageSummary.waiting_samples||0)"></span></div>
-        <div class="prop-bar"><template x-for="s in stageWinRows" :key="s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
-        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-          <template x-for="s in stageWinRows" :key="s.k">
-            <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;min-width:110px">
-              <span class="txs tm" x-text="s.label"></span>
-              <span class="txsm mono fw6" :style="s.avg==null?'opacity:.5;color:var(--muted)':('color:'+s.color)" x-text="msText(s.avg)"></span>
-              <span class="txs tm" x-show="s.avg!=null" x-text="t('stages_n_samples',s.n)"></span>
-            </div>
-          </template>
-        </div>
-        <div class="txs tm" style="color:var(--muted);margin-top:8px" x-text="t('stages_note')"></div>
-      </div>
-
       <!-- ④ 收尾两块: 首字延迟分布 + 拓扑三跳 -->
       <div x-show="ttftHasData" style="border-top:1px solid var(--border);padding-top:14px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('ttft_dist_title')"></div>

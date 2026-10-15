@@ -61,6 +61,20 @@ function dashboard() {  return {
     // 明细表的「更多列」开关 (两张表各一个)。默认关: 默认只给核心列, 不再横向滚动。
     modelColsMore: false,
     provColsMore: false,
+    // 请求时间轴当前选中的**节点** (2026-10-16): { provider, model } 或 null (= 全局)。
+    // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算" ——
+    // 全局平均会稀释掉慢的那条链路, 故默认落在第一个有数据的节点上, 可随时切换。
+    axisNode: null,
+    // 该节点的模型侧四段 (选中后由 stageRowsFor 算出)
+    get axisStageRows() {
+      const n = this.axisNode;
+      return n ? (this.stageRowsFor(n.provider, n.model) || []) : this.stageWinRows;
+    },
+    // 该节点的网关侧五段
+    get axisGwRows() {
+      const n = this.axisNode;
+      return n ? (this.gwRowsFor(n.provider, n.model) || []) : this.gwStageWinRows;
+    },
     // 诊断类面板的展开态 (默认全收起, 2026-10-16)。
     // 这些卡回答的是"出问题时才问"的问题 (省量审计 / 网关自身开销 / 链路拓扑),
     // 日常看用量不该占屏高; 收起后标题与关键结论仍可见, 点开才铺明细。

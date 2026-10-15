@@ -133,6 +133,35 @@ const { chromium } = require('playwright');
     };
   });
 
+  // ── 时间轴按节点 (2026-10-16 本轮核心) ──
+  // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算"。
+  // 关键判据: 切节点后**数字必须真的变** —— 若各节点共用一份全局样本,
+  // 表面有数据但看哪个都一样, 等于没分 (单测也盯了这条)。
+  out.axisNodes = await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    st.analyticsTab = 'perf';
+    return (st.axisNodes || []).slice(0, 4).map(n => n.label);
+  });
+  await p.waitForTimeout(400);
+  const readAxis = () => p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    return {
+      label: st.axisNodeLabel,
+      stage: (st.axisStageRows || []).map(r => r.k + ':' + r.avg).join(','),
+      gw: (st.axisGwRows || []).map(r => r.k + ':' + r.avg).join(','),
+      n: (st.axisStageRows || []).reduce((a, x) => Math.max(a, x.n || 0), 0),
+    };
+  });
+  out.axisAll = await readAxis();
+  out.axisByNode = {};
+  for (const lab of (out.axisNodes || [])) {
+    const [prov, model] = lab.split('/');
+    await p.evaluate(n => { document.querySelector('[x-data]')._x_dataStack[0].axisNode = n; },
+                     { provider: prov, model });
+    await p.waitForTimeout(350);
+    out.axisByNode[lab] = await readAxis();
+  }
+
   console.log(JSON.stringify(out, null, 1));
   await b.close();
 })();
@@ -203,6 +232,21 @@ ck(merged.get("distHasDonut") and merged.get("distHasRank"),
    "「调用分布」合并卡同时含环图与排名条: donut=%s rank=%s" % (merged.get("distHasDonut"), merged.get("distHasRank")))
 ck(merged.get("noRankPanel"), "独立的「调用排名」卡已并入 (不再单独存在)")
 ck(merged.get("modelTableAlive"), "合并过程中「模型明细」表仍在 (曾被脚本误删过)")
+
+# ── 时间轴按节点 (本轮核心) ──
+nodes = data.get("axisNodes") or []
+ck(len(nodes) >= 2, "时间轴提供多个可选节点: %s" % nodes)
+by = data.get("axisByNode") or {}
+ck(len(by) >= 2, "至少两个节点取到了数据: %s" % list(by.keys()))
+# 核心: 不同节点的**值必须不同** (若相同说明共用全局样本, 等于没分)
+vals = [ (v.get("stage") or "") + "|" + (v.get("gw") or "") for v in by.values() ]
+ck(len(set(vals)) >= 2, "各节点的耗时值互不相同 (没被全局平均稀释): %s" % vals)
+ck(all(v.get("label") and v.get("label") != "全部（混合）" for v in by.values()),
+   "选中节点后标题显示该节点名: %s" % [v.get("label") for v in by.values()])
+# 节点样本数应小于全局 (它是全局的一个子集)
+allN = (data.get("axisAll") or {}).get("n") or 0
+ck(all(x.get("n", 0) <= allN for x in by.values()),
+   "节点样本数 ≤ 全局样本数 (它是子集): 节点 %s vs 全局 %s" % ([x.get("n") for x in by.values()], allN))
 
 print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
 sys.exit(1 if fails else 0)

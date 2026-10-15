@@ -341,6 +341,89 @@
         mk('overhead', 'gw_own_overhead', 'var(--neutral-fg)'),
       ];
     },
+    // ─── 逐节点 (供应商 / 供应商+模型) 的阶段耗时 (2026-10-16) ───
+    // 用户: "请求时间轴不应该统计全部模型的，应该按供应商里面的各模型来算。
+    //        所以我才说要你做成拓扑图啊。"
+    // 全局平均把慢的与快的混在一起 → 慢的那条链路被稀释掉。而拓扑的意义就是**逐节点**看。
+    // 数据来自后端刚补的 `per_provider[].stage_summary` / `per_model[].stage_summary`
+    // (两个层级各算各的, 单测盯住了"慢的必须看得出慢")。
+    //
+    // 取值口径: 优先**供应商+模型**这一级 (最细), 没有则回退供应商级, 再没有才用全局。
+    // 这样"选中某个模型"时能看到它自己的数, 未选中时看到该供应商的数。
+    /// 时间轴可选节点列表: 每个「供应商 + 上游模型」一个 (拓扑的末端节点)。
+    /// 后端 per_model 已按 (provider, upstream_model) 分组, 直接拿来当节点。
+    get axisNodes() {
+      return (this.stats && this.stats.per_model || [])
+        .filter(m => (m.requests || 0) > 0)
+        .slice(0, 8)
+        .map(m => ({
+          provider: m.provider,
+          model: m.upstream_model || m.model,
+          label: m.provider + '/' + (m.upstream_model || m.model),
+        }));
+    },
+    /// 当前选中节点的可读名 (未选中 = "全部")
+    get axisNodeLabel() {
+      const n = this.axisNode;
+      return n ? (n.provider + '/' + n.model) : t('perf_axis_all');
+    },
+    /// 按 (provider, upstream_model) 取一个节点的模型侧四段行
+    stageRowsFor(prov, model) {
+      const s = this._nodeSummary(prov, model, 'stage_summary');
+      if (!s) return null;
+      const mk = (k, key, sumKey, nKey, color) => {
+        const n = s[nKey] || 0;
+        return { k, label: t(key), n, avg: n > 0 ? Math.round((s[sumKey] || 0) / n) : null, color };
+      };
+      const rows = [
+        mk('waiting', 'stage_waiting', 'waiting_sum_ms', 'waiting_samples', 'var(--muted)'),
+        mk('reasoning', 'stage_reasoning', 'reasoning_sum_ms', 'reasoning_samples', 'var(--secondary)'),
+        mk('output', 'stage_output', 'output_sum_ms', 'output_samples', 'var(--accent)'),
+        mk('tool', 'stage_tool_call', 'tool_call_sum_ms', 'tool_call_samples', 'var(--ok)'),
+      ];
+      return rows.some(r => r.avg != null) ? rows : null;
+    },
+    /// 按 (provider, upstream_model) 取一个节点的网关侧五段行
+    gwRowsFor(prov, model) {
+      const g = this._nodeSummary(prov, model, 'gateway_stages');
+      if (!g) return null;
+      const mk = (k, key, color) => {
+        const s = g[k] || {};
+        return { k, label: t(key), n: s.samples || 0,
+                 avg: s.avg_ms == null ? null : Math.round(s.avg_ms),
+                 p50: s.p50_ms, p95: s.p95_ms, color };
+      };
+      const rows = [
+        mk('route', 'gw_route', 'var(--muted)'),
+        mk('guard', 'gw_guard', 'var(--info-fg)'),
+        mk('convert', 'gw_convert', 'var(--secondary)'),
+        mk('upstream_ttfb', 'gw_ttfb', 'var(--warn-fg)'),
+        mk('overhead', 'gw_own_overhead', 'var(--neutral-fg)'),
+      ];
+      return rows.some(r => r.avg != null) ? rows : null;
+    },
+    /// 内部: 取某个节点的某类汇总。
+    ///
+    /// ⚠️ **不回退到全局** (2026-10-16 探针抓出的设计缺陷): 最初写成"模型级 → 供应商级 → 全局"
+    /// 三级回退, 结果**每个节点都显示全局值** —— 正是用户抱怨的"全部混在一起"换个地方重演,
+    /// 而且更糟: 它会把这些数**冠上节点名**显示。全局值不是该节点的值, 冒充就是假数。
+    /// 故: 指定了节点却拿不到该节点的数据 → 返回 null → 前端显示 "—" (未采集)。
+    _nodeSummary(prov, model, key) {
+      if (!this.stats) return null;
+      // 未指定节点 = 用户明确要看全局
+      if (!prov) return this.stats[key] || null;
+      const has = v => (key === 'stage_summary'
+        ? ((v.waiting_samples || 0) + (v.output_samples || 0)) > 0
+        : Object.keys(v || {}).some(k => (v[k] || {}).samples > 0));
+      if (model) {
+        const m = (this.stats.per_model || []).find(
+          x => x.provider === prov && (x.upstream_model || x.model) === model);
+        if (m && m[key] && has(m[key])) return m[key];
+      }
+      const p = (this.stats.per_provider || []).find(x => x.provider === prov);
+      if (p && p[key] && has(p[key])) return p[key];
+      return null;
+    },
     // 拓扑节点用的两个 p95: 未采集 → null → 模板显示 "—" (不拿 0 充)。
     get gwOverheadP95() {
       const s = this.gwStageSummary.overhead || {};

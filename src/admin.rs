@@ -3635,6 +3635,16 @@ pub struct ModelStats {
     /// 是否免费模型 (显式 free 标记或上游/中转模型名含 free/免费). 与路由配置页判定完全一致,
     /// 由调用方从注册表预计算 free_ids 传入, 组内任一中转 ID 命中即标记.
     pub free: bool,
+    // ── 阶段耗时 (2026-10-16 逐模型): 回答"**这个**模型慢在哪一段" ──
+    /// 模型侧四段 (等首字 / 思考 / 正文 / 工具调用) 的窗口级汇总。
+    ///
+    /// 为什么必须逐模型: 全局平均会把慢的模型被快的稀释掉 —— 而"哪个供应商/模型慢"
+    /// 正是这张表要回答的。只覆盖当前运行日志窗口 (rollup 不存逐条样本, 无法跨天恢复)。
+    #[serde(default)]
+    pub stage_summary: StageSummary,
+    /// 网关侧五段 (路由/护栏/转换/上游首字节/自身开销) 的窗口级汇总, 含 p50/p95。
+    #[serde(default)]
+    pub gateway_stages: GatewayStageSummary,
     // ── 优化省量 (2026-10-16 补: 此前只有供应商表有, 模型明细缺 → 用户问"省了多少"答不上来) ──
     /// **处理前**的输入 token 总数 = `total_prompt_tokens + optimization_saved_tokens`。
     ///
@@ -3737,6 +3747,13 @@ pub struct ProviderStats {
     pub today_trim_saved_tokens: u64,
     /// 今日窗口优化省量明细: 仅响应缓存命中省下的 token.
     pub today_resp_cache_saved_tokens: u64,
+    // ── 阶段耗时 (2026-10-16 逐供应商), 口径同 ModelStats 的同名字段 ──
+    /// 模型侧四段汇总。
+    #[serde(default)]
+    pub stage_summary: StageSummary,
+    /// 网关侧五段汇总 (含 p50/p95)。
+    #[serde(default)]
+    pub gateway_stages: GatewayStageSummary,
 }
 
 /// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
@@ -4901,6 +4918,10 @@ fn compute_stats(
             // 供前端单价列展示.
             let price = pricing::resolve_price(price_table.lookup(&logs[0].provider, &logs[0].model));
 
+            // 阶段耗时 (逐模型): 模型侧四段 + 网关侧五段。共用全局那两个函数, 口径不会漂。
+            let m_stage = stage_summary(logs.iter().copied());
+            let m_gw = gateway_stage_summary(logs.iter().copied());
+
             // 优化省量 (窗口累计) 与折算价值: 口径与 compute_stats 的 total_opt_saved_fee 一致.
             // 免费/月套餐组记 0 价值 —— 与 ProviderStats.cache_saved 同一条纪律:
             // 没有计费基数时,"省了多少钱"是假数, 前端以 "—" 呈现.
@@ -4980,6 +5001,8 @@ fn compute_stats(
                 price,
                 free,
                 billing,
+                stage_summary: m_stage,
+                gateway_stages: m_gw,
                 total_prompt_tokens_before: pt + opt_saved_tokens,
                 req_bytes_before: req_before,
                 req_bytes_after: req_after,
@@ -5048,6 +5071,9 @@ fn compute_stats(
             let (gen_ct, gen_ms, _gen_n, gen_speed) = gen_speed_of(logs.iter().copied());
             // 首字延迟, 同 per_model 口径.
             let ttft = ttft_aggregate(logs.iter().copied());
+            // 阶段耗时 (逐供应商), 口径同逐模型。
+            let p_stage = stage_summary(logs.iter().copied());
+            let p_gw = gateway_stage_summary(logs.iter().copied());
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -5074,6 +5100,8 @@ fn compute_stats(
                 today_strip_saved_tokens,
                 today_trim_saved_tokens,
                 today_resp_cache_saved_tokens,
+                stage_summary: p_stage,
+                gateway_stages: p_gw,
             }
         })
         .collect();
@@ -5165,11 +5193,25 @@ fn compute_stats(
     }
 }
 
+/// 模型侧四段汇总: **只把采集到的段计入样本** (未采集 → 该段样本不增)。
+///
+/// 与 [`gateway_stage_summary`] 对称抽出, 供**全局 / 逐模型 / 逐供应商**三处共用 ——
+/// 三处各写一遍 fold 早晚会出现"样本数对不上"的口径漂移 (与 `ttft_aggregate` 同一理由)。
+fn stage_summary<'a>(logs: impl IntoIterator<Item = &'a RequestLog>) -> StageSummary {
+    let mut acc = StageSummary::default();
+    for log in logs {
+        acc.absorb(&log.stages);
+    }
+    acc
+}
+
 /// 网关侧五段汇总: **只把采集到的段计入样本** (未采集 → 该段样本不增)。
 ///
 /// 单独成函数而非内联在 `compute_stats` 里: 判据要能单测 (未采集/直通不算样本,
 /// 分位与均值同源同口径), 内联在几百行的聚合函数里就只能靠 e2e 间接验证。
-fn gateway_stage_summary(logs: &[RequestLog]) -> GatewayStageSummary {
+fn gateway_stage_summary<'a>(
+    logs: impl IntoIterator<Item = &'a RequestLog>,
+) -> GatewayStageSummary {
     let (mut route, mut guard, mut conv, mut ttfb, mut over) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for log in logs {
@@ -5534,6 +5576,10 @@ fn merge_rollup_days(
                     price,
                     free: entry_free,
                     billing: !entry_free,
+                    // rollup 条目**没有**逐条阶段样本 (与 TTFT 分桶同理: 日级聚合不存逐条),
+                    // 故这里给 default (全 None = 未采集) —— 前端显示 "—", 不编造。
+                    stage_summary: StageSummary::default(),
+                    gateway_stages: GatewayStageSummary::default(),
                     total_prompt_tokens_before: e.prompt_tokens + e_saved,
                     // rollup 无字节数据 → 0 (前端显示 "—"), 不编造。
                     req_bytes_before: 0,
@@ -5629,6 +5675,9 @@ fn merge_rollup_days(
                     today_strip_saved_tokens: 0,
                     today_trim_saved_tokens: 0,
                     today_resp_cache_saved_tokens: 0,
+                    // 同模型侧: rollup 无逐条阶段样本 → default (未采集), 不编造。
+                    stage_summary: StageSummary::default(),
+                    gateway_stages: GatewayStageSummary::default(),
                 });
             }
         }
@@ -6158,6 +6207,62 @@ mod tests {
     /// 为什么钉住这两条: ① 未采集混进样本会把均值拉低 —— 用户读到的"网关只要 1ms"
     /// 其实是"一半记录没测到"; ② 直通请求的 convert 段是"没发生转换", 若按 0 计入,
     /// "协议转换均值"就被一堆 0 稀释掉, 真在做转换那部分的开销反而看不见。
+    /// 逐模型 / 逐供应商的阶段耗时必须**各算各的**, 且与全局口径一致。
+    ///
+    /// 起因 (2026-10-16 用户):「你这个请求时间轴不应该统计全部模型的，应该按供应商里面的
+    /// 各模型来算。所以我才说要你做成拓扑图啊。」—— 全局平均会把慢的模型稀释掉,
+    /// 而"哪个供应商/模型慢在哪一段"正是拓扑要回答的。
+    ///
+    /// 盯三件事: ① 三个层级都填了; ② 慢的那个模型**看得出**慢 (不被快的稀释);
+    ///          ③ 分组之和 == 全局 (同源同口径, 不重复也不遗漏)。
+    #[test]
+    fn stage_summary_is_per_model_and_per_provider() {
+        // fast: 等首字 100ms; slow: 等首字 900ms (相差 9 倍, 全局平均会落在中间)
+        let mut fast = mk("m", "pfast", 0, 0);
+        fast.stages.waiting_first_ms = Some(100);
+        fast.stages.reasoning_ms = Some(20);
+        let mut slow = mk("m", "pslow", 0, 0);
+        slow.stages.waiting_first_ms = Some(900);
+        slow.stages.reasoning_ms = Some(200);
+        let logs = vec![fast.clone(), slow.clone()];
+
+        let st = compute_stats(&logs, &PriceTable::default(), &std::collections::HashSet::new());
+
+        // ① 全局: 均值 (100+900)/2 = 500 —— 正是"把慢的稀释掉"的那个数
+        assert_eq!(st.stage_summary.waiting_samples, 2);
+        assert_eq!(st.stage_summary.waiting_sum_ms, 1000);
+        let gw = |m: &str| st.per_model.iter().find(|x| x.provider == m).unwrap();
+
+        // ② 逐模型: 慢的仍是 900, 快的仍是 100 (没被平均掉)
+        assert_eq!(gw("pfast").stage_summary.waiting_samples, 1);
+        assert_eq!(gw("pfast").stage_summary.waiting_sum_ms, 100, "快模型不应被拖慢");
+        assert_eq!(gw("pslow").stage_summary.waiting_sum_ms, 900, "慢模型必须看得出慢");
+        assert_eq!(gw("pslow").stage_summary.reasoning_sum_ms, 200);
+
+        // ③ 逐供应商同源
+        let pv = |n: &str| st.per_provider.iter().find(|x| x.provider == n).unwrap();
+        assert_eq!(pv("pfast").stage_summary.waiting_sum_ms, 100);
+        assert_eq!(pv("pslow").stage_summary.waiting_sum_ms, 900);
+
+        // ④ 分组之和 == 全局 (不重复计数、不遗漏)
+        let sum: u64 = st.per_model.iter().map(|m| m.stage_summary.waiting_sum_ms).sum();
+        assert_eq!(sum, st.stage_summary.waiting_sum_ms, "分组之和必须等于全局");
+
+        // ⑤ 网关侧同样逐模型 (p95 也要各自算)
+        let mut gwslow = mk("m2", "pslow", 0, 0);
+        gwslow.stages.upstream_ttfb_ms = Some(2000);
+        let mut gwfast = mk("m2", "pfast", 0, 0);
+        gwfast.stages.upstream_ttfb_ms = Some(50);
+        let st2 = compute_stats(&[gwslow, gwfast], &PriceTable::default(),
+                                &std::collections::HashSet::new());
+        let g2 = |m: &str| st2.per_model.iter().find(|x| x.provider == m).unwrap();
+        assert_eq!(g2("pslow").gateway_stages.upstream_ttfb.avg_ms, Some(2000.0));
+        assert_eq!(g2("pfast").gateway_stages.upstream_ttfb.avg_ms, Some(50.0));
+        assert_ne!(g2("pslow").gateway_stages.upstream_ttfb.avg_ms,
+                   g2("pfast").gateway_stages.upstream_ttfb.avg_ms,
+                   "两个模型的网关耗时必须不同 —— 相同说明共用了一份样本");
+    }
+
     #[test]
     fn gateway_stage_summary_counts_only_collected_segments() {
         let full = |route: u64, conv: Option<u64>, ttfb: u64| {
