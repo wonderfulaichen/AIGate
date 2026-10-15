@@ -109,46 +109,48 @@ const { chromium } = require('playwright');
              title: k.getAttribute('title') || '' };
   });
 
-  // ── 分析页变体: 网关自身开销面板 + 链路拓扑 ──
-  // sc=done 才有 gateway_stages / per_provider; sc=empty 用来验证"无样本时面板整个不出现"
+  // ── 分析页变体: 耗时拆分 (客户端 + 网关两侧) + 链路拓扑 ──
+  // sc=done 才有 gateway_stages / per_provider; sc=empty 用来验证"无样本时该侧整个不出现"
   // (而不是画一排 0 / 0ms 的假数据)。
   //
-  // ⚠️ 2026-10-16 分析页重构后, 这两张卡**默认折叠**且位于「性能与延迟」页签下 ——
-  // 故必须先切页签、再点标题展开, 否则量到的永远是收起态 (探针曾因此误报)。
+  // ⚠️ 结构变了两次, 探针必须跟着走, 否则会一直"假失败":
+  //   2026-10-16 ①: 分析页分三个页签, 这两块挪到「性能与延迟」页且默认折叠
+  //   2026-10-16 ②: 「时间去哪了」与「网关自身开销」合并成一张「耗时拆分」卡 (上下两行),
+  //                  拓扑里逐提供商列表也已去掉 (改指向供应商表)
+  // 故这里: 切页签 → 展开 → 读合并卡里的**网关侧那一行**。
   async function analytics(q) {
     const r = await prep();
     await r.p.goto('file:///' + %(an_page)s + q, { waitUntil: 'load' });
     await r.p.waitForTimeout(2500);
     const o = { pageerrors: r.errs, errs: await r.p.evaluate(() => (window.__ERRS || []).slice(0, 10)) };
-    // 切到「性能与延迟」页签并展开两张诊断卡
     o.expand = await r.p.evaluate(() => {
       const st = document.querySelector('[x-data]')._x_dataStack[0];
       st.analyticsTab = 'perf';
-      const before = { gw: st.gwStageExpanded, topo: st.gwTopoExpanded };
-      st.gwStageExpanded = true;
+      // 两张诊断卡都要展开才读得到正文 (默认收起是设计)
       st.gwTopoExpanded = true;
-      return before;
+      st.auditExpanded = true;
+      return { topo: false };
     });
     await r.p.waitForTimeout(500);
     o.dom = await r.p.evaluate(() => {
-      const panels = Array.from(document.querySelectorAll('.pnl'));
-      const pick = re => panels.find(x => re.test(x.innerText || ''));
-      const gw = pick(/网关自身开销/), topo = pick(/链路拓扑/);
+      const all = Array.from(document.querySelectorAll('.pnl'));
+      const txt = el => (el ? (el.innerText || '') : '');
+      // 合并卡: 「耗时拆分」(含客户端行 + 网关行)
+      const split = all.find(el => /耗时拆分/.test(txt(el)));
+      const gwRow = split ? Array.from(split.querySelectorAll('.prop-bar'))[1] || null : null;
+      const topo = all.find(el => /链路拓扑/.test(txt(el)));
       const vis = e => !!e && getComputedStyle(e).display !== 'none';
-      const bodyVis = e => {
-        const b = e && e.querySelector('.pnl-b');
-        return !!b && getComputedStyle(b).display !== 'none';
-      };
       return {
-        gwPanel: !!gw, gwVisible: vis(gw) && bodyVis(gw),
-        gwBars: gw ? Array.from(gw.querySelectorAll('.prop-bar')).map(b => b.querySelectorAll('span[style*="flex-grow"]').length) : [],
-        gwText: gw ? (gw.innerText || '').replace(/\n+/g, ' | ').slice(0, 500) : '',
-        topoPanel: !!topo, topoVisible: vis(topo) && bodyVis(topo),
-        topoText: topo ? (topo.innerText || '').replace(/\n+/g, ' | ').slice(0, 700) : '',
+        splitPanel: !!split, splitVisible: vis(split),
+        splitRows: split ? (txt(split).match(/客户端视角|网关视角/g) || []) : [],
+        // 第 2 条 bar 是网关侧 (第 1 条是客户端侧)
+        gwBars: gwRow ? gwRow.querySelectorAll('span[style*="flex-grow"]').length : 0,
+        gwText: split ? txt(split).replace(/\n+/g, ' | ').slice(0, 600) : '',
+        topoPanel: !!topo, topoVisible: vis(topo),
+        topoText: txt(topo).replace(/\n+/g, ' | ').slice(0, 700),
         topoNodes: topo ? topo.querySelectorAll('.ov-secondary-item').length : 0,
       };
     });
-    // 收起态另测: 默认值应为 false (页面初始态)
     o.collapsedByDefault = o.expand;
     return o;
   }
@@ -236,29 +238,33 @@ ALLTXT = (rb.get("val") or "") + "|" + (rd.get("dom") or {}).get("text", "")
 ck("%s" not in ALLTXT and "{0}" not in ALLTXT and "{1}" not in ALLTXT,
    "无未替换的占位符 (%s / {0} / {1})")
 
-print("\n== 分析页: 网关自身开销 + 链路拓扑 ==")
+print("\n== 分析页: 耗时拆分 (两侧) + 链路拓扑 ==")
 ck(not an.get("pageerrors"), "无 pageerror: %s" % an.get("pageerrors"))
 ck(not an.get("errs"), "window.__ERRS 为空: %s" % an.get("errs"))
-# 重构后这两张卡默认收起 (2026-10-16) —— 初始态必须是 false, 否则"默认收起"没生效
+# 诊断卡默认收起 (2026-10-16) —— 初始态必须为 false, 否则"默认收起"没生效
 ec = an.get("collapsedByDefault") or {}
-ck(ec.get("gw") is False and ec.get("topo") is False,
-   "两张诊断卡默认收起: %s" % ec)
-ck(ad.get("gwVisible"), "'网关自身开销' 展开后可见 (有样本就该显示)")
-ck(any(n >= 1 for n in (ad.get("gwBars") or [])), "该面板比例条含 >=1 个段, 实得 %s" % ad.get("gwBars"))
+ck(ec.get("topo") is False, "链路拓扑默认收起: %s" % ec)
+ck(ad.get("splitVisible"), "'耗时拆分' 卡可见 (有样本就该显示)")
+# 合并卡必须**同时**含客户端行与网关行 —— 这是合并后最容易丢的一半
+ck(sorted(set(ad.get("splitRows") or [])) == ["客户端视角", "网关视角"],
+   "合并卡同时含两侧行: %s" % ad.get("splitRows"))
+ck((ad.get("gwBars") or 0) >= 1, "网关侧比例条含 >=1 个段, 实得 %s" % ad.get("gwBars"))
 # 桩里 overhead p95=15 / ttfb p95=980; 两段都采到了就必须在文字里出现
 ck("15ms" in (ad.get("gwText") or "") and "980ms" in (ad.get("gwText") or ""),
-   "面板给出 p95 15ms / 980ms, 实得 %r" % (ad.get("gwText") or "")[:160])
+   "卡内给出 p95 15ms / 980ms, 实得 %r" % (ad.get("gwText") or "")[:160])
 # 参考卡点: 桩里护栏均值 0.4ms → 取整为 0。这是**实测 0**, 必须显示 "0ms" 而不是 "—",
 # 否则窗口级面板上会有一格看起来"没采集"(而它其实是全窗口最快的一段)。
 ck("0ms" in (ad.get("gwText") or ""), "实测 0ms 显示 '0ms' 而非 '—', 实得 %r" % (ad.get("gwText") or "")[:200])
 ck(ad.get("topoVisible"), "'链路拓扑' 面板可见")
-ck((ad.get("topoNodes") or 0) >= 4, "拓扑含 客户端+网关+提供商 节点 (>=4), 实得 %s" % ad.get("topoNodes"))
+# 拓扑只留链式三跳 (客户端 → 网关 → 提供商); 逐提供商明细已移至供应商表 (2026-10-16 精简)
+ck((ad.get("topoNodes") or 0) == 3, "拓扑为三跳节点 (客户端/网关/提供商), 实得 %s" % ad.get("topoNodes"))
 tt = ad.get("topoText") or ""
 ck("42" in tt and "p95" in tt, "拓扑给出窗口量 42 与 p95, 实得 %r" % tt[:200])
-ck("provB" in tt, "拓扑列出各提供商节点, 实得 %r" % tt[:200])
-# 关键负例: 无样本时面板必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据
-ck(ae.get("gwPanel") and not ae.get("gwVisible"),
-   "无样本时 '网关自身开销' 面板隐藏 (不拿 0 充数)")
+ck("供应商表" in tt, "拓扑指向供应商表而非重复列表, 实得 %r" % tt[-160:])
+# 关键负例: 无样本时该侧必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据。
+# 合并卡里两侧各自 x-show —— 故判据是"网关行不出现", 不是"整张卡消失"。
+ck("网关视角" not in (ae.get("gwText") or ""),
+   "无样本时网关行整个不出现: %r" % (ae.get("gwText") or "")[:200])
 ck(not (ae.get("errs") or []), "空场景无表达式异常: %s" % ae.get("errs"))
 
 print("\n== 记录详情图例 ==")
