@@ -112,6 +112,16 @@
       }
       return rows.join('\n');
     },
+    // 模型明细「已省」列 (2026-10-16): 免费/月套餐模型没有费用基数, 折算金额无意义 → "—",
+    // 与供应商表同一条纪律 (ProviderStats.cache_saved 只对计费供应商展示的理由)。
+    // 注意这里**不能**用 `fee>0` 当判据: 真省了但单价为 0 (显式配 0 的模型) 也会是 0,
+    // 那是"确实省了但折算为 0", 与"不适用"是两回事 —— 判据要看是否计费 (billing)。
+    // 它与 optimization_saved_tokens 同批次同口径, 两者相除即均价 (见 ModelStats 注释)。
+    modelSavedFeeText(m) {
+      if (!m) return '—';
+      if (!m.billing) return '—';
+      return this.fmtMoneyTiny(m.optimization_saved_fee || 0);
+    },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).
     providerLogo(p) {
       return window.providerLogo(p);

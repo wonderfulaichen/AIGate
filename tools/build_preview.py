@@ -69,7 +69,15 @@ STUB = r"""<script>
         var p = k.split('/');
         return { provider: p[0], upstream_model: p[1], model: k, requests: Math.max(1, 14 - i * 2), errors: i === 3 ? 1 : 0,
                  avg_latency_ms: 620 + i * 130, total_prompt_tokens: (14 - i * 2) * 820, total_completion_tokens: (14 - i * 2) * 260,
-                 total_cost: (14 - i * 2) * 0.03, cache_hit: 0.42 - i * 0.05, gen_speed: 54 - i * 3 };
+                 total_cost: (14 - i * 2) * 0.03, cache_hit: 0.42 - i * 0.05, gen_speed: 54 - i * 3,
+                 // 优化省量 (2026-10-16 新增列): 逐模型各不相同, 一眼能看出"不是共用的一个数";
+                 // 第 4 个模型刻意设为**不计费** (billing=false) 且金额为 0 —— 用来核对
+                 // 「已省」列显示 "—" 而不是 ¥0.00 (免费模型没有费用基数)。
+                 optimization_saved_tokens: i === 4 ? 0 : (14 - i * 2) * 4100,
+                 today_optimization_saved_tokens: (14 - i * 2) * 210,
+                 optimization_saved_fee: i === 4 ? 0 : (14 - i * 2) * 0.11,
+                 billing: i !== 4, free: i === 4,
+                 ttft_avg_ms: 280 + i * 90, ttft_samples: Math.max(1, 14 - i * 2) };
       }) : [],
       per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, rate_limited: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23 },
                          { provider: 'provB', requests: 12, errors: 1, rate_limited: 2, avg_latency_ms: 940, total_prompt_tokens: 12 * 800, total_completion_tokens: 12 * 260, total_cost: 0.61 },

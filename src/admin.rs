@@ -3594,6 +3594,27 @@ pub struct ModelStats {
     /// 是否免费模型 (显式 free 标记或上游/中转模型名含 free/免费). 与路由配置页判定完全一致,
     /// 由调用方从注册表预计算 free_ids 传入, 组内任一中转 ID 命中即标记.
     pub free: bool,
+    // ── 优化省量 (2026-10-16 补: 此前只有供应商表有, 模型明细缺 → 用户问"省了多少"答不上来) ──
+    /// 本统计窗口该模型累计优化省下的输入 token (剥离推理链 + 历史裁剪 + 响应缓存命中).
+    /// 口径与全局 `total_opt_saved_tokens` 一致, 只是粒度落到"供应商/上游模型";
+    /// 长跨度查询时 rollup 合并的**历史天**也计入 (同全局口径)。
+    #[serde(default)]
+    pub optimization_saved_tokens: u64,
+    /// 该模型是否按量计费 (组内任一中转 ID 不在 free_ids 即视为计费), 口径与
+    /// `ProviderStats.billing` 完全一致。前端据此决定「已省」列显示金额还是 "—"
+    /// (免费/月套餐没有费用基数, 金额无意义)。
+    #[serde(default)]
+    pub billing: bool,
+    /// 该模型优化省量的**折算价值** (元, 元/百万 token), 与 `total_cost` 同口径
+    /// (同走 `saved_tokens_fee` 的缓存命中比例加权)。
+    ///
+    /// 与 `optimization_saved_tokens` **同批次**: 同一批省量、同一批单价 —— 两者相除即均价,
+    /// 不会出现"一个按窗口、一个按累计"那种对不上的情形 (rollup 里的历史天同理, 见
+    /// `merge_rollup_days`: 它只合并**日志窗口之外且早于今天**的天, 与窗口口径一致, 不重叠)。
+    /// 免费/月套餐组强行记 0: 没有计费基数, 折算出来的"省了多少钱"是假的
+    /// (同 `ProviderStats.cache_saved` 只对计费供应商展示的理由)。
+    #[serde(default)]
+    pub optimization_saved_fee: f64,
 }
 
 /// 单个供应商的聚合统计.
@@ -4815,6 +4836,39 @@ fn compute_stats(
             // 供前端单价列展示.
             let price = pricing::resolve_price(price_table.lookup(&logs[0].provider, &logs[0].model));
 
+            // 优化省量 (窗口累计) 与折算价值: 口径与 compute_stats 的 total_opt_saved_fee 一致.
+            // 免费/月套餐组记 0 价值 —— 与 ProviderStats.cache_saved 同一条纪律:
+            // 没有计费基数时,"省了多少钱"是假数, 前端以 "—" 呈现.
+            let free = logs.iter().any(|l| free_ids.contains(&l.model));
+            // 计费判定与 free 同一依据 (组内任一中转 ID 不在免费集即计费), 与 ProviderStats.billing 同口径.
+            let billing = !free;
+            let opt_saved_tokens: u64 = logs
+                .iter()
+                .map(|l| (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64)
+                .sum();
+            let opt_saved_fee: f64 = if free {
+                0.0
+            } else {
+                logs.iter()
+                    .map(|l| {
+                        let opt =
+                            (l.strip_saved_tokens + l.trim_saved_tokens + l.resp_cache_saved_tokens) as u64;
+                        if opt == 0 {
+                            return 0.0;
+                        }
+                        match memo.resolve(l) {
+                            Some(p) => saved_tokens_fee(
+                                p,
+                                l.timestamp,
+                                opt,
+                                l.prompt_tokens as u64,
+                                l.prompt_cache_hit_tokens as u64,
+                            ),
+                            None => 0.0,
+                        }
+                    })
+                    .sum()
+            };
             let provider_name = logs[0].provider.clone();
             let upstream_name = logs[0]
                 .upstream_model
@@ -4843,7 +4897,10 @@ fn compute_stats(
                 ttft_hist: ttft.hist,
                 total_cost: cost,
                 price,
-                free: logs.iter().any(|l| free_ids.contains(&l.model)),
+                free,
+                billing,
+                optimization_saved_tokens: opt_saved_tokens,
+                optimization_saved_fee: opt_saved_fee,
             }
         })
         .collect();
@@ -5110,6 +5167,22 @@ fn entry_cost(p: ModelPrice, e: &crate::rollup::RollupEntry) -> f64 {
         + part(offpeak, e.bill_prompt_offpeak, e.bill_completion_offpeak, e.bill_hit_offpeak, e.bill_creation_offpeak)
 }
 
+/// rollup 条目优化省量的折算价值 (元), 口径与逐条 `saved_tokens_fee` 求和一致:
+/// 按该条目的 KV 缓存命中比例加权, 高峰/空闲两段各按自己的费率折算。
+///
+/// input 价为 0 (未配置/免费/显式配 0) 时返回 0 —— 没有计费基数就没有"省了多少钱"。
+fn entry_opt_saved_fee(p: ModelPrice, e: &crate::rollup::RollupEntry, saved: u64) -> f64 {
+    if saved == 0 || p.input_per_m <= 0.0 {
+        return 0.0;
+    }
+    let (peak_part, offpeak_part) = pricing::effective_parts(p);
+    let hit_ratio = cache_hit_ratio(e.prompt_tokens, e.cache_hit_tokens);
+    let peak_saved = e.saved_peak_tokens.min(saved);
+    let offpeak_saved = saved.saturating_sub(peak_saved);
+    saved_fee_weighted(peak_part, peak_saved as f64, hit_ratio)
+        + saved_fee_weighted(offpeak_part, offpeak_saved as f64, hit_ratio)
+}
+
 /// rollup 条目 KV 缓存净省金额 (元), 口径与 `log_cache_saved` 一致
 /// (净省 = 命中折扣 − 写入溢价; 输入价 0 → 无计费基数记 0; 不钳制到 0).
 fn entry_cache_saved(p: ModelPrice, e: &crate::rollup::RollupEntry) -> f64 {
@@ -5202,12 +5275,7 @@ fn merge_rollup_days(
                 // 缓存命中比例做加权, 高峰/空闲两段各按自己的费率折算.
                 // input 价为 0 (免费/显式配 0) 时不折算, 与旧口径一致.
                 if p.input_per_m > 0.0 {
-                    let (peak_part, offpeak_part) = pricing::effective_parts(p);
-                    let hit_ratio = cache_hit_ratio(e.prompt_tokens, e.cache_hit_tokens);
-                    let peak_saved = e.saved_peak_tokens.min(saved);
-                    let offpeak_saved = saved.saturating_sub(peak_saved);
-                    total_opt_saved_fee += saved_fee_weighted(peak_part, peak_saved as f64, hit_ratio)
-                        + saved_fee_weighted(offpeak_part, offpeak_saved as f64, hit_ratio);
+                    total_opt_saved_fee += entry_opt_saved_fee(p, e, saved);
                 }
             }
         }
@@ -5286,6 +5354,16 @@ fn merge_rollup_days(
             }
             let entry_free = e.aliases.iter().any(|a| free_ids.contains(a));
             let cost = entry_price(price_table, e).map(|p| entry_cost(p, e)).unwrap_or(0.0);
+            // 该条的优化省量与折算价值 (口径与全局 total_opt_saved_* 一致)。
+            // 免费组价值记 0: 没有计费基数 (同 ProviderStats.cache_saved 的纪律)。
+            let e_saved = e.strip_saved_tokens + e.trim_saved_tokens + e.resp_cache_saved_tokens;
+            let e_saved_fee = if entry_free {
+                0.0
+            } else {
+                entry_price(price_table, e)
+                    .map(|p| entry_opt_saved_fee(p, e, e_saved))
+                    .unwrap_or(0.0)
+            };
             if let Some(m) = stats
                 .per_model
                 .iter_mut()
@@ -5301,6 +5379,8 @@ fn merge_rollup_days(
                 m.total_completion_tokens += e.completion_tokens;
                 m.total_cache_hit_tokens += e.cache_hit_tokens;
                 m.total_cache_miss_tokens += e.cache_miss_tokens;
+                m.optimization_saved_tokens += e_saved;
+                m.optimization_saved_fee += e_saved_fee;
                 m.gen_output_tokens += e.gen_output_tokens;
                 m.gen_time_sum_ms += e.gen_time_sum_ms;
                 m.gen_speed = if m.gen_time_sum_ms > 0 {
@@ -5316,6 +5396,7 @@ fn merge_rollup_days(
                 m.aliases.sort();
                 m.total_cost += cost;
                 m.free = m.free || entry_free;
+                m.billing = m.billing || !entry_free;
                 merge_ttft_into(
                     &mut m.ttft_samples,
                     &mut m.ttft_sum_ms,
@@ -5364,6 +5445,9 @@ fn merge_rollup_days(
                     total_cost: cost,
                     price,
                     free: entry_free,
+                    billing: !entry_free,
+                    optimization_saved_tokens: e_saved,
+                    optimization_saved_fee: e_saved_fee,
                 });
             }
         }
@@ -6339,6 +6423,56 @@ mod tests {
         let p = s.per_provider.iter().find(|p| p.provider == "ds").unwrap();
         assert_eq!(p.total_cache_hit_tokens, 140);
         assert_eq!(p.total_cache_miss_tokens, 60);
+    }
+
+    /// 模型明细的优化省量: 各模型互不串账、免费模型不编价值.
+    ///
+    /// 起因 (2026-10-16 用户问「你这个明细怎么不把省了多少给显示了？」): 供应商表早就有
+    /// 「优化省 Tokens」列, 模型表**没有** —— 而 `ModelStats` 里也确实没这个字段, 前端无从显示。
+    /// 补字段时最容易犯的两个错, 就是本测试盯的两条:
+    ///   ① 把全局省量平摊/共用给每个模型 (省钱变成假数);
+    ///   ② 对免费模型按"输入价"折算出一个非零金额 (免费套餐没有计费基数, 那是编出来的钱)。
+    #[test]
+    fn model_opt_saved_is_per_model_and_free_models_have_no_fake_fee() {
+        // priced: 输入 1000 元/M (便于手算); cheap: 10 元/M; free: 免费 (在 free_ids 里)
+        let priced = ModelPrice { input_per_m: 1000.0, output_per_m: 1000.0, ..Default::default() };
+        let cheap = ModelPrice { input_per_m: 10.0, output_per_m: 10.0, ..Default::default() };
+        let mut t = PriceTable::default();
+        t.by_provider_model.insert(("p1".into(), "priced".into()), priced);
+        t.by_provider_model.insert(("p2".into(), "cheap".into()), cheap);
+        let free_ids: std::collections::HashSet<String> =
+            ["p3/free".to_string()].into_iter().collect();
+
+        let mut a = mk("priced", "p1", 0, 100); // 未命中 → 命中比例 0 → 按 input 价
+        a.strip_saved_tokens = 1_000_000;
+        let mut b = mk("cheap", "p2", 0, 100);
+        b.trim_saved_tokens = 500_000;
+        let mut c = mk("free", "p3", 0, 100);
+        c.strip_saved_tokens = 2_000_000;
+        // 再给 priced 补一条响应缓存省量 (验证三类省量会累加到同一模型上)
+        let mut d = mk_ts("priced", "p1", crate::admin::now_ts());
+        d.resp_cache_saved_tokens = 400_000;
+
+        let s = compute_stats(&[a, b, c, d], &t, &free_ids);
+        let get = |name: &str| s.per_model.iter().find(|m| m.upstream_model == name).unwrap();
+
+        // ① 省量按模型各记各的, 不平摊也不共用
+        let pa = get("priced");
+        assert_eq!(pa.optimization_saved_tokens, 1_400_000, "priced = strip 1M + resp 0.4M");
+        assert_eq!(get("cheap").optimization_saved_tokens, 500_000);
+        // ② 价值各按各的单价: 1.4M × 1000 元/M = 1400 元; 0.5M × 10 = 5 元
+        assert!((pa.optimization_saved_fee - 1400.0).abs() < 1e-6, "实得 {}", pa.optimization_saved_fee);
+        assert!((get("cheap").optimization_saved_fee - 5.0).abs() < 1e-6);
+        // ③ 免费模型: token 照记 (省确实是省), 但金额必须是 0 而不是编出来的 2000 元
+        let pf = get("free");
+        assert_eq!(pf.optimization_saved_tokens, 2_000_000, "免费也要记省了多少 token");
+        assert_eq!(pf.optimization_saved_fee, 0.0, "免费模型不得折算金额");
+        // ④ 与全局口径对得上 (逐条求和 = 分组求和)
+        assert_eq!(
+            s.total_opt_saved_tokens,
+            pa.optimization_saved_tokens + get("cheap").optimization_saved_tokens + pf.optimization_saved_tokens,
+            "分组省量之和必须等于全局省量"
+        );
     }
 
     /// 聚合: 无 cache 数据时命中率为 0 (不除零).
