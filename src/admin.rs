@@ -274,6 +274,27 @@ pub struct RequestLog {
     /// 一直缺失的东西 (此前只能手工翻日志拼接)。旧日志无此字段 → 空结构。
     #[serde(default)]
     pub session: crate::traces::SessionRef,
+    /// **发往上游的请求体字节数** (剥离/裁剪/注入/转换之后的最终那份, 2026-10-16 补)。
+    ///
+    /// 为什么需要它 —— 用户原话:「我去对比了上游的 token 好像基本一致啊?」
+    /// 「优化省量」是**本地估算**(剥离发生在发送之前, 上游报文里根本没有这个数),
+    /// 而此前日志里**没有任何请求体大小字段**(`body_len` 是**响应体**大小, 参数名就叫
+    /// `response_body_len`), 于是用户拿它跟上游对账时**没有任何可交叉验证的量** ——
+    /// 只能选择相信省量那一栏。这不是数字错, 是**观测缺口**。
+    /// 有了它, 一条记录就能自证: 上游的 `prompt_tokens` 对应的正是这份报文。
+    ///
+    /// `0` = 未采集 (旧日志 / 失败路径在采集体之前就返回)。
+    #[serde(default)]
+    pub req_bytes: usize,
+    /// **客户端原始请求体字节数** (剥离/裁剪之前, 2026-10-16 补)。
+    ///
+    /// 与 `req_bytes` 配对, 差值就是"这份请求被改小了/B/4 字节"。用户可据此自己核对:
+    ///   原始 req_bytes_orig  vs  实发 req_bytes  → 差多少 = 真省下多少字节
+    /// 与 `strip_saved_tokens`(÷4 估算) 交叉验证, 省量就有了可证伪的口径。
+    ///
+    /// `0` = 未采集。
+    #[serde(default)]
+    pub req_bytes_orig: usize,
 }
 
 #[inline]
@@ -734,6 +755,9 @@ pub async fn record_request(
         stages: StageTimings::default(),
         // 失败路径 (解析失败/路由失败) 不进会话关联 —— 那时连请求体都没解析完。
         session: crate::traces::SessionRef::default(),
+        // 失败路径多在采集体积之前, 未采集 → 0.
+        req_bytes: 0,
+        req_bytes_orig: 0,
     };
     log_buffer.push(log).await;
 }
@@ -772,6 +796,9 @@ pub async fn record_request_with_tokens(
     stages: StageTimings,
     // 会话/轮次归属 (见 [`crate::traces::SessionRef`]); 无法识别时传 default (空结构)。
     session: crate::traces::SessionRef,
+    // 实际发往上游的请求体字节 / 客户端原始字节 (见 [`RequestLog::req_bytes`]).
+    req_bytes: usize,
+    req_bytes_orig: usize,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -800,6 +827,8 @@ pub async fn record_request_with_tokens(
         end_reason,
         stages,
         session,
+        req_bytes,
+        req_bytes_orig,
     )
     .await;
 }
@@ -840,6 +869,10 @@ pub async fn record_request_with_tokens_status(
     stages: StageTimings,
     // 会话/轮次归属 (见 [`crate::traces::SessionRef`]); 无法识别时传 default (空结构)。
     session: crate::traces::SessionRef,
+    // 实际发往上游的请求体字节 (剥离/注入/转换之后). 0 = 未采集.
+    req_bytes: usize,
+    // 客户端原始请求体字节 (剥离/裁剪之前). 0 = 未采集.
+    req_bytes_orig: usize,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
@@ -876,6 +909,8 @@ pub async fn record_request_with_tokens_status(
         end_reason,
         stages,
         session,
+        req_bytes,
+        req_bytes_orig,
     };
     log_buffer.push(log).await;
 }
@@ -2367,6 +2402,8 @@ pub async fn api_mock(
             end_reason: None,
             stages: StageTimings::default(),
             session: crate::traces::SessionRef::default(),
+            req_bytes: 0,
+            req_bytes_orig: 0,
         });
     }
 
@@ -2412,6 +2449,8 @@ pub async fn api_mock(
             end_reason: None,
             stages: StageTimings::default(),
             session: crate::traces::SessionRef::default(),
+            req_bytes: 0,
+            req_bytes_orig: 0,
         });
     }
 
@@ -2659,6 +2698,8 @@ mod changelog_tests {
             price: None, usage_estimated: false, seq: 0, effort: None, end_reason: None,
             stages: StageTimings::default(),
             session: crate::traces::SessionRef::default(),
+            req_bytes: 0,
+            req_bytes_orig: 0,
         };
         let logs = vec![
             // 正常请求
@@ -6225,6 +6266,8 @@ mod tests {
             end_reason: None,
             stages: StageTimings::default(),
             session: crate::traces::SessionRef::default(),
+            req_bytes: 0,
+            req_bytes_orig: 0,
         }
     }
 

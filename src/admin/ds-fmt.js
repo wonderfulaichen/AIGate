@@ -122,6 +122,25 @@
       if (!m.billing) return '—';
       return this.fmtMoneyTiny(m.optimization_saved_fee || 0);
     },
+    // 请求体字节: 实发 → 原始 的缩减幅度。给的是**可核对**的两个绝对值, 不是估算。
+    // 判据 (2026-10-16): req_bytes_orig==0 表示未采集 (旧记录/失败路径) → "—";
+    // 两者相等且都非 0 = "没改动" (直通路径的正常形态) → 照实写出来, 不写成"—",
+    // 否则用户会以为"没采集", 而其实是我们**没改**这份请求 (省量为 0 也是对的)。
+    reqBytesText(log) {
+      if (!log) return '—';
+      const a = Number(log.req_bytes || 0), o = Number(log.req_bytes_orig || 0);
+      if (!o) return '—';
+      if (a === o) return this.fmtB(o) + ' · ' + t('req_bytes_unchanged');
+      const cut = o - a;
+      const pct = o > 0 ? (cut / o * 100) : 0;
+      return this.fmtB(o) + ' → ' + this.fmtB(a) + ' (' + t('req_bytes_cut', this.fmtB(cut), pct.toFixed(1)) + ')';
+    },
+    // 请求体字节缩减量 (字节) —— 与 strip_saved_tokens(÷4 估算) 可交叉核对:
+    // 真省下的字节数 ÷4 应约等于省量 token。0 = 未采集/无改动。
+    reqBytesCut(log) {
+      const a = Number((log || {}).req_bytes || 0), o = Number((log || {}).req_bytes_orig || 0);
+      return (o && a && o > a) ? (o - a) : 0;
+    },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).
     providerLogo(p) {
       return window.providerLogo(p);

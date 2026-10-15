@@ -518,6 +518,8 @@ mod tests {
             // 阶段耗时与 rollup 统计无关 (只用于面板「时间去哪了」) → 未采集。
             stages: Default::default(),
             session: Default::default(),
+            req_bytes: 0,
+            req_bytes_orig: 0,
         }
     }
 

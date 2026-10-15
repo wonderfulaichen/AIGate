@@ -1142,6 +1142,8 @@ pub async fn chat_completions(
                         gateway_stages,
                         // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
                         session_ref.clone(),
+                        body_len_val,
+                        orig_body_len,
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
                     let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
@@ -1200,6 +1202,8 @@ pub async fn chat_completions(
                         gateway_stages,
                         // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
                         session_ref.clone(),
+                        body_len_val,
+                        orig_body_len,
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
                     let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
@@ -1236,6 +1240,7 @@ pub async fn chat_completions(
     let resp = stream_response_with_tokens(
         upstream,
         state.log_buffer.clone(),
+        orig_body_len,
         model,
         provider_name,
         endpoint,
@@ -2024,6 +2029,8 @@ async fn relay_native_passthrough(
             gateway_stages,
             // 会话归属已在函数入口采集 (直通路径不断链)。
             session_ref.clone(),
+            bytes.len(),
+            bytes.len(),
         ).await;
         // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
         let text = crate::guard::restore_redactions(&text, &guard_map).0;
@@ -2047,6 +2054,8 @@ async fn relay_native_passthrough(
         session_ref,
         guard_map,
         gateway_stages,
+        bytes.len(),
+        bytes.len(),
     );
     let mut resp = Response::builder()
         .status(status)
@@ -2138,6 +2147,10 @@ struct NativeTapStream {
     cache_creation: u32,
     response_bytes: usize,
     logged: bool,
+    /// 实发请求体字节 / 客户端原始字节 (2026-10-16 补, 见 [`RequestLog::req_bytes`]).
+    /// 直通不剥离不裁剪 → 两者相等, 那是**实测值**; 未采集才写 0.
+    req_body_len: usize,
+    req_body_len_orig: usize,
     /// 转发优化省下的输入 token (剥离历史 reasoning item; 默认关, 见
     /// [`strip_responses_reasoning_items`]). 落库供面板「优化省量」展示.
     strip_saved_tokens: u32,
@@ -2174,6 +2187,8 @@ impl NativeTapStream {
         session: crate::traces::SessionRef,
         guard_redactions: std::collections::HashMap<String, String>,
         gateway_stages: crate::admin::StageTimings,
+        req_body_len: usize,
+        req_body_len_orig: usize,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -2195,6 +2210,8 @@ impl NativeTapStream {
             cache_creation: 0,
             response_bytes: 0,
             logged: false,
+            req_body_len,
+            req_body_len_orig,
             truncated: false,
             strip_saved_tokens,
             effort,
@@ -2332,6 +2349,8 @@ impl Stream for NativeTapStream {
                         ),
                     };
                     self.logged = true;
+                    // 请求体字节: 直通路径两者相等 (不剥离不裁剪), 那是**实测值**不是未采集.
+                    let (req_bytes, req_bytes_orig) = (self.req_body_len, self.req_body_len_orig);
                     // 省量落库: strip = 本次剥离历史 reasoning item 的估算 token (默认关时为 0).
                     let st = self.strip_saved_tokens;
                     // 截断时写可读原因 (status 保持 200 —— 客户端收到的是协议规定的
@@ -2366,6 +2385,8 @@ impl Stream for NativeTapStream {
                             end_reason,
                             stages,
                             sess,
+                            req_bytes,
+                            req_bytes_orig,
                         ).await;
                     });
                 }
@@ -2790,6 +2811,9 @@ const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 fn stream_response_with_tokens(
     upstream: reqwest::Response,
     log_buffer: LogBuffer,
+    // 客户端原始请求体字节 (2026-10-16): 落库供用户核对"到底发出去多少字节".
+    // 实发字节由既有形参 `req_body_len` 携带.
+    req_body_len_orig: usize,
     model: String,
     provider: String,
     endpoint: String,
@@ -2914,6 +2938,7 @@ fn stream_response_with_tokens(
                 endpoint,
                 upstream_model,
                 start,
+                req_body_len_orig,
                 req_body_len,
                 strip_saved_tokens,
                 trim_saved_tokens,
@@ -3015,6 +3040,10 @@ async fn try_replay_cache(
         crate::admin::StageTimings::default(),
         // 缓存命中也要留在会话链上 (调用方已采集好归属)。
         session,
+        // 缓存回放**没有**发往上游的报文 (压根没打上游) → 两处记 0,
+        // 那是"不适用"而不是未采集 (该条另有 "缓存" 徽章可辨)。
+        0,
+        0,
     )
     .await;
     Some(serve_cached(&cached))
@@ -3030,6 +3059,10 @@ struct TokenLogData {
     endpoint: String,
     upstream_model: Option<String>,
     start: std::time::Instant,
+    /// 客户端**原始**请求体字节数 (剥离/裁剪之前) —— 与 req_body_len 配对,
+    /// 差值即"这份请求被改小了多少字节", 供用户与省量交叉核对 (2026-10-16).
+    req_body_len_orig: usize,
+    /// 实际发往上游的请求体字节数 (剥离/注入/转换之后).
     req_body_len: usize,
     response_body_len: usize,
     strip_saved_tokens: u32,
@@ -3758,6 +3791,8 @@ impl TokenStream {
                 end_reason,
                 stages,
                 sess,
+                ld.req_body_len,
+                ld.req_body_len_orig,
             )
             .await;
         });
@@ -4199,6 +4234,8 @@ impl Stream for TokenStream {
                                     end_reason,
                                     stages,
                                     sess,
+                                    ld.req_body_len,
+                                    ld.req_body_len_orig,
                                 ).await;
                             });
                         }
@@ -4363,6 +4400,8 @@ impl Drop for TokenStream {
                 end_reason,
                 stages,
                 sess,
+                ld.req_body_len,
+                ld.req_body_len_orig,
             ).await;
         });
     }
