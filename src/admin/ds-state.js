@@ -53,6 +53,20 @@ function dashboard() {  return {
     balanceData: null, balanceLoading: false,
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
+    // 分析页页签 (2026-10-16 重构): 此前 15 张卡平铺, 内容高 4342px = 要滚 4.2 屏,
+    // 且省量/延迟/分布三类信息各散在 4-5 张卡里重复出现。按"回答什么问题"分三组,
+    // 每组 1-2 屏; 诊断类卡片（省量审计/网关开销/拓扑）再各自默认折叠。
+    // 'overview'(用量概览) | 'cost'(省量与成本) | 'perf'(性能与延迟)
+    analyticsTab: 'overview',
+    // 明细表的「更多列」开关 (两张表各一个)。默认关: 默认只给核心列, 不再横向滚动。
+    modelColsMore: false,
+    provColsMore: false,
+    // 诊断类面板的展开态 (默认全收起, 2026-10-16)。
+    // 这些卡回答的是"出问题时才问"的问题 (省量审计 / 网关自身开销 / 链路拓扑),
+    // 日常看用量不该占屏高; 收起后标题与关键结论仍可见, 点开才铺明细。
+    auditExpanded: false,
+    gwStageExpanded: false,
+    gwTopoExpanded: false,
     // 主题: 'dark' (默认) | 'light' | 'system'. 只改 <html class="light">, 视觉全部由
     // base.css 的 token 层响应 (见 html.light 块); 首帧类名由 head.html 内联脚本先写好,
     // 故不会先闪一下暗色。品牌 logo 与图表数据系列色不随主题变。

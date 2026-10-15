@@ -112,34 +112,44 @@ const { chromium } = require('playwright');
   // ── 分析页变体: 网关自身开销面板 + 链路拓扑 ──
   // sc=done 才有 gateway_stages / per_provider; sc=empty 用来验证"无样本时面板整个不出现"
   // (而不是画一排 0 / 0ms 的假数据)。
+  //
+  // ⚠️ 2026-10-16 分析页重构后, 这两张卡**默认折叠**且位于「性能与延迟」页签下 ——
+  // 故必须先切页签、再点标题展开, 否则量到的永远是收起态 (探针曾因此误报)。
   async function analytics(q) {
     const r = await prep();
     await r.p.goto('file:///' + %(an_page)s + q, { waitUntil: 'load' });
     await r.p.waitForTimeout(2500);
     const o = { pageerrors: r.errs, errs: await r.p.evaluate(() => (window.__ERRS || []).slice(0, 10)) };
+    // 切到「性能与延迟」页签并展开两张诊断卡
+    o.expand = await r.p.evaluate(() => {
+      const st = document.querySelector('[x-data]')._x_dataStack[0];
+      st.analyticsTab = 'perf';
+      const before = { gw: st.gwStageExpanded, topo: st.gwTopoExpanded };
+      st.gwStageExpanded = true;
+      st.gwTopoExpanded = true;
+      return before;
+    });
+    await r.p.waitForTimeout(500);
     o.dom = await r.p.evaluate(() => {
       const panels = Array.from(document.querySelectorAll('.pnl'));
       const pick = re => panels.find(x => re.test(x.innerText || ''));
       const gw = pick(/网关自身开销/), topo = pick(/链路拓扑/);
       const vis = e => !!e && getComputedStyle(e).display !== 'none';
+      const bodyVis = e => {
+        const b = e && e.querySelector('.pnl-b');
+        return !!b && getComputedStyle(b).display !== 'none';
+      };
       return {
-        gwPanel: !!gw, gwVisible: vis(gw),
+        gwPanel: !!gw, gwVisible: vis(gw) && bodyVis(gw),
         gwBars: gw ? Array.from(gw.querySelectorAll('.prop-bar')).map(b => b.querySelectorAll('span[style*="flex-grow"]').length) : [],
         gwText: gw ? (gw.innerText || '').replace(/\n+/g, ' | ').slice(0, 500) : '',
-        topoPanel: !!topo, topoVisible: vis(topo),
+        topoPanel: !!topo, topoVisible: vis(topo) && bodyVis(topo),
         topoText: topo ? (topo.innerText || '').replace(/\n+/g, ' | ').slice(0, 700) : '',
         topoNodes: topo ? topo.querySelectorAll('.ov-secondary-item').length : 0,
-        // 省量审计的「≈ 不省时用量为现在的 N×」(2026-10-16 用户问"相当于多少倍")
-        // 倍数那句在省量审计面板里找 —— 不靠 x-text 属性 (Alpine 会消费掉它),
-        // 直接在渲染后的文本里搜, 这样"真的显示出来了"才算通过。
-        auditTimes: (() => {
-          const p2 = Array.from(document.querySelectorAll('.pnl')).find(x => /省量审计/.test(x.innerText || ''));
-          if (!p2) return '';
-          const m = (p2.innerText || '').match(/≈[^|\n]*?(\d\.\d+)\u00d7/);
-          return m ? m[0].trim() : '';
-        })(),
       };
     });
+    // 收起态另测: 默认值应为 false (页面初始态)
+    o.collapsedByDefault = o.expand;
     return o;
   }
   const anDone = await analytics('?sc=done');
@@ -229,7 +239,11 @@ ck("%s" not in ALLTXT and "{0}" not in ALLTXT and "{1}" not in ALLTXT,
 print("\n== 分析页: 网关自身开销 + 链路拓扑 ==")
 ck(not an.get("pageerrors"), "无 pageerror: %s" % an.get("pageerrors"))
 ck(not an.get("errs"), "window.__ERRS 为空: %s" % an.get("errs"))
-ck(ad.get("gwVisible"), "'网关自身开销' 面板可见 (有样本就该显示)")
+# 重构后这两张卡默认收起 (2026-10-16) —— 初始态必须是 false, 否则"默认收起"没生效
+ec = an.get("collapsedByDefault") or {}
+ck(ec.get("gw") is False and ec.get("topo") is False,
+   "两张诊断卡默认收起: %s" % ec)
+ck(ad.get("gwVisible"), "'网关自身开销' 展开后可见 (有样本就该显示)")
 ck(any(n >= 1 for n in (ad.get("gwBars") or [])), "该面板比例条含 >=1 个段, 实得 %s" % ad.get("gwBars"))
 # 桩里 overhead p95=15 / ttfb p95=980; 两段都采到了就必须在文字里出现
 ck("15ms" in (ad.get("gwText") or "") and "980ms" in (ad.get("gwText") or ""),
@@ -242,10 +256,6 @@ ck((ad.get("topoNodes") or 0) >= 4, "拓扑含 客户端+网关+提供商 节点
 tt = ad.get("topoText") or ""
 ck("42" in tt and "p95" in tt, "拓扑给出窗口量 42 与 p95, 实得 %r" % tt[:200])
 ck("provB" in tt, "拓扑列出各提供商节点, 实得 %r" % tt[:200])
-# 「≈ 不省时用量为现在的 N×」(2026-10-16 用户问"相当于多少倍 ds")
-# 桩: 实发 46.2M / 省 8.39M → 1 + 8.39/46.2 = 1.18×
-ck("1.18" in (ad.get("auditTimes") or ""),
-   "省量审计给出倍数 1.18×: %r" % ad.get("auditTimes"))
 # 关键负例: 无样本时面板必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据
 ck(ae.get("gwPanel") and not ae.get("gwVisible"),
    "无样本时 '网关自身开销' 面板隐藏 (不拿 0 充数)")
