@@ -47,5 +47,17 @@
           <div class="prop-bar" x-html="stageBarHtml(selectedLog)"></div>
           <div class="txs tm" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:10px" x-html="stageLegendHtml(selectedLog)"></div>
           <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('stages_note')"></div>
+        </div></div>
+        <!-- ── 网关去程瀑布 (2026-10-15) ──
+             五段互不重叠, 顺序铺满「进门 → 上游响应头」: 路由/鉴权 → 护栏 → 协议转换 →
+             其他网关工作 → 上游首字节。与上方的模型侧四段**视角不同**, 不可相加 (见 gw_note)。 -->
+        <div class="log-detail-item" style="grid-column:1/-1" x-show="hasGatewayData(selectedLog)"><div class="log-detail-key" x-text="t('gw_title')"></div><div class="log-detail-val">
+          <div class="prop-bar" x-html="gwBarHtml(selectedLog)"></div>
+          <div class="txs tm" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:10px" x-html="gwLegendHtml(selectedLog)"></div>
+          <div class="txs tm" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:10px">
+            <span x-show="gwOverheadShareText(selectedLog)" style="color:var(--muted)" x-text="gwOverheadShareText(selectedLog)"></span>
+            <span style="color:var(--muted)" x-text="t('gw_note')"></span>
+          </div>
+          <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('gw_direct_note')"></div>
         </div></div></div></div></div></div></template>
 </div>

@@ -316,6 +316,48 @@
       ];
     },
 
+    // ─── 网关自身开销 (窗口级, 2026-10-15) ───
+    // 与上者的区别: 上者回答"模型侧哪段最久", 这里回答"**网关照成的部分有多大**" ——
+    // 用户报"慢"时第一件要分清的事。取后端算好的样本数/均值/p50/p95 (逐条样本只留在后端,
+    // 前端不重算分位 —— 同一判据不在两处各写一遍)。
+    // ⚠️ 无样本 → avg 为 null → 显示 "—" (未采集 ≠ 0)。
+    get gwStageSummary() { return (this.stats && this.stats.gateway_stages) || {}; },
+    get gwStageHasData() {
+      const g = this.gwStageSummary;
+      return ['route', 'guard', 'convert', 'upstream_ttfb', 'overhead'].some(k => (g[k] || {}).samples > 0);
+    },
+    get gwStageWinRows() {
+      const g = this.gwStageSummary;
+      const mk = (k, key, color) => {
+        const s = g[k] || {};
+        return { k, label: t(key), n: s.samples || 0, avg: s.avg_ms == null ? null : Math.round(s.avg_ms), p50: s.p50_ms, p95: s.p95_ms, color };
+      };
+      return [
+        mk('route', 'gw_route', 'var(--muted)'),
+        mk('guard', 'gw_guard', 'var(--info-fg)'),
+        // 协议转换只在真发生转换时才有样本 (直通请求该段为 None), 见后端 GatewayStageSummary。
+        mk('convert', 'gw_convert', 'var(--secondary)'),
+        mk('upstream_ttfb', 'gw_ttfb', 'var(--warn-fg)'),
+        mk('overhead', 'gw_own_overhead', 'var(--neutral-fg)'),
+      ];
+    },
+    // 拓扑节点用的两个 p95: 未采集 → null → 模板显示 "—" (不拿 0 充)。
+    get gwOverheadP95() {
+      const s = this.gwStageSummary.overhead || {};
+      return s.p95_ms == null ? null : s.p95_ms;
+    },
+    get gwTtfbP95() {
+      const s = this.gwStageSummary.upstream_ttfb || {};
+      return s.p95_ms == null ? null : s.p95_ms;
+    },
+    // 网关自身开销占本次请求总耗时的比例: 只有两者都采集到才算 (缺一个就显示 "—", 不拿 0 充)。
+    gwOverheadShareText(log) {
+      const s = (log && log.stages) || {};
+      const oh = s.overhead_ms, total = log && log.latency_ms;
+      if (oh == null || !total) return '';
+      return t('gw_overhead_share', this.fmtPct(oh / total * 100));
+    },
+
     // ─── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ───
     //
     // 数据来自 `/admin/api/heatmap`（后端按日级 rollup 逐日补齐），前端只负责画格子。

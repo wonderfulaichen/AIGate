@@ -71,9 +71,21 @@ STUB = r"""<script>
                  avg_latency_ms: 620 + i * 130, total_prompt_tokens: (14 - i * 2) * 820, total_completion_tokens: (14 - i * 2) * 260,
                  total_cost: (14 - i * 2) * 0.03, cache_hit: 0.42 - i * 0.05, gen_speed: 54 - i * 3 };
       }) : [],
-      per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23 },
-                         { provider: 'provB', requests: 12, errors: 1, avg_latency_ms: 940, total_prompt_tokens: 12 * 800, total_completion_tokens: 12 * 260, total_cost: 0.61 },
-                         { provider: 'provC', requests: 6, errors: 0, avg_latency_ms: 1180, total_prompt_tokens: 6 * 800, total_completion_tokens: 6 * 260, total_cost: 0.28 }] : [],
+      per_provider: n ? [{ provider: 'provA', requests: 24, errors: 0, rate_limited: 0, avg_latency_ms: 700, total_prompt_tokens: 24 * 800, total_completion_tokens: 24 * 260, total_cost: 1.23 },
+                         { provider: 'provB', requests: 12, errors: 1, rate_limited: 2, avg_latency_ms: 940, total_prompt_tokens: 12 * 800, total_completion_tokens: 12 * 260, total_cost: 0.61 },
+                         { provider: 'provC', requests: 6, errors: 0, rate_limited: 0, avg_latency_ms: 1180, total_prompt_tokens: 6 * 800, total_completion_tokens: 6 * 260, total_cost: 0.28 }] : [],
+      error_count: n ? 3 : 0,
+      // 网关侧阶段 (2026-10-15): 面板「网关自身开销」+ 链路拓扑节点的数据源。
+      // 各段都带 samples/avg/p50/p95 —— 缺 samples 时面板会判为"无样本"而不显示。
+      gateway_stages: n ? {
+        route: { samples: 42, avg_ms: 2.4, p50_ms: 2, p95_ms: 6 },
+        // guard 均值刻意给 0.4ms (Math.round → 0): 用来验证"实测 0 显示 0ms"而不是 "—"。
+        // 护栏本来就是亚毫秒级的活, 0 是常见实测值, 不是"没测到"。
+        guard: { samples: 42, avg_ms: 0.4, p50_ms: 0, p95_ms: 3 },
+        convert: { samples: 18, avg_ms: 1.2, p50_ms: 1, p95_ms: 4 },
+        upstream_ttfb: { samples: 42, avg_ms: 412.5, p50_ms: 380, p95_ms: 980 },
+        overhead: { samples: 42, avg_ms: 4.8, p50_ms: 4, p95_ms: 15 }
+      } : {},
       top_models: n ? [{ model: 'provA/up-a', requests: 14, errors: 0 }, { model: 'provA/up-b', requests: 12, errors: 0 },
                        { model: 'provB/up-c', requests: 10, errors: 1 }, { model: 'provB/up-d', requests: 8, errors: 1 },
                        { model: 'provC/up-e', requests: 6, errors: 0 }] : [],
@@ -117,7 +129,11 @@ STUB = r"""<script>
   }
   var LOG = { timestamp: Date.now() / 1000, status: 200, model: 'provA/up-a', upstream_model: 'up-a', provider: 'provA',
     endpoint: '/v1/chat/completions', prompt_tokens: 800, completion_tokens: 260, latency_ms: 720, first_token_ms: 310,
-    cached: false, cost: 0.41, body_len: 1024, error: '' };
+    cached: false, cost: 0.41, body_len: 1024, error: '',
+    // 阶段耗时: 记录详情的「时间去哪了」+「网关去程」两条都要有数据才看得出瀑布是否对齐;
+    // convert_ms 留 null 表示"直通"(未发生协议转换) —— 正是要核对的措辞分支。
+    stages: { waiting_first_ms: 310, reasoning_ms: 40, output_ms: 370, tool_call_ms: null,
+              route_ms: 2, guard_ms: 1, convert_ms: null, upstream_ttfb_ms: 300, overhead_ms: 5 } };
   // ?logs=N: 造 N 条日志 (验证分页/排序/列显隐需要多页数据; 轮询会覆盖注入值, 故由桩提供)
   var manyLogs = (function () {
     var n = 0;
@@ -259,5 +275,24 @@ v2 = v.replace("provViewMode: 'card', drawerProv: null,",
                "provViewMode: 'table', drawerProv: %s," % MOCK_DRAWER, 1)
 assert v2 != v, "抽屉变体: drawerProv 初值替换失败 —— ds-state.js 改了? 需同步本脚本"
 p = os.path.join(OUT_DIR, "admin_drawer.html")
+io.open(p, "w", encoding="utf-8").write(v2)
+print("variant:", p)
+
+# 记录详情变体: 记录页 + 直接打开第一条记录的详情 —— 用于核对「时间去哪了」与
+# 「网关去程」两条瀑布的措辞/配色是否一致 (未采集 → "—", 直通 → "直通")。
+# 同抽屉变体: 必须写进**初始状态**, headless 下运行时改 selectedLog 不会重渲染。
+v = html.replace("await this.switchTab('dashboard');",
+                 "await this.fetchStats();\n      await this.switchTab('records');", 1)
+assert v != html, "记录详情变体: switchTab 替换失败"
+# 日志对象直接内联 (桩里的 LOG 在 IIFE 内, Alpine 的 data 取不到)。
+MOCK_REC = ('{timestamp:1758900000,status:200,model:"provA/up-a",upstream_model:"up-a",provider:"provA",'
+            'endpoint:"/v1/chat/completions",prompt_tokens:800,completion_tokens:260,latency_ms:720,'
+            'first_token_ms:310,cached:false,cost:0.41,body_len:1024,error:"",end_reason:"stop",'
+            'stages:{waiting_first_ms:310,reasoning_ms:40,output_ms:370,tool_call_ms:null,'
+            'route_ms:2,guard_ms:1,convert_ms:null,upstream_ttfb_ms:300,overhead_ms:5}}')
+v2 = v.replace("logs: [], selectedLog: null,",
+               "logs: [], selectedLog: %s," % MOCK_REC)
+assert v2 != v, "记录详情变体: selectedLog 初值替换失败 —— ds-state.js 改了? 需同步本脚本"
+p = os.path.join(OUT_DIR, "admin_recorddetail.html")
 io.open(p, "w", encoding="utf-8").write(v2)
 print("variant:", p)

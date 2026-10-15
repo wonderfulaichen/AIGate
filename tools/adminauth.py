@@ -12,6 +12,9 @@ token 由网关在启动时生成在 `<data_dir>/.admin_token`, 所以**每次�
 """
 import io
 import os
+import json
+import urllib.request
+import urllib.error
 
 
 def headers(data_dir):
@@ -22,3 +25,40 @@ def headers(data_dir):
     except Exception:
         return {}
     return {"Authorization": "Bearer " + tok} if tok else {}
+
+
+def _req(method, url, data=None, hdrs=None, timeout=60):
+    h = dict(hdrs or {})
+    if data is not None:
+        if isinstance(data, (dict, list)):
+            data = json.dumps(data).encode("utf-8")
+            h.setdefault("Content-Type", "application/json")
+        body = data if isinstance(data, bytes) else data.encode("utf-8")
+    else:
+        body = None
+    req = urllib.request.Request(url, data=body, method=method, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            if not raw:
+                return {}
+            try:
+                return json.loads(raw)
+            except Exception:
+                # 流式 (SSE) 响应 / 非 JSON 体: 原样返回, 调用方按需解析.
+                return {"_raw": raw, "status": resp.status}
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace") if e.fp else ""
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"error": raw or str(e.code), "status": e.code}
+
+
+def get_json(url, hdrs=None, timeout=60):
+    return _req("GET", url, hdrs=hdrs, timeout=timeout)
+
+
+def post_json(url, data=None, hdrs=None, timeout=60):
+    return _req("POST", url, data=data, hdrs=hdrs, timeout=timeout)
+

@@ -60,6 +60,7 @@ mod recall;
 mod events;
 mod notify;
 mod traces;
+mod guard;
 mod provider_catalog;
 mod presets;
 
@@ -572,6 +573,31 @@ fn toggle_console(show: bool) {
 #[cfg(not(windows))]
 fn toggle_console(_show: bool) {}
 
+/// 加载隐私护栏配置 (`config/guard.json`, 方案 B)。
+///
+/// 与 `tooltip::load_config` 同一模式: 文件不存在/损坏 → 默认**关**。
+/// 默认关的理由 (用户 2026-10-13 拍板 + `guard::GuardConfig::default_off` 文档):
+/// 扫描有 CPU 成本且多数用户不需要; 默认开但只警告会让用户误以为"已在保护中"。
+fn load_guard_config() -> Option<crate::guard::GuardConfig> {
+    let path = std::path::Path::new("config").join("guard.json");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<crate::guard::GuardConfig>(&text) {
+            Ok(cfg) => {
+                info!(
+                    "guard: config loaded (enabled={}, dry_run={})",
+                    cfg.enabled, cfg.dry_run
+                );
+                Some(cfg)
+            }
+            Err(e) => {
+                warn!("guard: {} 解析失败 ({e}), 使用默认(关闭)", path.display());
+                None
+            }
+        },
+        Err(_) => Some(crate::guard::GuardConfig::default_off()),
+    }
+}
+
 /// 根据环境变量配置上游请求的代理策略 (诊断 opencode.ai 等 TLS 握手 EOF 用).
 fn apply_proxy_env(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let status = crate::proxy_cfg::proxy_status();
@@ -778,6 +804,9 @@ fn main() {
         accounts: crate::accounts::AccountStore::new(&resolved_data_dir),
         login_sessions: Default::default(),
         sessions: crate::traces::SessionTracker::new(),
+        // 隐私护栏 (方案 B): 默认关 + dry_run; 配置文件 `config/guard.json`.
+        guard_config: std::sync::Arc::new(tokio::sync::RwLock::new(load_guard_config())),
+        guard_rules: std::sync::Arc::new(crate::guard::builtin_rules()),
         balance_manager: crate::balance::BalanceManager::new(
             std::path::PathBuf::from("config").join("balance.json"),
         ),

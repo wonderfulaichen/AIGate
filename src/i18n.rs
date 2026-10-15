@@ -152,9 +152,6 @@ pub fn edge_block_hint(status: u16, body: &str) -> Option<String> {
 ///   · `edge`     —— 上游边缘防护/WAF 拦下（到达了但没进应用层）
 ///   · `upstream` —— 上游应用层应答了错误（状态码 + 它自己的原因）
 ///   · `local`    —— 网关自身（熔断/配置/转换）
-///
-/// 为什么值得单列：同一个"403"在这些环节下含义完全不同、动作也完全不同
-/// （补 key / 换网络 / 等一等 / 换模型 / 改配置）—— 不区分就只能靠猜。
 pub fn stage_label(stage: &str) -> &'static str {
     match stage {
         "key" => pick("本机凭据", "local credentials"),
@@ -243,11 +240,13 @@ pub fn notify_kind_name(kind: crate::events::EventKind) -> &'static str {
         crate::events::EventKind::ProvidersReloaded => pick("配置已重载", "Config reloaded"),
         crate::events::EventKind::Started => pick("已启动", "Started"),
         crate::events::EventKind::PortFallback => pick("端口已顺延", "Port moved"),
+        crate::events::EventKind::GuardHit => pick("隐私护栏命中", "Privacy guard hit"),
     }
 }
 
 /// 按**字符边界**截断到最多 `max` 字节 (日志/诊断用的防 panic 截断).
-////// 为什么必须存在: `&s[..s.len().min(n)]` 在 n 落进多字节字符中间时**直接 panic** ——
+///
+/// 为什么必须存在: `&s[..s.len().min(n)]` 在 n 落进多字节字符中间时**直接 panic** ——
 /// 实机事故 (2026-10-01, e2e_buddy_proxy ④ 抓出): 上游 400 错误体含中文 displayTips,
 /// 截 500 处切进「一」的中间, axum 任务当场崩溃, 客户端只见连接被重置/挂死。
 /// recall.rs 的 `floor_char_boundary` 是同一教训的前一次落地 (那里需要 index, 这里要 &str).
@@ -556,6 +555,24 @@ macro_rules! fmt_msg {
             format!($zh $(, $arg)*)
         }
     }};
+}
+
+/// 隐私护栏拦截提示的前缀 (见 `crate::guard`).
+pub fn guard_blocked_label() -> &'static str {
+    pick(
+        "请求含敏感信息，已被隐私护栏拦截",
+        "Request contains sensitive data; blocked by the privacy guard",
+    )
+}
+
+/// 隐私护栏命中台账文案 (类别名由调用方给).
+pub fn guard_hit_note(rule_label: &str, count: usize) -> String {
+    fmt_msg!(
+        "隐私护栏命中 {} 处「{}」（已放行，未在出网前处理）",
+        "Privacy guard matched {} x {} (allowed; not processed before leaving)",
+        count,
+        rule_label
+    )
 }
 
 /// 清空日志反馈.

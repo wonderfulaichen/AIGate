@@ -61,6 +61,12 @@ pub enum EventKind {
     /// 但单次不成阈值）—— 用户侧看到的是"回答答一半就没了"，而面板此前只有一条 502。
     /// 只对**上游断流**报，不对"真空闲超时"报（后者常是本机/上游慢，不是供应商故障）。
     UpstreamCut,
+    /// **隐私护栏命中** (2026-10-13, 方案 B): 出网前扫到敏感信息 (默认仅放行+台账)。
+    ///
+    /// 为什么单独一类: 它是**用户数据正在离开本机**的信号, 与"供应商不稳"是两回事。
+    /// 但默认动作是 Warn (放行), 故定为 warn 级 —— 点红点提示"有东西在出网",
+    /// 不弹气球 (拦截才是 err, 而拦截走的是请求 400, 不需要事件)。
+    GuardHit,
     /// 进程启动 —— 台账的"分界线", 便于分辨"这条是重启前还是重启后".
     Started,
     /// **端口被占用, 已顺延到别的端口**（2026-10-11）。
@@ -80,6 +86,7 @@ impl EventKind {
             EventKind::BreakerReset => "breaker_reset",
             EventKind::UpstreamFailing => "upstream_failing",
             EventKind::UpstreamRecovered => "upstream_recovered",
+            EventKind::GuardHit => "guard_hit",
             EventKind::UpstreamCut => "upstream_cut",
             EventKind::QuotaLow => "quota_low",
             EventKind::AccountDead => "account_dead",
@@ -100,6 +107,7 @@ impl EventKind {
             EventKind::BreakerClosed | EventKind::UpstreamRecovered | EventKind::Started => "ok",
             EventKind::BreakerHalfOpen
             | EventKind::UpstreamFailing
+            | EventKind::GuardHit
             | EventKind::UpstreamCut
             | EventKind::QuotaLow
             | EventKind::ProvidersReloaded

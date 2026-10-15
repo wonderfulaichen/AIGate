@@ -49,8 +49,13 @@
       return key ? t(key) : k;
     },
     // ── 「时间去哪了」(方案 F, 2026-10-13) ──
-    // 四段耗时拆分。与「结束方式」同一口径: 未采集显示 "—", 不显示 0ms。
+    // 四段耗时拆分。判据: null = 未采集 → "—"; 0 = 实测为 0 → "0ms" (走 msText)。
     // 只有流式路径采集得到 (非流式/缓存回放/原生直通为整块 null)。
+    //
+    // ⚠️ 本文件里的格式化一律走 `this.xxx`: fmtMs/msText 是 dashboard 对象的**方法**,
+    //    不是全局函数 —— 裸调会抛 ReferenceError, 而 Alpine 对表达式异常是**静默吞掉**的
+    //    (DOM 保持空), 表现就是"比例条和图例永远空白"。这一处曾真的这样错了很久
+    //    (2026-10-15 用 headless dump-dom 抓 window.__ERRS 才定位到)。
     _stageSegs(log) {
       const s = (log && log.stages) || {};
       return [
@@ -72,16 +77,62 @@
       return segs.map(s => {
         const pct = Math.max(0, Number(s.v) || 0) / total * 100;
         return '<span style="flex-grow:' + Math.max(pct, 0.5).toFixed(2) + ';background:' + s.color + '" title="'
-          + s.label + ' ' + fmtMs(s.v) + '"></span>';
+          + s.label + ' ' + this.msText(s.v) + '"></span>';
       }).join('');
     },
     stageLegendHtml(log) {
       return this._stageSegs(log).map(s => {
-        // 未采集的段照实显示 "—" 并压暗 —— 不写 0, 也不隐藏 (隐藏会让用户以为该段不存在)。
+        // 未采集的段照实显示 "—" 并压暗 —— 不写 0, 也不隐藏 (隐藏会让用户以为该段不存在);
+        // 实测为 0 的段照常给色给值 (0ms), 与"没测到"分得开。
         const missing = s.v == null;
-        const val = missing ? '—' : fmtMs(s.v);
+        const val = this.msText(s.v);
         const style = 'display:inline-flex;align-items:center;gap:5px'
           + (missing ? ';opacity:.55' : '');
+        const dot = 'width:7px;height:7px;border-radius:var(--rs);flex:0 0 7px;background:'
+          + (missing ? 'var(--muted)' : s.color);
+        return '<span style="' + style + '"><i style="' + dot + '"></i>' + s.label
+          + ' <b class="mono">' + val + '</b></span>';
+      }).join('');
+    },
+    // ── 网关去程瀑布 (2026-10-15) ──
+    // 与「时间去哪了」的区别: 那四段是**客户端视角**(等首字/思考/正文/工具), 首段里就包着
+    // 整段网关去程; 这五段是**网关视角**, 互不重叠, 顺序铺满"进门 → 上游响应头":
+    //   路由/鉴权 → 隐私护栏 → 协议转换 → 其他网关工作 → 上游首字节
+    // 「其他网关工作」= overhead − (路由+护栏+转换): 注入/瘦身/缓存键等零散工作。
+    // 用**减法**而不是再挂一个计时器 —— 三者本就是 overhead 的子集, 分开测还得对齐边界。
+    _gwSegs(log) {
+      const s = (log && log.stages) || {};
+      const num = v => (v == null ? null : Number(v) || 0);
+      const route = num(s.route_ms), guard = num(s.guard_ms), conv = num(s.convert_ms), oh = num(s.overhead_ms);
+      // 差值在子段之和 > overhead 时夹到 0: 各计时器独立取整, 允许 1-2ms 漂移,
+      // 不为它编一个负数出来 (负段宽会画出诡异的条)。
+      const other = oh == null ? null : Math.max(0, oh - ((route || 0) + (guard || 0) + (conv || 0)));
+      return [
+        { k: 'route', label: t('gw_route'), v: route, color: 'var(--muted)' },
+        { k: 'guard', label: t('gw_guard'), v: guard, color: 'var(--info-fg)' },
+        // convert 的 null 有两种含义, 靠 na 措辞分开: 直通(没转换) vs 其他段没测到。
+        { k: 'convert', label: t('gw_convert'), v: conv, color: 'var(--secondary)', na: t('gw_convert_direct') },
+        { k: 'gw_other', label: t('gw_other'), v: other, color: 'var(--neutral-fg)' },
+        { k: 'ttfb', label: t('gw_ttfb'), v: num(s.upstream_ttfb_ms), color: 'var(--warn-fg)' },
+      ];
+    },
+    hasGatewayData(log) { return this._gwSegs(log).some(s => s.v != null); },
+    gwBarHtml(log) {
+      const segs = this._gwSegs(log).filter(s => s.v != null && s.v > 0);
+      const total = segs.reduce((a, s) => a + s.v, 0);
+      if (!segs.length || total <= 0) return '<span class="empty"></span>';
+      return segs.map(s => {
+        const pct = s.v / total * 100;
+        return '<span style="flex-grow:' + Math.max(pct, 0.5).toFixed(2) + ';background:' + s.color + '" title="'
+          + s.label + ' ' + this.msText(s.v) + '"></span>';
+      }).join('');
+    },
+    gwLegendHtml(log) {
+      return this._gwSegs(log).map(s => {
+        // 未采集 → "—"; 协议转换例外: null 是"直通"(确实没转换), 措辞必须不同。
+        const missing = s.v == null;
+        const val = missing ? (s.na || '—') : this.msText(s.v);
+        const style = 'display:inline-flex;align-items:center;gap:5px' + (missing ? ';opacity:.55' : '');
         const dot = 'width:7px;height:7px;border-radius:var(--rs);flex:0 0 7px;background:'
           + (missing ? 'var(--muted)' : s.color);
         return '<span style="' + style + '"><i style="' + dot + '"></i>' + s.label

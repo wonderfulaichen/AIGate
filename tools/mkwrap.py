@@ -35,4 +35,7 @@ for tab in TABS:
 # 抽屉变体 (模型表最密集, 必须单独核对)
 make("s_drawer", "drawer", query="sc=done")
 make("s_light_drawer", "drawer", theme="light", query="sc=done")
+# 记录详情变体 (阶段瀑布: 模型侧四段 + 网关去程五段)
+make("s_recorddetail", "recorddetail", query="sc=done")
+make("s_light_recorddetail", "recorddetail", theme="light", query="sc=done")
 print("wrote %d wrappers" % (len(TABS) * 2 + 2))

@@ -95,6 +95,24 @@ const I18N = {
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
     'stages_win_desc': '窗口内流式请求的平均阶段耗时 —— 看"时间主要花在哪一段"，而不是只看总延迟',
     'stages_samples': '{0} 条采样', 'stages_n_samples': '{0} 条采样',
+    // ── 网关去程 (2026-10-15 对标 Astra-Gate 网关侧拆分) ──
+    // 与「时间去哪了」的分工: 那个是**模型侧**四段, 这个是**网关+上游首字节**五段。
+    // ⚠️ 措辞纪律: 协议转换未发生 = 「直通」, 不是「—」(那个表示没测到)。
+    'gw_title': '网关去程（进门 → 上游响应头）',
+    'gw_note': '五段互不重叠，合计即"进门到上游响应头"。上方「时间去哪了」是客户端视角（含这段去程），两者不可相加。',
+    'gw_route': '路由/鉴权', 'gw_guard': '隐私护栏', 'gw_convert': '协议转换',
+    'gw_convert_direct': '直通', 'gw_other': '其他网关工作', 'gw_ttfb': '上游首字节',
+    'gw_win_title': '网关自身开销', 'gw_own_overhead': '自身开销',
+    'gw_win_desc': 'AIGate 自身各段耗时（均值与 p95）—— 判断"慢"是网关造成的还是上游造成的',
+    'gw_overhead_share': '占本次总耗时 {0}',
+    'gw_direct_note': '「协议转换」显示"直通"表示本次未发生协议转换（原生透传），不是未采集。',
+    // ── 链路拓扑 (简化版: 客户端 → 网关 → 提供商) ──
+    'gw_topo_title': '链路拓扑', 'gw_topo_desc': '客户端 → 网关 → 提供商，节点上是本窗口内的量 / 错误 / 限流',
+    'gw_topo_client': '客户端 / Agent', 'gw_topo_gateway': 'AIGate 网关', 'gw_topo_providers': '提供商',
+    'gw_topo_requests': '请求', 'gw_topo_errors': '错误', 'gw_topo_rl': '限流 429',
+    'gw_topo_own': '自身开销', 'gw_topo_upstream': '上游首字节',
+    'gw_topo_note': '节点数字均来自本窗口实测；网关侧未采集时显示 —（旧记录 / 聚合来源不含逐条样本）。',
+    'tbl.rate_limited': '限流 429',
     'end_stop': '模型正常结束 (stop)', 'end_tool_calls': '转入工具调用 (tool_calls)',
     'end_length': '输出额度用尽被截断 (length)', 'end_content_filter': '上游按内容策略拦截 (content_filter)',
     'end_done': '上游只发了结束标记, 未说明原因', 'end_eof': '上游连接断开, 未发终止帧',
@@ -427,6 +445,23 @@ const I18N = {
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',
     'stages_samples': '{0} sampled', 'stages_n_samples': '{0} sampled',
+    // ── Gateway inbound path (2026-10-15, modeled on Astra-Gate) ──
+    // Wording rule: no protocol conversion happened => "Direct", not "-" (which means not collected).
+    'gw_title': 'Gateway inbound (entry -> upstream headers)',
+    'gw_note': 'The five segments do not overlap; together they are "entry to upstream response headers". "Where the time went" above is the client view (it includes this inbound path) - do not add them up.',
+    'gw_route': 'Routing/auth', 'gw_guard': 'Privacy guard', 'gw_convert': 'Protocol conversion',
+    'gw_convert_direct': 'Direct', 'gw_other': 'Other gateway work', 'gw_ttfb': 'Upstream first byte',
+    'gw_win_title': 'Gateway own overhead', 'gw_own_overhead': 'Own overhead',
+    'gw_win_desc': 'AIGate own stage timings (average and p95) - tells whether slowness comes from the gateway or the upstream',
+    'gw_overhead_share': '{0} of this request',
+    'gw_direct_note': '"Direct" for protocol conversion means no conversion happened (native passthrough), not missing data.',
+    // ── Request topology (simplified: client -> gateway -> providers) ──
+    'gw_topo_title': 'Request topology', 'gw_topo_desc': 'Client -> gateway -> providers; nodes show volume / errors / rate limits in this window',
+    'gw_topo_client': 'Client / Agent', 'gw_topo_gateway': 'AIGate gateway', 'gw_topo_providers': 'Providers',
+    'gw_topo_requests': 'Requests', 'gw_topo_errors': 'Errors', 'gw_topo_rl': 'Rate limited 429',
+    'gw_topo_own': 'Own overhead', 'gw_topo_upstream': 'Upstream first byte',
+    'gw_topo_note': 'Every number comes from measurements in this window; gateway stages show - when not collected (old records / aggregate sources without per-request samples).',
+    'tbl.rate_limited': 'Rate limited 429',
     'end_stop': 'Model finished normally (stop)', 'end_tool_calls': 'Tool call (tool_calls)',
     'end_length': 'Cut off by output limit (length)', 'end_content_filter': 'Blocked by upstream content policy (content_filter)',
     'end_done': 'Upstream sent only its end marker, gave no reason', 'end_eof': 'Upstream closed with no terminator',

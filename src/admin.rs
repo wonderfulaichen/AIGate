@@ -48,23 +48,35 @@ pub struct RealtimeStats {
     pub timestamp: u64,
 }
 
-/// **一次流式请求的阶段耗时拆分** (2026-10-13 方案 F「时间去哪了」的数据源).
+/// **一次请求的阶段耗时拆分** (2026-10-13 方案 F「时间去哪了」 + 2026-10-15 网关侧扩展).
 ///
 /// 为什么需要: 记录里只有 `latency_ms` (总耗时) 与 `first_token_ms` (首字延迟) 两个数,
 /// 回答不了"时间到底花在哪" —— 而这是反复排查「跑一会就停」「延迟 365s」「上游断流」
-/// 时最常问的问题。四段划分与 Astra 的链路追踪同口径 (可观测性对标):
+/// 时最常问的问题。
 ///
+/// 分两个来源 (2026-10-15 对标 Astra-Gate 的链路追踪, 见 docs 的「链路追踪」):
+///
+/// **模型侧** (在响应流里测; 仅流式路径采集得到):
 ///   · `waiting_first_ms`  = 请求开始 → 第一个增量内容 (排队 + 上游思考到首字)
 ///   · `reasoning_ms`      = 首字 → 第一个**可见正文** (纯思考阶段; 无思考时为 0)
 ///   · `output_ms`         = 正文产出阶段 (首段正文 → 结束)
 ///   · `tool_call_ms`      = 生成工具调用参数阶段 (与正文可能交替, 按累计)
 ///
-/// ⚠️ **未采集 ≠ 0**: 非流式 / 缓存回放 / 失败路径拿不到这些时刻, 整块为 `None`。
+/// **网关侧** (在 handler 里测; 请求期即可采集, 与是否流式无关):
+///   · `route_ms`          = 鉴权 + 路由 + 会话归属解析 (进门 → 已确定供应商/模型)
+///   · `guard_ms`          = 隐私护栏逐值扫描耗时 (关闭时≈0, 仍是实测值)
+///   · `convert_ms`        = 协议转换耗时; **None = 未发生转换 (直通)** —— 面板显示"直通"
+///   · `upstream_ttfb_ms`  = 发出请求 → 收到上游响应头 (最后一次尝试; "上游首字节")
+///   · `overhead_ms`       = **AIGate 自身开销**: 进门 → 首次发往上游 (不含上游耗时与重试).
+///                           Astra 同口径; 含 route/guard/convert 及注入/瘦身/缓存键等工作.
+///
+/// ⚠️ **未采集 ≠ 0**: 非流式 / 缓存回放 / 失败路径拿不到模型侧时刻, 对应字段为 `None`。
 /// 展示层必须显示 "—" 而不是 0 (本项目一贯口径: 无数据不得伪装成测得为 0)。
-/// 各段之和 **不要求**等于 `latency_ms` —— 上游可能在两段之间发空 delta / 保活帧,
-/// 强制自洽只会制造假数。
+/// ⚠️ 各段之和 **不要求**等于 `latency_ms` —— 上游可能在两段之间发空 delta / 保活帧,
+/// 网关侧也还有未单独计时的零散工作; 强制自洽只会制造假数。
 #[derive(Debug, Clone, Copy, Default, Serialize, serde::Deserialize)]
 pub struct StageTimings {
+    // ── 模型侧 (流式路径) ──
     #[serde(default)]
     pub waiting_first_ms: Option<u64>,
     #[serde(default)]
@@ -73,6 +85,18 @@ pub struct StageTimings {
     pub output_ms: Option<u64>,
     #[serde(default)]
     pub tool_call_ms: Option<u64>,
+    // ── 网关侧 (handler) ──
+    #[serde(default)]
+    pub route_ms: Option<u64>,
+    #[serde(default)]
+    pub guard_ms: Option<u64>,
+    /// None = 直通 (未发生协议转换); Some(ms) = 转换耗时。展示层据此显示"直通"。
+    #[serde(default)]
+    pub convert_ms: Option<u64>,
+    #[serde(default)]
+    pub upstream_ttfb_ms: Option<u64>,
+    #[serde(default)]
+    pub overhead_ms: Option<u64>,
 }
 
 impl StageTimings {
@@ -85,7 +109,13 @@ impl StageTimings {
             && self.reasoning_ms.is_none()
             && self.output_ms.is_none()
             && self.tool_call_ms.is_none()
+            && self.route_ms.is_none()
+            && self.guard_ms.is_none()
+            && self.convert_ms.is_none()
+            && self.upstream_ttfb_ms.is_none()
+            && self.overhead_ms.is_none()
     }
+
 }
 
 /// 单条请求日志.
@@ -1403,6 +1433,21 @@ async fn sync_breakers_for(state: &super::proxy::AppState) {
     super::proxy::sync_breakers(&state.breakers, &names, &state.breaker);
 }
 
+/// 读取隐私护栏配置 (`config/guard.json`, 方案 B)。文件缺失/损坏 → None (保持默认关)。
+fn read_guard_config() -> Option<crate::guard::GuardConfig> {
+    let path = std::path::Path::new("config").join("guard.json");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<crate::guard::GuardConfig>(&text) {
+            Ok(cfg) => Some(cfg),
+            Err(e) => {
+                warn!("guard: {} 解析失败 ({e}), 保留上一版配置", path.display());
+                None
+            }
+        },
+        Err(_) => Some(crate::guard::GuardConfig::default_off()),
+    }
+}
+
 /// POST /admin/api/providers/reload — 从磁盘重读 providers.json.
 pub async fn api_providers_reload(
     State(state): State<super::proxy::AppState>,
@@ -1414,6 +1459,11 @@ pub async fn api_providers_reload(
         }
     }
     sync_breakers_for(&state).await;
+    // 隐私护栏配置 (方案 B) 也随 reload 重新读取: 用户改 `config/guard.json` 后点重载即生效,
+    // 不必重启整个网关进程。失败 (文件损坏) 时保持上一版配置, 不阻塞 providers 重载。
+    if let Some(g) = read_guard_config() {
+        *state.guard_config.write().await = Some(g);
+    }
     // 热重载会整体替换路由表 (改端点/加删供应商都可能), 是"配置变了"的明确分界点 ——
     // 用户排查"是不是我改配置改坏的"时, 台账里这条就是时间锚点。
     let n = state.registry.read().await.providers().len();
@@ -3552,6 +3602,11 @@ pub struct ProviderStats {
     pub provider: String,
     pub requests: usize,
     pub errors: usize,
+    /// 上游返回 429 (限流) 的次数 (2026-10-15, 拓扑/供应商节点用)。
+    /// 单独计数而非混进 `errors`: 429 是"上游让你慢点"而非"请求失败", 处置方式不同
+    /// (换号/退避 vs 改配置), 混在一起看不出是限流还是真故障。
+    #[serde(default)]
+    pub rate_limited: usize,
     pub avg_latency_ms: f64,
     pub total_body_bytes: usize,
     pub total_prompt_tokens: u64,
@@ -3952,6 +4007,14 @@ pub struct UsageStats {
     /// 聚合成可读的「时间花在哪」。未采集的样本不计入 (面板显示 "—" 而非 0)。
     #[serde(default)]
     pub stage_summary: StageSummary,
+    /// **网关侧阶段汇总** (2026-10-15): AIGate 自身各段的样本数/均值/p50/p95。
+    ///
+    /// 与 `stage_summary` 的分工: 那个是**模型侧**四段 (等首字/思考/正文/工具调用),
+    /// 这个是**网关侧**五段 (鉴权路由/隐私护栏/协议转换/上游首字节/自身开销)。
+    /// 分两个字段是因为模型侧只需 Σ 与样本数 (可跨重启由 rollup 合并), 而网关侧要分位数,
+    /// 必须有逐条样本 —— rollup 不存逐条 (同 TTFT 的分桶理由), 故只覆盖当前运行日志窗口。
+    #[serde(default)]
+    pub gateway_stages: GatewayStageSummary,
 }
 
 /// **阶段耗时汇总** (方案 F「时间去哪了」的窗口级数据源).
@@ -4002,6 +4065,68 @@ impl StageSummary {
             self.tool_call_sum_ms += v as u64;
         }
     }
+}
+
+/// 单段耗时聚合 (2026-10-15 网关侧通用): 样本数 + Σ + 均值 + p50/p95。
+///
+/// 为什么要分位而不是只给均值: 「网关是不是瓶颈」问的是**尾部** —— 均值 3ms 但 p95 400ms
+/// 的护栏扫描照样让每秒几十个请求的用户难受, 而均值会把这件事抹平 (与 gen_speed 同一条
+/// 教训: 别用平均掩盖长尾)。
+///
+/// ⚠️ **无样本 → 全 None** (面板显示 "—"), 不报 0: 该段没被采集到 ≠ 测得为 0。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct StageAgg {
+    pub samples: usize,
+    /// 均值 (ms); 无样本 → None。
+    pub avg_ms: Option<f64>,
+    /// 中位数 (ms); 无样本 → None。
+    pub p50_ms: Option<u64>,
+    /// 95 分位 (ms); 无样本 → None。
+    pub p95_ms: Option<u64>,
+}
+
+impl StageAgg {
+    /// 从逐条样本算聚合 (最近秩法: p50 = ceil(0.5n)、p95 = ceil(0.95n), 1-based → 0-based 下标)。
+    ///
+    /// 样本只在此处排序一次; 调用方传 owned Vec<u64> (逐条阶段耗时本来就只是一串 u64)。
+    pub fn from_samples(mut v: Vec<u64>) -> Self {
+        if v.is_empty() {
+            return Self::default();
+        }
+        v.sort_unstable();
+        let n = v.len();
+        let sum: u64 = v.iter().sum();
+        let rank = |q: f64| -> u64 {
+            // ceil(q*n) 的整数写法 (避免浮点 ceil 的舍入意外), 再夹到 [1, n]。
+            let r = ((n as f64) * q).ceil() as usize;
+            v[r.clamp(1, n) - 1]
+        };
+        Self {
+            samples: n,
+            avg_ms: Some(sum as f64 / n as f64),
+            p50_ms: Some(rank(0.5)),
+            p95_ms: Some(rank(0.95)),
+        }
+    }
+}
+
+/// 网关侧五段汇聚 (2026-10-15 对标 Astra-Gate 的网关自身耗时拆分)。
+///
+/// 段义与 [`StageTimings`] 的网关侧字段一一对应, 但**样本集合不同**:
+///   · `convert` 只统计**真的发生协议转换**的请求 (直通请求该段为 None, 不计入) ——
+///     否则"转换均值"里混进一堆 0 会把真实转换成本稀释掉。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GatewayStageSummary {
+    /// 鉴权 + 路由 + 会话归属解析。
+    pub route: StageAgg,
+    /// 隐私护栏逐值扫描。
+    pub guard: StageAgg,
+    /// 协议转换 (仅统计发生转换的请求)。
+    pub convert: StageAgg,
+    /// 上游首字节 (发出请求 → 收到响应头)。
+    pub upstream_ttfb: StageAgg,
+    /// AIGate 自身开销 (进门 → 首次发往上游)。
+    pub overhead: StageAgg,
 }
 
 fn stats_range_seconds(range: &str) -> Option<u64> {
@@ -4739,6 +4864,7 @@ fn compute_stats(
         .map(|(provider, logs)| {
             let reqs = logs.len();
             let errs = logs.iter().filter(|l| is_log_error(l)).count();
+            let rate_limited = logs.iter().filter(|l| l.status == 429).count();
             let bytes: usize = logs.iter().map(|l| l.body_len).sum();
             let avg = logs.iter().map(|l| l.latency_ms).sum::<u64>() as f64 / reqs as f64;
             let pt: u64 = logs.iter().map(|l| l.prompt_tokens as u64).sum();
@@ -4785,6 +4911,7 @@ fn compute_stats(
                 provider: provider.to_string(),
                 requests: reqs,
                 errors: errs,
+                rate_limited,
                 avg_latency_ms: avg,
                 total_body_bytes: bytes,
                 total_prompt_tokens: pt,
@@ -4824,6 +4951,9 @@ fn compute_stats(
     for log in logs {
         stage_summary.absorb(&log.stages);
     }
+
+    // 网关侧各段 (2026-10-15).
+    let gateway_stages = gateway_stage_summary(logs);
 
     UsageStats {
         total_requests: total,
@@ -4890,6 +5020,43 @@ fn compute_stats(
         window_minutes: 1.0,
         source_window: "当前运行日志窗口".to_string(),
         stage_summary,
+        gateway_stages,
+    }
+}
+
+/// 网关侧五段汇总: **只把采集到的段计入样本** (未采集 → 该段样本不增)。
+///
+/// 单独成函数而非内联在 `compute_stats` 里: 判据要能单测 (未采集/直通不算样本,
+/// 分位与均值同源同口径), 内联在几百行的聚合函数里就只能靠 e2e 间接验证。
+fn gateway_stage_summary(logs: &[RequestLog]) -> GatewayStageSummary {
+    let (mut route, mut guard, mut conv, mut ttfb, mut over) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for log in logs {
+        let s = &log.stages;
+        if let Some(v) = s.route_ms {
+            route.push(v);
+        }
+        if let Some(v) = s.guard_ms {
+            guard.push(v);
+        }
+        // convert 只在真发生转换时才有值 (None = 直通) → 直通请求不进转换样本,
+        // 否则"协议转换均值"会被一堆 0 稀释成"转换不要钱"。
+        if let Some(v) = s.convert_ms {
+            conv.push(v);
+        }
+        if let Some(v) = s.upstream_ttfb_ms {
+            ttfb.push(v);
+        }
+        if let Some(v) = s.overhead_ms {
+            over.push(v);
+        }
+    }
+    GatewayStageSummary {
+        route: StageAgg::from_samples(route),
+        guard: StageAgg::from_samples(guard),
+        convert: StageAgg::from_samples(conv),
+        upstream_ttfb: StageAgg::from_samples(ttfb),
+        overhead: StageAgg::from_samples(over),
     }
 }
 
@@ -5250,6 +5417,9 @@ fn merge_rollup_days(
                     provider: e.provider.clone(),
                     requests: e.requests as usize,
                     errors: e.errors as usize,
+                    // rollup 逐日只存 errors 计数、不留状态码分布 → 跨日合并部分无法回溯 429,
+                    // 记 0 而非估算 (rollup 里的 errors 计数仍照常合并)。
+                    rate_limited: 0,
                     avg_latency_ms: if e.requests > 0 {
                         e.latency_sum_ms as f64 / e.requests as f64
                     } else {
@@ -5784,6 +5954,8 @@ mod tests {
             reasoning_ms: Some(200),
             output_ms: Some(300),
             tool_call_ms: Some(40),
+            // 本用例只考模型侧四段; 网关侧用默认值 (未采集), absorb 也不看它们.
+            ..Default::default()
         });
         // 一条非流式: 整块未采集 → 一条都不该并入
         s.absorb(&StageTimings::default());
@@ -5793,6 +5965,7 @@ mod tests {
             reasoning_ms: Some(10),
             output_ms: None,
             tool_call_ms: None,
+            ..Default::default()
         });
         assert_eq!(s.waiting_samples, 2, "只有两条采集到首字时刻");
         assert_eq!(s.waiting_sum_ms, 150);
@@ -5802,6 +5975,58 @@ mod tests {
         assert_eq!(s.output_sum_ms, 300);
         assert_eq!(s.tool_call_samples, 1);
         assert_eq!(s.tool_call_sum_ms, 40);
+    }
+
+    /// 网关侧各段聚合的口径契约 (2026-10-15): 未采集不算样本, 直通不算"转换样本"。
+    ///
+    /// 为什么钉住这两条: ① 未采集混进样本会把均值拉低 —— 用户读到的"网关只要 1ms"
+    /// 其实是"一半记录没测到"; ② 直通请求的 convert 段是"没发生转换", 若按 0 计入,
+    /// "协议转换均值"就被一堆 0 稀释掉, 真在做转换那部分的开销反而看不见。
+    #[test]
+    fn gateway_stage_summary_counts_only_collected_segments() {
+        let full = |route: u64, conv: Option<u64>, ttfb: u64| {
+            let mut l = mk("m", "p", 0, 0);
+            l.stages = StageTimings {
+                route_ms: Some(route),
+                guard_ms: Some(2),
+                convert_ms: conv,
+                upstream_ttfb_ms: Some(ttfb),
+                overhead_ms: Some(10),
+                ..Default::default()
+            };
+            l
+        };
+        // 一条直通 (convert=None), 一条真转换 (convert=7), 一条旧记录 (整块未采集)。
+        let logs = vec![full(5, None, 100), full(3, Some(7), 50), mk("m", "p", 0, 0)];
+        let g = gateway_stage_summary(&logs);
+        assert_eq!(g.route.samples, 2, "第三条未采集 → 不进样本");
+        assert_eq!(g.route.avg_ms, Some(4.0), "(5+3)/2");
+        assert_eq!(g.convert.samples, 1, "直通那条不算转换样本");
+        assert_eq!(g.convert.avg_ms, Some(7.0), "只剩真转换那条, 不被 0 稀释");
+        assert_eq!(g.upstream_ttfb.samples, 2);
+        assert_eq!(g.overhead.samples, 2);
+        // 全未采集时必须是"无样本"而非 0ms (面板显示 "—")。
+        let empty = gateway_stage_summary(&[mk("m", "p", 0, 0)]);
+        assert_eq!(empty.route.samples, 0);
+        assert_eq!(empty.route.avg_ms, None, "无样本 = None, 不是 Some(0)");
+        assert_eq!(empty.route.p95_ms, None);
+    }
+
+    /// 分位数取最近秩 (ceil(q·n)), 且小样本下不得越界 (单样本时 p50 = p95 = 该样本)。
+    #[test]
+    fn stage_agg_percentiles_use_nearest_rank() {
+        let a = StageAgg::from_samples(vec![50, 10, 40, 20, 30]);
+        assert_eq!(a.samples, 5);
+        assert_eq!(a.avg_ms, Some(30.0));
+        assert_eq!(a.p50_ms, Some(30), "ceil(0.5×5)=3 → 排序后第 3 个");
+        assert_eq!(a.p95_ms, Some(50), "ceil(0.95×5)=5 → 最大值");
+        // 单样本: p50/p95 都只能是它自己 (不能越界取到不存在的下标)。
+        let one = StageAgg::from_samples(vec![7]);
+        assert_eq!((one.p50_ms, one.p95_ms), (Some(7), Some(7)));
+        // 未采集: 全 None (口径红线)。
+        let none = StageAgg::from_samples(vec![]);
+        assert_eq!(none.samples, 0);
+        assert_eq!((none.avg_ms, none.p50_ms, none.p95_ms), (None, None, None));
     }
 
     /// 「测试」与熔断的隔离契约（2026-10-12 用户报障后立，防回归）。

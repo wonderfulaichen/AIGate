@@ -97,6 +97,11 @@ pub struct AppState {
     /// 会话/轮次关联表 (方案 F): 给每条请求标上"属于哪个会话的第几轮"。
     /// 只存 会话键→轮次计数, 不存任何请求内容 (见 `crate::traces`)。
     pub sessions: crate::traces::SessionTracker,
+    /// 隐私护栏配置 (方案 B, 见 `crate::guard`)。None = 未加载 (不扫描)。
+    /// Arc<RwLock> 包裹: reload 接口可热重载, 转发热路径并发读。
+    pub guard_config: Arc<tokio::sync::RwLock<Option<crate::guard::GuardConfig>>>,
+    /// 隐私护栏规则表 (编译期内置; 独立 field 免得每请求重建正则)。
+    pub guard_rules: std::sync::Arc<Vec<crate::guard::GuardRule>>,
 }
 
 /// 熔断器表类型别名.
@@ -475,6 +480,11 @@ pub async fn chat_completions(
         }
     }
 
+    // ── 网关侧阶段计时 (2026-10-15 对标 Astra-Gate 链路追踪) ──
+    // route_ms = 进门 → 供应商/模型/端点已解析完毕 (鉴权 + 路由 + 会话归属 + 协议判定)。
+    // 后续 inject/瘦身/缓存键等零散工作不单独计时, 归入 overhead_ms。
+    let route_ms = start.elapsed().as_millis() as u64;
+
     // 2.5 熔断检查: 供应商处于 Open / 探测名额占用时快速失败 (503),
     //     避免把请求打向已挂的上游, 也避免苦等 660s 超时.
     if !check_breaker(&state.breakers, &provider_name) {
@@ -512,7 +522,8 @@ pub async fn chat_completions(
         state.strip_toolcall_on_chat.load(Ordering::Relaxed),
         state.strip_toolcall_on_responses.load(Ordering::Relaxed),
     );
-    let (bytes, _injected, strip_saved, trim_saved, audit, effort) = inject_model_params(
+    // ⚠️ `bytes` 要 mut: 隐私护栏脱敏会改写它 (见下方 guard 段)。
+    let (mut bytes, _injected, strip_saved, trim_saved, audit, effort) = inject_model_params(
         bytes,
         &model_cfg,
         state.strip_history_reasoning.load(Ordering::Relaxed),
@@ -529,6 +540,65 @@ pub async fn chat_completions(
         provider.require_system_first.unwrap_or(false),
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
+    // ── 隐私护栏 (方案 B, 2026-10-13) ──
+    // 出网前最后一道: 逐值扫敏感信息 (密钥/私钥/连接串/JWT/内网地址)。
+    // 默认**关** (用户拍板: 先观察误报再逐类开), 开启后默认 dry_run 只检测不改写 ——
+    // 脱敏会改变发往上游的 token 序列, 破坏 KV 缓存前缀, 故必须用户逐个类目显式选 Redact。
+    // 位置选在 inject_model_params 之后: 那里已把 body 规整成 OpenAI chat 形态
+    // (system/messages/tools), 本模块的逐值遍历正对这套结构。
+    // ⚠️ 还原映射 (`redactions`) 只在本请求生命周期内有效: 响应侧还原完即弃。
+    // 空 map 时流走零开销路径 (不做任何子串替换)。
+    let mut guard_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let guard_t0 = std::time::Instant::now();
+    let guard_cfg = state.guard_config.read().await;
+    if let Some(gcfg) = guard_cfg.as_ref() {
+        if gcfg.enabled {
+            if let Ok(mut gv) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let gscan = crate::guard::scan_and_redact(&mut gv, gcfg, state.guard_rules.as_ref());
+                if let Some(reason) = gscan.blocked {
+                    // 拦截: 请求**未发往上游**。记一条 400 (含类别) 让面板可见。
+                    crate::admin::record_request(
+                        &state.log_buffer, &model, &provider_name, &endpoint,
+                        model_cfg.upstream_model.as_deref(), 400, start, bytes.len(),
+                        Some(reason.clone()),
+                    ).await;
+                    warn!("proxy: privacy guard blocked request (model={model}, provider={provider_name}): {reason}");
+                    return Err(error_response(StatusCode::BAD_REQUEST, &reason));
+                }
+                if !gscan.hits.is_empty() {
+                    // 命中但放行: 记台账 (只报类别与处数, **不报原值**)。
+                    let mut by_rule: std::collections::HashMap<&str, usize> =
+                        std::collections::HashMap::new();
+                    for h in &gscan.hits {
+                        *by_rule.entry(h.rule_id.as_str()).or_insert(0) += 1;
+                    }
+                    for rule in state.guard_rules.iter() {
+                        if let Some(n) = by_rule.get(rule.id) {
+                            crate::admin::note_event(
+                                crate::events::EventKind::GuardHit,
+                                &provider_name,
+                                &crate::i18n::guard_hit_note(rule.label_zh, *n),
+                            );
+                        }
+                    }
+                }
+                if !gscan.redactions.is_empty() {
+                    let n = gscan.redactions.len();
+                    // 改写后的 body 重新序列化 (仅在有脱敏时才动 —— 否则逐字节不变)。
+                    if let Ok(nb) = serde_json::to_vec(&gv) {
+                        bytes = bytes::Bytes::from(nb);
+                        info!("proxy: privacy guard redacted {n} secret(s) before forwarding (model={model})");
+                    }
+                    // 占位符→原值: 交给流在**出站字节**上还原 (客户端无感知)。
+                    // 只经手这一条路径, 不落盘不记日志 (隐私纪律: 原值只活在请求栈帧里)。
+                    guard_map = gscan.redactions;
+                }
+            }
+        }
+    }
+    // 隐私护栏阶段耗时 (关闭时也测: 那是接近 0 的实测值, 不是"未采集")。
+    let guard_ms = guard_t0.elapsed().as_millis() as u64;
     // 转发优化省量 (剥离推理链 + 历史裁剪) 估算为 token, 拆分记账供请求日志持久化"优化省量"明细展示.
     // 二者随请求日志落盘, 跨重启累计, 不再依赖运行时内存计数器 (避免重启清零导致与头条卡不一致).
     let strip_saved_tokens = (strip_saved / 4) as u32;
@@ -536,7 +606,10 @@ pub async fn chat_completions(
     // 5.1 Anthropic /messages 模式: 请求体 OpenAI → Anthropic 格式转换.
     //     客户端侧始终是 OpenAI 兼容, 转换只在网关与上游之间进行.
     //     (anthropic_mode / endpoint 改写已在上方按模型级 api_format 完成)
-    let mut bytes = if anthropic_mode {
+    // ⚠️ 这里不能再 `let mut bytes = ...` 重声明: 上方的隐私护栏已改写过 bytes (脱敏),
+    //    重声明会编译报错 "cannot assign twice to immutable variable"。
+    let convert_t0 = std::time::Instant::now();
+    bytes = if anthropic_mode {
         match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(v) => {
                 // prompt cache 开关: 供应商级默认开 (go 网关 minimax/qwen 已证实支持);
@@ -648,6 +721,10 @@ pub async fn chat_completions(
         }
         serde_json::to_vec(&bval).unwrap_or_else(|_| bytes.to_vec()).into()
     };
+    // convert_ms: 直通 (OpenAI 兼容, 未发生转换) 时为 None —— 面板据此显示"直通";
+    // 有协议转换时记实测耗时 (含 5.3 的规整/打标工作)。
+    let convert_ms = (anthropic_mode || responses_mode)
+        .then(|| convert_t0.elapsed().as_millis() as u64);
     let mut body_len_val = bytes.len(); // 在 bytes 被 move 前保存
     // 诊断: 请求体大小变化链路 (原始→注入后→最终), 用于排查 "工具显示150KB但中转显示1.5MB" 类问题.
     // 降为 debug: responses 转换本身就会改变字节数, 原条件 `orig != final` 使小请求几乎每次命中
@@ -820,6 +897,11 @@ pub async fn chat_completions(
     let mut attempt = 0u32;
     // 已经用过的账号 id (换号重试时排除, 避免来回打同一个被拒的号).
     let mut tried_accounts: Vec<String> = Vec::new();
+    // ── 网关侧阶段计时 (2026-10-15 对标 Astra-Gate 链路追踪) ──
+    // overhead = 进门 → 首次发往上游 (不含上游耗时与重试, 与 Astra 同口径);
+    // upstream_ttfb = 最后一次尝试的"发出 → 收到响应头"(上游首字节)。
+    let mut first_send_at: Option<std::time::Instant> = None;
+    let mut upstream_ttfb_ms: Option<u64> = None;
     loop {
         attempt += 1;
         // 每次重试前复检熔断状态. 必须用**非消费式**的 breaker_allows_retry: 入口已认领
@@ -832,6 +914,11 @@ pub async fn chat_completions(
                 body_len_val, Some("circuit breaker open".to_string()),
             ).await;
             return Err(circuit_open_response(&state, &provider_name));
+        }
+        // 上游尝试计时: 首次发往上游的时刻决定 overhead (Astra 口径: 不含重试)。
+        let attempt_start = std::time::Instant::now();
+        if first_send_at.is_none() {
+            first_send_at = Some(attempt_start);
         }
         match state
             .client
@@ -878,10 +965,12 @@ pub async fn chat_completions(
                         continue;
                     }
                     upstream = Some(resp);
+                    upstream_ttfb_ms = Some(attempt_start.elapsed().as_millis() as u64);
                     break;
                 }
                 // 2xx 成功或 4xx 终态, 不重试.
                 upstream = Some(resp);
+                upstream_ttfb_ms = Some(attempt_start.elapsed().as_millis() as u64);
                 break;
             }
             Err(e) => {
@@ -900,6 +989,18 @@ pub async fn chat_completions(
             }
         }
     }
+
+    // ── 网关侧阶段汇总 (2026-10-15) ──
+    // overhead_ms = 进门 → 首次发往上游 (不含上游耗时与重试); Astra 同口径。
+    let overhead_ms = first_send_at.map(|t| t.duration_since(start).as_millis() as u64);
+    let gateway_stages = crate::admin::StageTimings {
+        route_ms: Some(route_ms),
+        guard_ms: Some(guard_ms),
+        convert_ms,
+        upstream_ttfb_ms,
+        overhead_ms,
+        ..Default::default()
+    };
 
     // 连接层失败 (重试耗尽) → 502.
     if let Some(chain) = send_err {
@@ -1036,11 +1137,14 @@ pub async fn chat_completions(
                         usage_missing(pt, ct), effort.clone(),
                         // 非流式路径未采集结束形态 (展示为 "—").
                         None,
-                        // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
-                        crate::admin::StageTimings::default(),
+                        // 非流式路径无**模型侧**阶段时刻 (整块 None), 但**网关侧**阶段
+                        // (route/guard/convert/ttfb/overhead) 同样采集得到 —— 照常带上。
+                        gateway_stages,
                         // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
                         session_ref.clone(),
                     ).await;
+                    // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
+                    let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
                     ).into_response());
@@ -1091,11 +1195,14 @@ pub async fn chat_completions(
                         usage_missing(pt, ct), effort.clone(),
                         // 非流式路径未采集结束形态 (展示为 "—").
                         None,
-                        // 非流式路径无流式阶段时刻 → 未采集 (整块 None, 展示为 "—").
-                        crate::admin::StageTimings::default(),
+                        // 非流式路径无**模型侧**阶段时刻 (整块 None), 但**网关侧**阶段
+                        // (route/guard/convert/ttfb/overhead) 同样采集得到 —— 照常带上。
+                        gateway_stages,
                         // 非流式路径同样有会话归属 (入口已采集) —— 会话链不区分流式与否。
                         session_ref.clone(),
                     ).await;
+                    // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
+                    let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
                     return Ok(axum::Json(
                         serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or(serde_json::Value::Null),
                     ).into_response());
@@ -1148,8 +1255,12 @@ pub async fn chat_completions(
         // 客户端声明的工具名（原始请求体的 `tools[].function.name`）。
         // 见 `extract_client_tool_names`：None = 未采集，此时不做"未声明工具"判定。
         extract_client_tool_names_from_bytes(&bytes),
+        // 隐私护栏还原映射 (方案 B): 脱敏后的出站块要还原回原值 (客户端无感知)。
+        guard_map.clone(),
         // 会话/轮次归属 (方案 F): 入口已采集, 直接带下去。
         session_ref,
+        // 网关侧阶段 (2026-10-15): 流收尾记账时与模型侧阶段合并写入。
+        gateway_stages,
     );
     Ok(resp)
 }
@@ -1656,6 +1767,58 @@ async fn relay_native_passthrough(
             bytes = Bytes::from(nb);
         }
     }
+    // ── 网关侧阶段计时 (2026-10-15): 鉴权+路由+端点+会话 (由调用方完成) + 请求体改写 ──
+    let route_ms = start.elapsed().as_millis() as u64;
+    // ── 隐私护栏 (方案 B, 与 chat_completions 同口径) ──
+    // 直通路径此前漏扫: /v1/messages、/v1/responses 入口且上游为原生协议时, 敏感值会
+    // 原样发往上游客户端完全无防护。这里在 body 最终定稿后、发往前补一次逐值扫描:
+    // 默认关零开销; 开启后 dry_run 只记台账; Redact 改写 (占位符→原值在出站还原);
+    // Block 直接拒 400 (请求未发往上游)。
+    let guard_t0 = std::time::Instant::now();
+    let mut guard_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    {
+        let guard_cfg = state.guard_config.read().await;
+        if let Some(gcfg) = guard_cfg.as_ref() {
+            if gcfg.enabled {
+                if let Ok(mut gv) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    let gscan = crate::guard::scan_and_redact(&mut gv, gcfg, state.guard_rules.as_ref());
+                    if let Some(reason) = gscan.blocked {
+                        crate::admin::record_request(
+                            &state.log_buffer, &model, &provider_name, &endpoint,
+                            model_cfg.upstream_model.as_deref(), 400, start, bytes.len(),
+                            Some(reason.clone()),
+                        ).await;
+                        warn!("{tag}: privacy guard blocked request (model={model}): {reason}");
+                        return Err(proto.error_response(StatusCode::BAD_REQUEST, &reason));
+                    }
+                    if !gscan.hits.is_empty() {
+                        let mut by_rule: std::collections::HashMap<&str, usize> =
+                            std::collections::HashMap::new();
+                        for h in &gscan.hits {
+                            *by_rule.entry(h.rule_id.as_str()).or_insert(0) += 1;
+                        }
+                        for rule in state.guard_rules.iter() {
+                            if let Some(n) = by_rule.get(rule.id) {
+                                crate::admin::note_event(
+                                    crate::events::EventKind::GuardHit,
+                                    &provider_name,
+                                    &crate::i18n::guard_hit_note(rule.label_zh, *n),
+                                );
+                            }
+                        }
+                    }
+                    if !gscan.redactions.is_empty() {
+                        guard_map = gscan.redactions;
+                        if let Ok(nb) = serde_json::to_vec(&gv) {
+                            bytes = Bytes::from(nb);
+                            info!("{tag}: privacy guard redacted {} secret(s) before forwarding (model={model})", guard_map.len());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let guard_ms = guard_t0.elapsed().as_millis() as u64;
     let strip_saved_tokens = (strip_saved_chars / 4) as u32;
     let body_len_val = bytes.len();
     let is_stream = serde_json::from_slice::<serde_json::Value>(&bytes)
@@ -1700,6 +1863,9 @@ async fn relay_native_passthrough(
     let mut attempt = 0u32;
     // 已经用过的账号 id (换号重试时排除, 避免来回打同一个被拒的号).
     let mut tried_accounts: Vec<String> = Vec::new();
+    // 网关侧阶段计时 (2026-10-15): overhead/上游首字节。
+    let mut first_send_at: Option<std::time::Instant> = None;
+    let mut upstream_ttfb_ms: Option<u64> = None;
     loop {
         attempt += 1;
         // 非消费式复检 (入口已认领 HalfOpen 探测名额, 不能再调 check_breaker).
@@ -1710,6 +1876,10 @@ async fn relay_native_passthrough(
                 Some("circuit breaker open".to_string()),
             ).await;
             return Err(proto.circuit_open_response(&state, &provider_name));
+        }
+        let attempt_start = std::time::Instant::now();
+        if first_send_at.is_none() {
+            first_send_at = Some(attempt_start);
         }
         match state
             .client
@@ -1753,6 +1923,7 @@ async fn relay_native_passthrough(
                     continue;
                 }
                 upstream = Some(resp);
+                upstream_ttfb_ms = Some(attempt_start.elapsed().as_millis() as u64);
                 break;
             }
             Err(e) => {
@@ -1768,6 +1939,18 @@ async fn relay_native_passthrough(
             }
         }
     }
+
+    // ── 网关侧阶段汇总 (2026-10-15) ──
+    // convert_ms 恒为 None: 本函数只在"上游原生协议"时进入, 网关不转换字节 (真直通)。
+    let overhead_ms = first_send_at.map(|t| t.duration_since(start).as_millis() as u64);
+    let gateway_stages = crate::admin::StageTimings {
+        route_ms: Some(route_ms),
+        guard_ms: Some(guard_ms),
+        convert_ms: None,
+        upstream_ttfb_ms,
+        overhead_ms,
+        ..Default::default()
+    };
 
     if let Some(chain) = send_err {
         report_breaker(&state.breakers, &provider_name, false);
@@ -1837,11 +2020,13 @@ async fn relay_native_passthrough(
             usage_missing(pt, ct), effort,
             // 非流式路径未采集结束形态 (展示为 "—").
             None,
-            // 原生直通非流式: 无流式阶段时刻 → 未采集.
-            crate::admin::StageTimings::default(),
+            // 原生直通非流式: 模型侧四段未采集 (非流式无首字), 网关侧照常记账.
+            gateway_stages,
             // 会话归属已在函数入口采集 (直通路径不断链)。
             session_ref.clone(),
         ).await;
+        // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
+        let text = crate::guard::restore_redactions(&text, &guard_map).0;
         let mut resp = (status, axum::body::Body::from(text)).into_response();
         resp.headers_mut().insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
         return Ok(resp);
@@ -1860,6 +2045,8 @@ async fn relay_native_passthrough(
         strip_saved_tokens,
         effort,
         session_ref,
+        guard_map,
+        gateway_stages,
     );
     let mut resp = Response::builder()
         .status(status)
@@ -1965,6 +2152,11 @@ struct NativeTapStream {
     effort: Option<String>,
     /// 会话/轮次归属 (方案 F): 入口采集一次, 收尾记账时带上。
     session: crate::traces::SessionRef,
+    /// 隐私护栏还原映射 (方案 B): 非空时出站字节还原占位符 (客户端无感知), 仅本次请求生命周期有效。
+    guard_redactions: std::collections::HashMap<String, String>,
+    /// 网关侧阶段 (2026-10-15): route/guard/ttfb/overhead。直通路径**只有**这一段有值 ——
+    /// 字节原样转发, 不解析模型阶段 (模型侧四段保持 None, 面板显示 "—")。
+    gateway_stages: crate::admin::StageTimings,
 }
 
 impl NativeTapStream {
@@ -1980,6 +2172,8 @@ impl NativeTapStream {
         strip_saved_tokens: u32,
         effort: Option<String>,
         session: crate::traces::SessionRef,
+        guard_redactions: std::collections::HashMap<String, String>,
+        gateway_stages: crate::admin::StageTimings,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -2005,6 +2199,8 @@ impl NativeTapStream {
             strip_saved_tokens,
             effort,
             session,
+            guard_redactions,
+            gateway_stages,
         }
     }
 
@@ -2086,6 +2282,12 @@ impl Stream for NativeTapStream {
                 self.response_bytes += chunk.len();
                 self.line_buf.extend_from_slice(&chunk);
                 self.drain_lines();
+                // 出站前还原隐私护栏占位符 (方案 B): 映射为空时零开销.
+                if !self.guard_redactions.is_empty() {
+                    let s = String::from_utf8_lossy(&chunk);
+                    let restored = crate::guard::restore_redactions(&s, &self.guard_redactions).0;
+                    return Poll::Ready(Some(Ok(Bytes::from(restored.into_bytes()))));
+                }
                 Poll::Ready(Some(Ok(chunk)))
             }
             Poll::Ready(Some(Err(e))) => {
@@ -2150,9 +2352,9 @@ impl Stream for NativeTapStream {
                     // 结束原因: 本路径只在"按 max_output_tokens 截断"时能确定原因, 其余形态
                     // 未采集 (None = 未采集, 展示为 "—")。
                     let end_reason = self.truncated.then(|| "length".to_string());
-                    // 原生直通流式: 网关只透传字节、不解析阶段 → 未采集 (展示为 "—").
-                    // 这是**如实**的: 直通路径不拆解模型阶段, 给 0 会是假数。
-                    let stages = crate::admin::StageTimings::default();
+                    // 原生直通流式: 网关只透传字节、不解析阶段 → 模型侧四段未采集 (展示为 "—").
+                    // 这是**如实**的: 直通路径不拆解模型阶段, 给 0 会是假数。网关侧照常记账.
+                    let stages = self.gateway_stages;
                     // 会话归属: 直通路径不断链 (入口已采集)。
                     let sess = self.session.clone();
                     tokio::spawn(async move {
@@ -2607,8 +2809,14 @@ fn stream_response_with_tokens(
     effort: Option<String>,
     // 客户端在原始请求体里声明过的工具名；None = 未采集（不做"未声明工具"判定）。
     client_tool_names: Option<std::collections::HashSet<String>>,
+    // 隐私护栏还原映射 (方案 B): 非空时流在出站字节上还原占位符 (客户端无感知)。
+    // 仅本次请求生命周期内有效, 不落盘不进日志。
+    guard_redactions: std::collections::HashMap<String, String>,
     // 会话/轮次归属 (方案 F): 入口采集一次, 三条收尾路径共用。
     session: crate::traces::SessionRef,
+    // 网关侧阶段 (2026-10-15): handler 已采集的 route/guard/convert/ttfb/overhead,
+    // 收尾记账时与流内采集的模型侧阶段合并 (见 TokenStream::stage_timings)。
+    gateway_stages: crate::admin::StageTimings,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -2696,6 +2904,8 @@ fn stream_response_with_tokens(
                 None
             },
             tool_call_ids: std::collections::HashMap::new(),
+            guard_redactions: guard_redactions.clone(),
+            gateway_stages,
             log_buffer: Some(TokenLogData {
                 log_buffer,
                 effort,
@@ -3000,9 +3210,29 @@ struct TokenStream {
     /// (实测 CodeBuddy: call_00_xxx 仅出现在首个 tool_calls 帧, 之后 12 帧 id=None),
     /// 严格按 id 配对 tool/result 的客户端会跨轮错配 → 见 [`backfill_tool_call_ids`].
     tool_call_ids: std::collections::HashMap<u64, String>,
+    /// 隐私护栏还原映射 (方案 B): 非空时每个出站块先还原占位符再发客户端.
+    /// **只活在本次请求**: Drop 即清零 (不落盘不进日志).
+    guard_redactions: std::collections::HashMap<String, String>,
+    /// 网关侧阶段 (2026-10-15): handler 采集的 route/guard/convert/ttfb/overhead。
+    /// [`Self::stage_timings`] 以此为基, 再填模型侧四段后写入日志。
+    gateway_stages: crate::admin::StageTimings,
 }
 
 impl TokenStream {
+    /// 取出 out_buf 并发出, 出站前先还原隐私护栏的占位符 (方案 B).
+    ///
+    /// 还原只在此一处统一进行: 3 个数据出口 (`out = take(out_buf)`) 都改调本方法,
+    /// 保证占位符不会漏出给客户端. 映射为空时 `restore_redactions` 立即返回原串 (零开销).
+    fn take_out(&mut self) -> Bytes {
+        let out = std::mem::take(&mut self.out_buf);
+        if !self.guard_redactions.is_empty() {
+            // from_utf8_lossy 不消费 out; 还原后重新转回字节.
+            let s = String::from_utf8_lossy(&out);
+            return Bytes::from(crate::guard::restore_redactions(&s, &self.guard_redactions).0.into_bytes());
+        }
+        Bytes::from(out)
+    }
+
     /// 截断续写资格判定 + 续写请求构造. 返回 true 表示已发起续写 (poll_next 应转入等待态).
     ///
     /// 触发条件 (全部满足):
@@ -3444,11 +3674,15 @@ impl TokenStream {
     /// 强制自洽只会制造假数。`tool_call` 段刻意记 0 而非 None 当**确有工具调用但无独立
     /// 计时**时不好区分, 故用「有没有工具调用」决定它是 0 还是 None (见下).
     fn stage_timings(&self) -> crate::admin::StageTimings {
+        // 网关侧阶段 (route/guard/convert/ttfb/overhead) 由 handler 采集, 与是否流式无关,
+        // 这里以它为基, 再把流内采集的**模型侧**四段填进去 (2026-10-15)。
+        let mut st = self.gateway_stages;
         let Some(t0) = self.first_token_at else {
-            // 完全没采集到首字时刻 → 四段全 None (未采集), 不是 0.
-            return crate::admin::StageTimings::default();
+            // 完全没采集到首字时刻 → 模型侧四段全 None (未采集), 不是 0;
+            // 网关侧照常保留 (它不依赖首字)。
+            return st;
         };
-        let waiting = Some(t0.elapsed().as_millis() as u64);
+        st.waiting_first_ms = Some(t0.elapsed().as_millis() as u64);
         // 思考段 = 首字 → 第一段可见正文。
         //
         // ⚠️ **没有可见正文时是 None, 不是 0**: 该段从未结束 (缺"正文开始"这个边界),
@@ -3456,23 +3690,18 @@ impl TokenStream {
         // 全程 reasoning) 实际把整段时间都花在思考上, 却显示"思考 0ms"。
         // 反过来, 无思考的模型首块即正文 → `first_visible` 与 `first_token` 几乎同期,
         // 于是测得一个真实的≈0 (那才是"确实没思考"), 与本项目"无数据 ≠ 0"的口径一致。
-        let reasoning = self
+        st.reasoning_ms = self
             .stage_t_first_visible
             .map(|t1| t1.saturating_duration_since(t0).as_millis() as u64);
         // 正文段 = 第一段正文 → 最后数据块; 从未有正文 → None (未采集, 不是 0).
-        let output = match (self.stage_t_first_visible, self.stage_t_last_data) {
+        st.output_ms = match (self.stage_t_first_visible, self.stage_t_last_data) {
             (Some(a), Some(b)) => Some(b.saturating_duration_since(a).as_millis() as u64),
             _ => None,
         };
         // 工具调用段: 只有**真的产出过工具调用**才给值 (0 = 有调用但无独立计时;
         // 没有调用时给 None, 免得面板显示一个没有意义的 "0ms")。
-        let tool_call = self.emitted_tool_calls.then_some(self.stage_tool_call_ms);
-        crate::admin::StageTimings {
-            waiting_first_ms: waiting,
-            reasoning_ms: reasoning,
-            output_ms: output,
-            tool_call_ms: tool_call,
-        }
+        st.tool_call_ms = self.emitted_tool_calls.then_some(self.stage_tool_call_ms);
+        st
     }
 
     /// 流异常终止时写日志: 保留已解析到的 token / 首 token 延迟, 并按真实失败状态码记录.
@@ -3683,8 +3912,7 @@ impl Stream for TokenStream {
                 if this.stream_errored {
                     // 先 flush 错误事件之前的归一化帧, 避免丢失已解析的内容.
                     if !this.out_buf.is_empty() {
-                        let out = std::mem::take(&mut this.out_buf);
-                        return Poll::Ready(Some(Ok(Bytes::from(out))));
+                        return Poll::Ready(Some(Ok(this.take_out())));
                     }
                     if let Some(translated) = this.pending_error_sse.take() {
                         return Poll::Ready(Some(Ok(Bytes::from(format!("data: {translated}\n\n")))));
@@ -3735,6 +3963,11 @@ impl Stream for TokenStream {
                                 b"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
                                   data: [DONE]\n\n",
                             );
+                            if !this.guard_redactions.is_empty() {
+                                if let Ok(s) = String::from_utf8(out.clone()) {
+                                    out = crate::guard::restore_redactions(&s, &this.guard_redactions).0.into_bytes();
+                                }
+                            }
                             return Poll::Ready(Some(Ok(Bytes::from(out))));
                         }
                         // 已发过终止帧: 丢弃上游剩余内容, 直接结束流.
@@ -3745,8 +3978,8 @@ impl Stream for TokenStream {
                     if this.out_buf.is_empty() {
                         continue;
                     }
-                    let out = std::mem::take(&mut this.out_buf);
-                    return Poll::Ready(Some(Ok(Bytes::from(out))));
+                    // 出站前还原隐私护栏占位符 (方案 B); 映射为空时 take_out 零开销.
+                    return Poll::Ready(Some(Ok(this.take_out())));
                 }
                 Poll::Ready(Some(Err(e))) => {
                     // 上游错误或空闲超时:
@@ -3808,8 +4041,7 @@ impl Stream for TokenStream {
                     }
                     // 若 flush 后又有归一化帧, 先发出去; 下次 None 再写收尾日志 (done 保证只写一次).
                     if !this.out_buf.is_empty() {
-                        let out = std::mem::take(&mut this.out_buf);
-                        return Poll::Ready(Some(Ok(Bytes::from(out))));
+                        return Poll::Ready(Some(Ok(this.take_out())));
                     }
                     if !this.done {
                         // 自动续写: 流被掐且满足条件 → 发起续写请求而非立即收尾.
@@ -6801,10 +7033,12 @@ mod tests {
             tokens_reasoning: 0,
             usage_seen: false, emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
-            client_tool_names: None, cont_pending: None,
+            client_tool_names: None, guard_redactions: std::collections::HashMap::new(), cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
+            // 测试夹具: 网关侧阶段未采集 (与真实 handler 无关).
+            gateway_stages: Default::default(),
         };
 
         // ① 上游明确说 stop = **模型自己说完了** —— 这正是排查时最需要的那条证据,
@@ -6928,7 +7162,7 @@ mod tests {
             usage_seen: false,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
-            client_tool_names: None,
+            client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -6937,6 +7171,8 @@ mod tests {
             loop_params: None,
             log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
+            // 测试夹具: 网关侧阶段未采集 (与真实 handler 无关).
+            gateway_stages: Default::default(),
         };
         // SSE 外层 usage
         ts.parse_sse_chunk(
@@ -6995,10 +7231,12 @@ mod tests {
             tokens_reasoning: 0,
             usage_seen: false, emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
-            client_tool_names: None, cont_pending: None,
+            client_tool_names: None, guard_redactions: std::collections::HashMap::new(), cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
             loop_params: None, log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
+            // 测试夹具: 网关侧阶段未采集 (与真实 handler 无关).
+            gateway_stages: Default::default(),
         };
 
         // 场景 A: 纯思考无可见正文 → 按**推理文本**估算, 不得记 0, 也不得按响应字节放大.
@@ -7129,7 +7367,7 @@ mod tests {
             usage_seen: false,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
-            client_tool_names: None,
+            client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -7138,6 +7376,8 @@ mod tests {
             loop_params: None,
             log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
+            // 测试夹具: 网关侧阶段未采集 (与真实 handler 无关).
+            gateway_stages: Default::default(),
         };
         // message_start 帧: 输入 1000 + 缓存读 5000 → prompt 6000
         ts.parse_sse_chunk(
@@ -7228,7 +7468,7 @@ mod tests {
             usage_seen: false,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
-            client_tool_names: None,
+            client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
             cont_pending: None,
             cont_segment: 0,
             cont_fail_note: None,
@@ -7237,6 +7477,8 @@ mod tests {
             loop_params: None,
             log_buffer: None,
             tool_call_ids: std::collections::HashMap::new(),
+            // 测试夹具: 网关侧阶段未采集 (与真实 handler 无关).
+            gateway_stages: Default::default(),
         };
         // 第一次 poll: 收到翻译后的中文 SSE error 事件
         let first = futures::executor::block_on(ts.next()).unwrap().unwrap();

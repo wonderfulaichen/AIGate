@@ -131,6 +131,19 @@
       if (n < 1000) return Math.round(n) + 'ms';
       return (n / 1000).toFixed(1) + 's';
     },
+    // 阶段耗时的展示出口。与 fmtMs 的**唯一**区别: 这里 0 是**实测值**, 不是"无数据"。
+    //
+    // 为什么必须分开: fmtMs 服务于延迟列 —— 那里 0ms 无意义, 当"无数据"处理是对的。
+    // 但阶段耗时里 0ms 是合法测量 (路由/护栏常 <1ms)。用 fmtMs 会把"已采集到 0ms"
+    // 渲染成 "—", 即把**测到了**说成**没测到** —— 与项目红线方向相反, 而且实测会让
+    // 整条图例看起来全都没采集。
+    // 判据: null/undefined = 未采集 → "—"; 0 = 实测为 0 → "0ms"。
+    msText(v) {
+      if (v === null || v === undefined) return '—';
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '—';
+      return n <= 0 ? '0ms' : this.fmtMs(n);
+    },
     // 百分比格式化 (入参为 0..100 的百分值).
     //
     // 两处舍入都会把"事实"改掉, 必须挡住:
