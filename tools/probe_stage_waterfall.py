@@ -96,6 +96,19 @@ const { chromium } = require('playwright');
     return { modal: true, bars, legends, text: (modal.innerText || '').replace(/\n+/g, ' | ').slice(0, 900) };
   });
 
+  // 请求体字节行 (2026-10-16, 用户报障"省量对不上上游"): 必须真的渲染出"原始 → 实发"。
+  // 这是用户唯一能自查省量的地方 —— 它若空白/报错, 用户就只能相信省量那一栏。
+  rd.reqBytes = await r1.p.evaluate(() => {
+    const modal = document.querySelector('.log-modal-card');
+    if (!modal) return { modal: false };
+    const keys = Array.from(modal.querySelectorAll('.log-detail-key'));
+    const k = keys.find(e => (e.innerText || '').indexOf('请求体') >= 0);
+    if (!k) return { row: false, text: (modal.innerText || '').slice(0, 200) };
+    const val = k.parentElement.querySelector('.log-detail-val');
+    return { row: true, key: (k.innerText || '').trim(), val: val ? (val.innerText || '').trim() : null,
+             title: k.getAttribute('title') || '' };
+  });
+
   // ── 分析页变体: 网关自身开销面板 + 链路拓扑 ──
   // sc=done 才有 gateway_stages / per_provider; sc=empty 用来验证"无样本时面板整个不出现"
   // (而不是画一排 0 / 0ms 的假数据)。
@@ -151,7 +164,9 @@ except Exception:
     sys.exit(1)
 
 fails = []
+NCHK = [0]
 def ck(cond, msg):
+    NCHK[0] += 1
     print(("  OK   " if cond else "  FAIL ") + msg)
     if not cond:
         fails.append(msg)
@@ -188,6 +203,19 @@ ck(any("—" in (l.get("txt") or "") for l in legends), "未采集段显示 '—
 ck(any("直通" in (l.get("txt") or "") for l in legends), "直通的协议转换段显示「直通」")
 ck(any(l.get("bg") not in ("rgba(0, 0, 0, 0)", "transparent", "") for l in legends),
    "图例圆点有底色 (段颜色真的生效)")
+# 请求体字节行: 用户自查省量的唯一入口 (2026-10-16 加)
+rb = rd.get("reqBytes") or {}
+ck(rb.get("row"), "详情里有「请求体」行 (key=%r)" % rb.get("key"))
+ck("2.2MB" in (rb.get("val") or "") and "1.1MB" in (rb.get("val") or ""),
+   "该行给出 原始 → 实发 两个实测值: %r" % rb.get("val"))
+ck("省" in (rb.get("val") or ""), "该行含缩减量措辞: %r" % rb.get("val"))
+ck((rb.get("title") or "") != "", "该行有 tooltip 说明 (口径可发现)")
+# ⚠️ 占位符残留检查 (真踩过): i18n 的 t() 用 `{0}`/`{1}`, 不是 `%s` —— 写错时页面会
+# 直接显示字面量 "省 %s · %s%", 比空白更糟 (看着就像坏了)。而"关键词都存在"的弱判据
+# **抓不住它**, 故这里单独钉一条: 渲染结果里不得出现任何未替换的占位符。
+ALLTXT = (rb.get("val") or "") + "|" + (rd.get("dom") or {}).get("text", "")
+ck("%s" not in ALLTXT and "{0}" not in ALLTXT and "{1}" not in ALLTXT,
+   "无未替换的占位符 (%s / {0} / {1})")
 
 print("\n== 分析页: 网关自身开销 + 链路拓扑 ==")
 ck(not an.get("pageerrors"), "无 pageerror: %s" % an.get("pageerrors"))
@@ -217,6 +245,5 @@ print("\n== 弹窗文本片段 ==\n   " + str(dom.get("text"))[:400])
 print("\n== 网关面板文本 ==\n   " + str(ad.get("gwText"))[:400])
 print("\n== 拓扑文本 ==\n   " + str(ad.get("topoText"))[:500])
 
-n_ck = 25
-print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", n_ck, len(fails)))
+print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
 sys.exit(1 if fails else 0)

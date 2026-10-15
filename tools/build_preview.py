@@ -296,6 +296,9 @@ assert v != html, "记录详情变体: switchTab 替换失败"
 MOCK_REC = ('{timestamp:1758900000,status:200,model:"provA/up-a",upstream_model:"up-a",provider:"provA",'
             'endpoint:"/v1/chat/completions",prompt_tokens:800,completion_tokens:260,latency_ms:720,'
             'first_token_ms:310,cached:false,cost:0.41,body_len:1024,error:"",end_reason:"stop",'
+            # 实测请求体字节 (2026-10-16): 原始 → 实发, 供用户核对"省量是不是真的"。
+            # 刻意给一个明显的缩减 (2.2MB → 1.2MB), 与省量列同源可交叉验算。
+            'req_bytes:1183238,req_bytes_orig:2275753,'
             'stages:{waiting_first_ms:310,reasoning_ms:40,output_ms:370,tool_call_ms:null,'
             'route_ms:2,guard_ms:1,convert_ms:null,upstream_ttfb_ms:300,overhead_ms:5}}')
 v2 = v.replace("logs: [], selectedLog: null,",
