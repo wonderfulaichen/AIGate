@@ -362,6 +362,67 @@
           label: m.provider + '/' + (m.upstream_model || m.model),
         }));
     },
+    // ─── 流程拓扑 (2026-10-16) ───
+    // 客户端 → 网关 → **每个供应商** (卡片) → 该供应商下的**每个模型** (行)。
+    // 用户: "我说的是搞流程拓扑图，图中不是有供应商吗？供应商里面不是有模型吗？模型不应该有详情吗？"
+    // 与"三跳摘要"的区别: 摘要是把整条链路压成一个数; 这里是**逐节点展开** ——
+    // 哪个供应商慢、它的哪个模型慢, 一次看全, 不用来回切选择器。
+    /// 拓扑的供应商层: 每个供应商 + 它下面的模型 (按请求数降序)
+    get topoProviders() {
+      const st = this.stats || {};
+      const provs = (st.per_provider || []).slice(0, 8);
+      const models = st.per_model || [];
+      return provs.map(p => ({
+        provider: p.provider,
+        requests: p.requests || 0,
+        errors: p.errors || 0,
+        rateLimited: p.rate_limited || 0,
+        successPct: (p.requests || 0) > 0
+          ? Math.max(0, (p.requests - (p.errors || 0)) / p.requests * 100) : null,
+        // 该供应商的模型节点 (含各自的阶段耗时, 供"详情"展开)
+        models: models
+          .filter(m => m.provider === p.provider && (m.requests || 0) > 0)
+          .slice(0, 6)
+          .map(m => ({
+            provider: p.provider,
+            model: m.upstream_model || m.model,
+            key: p.provider + '/' + (m.upstream_model || m.model),
+            requests: m.requests || 0,
+            errors: m.errors || 0,
+            avgLatency: m.avg_latency_ms || 0,
+            avgTtft: m.ttft_avg_ms == null ? null : m.ttft_avg_ms,
+            genSpeed: m.gen_speed || 0,
+            cost: m.total_cost || 0,
+            savedTokens: m.optimization_saved_tokens || 0,
+            billing: !!m.billing,
+          })),
+      })).filter(p => p.requests > 0 || p.models.length > 0);
+    },
+    /// 某模型的阶段耗时行 (供拓扑里"详情"展开) —— 复用逐节点取值
+    topoModelStageRows(m) {
+      return (m && this.stageRowsFor(m.provider, m.model)) || [];
+    },
+    topoModelGwRows(m) {
+      return (m && this.gwRowsFor(m.provider, m.model)) || [];
+    },
+    /// 某节点是否展开详情 (默认收起)
+    topoModelOpen(key) {
+      return !!(this.topoOpenModels && this.topoOpenModels[key]);
+    },
+    topoModelToggle(key) {
+      if (!this.topoOpenModels) this.topoOpenModels = {};
+      this.topoOpenModels[key] = !this.topoOpenModels[key];
+    },
+    /// 某供应商是否展开 (默认展开 —— 两级结构要一眼看全)
+    topoProvOpen(prov) {
+      const v = this.topoOpenProviders && this.topoOpenProviders[prov];
+      return v === undefined ? true : !!v;
+    },
+    topoProvToggle(prov) {
+      if (!this.topoOpenProviders) this.topoOpenProviders = {};
+      this.topoOpenProviders[prov] = !this.topoProvOpen(prov);
+    },
+    /// 当前选中节点的可读名 (未选中 = "全部")
     /// 当前选中节点的可读名 (未选中 = "全部")
     get axisNodeLabel() {
       const n = this.axisNode;

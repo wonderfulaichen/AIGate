@@ -247,10 +247,11 @@ gt = ad.get("gwSegText") or ""
 ck("15ms" in gt and "980ms" in gt, "卡内给出 p95 15ms / 980ms, 实得 %r" % gt[:160])
 # 参考卡点: 桩里护栏均值 0.4ms → 取整为 0。这是**实测 0**, 必须显示 "0ms" 而不是 "—"。
 ck("0ms" in gt, "实测 0ms 显示 '0ms' 而非 '—'")
-# 拓扑三跳已并入同一张卡
+# 拓扑已升级为**流程拓扑图** (2026-10-16: 客户端 → 网关 → 供应商 → 模型), 节点数不再固定 3。
+# 这里只钉"客户端与网关两个节点仍在", 逐层结构由 probe_flow_topo.py 专门覆盖。
 ck(ad.get("hasClient") and ad.get("hasGateway"),
-   "拓扑三跳在同一张卡内 (客户端/网关): %s / %s" % (ad.get("hasClient"), ad.get("hasGateway")))
-ck((ad.get("topoNodes") or 0) == 3, "拓扑为三跳节点, 实得 %s" % ad.get("topoNodes"))
+   "拓扑仍在同一张卡内 (客户端/网关): %s / %s" % (ad.get("hasClient"), ad.get("hasGateway")))
+ck((ad.get("topoNodes") or 0) >= 3, "拓扑至少有客户端/网关/供应商节点, 实得 %s" % ad.get("topoNodes"))
 ck("42" in gt and "p95" in gt, "拓扑给出窗口量 42 与 p95")
 # 关键负例: 无样本时该侧必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据。
 # 时间轴里各层各自 x-show —— 故判据是"网关段不出现", 不是"整张卡消失"。

@@ -65,6 +65,11 @@ function dashboard() {  return {
     // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算" ——
     // 全局平均会稀释掉慢的那条链路, 故默认落在第一个有数据的节点上, 可随时切换。
     axisNode: null,
+    // 流程拓扑 (2026-10-16): 客户端 → 网关 → 供应商 → 该供应商下的模型。
+    // 用户: "我说的是搞流程拓扑图，图中不是有供应商吗？供应商里面不是有模型吗？模型不应该有详情吗？"
+    // 展开态: 供应商默认全展开 (两级结构要一眼看全), 模型节点点"详情"才展开它的耗时拆分。
+    topoOpenProviders: {},   // { [provider]: bool } —— 默认 undefined = 展开
+    topoOpenModels: {},      // { 'prov/model': bool } —— 默认 undefined = 收起 (详情按需展开)
     // 该节点的模型侧四段 (选中后由 stageRowsFor 算出)
     get axisStageRows() {
       const n = this.axisNode;

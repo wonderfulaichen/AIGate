@@ -171,25 +171,79 @@
         <div x-show="ttftSlowCount>0" class="txs" style="color:var(--warn)" x-text="t('ttft_slow_hint',ttftSlowCount)"></div>
       </div>
 
-      <div x-show="(stats.total_requests||0)>0" style="border-top:1px solid var(--border);padding-top:14px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
-        <div class="ov-secondary-item" style="min-width:170px">
-          <div class="txs tm" x-text="t('gw_topo_client')"></div>
-          <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_requests')+' '+(stats.total_requests||0)"></div>
-          <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_errors')+' '+(stats.error_count||0)"></div>
-          <div class="txs tm" style="margin-top:2px" x-text="t('success_rate')+' '+((stats.total_requests||0)?fmtPct(((stats.total_requests-(stats.error_count||0))/(stats.total_requests))*100):'—')"></div>
+      <div x-show="(stats.total_requests||0)>0" style="border-top:1px solid var(--border);padding-top:14px">
+        <div class="txs fw7" style="color:var(--fg);margin-bottom:10px" x-text="t('topo_title')"></div>
+        <!-- 三级流程拓扑: 客户端 → 网关 → 供应商 → 模型。 -->
+        <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+          <!-- 第一级: 客户端 -->
+          <div class="ov-secondary-item" style="min-width:150px">
+            <div class="txs tm" x-text="t('gw_topo_client')"></div>
+            <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_requests')+' '+(stats.total_requests||0)"></div>
+            <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_errors')+' '+(stats.error_count||0)"></div>
+            <div class="txs tm" style="margin-top:2px" x-text="t('success_rate')+' '+((stats.total_requests||0)?fmtPct(((stats.total_requests-(stats.error_count||0))/(stats.total_requests))*100):'—')"></div>
+          </div>
+          <span aria-hidden="true" style="color:var(--muted);align-self:center;font-size:var(--fs-13)">→</span>
+          <!-- 第二级: 网关 (自身开销, 即时间轴里「等首字」的下钻汇总) -->
+          <div class="ov-secondary-item" style="min-width:150px">
+            <div class="txs tm" x-text="t('gw_topo_gateway')"></div>
+            <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_own')+' '+(gwOverheadP95==null?'—':('p95 '+msText(gwOverheadP95)))"></div>
+            <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_upstream')+' '+(gwTtfbP95==null?'—':('p95 '+msText(gwTtfbP95)))"></div>
+          </div>
+          <span aria-hidden="true" style="color:var(--muted);align-self:center;font-size:var(--fs-13)">→</span>
+          <!-- 第三级: 供应商 (每个一张卡), 卡内是该供应商的模型 (逐行, 可展开详情) -->
+          <div style="flex:1;min-width:340px;display:flex;flex-direction:column;gap:10px">
+            <template x-for="p in topoProviders" :key="'tp'+p.provider">
+              <div class="ov-secondary-item" style="padding:10px 12px">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" @click="topoProvToggle(p.provider)" role="button" :aria-expanded="topoProvOpen(p.provider)">
+                  <span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;transform:rotate('+(topoProvOpen(p.provider)?90:0)+'deg);color:var(--muted);font-size:var(--fs-11)'">▸</span>
+                  <span class="fw6 txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="p.provider"></span>
+                  <span class="txs tm" x-text="t('gw_topo_requests')+' '+p.requests"></span>
+                  <span class="txs tm" :style="p.errors?'color:var(--err)':'color:var(--muted)'" x-text="t('gw_topo_errors')+' '+p.errors"></span>
+                  <span class="txs tm" x-show="p.rateLimited>0" style="color:var(--warn-fg)" x-text="t('gw_topo_rl')+' '+p.rateLimited"></span>
+                </div>
+                <div x-show="topoProvOpen(p.provider)" style="margin-top:8px;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+                  <template x-for="m in p.models" :key="m.key">
+                    <div>
+                      <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" @click="topoModelToggle(m.key)" role="button" :aria-expanded="topoModelOpen(m.key)">
+                        <span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;transform:rotate('+(topoModelOpen(m.key)?90:0)+'deg);color:var(--muted);font-size:var(--fs-10)'">▸</span>
+                        <span class="mono txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="m.model"></span>
+                        <span class="txs tm" x-text="t('gw_topo_requests')+' '+m.requests"></span>
+                        <span class="txs tm" :style="m.errors?'color:var(--err)':'color:var(--muted)'" x-text="t('gw_topo_errors')+' '+m.errors"></span>
+                        <span class="txs tm" x-text="t('topo_latency')+' '+fmtMs(m.avgLatency)"></span>
+                        <span class="txs tm" x-show="m.avgTtft!=null" x-text="t('topo_ttft')+' '+msText(m.avgTtft!=null?Math.round(m.avgTtft):null)"></span>
+                        <span class="txs tm" x-show="m.genSpeed>0" x-text="m.genSpeed.toFixed(1)+' '+t('unit_tokps')"></span>
+                      </div>
+                      <!-- 模型详情: 该节点的四段耗时 + 网关去程 (按需展开) -->
+                      <div x-show="topoModelOpen(m.key)" style="margin-top:8px;padding-left:22px;display:flex;flex-direction:column;gap:10px;border-left:2px solid var(--border)">
+                        <div>
+                          <div class="txs tm" style="margin-bottom:5px" x-text="t('perf_row_model')"></div>
+                          <div class="prop-bar"><template x-for="s in topoModelStageRows(m)" :key="'ms'+s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
+                          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:7px">
+                            <template x-for="s in topoModelStageRows(m)" :key="'mst'+s.k">
+                              <span class="txs tm" x-show="s.avg!=null"><span x-text="s.label"></span> <b class="mono" :style="'color:'+s.color" x-text="msText(s.avg)"></b></span>
+                            </template>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="txs tm" style="margin-bottom:5px" x-text="t('perf_row_gateway')"></div>
+                          <div class="prop-bar"><template x-for="s in topoModelGwRows(m)" :key="'gs'+s.k"><span x-show="s.avg!=null" :style="'flex-grow:'+Math.max(s.avg||0,0.5)+';background:'+s.color" :title="s.label+' '+msText(s.avg)"></span></template></div>
+                          <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:7px">
+                            <template x-for="s in topoModelGwRows(m)" :key="'gst'+s.k">
+                              <span class="txs tm" x-show="s.avg!=null"><span x-text="s.label"></span> <b class="mono" :style="'color:'+s.color" x-text="msText(s.avg)"></b><span class="tm" x-show="s.p95!=null" x-text="' · p95 '+msText(s.p95)"></span></span>
+                            </template>
+                          </div>
+                        </div>
+                        <div class="txs tm" x-text="t('topo_model_cost')+' '+fmtMoney(m.cost)+' · '+t('optimization_saved_tokens')+' '+fmtT(m.savedTokens)"></div>
+                      </div>
+                    </div>
+                  </template>
+                  <div class="txs tm" x-show="!p.models.length" x-text="t('no_data')"></div>
+                </div>
+              </div>
+            </template>
+          </div>
         </div>
-        <span aria-hidden="true" style="color:var(--muted);align-self:center">→</span>
-        <div class="ov-secondary-item" style="min-width:170px">
-          <div class="txs tm" x-text="t('gw_topo_gateway')"></div>
-          <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_own')+' '+(gwOverheadP95==null?'—':('p95 '+msText(gwOverheadP95)))"></div>
-          <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_upstream')+' '+(gwTtfbP95==null?'—':('p95 '+msText(gwTtfbP95)))"></div>
-        </div>
-        <span aria-hidden="true" style="color:var(--muted);align-self:center">→</span>
-        <div class="ov-secondary-item" style="min-width:190px;flex:1">
-          <div class="txs tm" x-text="t('gw_topo_providers')"></div>
-          <div class="mono fw6" style="margin-top:6px" x-text="t('gw_topo_prov_n',(stats.per_provider||[]).length)"></div>
-          <div class="txs tm" style="margin-top:2px" x-text="t('gw_topo_prov_hint')"></div>
-        </div>
+        <div class="txs tm" style="color:var(--muted);margin-top:10px" x-text="t('topo_note')"></div>
       </div>
     </div></div>
     <div class="pnl mb4" x-show="analyticsTab==='overview'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('call_distribution')"></span><div class="txs tm" style="margin-top:3px" x-text="t('aggregate_provider_model')"></div></div></div><div class="pnl-b"><div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap"><div style="width:150px;flex-shrink:0;text-align:center" x-html="'<svg viewBox=&quot;0 0 140 140&quot; width=&quot;140&quot;>'+donutSvg+'</svg>'"></div><div style="flex:1;min-width:280px"><!-- 环图与排名原本是两张卡、同一份 per_model 数据 (2026-10-16 合并)：
