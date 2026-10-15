@@ -129,6 +129,15 @@ const { chromium } = require('playwright');
         topoPanel: !!topo, topoVisible: vis(topo),
         topoText: topo ? (topo.innerText || '').replace(/\n+/g, ' | ').slice(0, 700) : '',
         topoNodes: topo ? topo.querySelectorAll('.ov-secondary-item').length : 0,
+        // 省量审计的「≈ 不省时用量为现在的 N×」(2026-10-16 用户问"相当于多少倍")
+        // 倍数那句在省量审计面板里找 —— 不靠 x-text 属性 (Alpine 会消费掉它),
+        // 直接在渲染后的文本里搜, 这样"真的显示出来了"才算通过。
+        auditTimes: (() => {
+          const p2 = Array.from(document.querySelectorAll('.pnl')).find(x => /省量审计/.test(x.innerText || ''));
+          if (!p2) return '';
+          const m = (p2.innerText || '').match(/≈[^|\n]*?(\d\.\d+)\u00d7/);
+          return m ? m[0].trim() : '';
+        })(),
       };
     });
     return o;
@@ -233,6 +242,10 @@ ck((ad.get("topoNodes") or 0) >= 4, "拓扑含 客户端+网关+提供商 节点
 tt = ad.get("topoText") or ""
 ck("42" in tt and "p95" in tt, "拓扑给出窗口量 42 与 p95, 实得 %r" % tt[:200])
 ck("provB" in tt, "拓扑列出各提供商节点, 实得 %r" % tt[:200])
+# 「≈ 不省时用量为现在的 N×」(2026-10-16 用户问"相当于多少倍 ds")
+# 桩: 实发 46.2M / 省 8.39M → 1 + 8.39/46.2 = 1.18×
+ck("1.18" in (ad.get("auditTimes") or ""),
+   "省量审计给出倍数 1.18×: %r" % ad.get("auditTimes"))
 # 关键负例: 无样本时面板必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据
 ck(ae.get("gwPanel") and not ae.get("gwVisible"),
    "无样本时 '网关自身开销' 面板隐藏 (不拿 0 充数)")

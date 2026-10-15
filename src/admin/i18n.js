@@ -53,6 +53,9 @@ const I18N = {
     'no_data': '暂无数据',
     
     'audit_title': '省量审计', 'audit_desc': '统计潜在可省量分布（只读，不改变任何转发内容）', 'audit_basis': '窗口内 {0} 次请求', 'audit_sampled': '其中 {0} 次有审计数据', 'audit_estimated': '{0} 次用量为估算', 'usage_estimated_hint': '用量为估算值（上游未返回 usage，非实测）', 'hero_requests': '请求', 'hero_cost': '费用', 'hero_tokens': 'Token 总量', 'window_label': '窗口累计', 'audit_applied': '已生效省量',
+    'audit_times': '≈ 不省时用量为现在的 {0}',
+    'audit_times_hint': '省量 / 实发量 的倍数（token 口径，与金额无关）：不省的话，这些请求要发的输入量是现在的这个倍数。注意"省下的量是实付的几倍" = 该值 − 1，两种问法差 1，引用前先看口径',
+    'audit_need_price': '要换算成钱需给模型配单价（「优化省金额」据此计算；未配价时显示 ¥0.00 是「无法折算」，不是「没省」）',
     'audit_applied_strip': '· 剥离推理链（普通轮次）', 'audit_applied_strip_tc': '· 剥离推理链（工具轮次）', 'audit_applied_trim': '· 历史裁剪', 'audit_applied_resp': '· 响应缓存',
     'audit_toggle_active': '「剥离 tool_calls 推理链」已在 {0} 次请求中生效（省量见上方"剥离推理链（工具轮次）"）',
     'audit_kv_saved_fee': '缓存净省', 'audit_kv_hit': 'KV 缓存命中率', 'audit_kv_miss': '未命中', 'audit_kv_read': '命中', 'audit_kv_creation': '缓存写入',
@@ -415,6 +418,9 @@ const I18N = {
     'no_data': 'No data',
     
     'audit_title': 'Saving Audit', 'audit_desc': 'Distribution of potential input-token savings (read-only, does not alter any forwarded request)', 'audit_basis': '{0} requests in window', 'audit_sampled': '{0} with audit data', 'audit_estimated': '{0} with estimated usage', 'usage_estimated_hint': 'Estimated usage (upstream returned no usage)', 'hero_requests': 'Requests', 'hero_cost': 'Cost', 'hero_tokens': 'Total tokens', 'window_label': 'Window total', 'audit_applied': 'Applied savings',
+    'audit_times': '≈ {0} of current volume if nothing were saved',
+    'audit_times_hint': 'Savings divided by what was actually sent (token basis, independent of money): had nothing been saved, the input volume for these requests would be this multiple of today\'s. Note "how many times the amount paid did we save" = this value − 1; the two phrasings differ by 1, so state the basis before quoting',
+    'audit_need_price': 'Converting to money requires per-model prices (that is what "Optimization savings (cost)" uses; ¥0.00 means "cannot convert", not "nothing saved")',
     'audit_applied_strip': '· strip reasoning (plain turns)', 'audit_applied_strip_tc': '· strip reasoning (tool turns)', 'audit_applied_trim': '· history trim', 'audit_applied_resp': '· response cache',
     'audit_toggle_active': '"Strip tool-call reasoning" is active on {0} requests (see "strip reasoning (tool turns)" above)',
     'audit_kv_saved_fee': 'net saved', 'audit_kv_hit': 'KV cache hit rate', 'audit_kv_miss': 'miss', 'audit_kv_read': 'hit', 'audit_kv_creation': 'cache write',

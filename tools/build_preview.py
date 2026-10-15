@@ -21,7 +21,10 @@ STUB = r"""<script>
   var sc = 'empty';
   try { sc = new URLSearchParams(location.search).get('sc') || 'empty'; } catch (e) {}
   var AUDIT = { output: { output_tokens: 1200, requests: 30, max_tokens: 480, long_requests: 0, loop_truncated: 0 },
-    applied_saved_tokens: 0, applied_strip_tokens: 0, applied_trim_tokens: 0, applied_resp_cache_tokens: 0,
+    // input_tokens = 实发输入量, 与 applied_saved_tokens 一起才能算出"≈ 不省时是现在的几倍".
+    // 刻意给一个可观的比例 (实发 46.2M / 省 8.9M), 与模型明细那行同源, 便于交叉核对。
+    input_tokens: 46200000,
+    applied_saved_tokens: 8390000, applied_strip_tokens: 8390000, applied_trim_tokens: 0, applied_resp_cache_tokens: 0,
     cache_miss_tokens: 0, cache_read_tokens: 0, exempt_reasoning_tokens: 0, dup_block_tokens: 0, dup_block_count: 0 };
   // 多点图表数据: 趋势图/环图/排名条需要多桶多模型才能体现设计 (否则永远是空态).
   // 固定基线日期而非 Date.now(), 保证每次截图一致.

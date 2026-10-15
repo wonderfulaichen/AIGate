@@ -391,6 +391,21 @@
       if (!saved) return '0%';
       return this.fmtPct(saved / base * 100);
     },
+    // 「相当于几倍」—— 用户 2026-10-16 原话:「你说我们这样算 ds 省了多少钱？相当于多少倍 ds？」
+    //
+    // 这个倍数有两种读法, 差 1, 必须说清是哪一个 (否则一个说 1.16、一个说 0.16 会吵起来):
+    //   · 「不省的话账单是现在的几倍」= 1 / (1 - 省量占比)   ← 用户直觉里的"几倍"
+    //   · 「省下的量是实付量的几倍」  = 省量 / 实付          ← 它等于上面那个减 1
+    // 这里给前者 (账单倍数), 因为它最贴近"不省就要多花多少"的直觉。
+    // 与金额无关 —— token 层面的倍数, 免费模型同样成立 (它衡量体积, 不衡量钱)。
+    auditSavedTimesText() {
+      const a = (this.stats && this.stats.audit) || {};
+      const saved = a.applied_saved_tokens || 0;
+      const sent = a.input_tokens || 0;
+      // 无数据 ≠ 0: 没有实发量时无从计算倍数 (省量单独存在但没有基线).
+      if (!sent || !saved) return '—';
+      return (1 + saved / sent).toFixed(2) + '×';
+    },
     // 省量审计: KV 缓存命中率 = 命中 token / 输入总量 (比"写入量"普适, 后者仅 Anthropic 上报).
     kvHitRate() {
       const a = (this.stats && this.stats.audit) || {};
