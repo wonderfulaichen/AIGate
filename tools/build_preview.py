@@ -130,6 +130,9 @@ STUB = r"""<script>
         upstream_ttfb: { samples: 42, avg_ms: 412.5, p50_ms: 380, p95_ms: 980 },
         overhead: { samples: 42, avg_ms: 4.8, p50_ms: 4, p95_ms: 15 }
       } : {},
+      // 全局首字延迟汇总 (融合卡底部的分布条需要它; 缺了 ttftHasData 为假 → 那一块不显示)
+      ttft: n ? { samples: 35, avg_ms: 412.5, p50_ms: 380, p90_ms: 980, slowest_bucket: 2,
+                  hist: [3, 8, 12, 6, 4, 1, 1, 0, 0, 0] } : { samples: 0, hist: [] },
       top_models: n ? [{ model: 'provA/up-a', requests: 14, errors: 0 }, { model: 'provA/up-b', requests: 12, errors: 0 },
                        { model: 'provB/up-c', requests: 10, errors: 1 }, { model: 'provB/up-d', requests: 8, errors: 1 },
                        { model: 'provC/up-e', requests: 6, errors: 0 }] : [],

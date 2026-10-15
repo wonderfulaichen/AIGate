@@ -398,20 +398,56 @@
           })),
       })).filter(p => p.requests > 0 || p.models.length > 0);
     },
-    /// 某模型的阶段耗时行 (供拓扑里"详情"展开) —— 复用逐节点取值
-    topoModelStageRows(m) {
-      return (m && this.stageRowsFor(m.provider, m.model)) || [];
+    /// **融合行** (2026-10-16): 拓扑的每个模型节点 = 它自己的一条时间轴。
+    ///
+    /// 用户: "请求时间轴和拓扑图明明就是能融合在一起的，你还是偷懒分离显示，并且这样非常
+    /// 不直观、不是人看的" —— 说到点子上了。两者本来是一份数据的两种画法:
+    /// 拓扑回答"链路有哪几跳", 时间轴回答"每跳花多久"。**融合 = 节点自带时间轴**,
+    /// 于是不需要"上面拓扑 + 下面时间轴 + 中间选择器切换"这套三件套。
+    ///
+    /// 横向可比性: 条**宽度按该节点总耗时占最慢节点的比例** (不是各自铺满 100%) ——
+    /// 否则每个条一样长, 看不出谁慢。段内再按四段比例分色。
+    get topoFlowRows() {
+      const rows = [];
+      (this.topoProviders || []).forEach(p => {
+        p.models.forEach(m => {
+          const segs = (this.stageRowsFor(m.provider, m.model) || [])
+            .filter(s => s.avg != null && s.avg > 0);
+          const gw = (this.gwRowsFor(m.provider, m.model) || [])
+            .filter(s => s.avg != null && s.avg > 0);
+          const total = segs.reduce((a, s) => a + s.avg, 0);
+          // 网关去程含在「等首字」里, 单独给一行小字 (不混进四段, 否则重复计时)
+          const gwSum = gw.reduce((a, s) => a + s.avg, 0);
+          rows.push({
+            provider: m.provider, model: m.model, key: m.key,
+            segs, gw, total, gwSum,
+            requests: m.requests, errors: m.errors,
+            latency: m.avgLatency, ttft: m.avgTtft, cost: m.cost,
+          });
+        });
+      });
+      const max = rows.reduce((a, r) => Math.max(a, r.total), 0) || 1;
+      rows.forEach(r => { r.widthPct = Math.max(4, r.total / max * 100); });
+      return rows;
     },
-    topoModelGwRows(m) {
-      return (m && this.gwRowsFor(m.provider, m.model)) || [];
+    /// 融合行的最大值 (供"最慢"标记)
+    get topoFlowMax() {
+      return (this.topoFlowRows || []).reduce((a, r) => Math.max(a, r.total), 0);
     },
-    /// 某节点是否展开详情 (默认收起)
-    topoModelOpen(key) {
-      return !!(this.topoOpenModels && this.topoOpenModels[key]);
+    /// 该行是否本窗口最慢 (供融合视图高亮) —— 融合的意义就是"一眼看出谁慢"
+    isSlowest(r) {
+      const m = this.topoFlowMax;
+      return !!(r && m && r.total === m && m > 0);
     },
-    topoModelToggle(key) {
-      if (!this.topoOpenModels) this.topoOpenModels = {};
-      this.topoOpenModels[key] = !this.topoOpenModels[key];
+    /// 单条迷你时间轴的 HTML (段宽按该行总时长占比, 段内按四段比例)。
+    /// 只输出**已采集**的段; 未采集的整条不画 (显示 "—"), 不拿 0 充。
+    flowBarHtml(r) {
+      if (!r || !r.total) return '';
+      return r.segs.map(s => {
+        const pct = s.avg / r.total * 100;
+        return '<span style="flex-grow:' + Math.max(pct, 0.5).toFixed(2) + ';background:' + s.color
+          + '" title="' + s.label + ' ' + this.msText(s.avg) + '"></span>';
+      }).join('');
     },
     /// 某供应商是否展开 (默认展开 —— 两级结构要一眼看全)
     topoProvOpen(prov) {

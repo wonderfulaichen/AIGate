@@ -108,27 +108,37 @@ const { chromium } = require('playwright');
     return Array.from(tbl.querySelectorAll('thead th')).filter(th => getComputedStyle(th).display !== 'none').length;
   });
 
-  // 合并后的内容完整性 (2026-10-16 二/三轮): 卡片合并最容易"看着省了、其实丢内容"
+  // 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张)
+  // ⚠️ 必须先切到 perf 页签: 融合卡只在 perf 显示, 在别的页签下它是 display:none,
+  //    里面的条宽度为 0 → 按可见性数会数出 0 (探针曾因此在错误的页签下判定"没渲染")。
+  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'perf'; });
+  await p.waitForTimeout(500);
   out.merged = await p.evaluate(() => {
     const all = Array.from(document.querySelectorAll('.pnl'));
     const txt = el => (el ? (el.innerText || '') : '');
-    const axis = all.find(el => txt(el).indexOf('请求时间轴') >= 0);
-    const dist = all.find(el => txt(el).indexOf('调用分布') >= 0);
+    const fuse = all.find(el => txt(el).indexOf('链路与耗时') >= 0);
     const modelTbl = all.find(el => txt(el).indexOf('模型明细') >= 0);
-    const a = txt(axis);
+    const f = txt(fuse);
+    const vis = e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return getComputedStyle(e).display !== 'none'; };
+    const barVisible = b => {
+      let x = b;
+      while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; }
+      // ⚠️ 不能用 offsetHeight: .prop-bar 自身无固定高度, 高由子段撑/父容器决定,
+      //    实测可见的条 offsetHeight 也是 0 → 会误判成"没渲染"。改用**宽度**判断。
+      return b.getBoundingClientRect().width > 0;
+    };
     return {
-      // 时间轴四层都要在: 客户端行 / 网关下钻行 / 首字延迟分布 / 拓扑三跳
-      axisModelRow: /客户端视角/.test(a),
-      axisGatewayRow: /网关视角/.test(a),
-      axisTtftDist: /首字延迟分布|分布/.test(a),
-      axisTopo: /客户端\s*\/\s*Agent|AIGate 网关/.test(a),
-      axisHasBars: axis ? axis.querySelectorAll('.prop-bar').length : 0,
-      noSeparateCards: !all.some(el => /^首字延迟$/.test(txt(el).trim())) &&
-                       !all.some(el => /^耗时拆分$/.test(txt(el).trim())) &&
-                       !all.some(el => /^链路拓扑$/.test(txt(el).trim())),
-      distHasDonut: !!dist && !!dist.querySelector('svg'),
-      distHasRank: !!dist && !!dist.querySelector('.an-rank'),
-      noRankPanel: !all.some(el => /^调用排名/.test(txt(el).trim())),
+      hasFuse: !!fuse,
+      // 融合卡必须同时含: 链路三级 + 每模型一条的耗时条 + 段色图例 + 首字分布
+      fuseChain: /客户端\s*\/\s*Agent/.test(f) && /AIGate 网关/.test(f),
+      fuseLegend: /段色/.test(f),
+      fuseTtftDist: /首字延迟分布/.test(f),
+      fuseText: f.slice(0, 400),
+      fuseBars: fuse ? Array.from(fuse.querySelectorAll('.prop-bar')).filter(barVisible).length : 0,
+      // 融合的硬指标: 每个模型行都带自己的条 (条数 >= 模型数)
+      modelRows: fuse ? Array.from(fuse.querySelectorAll('.mono.txs[title]')).filter(
+        e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return e.getBoundingClientRect().width > 0; }).length : 0,
+      noDonutPanel: !all.some(el => /^调用分布$/.test(txt(el).trim())),
       modelTableAlive: !!modelTbl && !!modelTbl.querySelector('table') && /上游模型/.test(txt(modelTbl)),
     };
   });
@@ -202,7 +212,7 @@ co = {x["t"] for x in (pt.get("cost") or {}).get("titles", []) if x["v"]}
 pf = {x["t"] for x in (pt.get("perf") or {}).get("titles", []) if x["v"]}
 ck("Token 趋势" in ov and "Token 趋势" not in co and "Token 趋势" not in pf, "趋势只在概览页: ov=%s" % sorted(ov))
 ck("模型明细" in co and "模型明细" not in ov, "模型明细只在成本页: co=%s" % sorted(co))
-ck("请求时间轴" in pf and "请求时间轴" not in ov, "请求时间轴只在性能页: pf=%s" % sorted(pf))
+ck("链路与耗时" in pf and "链路与耗时" not in ov, "融合卡只在性能页: pf=%s" % sorted(pf))
 ck(not (ov & co) and not (co & pf) and not (ov & pf), "三组面板互斥 (无重复)")
 
 cl = data.get("collapse") or {}
@@ -217,21 +227,17 @@ ck((data.get("colsAfter") or 0) == (cols.get("all") or 0), "点「更多列」�
 hs = [ (pt.get(k) or {}).get("h") or 0 for k in ("overview", "cost", "perf") ]
 ck(max(hs) < 4556, "内容高度较重构前 (4556) 下降: %s" % hs)
 
-# ── 合并后的内容完整性 (2026-10-16 二/三轮: 卡片合并) ──
-# 合并容易"看着省了、其实丢内容" —— 故逐项钉住被合并的东西仍在页面上。
+# ── 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张) ──
 merged = data.get("merged") or {}
-ck(merged.get("axisModelRow") and merged.get("axisGatewayRow"),
-   "「请求时间轴」同时含客户端行与网关下钻行")
-ck((merged.get("axisHasBars") or 0) >= 3,
-   "时间轴含 >=3 条比例条 (客户端段 / 网关段 / 首字分布), 实得 %s" % merged.get("axisHasBars"))
-ck(merged.get("axisTtftDist"), "时间轴内含首字延迟分布 (原独立卡)")
-ck(merged.get("axisTopo"), "时间轴内含拓扑三跳 (原独立卡)")
-ck(merged.get("noSeparateCards"),
-   "三张原卡不再单独存在 (首字延迟/耗时拆分/链路拓扑 已并入)")
-ck(merged.get("distHasDonut") and merged.get("distHasRank"),
-   "「调用分布」合并卡同时含环图与排名条: donut=%s rank=%s" % (merged.get("distHasDonut"), merged.get("distHasRank")))
-ck(merged.get("noRankPanel"), "独立的「调用排名」卡已并入 (不再单独存在)")
-ck(merged.get("modelTableAlive"), "合并过程中「模型明细」表仍在 (曾被脚本误删过)")
+ck(merged.get("hasFuse"), "融合卡「链路与耗时」存在")
+ck(merged.get("fuseChain"), "融合卡含链路三级 (客户端/网关)")
+ck(merged.get("fuseLegend"), "融合卡含共用段色图例 (只印一次, 不逐行重复)")
+ck(merged.get("fuseTtftDist"), "融合卡含首字延迟分布")
+ck((merged.get("fuseBars") or 0) >= 3, "融合卡含 >=3 条可见比例条, 实得 %s" % merged.get("fuseBars"))
+ck((merged.get("modelRows") or 0) >= 2,
+   "每个模型行都带自己的条 (可见模型行 >=2), 实得 %s" % merged.get("modelRows"))
+ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删 (与模型明细同一份 per_model)")
+ck(merged.get("modelTableAlive"), "「模型明细」表仍在 (没被误删)")
 
 # ── 时间轴按节点 (本轮核心) ──
 nodes = data.get("axisNodes") or []

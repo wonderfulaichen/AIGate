@@ -109,52 +109,7 @@ const { chromium } = require('playwright');
              title: k.getAttribute('title') || '' };
   });
 
-  // ── 分析页变体: 「请求时间轴」一张卡 (2026-10-16 三卡合并后) ──
-  // sc=done 才有 gateway_stages / per_provider; sc=empty 验证"无样本时该侧不出现"。
-  //
-  // ⚠️ 结构演进 (探针必须跟着走, 否则一直"假失败"):
-  //   10-16 ①: 分三页签, 这些卡挪到「性能与延迟」且默认折叠
-  //   10-16 ②: 「时间去哪了」+「网关自身开销」→ 合并为「耗时拆分」
-  //   10-16 ③: 首字延迟 + 耗时拆分 + 链路拓扑 → 合并为**一张**「请求时间轴」
-  //             (客户端四段 / 网关下钻 / 首字分布 / 拓扑三跳 四层)
-  async function analytics(q) {
-    const r = await prep();
-    await r.p.goto('file:///' + %(an_page)s + q, { waitUntil: 'load' });
-    await r.p.waitForTimeout(2500);
-    const o = { pageerrors: r.errs, errs: await r.p.evaluate(() => (window.__ERRS || []).slice(0, 10)) };
-    o.expand = await r.p.evaluate(() => {
-      const st = document.querySelector('[x-data]')._x_dataStack[0];
-      st.analyticsTab = 'perf';
-      return { audit: st.auditExpanded };
-    });
-    await r.p.waitForTimeout(500);
-    o.dom = await r.p.evaluate(() => {
-      const all = Array.from(document.querySelectorAll('.pnl'));
-      const txt = el => (el ? (el.innerText || '') : '');
-      const axis = all.find(el => /请求时间轴/.test(txt(el)));
-      const bars = axis ? Array.from(axis.querySelectorAll('.prop-bar')) : [];
-      // bars[0] = 客户端四段, bars[1] = 网关五段, bars[2] = 首字延迟分布
-      const gwBar = bars[1] || null;
-      const vis = e => !!e && getComputedStyle(e).display !== 'none';
-      return {
-        axisPanel: !!axis, axisVisible: vis(axis),
-        axisText: axis ? txt(axis).replace(/\n+/g, ' | ').slice(0, 900) : '',
-        axisBarCount: bars.length,
-        gwBars: gwBar ? gwBar.querySelectorAll('span[style*="flex-grow"]').length : 0,
-        gwSegText: axis ? txt(axis) : '',
-        // 拓扑三跳的节点 (客户端/网关/提供商)
-        topoNodes: axis ? axis.querySelectorAll('.ov-secondary-item').length : 0,
-        hasClient: /客户端\s*\/\s*Agent/.test(txt(axis)),
-        hasGateway: /AIGate 网关/.test(txt(axis)),
-      };
-    });
-    o.collapsedByDefault = o.expand;
-    return o;
-  }
-  const anDone = await analytics('?sc=done');
-  const anEmpty = await analytics('?sc=empty');
-
-  console.log(JSON.stringify({ rd, anDone, anEmpty }, null, 2));
+  console.log(JSON.stringify({ rd }, null, 2));
   await b.close();
 })();
 """ % {"rd_page": json.dumps(os.path.join(ROOT, ".openbitfun", "tmp", "preview", "admin_recorddetail.html").replace("\\", "/")),
@@ -195,9 +150,6 @@ pr = st.get("probe") or {}
 dom = rd.get("dom") or {}
 legends = dom.get("legends") or []
 bars = dom.get("bars") or []
-an = data.get("anDone") or {}
-ad = an.get("dom") or {}
-ae = (data.get("anEmpty") or {}).get("dom") or {}
 
 print("== 记录详情: 两条瀑布 ==")
 ck(not rd.get("pageerrors"), "无 pageerror: %s" % rd.get("pageerrors"))
@@ -235,35 +187,10 @@ ALLTXT = (rb.get("val") or "") + "|" + (rd.get("dom") or {}).get("text", "")
 ck("%s" not in ALLTXT and "{0}" not in ALLTXT and "{1}" not in ALLTXT,
    "无未替换的占位符 (%s / {0} / {1})")
 
-print("\n== 分析页: 请求时间轴 (三卡合并后) ==")
-ck(not an.get("pageerrors"), "无 pageerror: %s" % an.get("pageerrors"))
-ck(not an.get("errs"), "window.__ERRS 为空: %s" % an.get("errs"))
-ck(ad.get("axisVisible"), "'请求时间轴' 卡可见 (有样本就该显示)")
-ck((ad.get("axisBarCount") or 0) >= 3,
-   "时间轴含 >=3 条比例条 (客户端段/网关段/首字分布), 实得 %s" % ad.get("axisBarCount"))
-ck((ad.get("gwBars") or 0) >= 1, "网关侧比例条含 >=1 个段, 实得 %s" % ad.get("gwBars"))
-# 桩里 overhead p95=15 / ttfb p95=980; 两段都采到了就必须在文字里出现
-gt = ad.get("gwSegText") or ""
-ck("15ms" in gt and "980ms" in gt, "卡内给出 p95 15ms / 980ms, 实得 %r" % gt[:160])
-# 参考卡点: 桩里护栏均值 0.4ms → 取整为 0。这是**实测 0**, 必须显示 "0ms" 而不是 "—"。
-ck("0ms" in gt, "实测 0ms 显示 '0ms' 而非 '—'")
-# 拓扑已升级为**流程拓扑图** (2026-10-16: 客户端 → 网关 → 供应商 → 模型), 节点数不再固定 3。
-# 这里只钉"客户端与网关两个节点仍在", 逐层结构由 probe_flow_topo.py 专门覆盖。
-ck(ad.get("hasClient") and ad.get("hasGateway"),
-   "拓扑仍在同一张卡内 (客户端/网关): %s / %s" % (ad.get("hasClient"), ad.get("hasGateway")))
-ck((ad.get("topoNodes") or 0) >= 3, "拓扑至少有客户端/网关/供应商节点, 实得 %s" % ad.get("topoNodes"))
-ck("42" in gt and "p95" in gt, "拓扑给出窗口量 42 与 p95")
-# 关键负例: 无样本时该侧必须**整个不出现**, 而不是画一排 0 / 0ms 的假数据。
-# 时间轴里各层各自 x-show —— 故判据是"网关段不出现", 不是"整张卡消失"。
-ck("网关视角" not in (ae.get("gwSegText") or ""),
-   "无样本时网关段整个不出现: %r" % (ae.get("gwSegText") or "")[:200])
-ck(not (ae.get("errs") or []), "空场景无表达式异常: %s" % ae.get("errs"))
-
 print("\n== 记录详情图例 ==")
 for l in legends[:12]:
     print("   %-28s %s" % (l.get("txt"), l.get("bg")))
 print("\n== 弹窗文本片段 ==\n   " + str(dom.get("text"))[:400])
-print("\n== 时间轴文本 ==\n   " + str(ad.get("gwSegText"))[:500])
 
 
 print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
