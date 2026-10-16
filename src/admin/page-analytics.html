@@ -1,4 +1,4 @@
-<div x-show="activeTab==='analytics'" class="page-enter ov-page">
+<div x-show="activeTab==='analytics'" class="page-enter ov-page" x-init="normalizeAnalyticsTab()">
   <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats(null,true)" :disabled="_refreshing"><span x-show="!_refreshing" x-text="t('refresh')"></span><span x-show="_refreshing" class="spin"></span></button></div></div>
   <!-- P1 骨架 (loading 态): 与页根同级; 页头不闪. 手动刷新 (_refreshing) 覆盖内容显示同一骨架. -->
   <div x-show="!statsError && ((loading&&skelReady)||(_refreshing))" x-cloak aria-hidden="true" style="display:flex;flex-direction:column;gap:16px">
@@ -160,7 +160,7 @@
             <span class="topo-edge-label mono" x-text="fmtT((stats.total_prompt_tokens||0)+(stats.total_completion_tokens||0))+' '+t('unit_tok')"></span>
             <span class="topo-edge-line" aria-hidden="true"></span>
           </div>
-          <div class="topo-node topo-node-prov">
+          <div class="topo-node topo-node-prov" :class="{'topo-node-slowest':topoFlowMax>0}">
             <span class="ibox" style="background:var(--secondary-soft);color:var(--secondary)" aria-hidden="true">⇅</span>
             <div class="topo-node-body">
               <div class="topo-node-name" x-text="t('gw_topo_providers')"></div>
@@ -196,14 +196,6 @@
                     <span class="txs tm" style="min-width:34px" :style="r.errors?'color:var(--err)':'color:var(--muted)'" x-text="'✕'+r.errors"></span>
                     <span class="txs tm" x-show="isSlowest(r)" style="color:var(--warn);min-width:38px" x-text="t('fuse_slowest')"></span>
                   </div>
-                  <!-- 原「模型明细」表的核心列并到这里 (避免两处列同一批实体) -->
-                  <div class="txs tm" style="margin-top:3px;padding-left:158px;display:flex;flex-wrap:wrap;gap:14px">
-                    <span><span x-text="t('tbl.tokens_in_out')"></span> <b class="mono" x-text="modelTokensBeforeText(r.modelStat)"></b> <span class="tm">→</span> <b class="mono" x-text="modelTokensAfterText(r.modelStat)"></b> <span style="color:var(--ok)" x-show="modelSavedPct(r.modelStat)" x-text="t('tokens_saved_pct',modelSavedPct(r.modelStat))"></span></span>
-                    <span><span x-text="t('tbl.output_tokens')"></span> <b class="mono" x-text="fmtT((r.modelStat||{}).total_completion_tokens||0)"></b></span>
-                    <span><span x-text="t('tbl.cost')"></span> <b class="mono" x-text="fmtMoney((r.modelStat||{}).total_cost||0)"></b></span>
-                    <span style="color:var(--ok)"><span x-text="t('optimization_saved_tokens')"></span> <b class="mono" x-text="fmtT(r.modelStat?(r.modelStat.optimization_saved_tokens||0):0)"></b></span>
-                    <span x-show="(r.modelStat||{}).billing!==false" style="color:var(--ok)"><span x-text="t('optimization_saved_fee')"></span> <b class="mono" x-text="modelSavedFeeText(r.modelStat)"></b></span>
-                  </div>
                   <!-- 该模型的网关去程 (含在「等首字」里): 一行小字, 不重复计时 -->
                   <div class="txs tm" style="margin-top:3px;padding-left:158px" x-show="r.gw.length">
                     <span x-text="t('fuse_gw_leg')+' '"></span>
@@ -228,5 +220,9 @@
       </div>
       <div class="txs tm" style="color:var(--muted)" x-text="t('fuse_note')"></div>
     </div></div>
+    <!-- ── 模型明细表 (2026-10-16 从拓扑里拆回来) ──
+         拓扑回答"链路哪一跳慢"(图), 这张表回答"逐模型多列对比"(表) —— 两种读法, 分开。
+         上一轮把明细列塞进拓扑节点是错的: 用户要按列扫、要横向比较, 而节点行做不了这件事。 -->
+    <div class="pnl" x-show="analyticsTab==='cost'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="cg" style="gap:8px"><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 9px" @click="modelColsMore=!modelColsMore" :aria-pressed="modelColsMore" x-text="modelColsMore?t('cols_less'):t('cols_more')"></button></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-show="modelColsMore" x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-show="modelColsMore" x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-show="modelColsMore" x-text="t('tbl.avg_latency')"></th><th :title="t('tbl.tokens_in_out_hint')" x-text="t('tbl.tokens_in_out')"></th><th x-text="t('tbl.output_tokens')"></th><th x-show="modelColsMore" x-text="t('tbl.cache_hit')"></th><th x-show="modelColsMore" x-text="t('tbl.gen_speed')"></th><th x-show="modelColsMore" x-text="t('ttft_col_avg')"></th><th x-text="t('tbl.cost')"></th><th :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_tokens')"></th><th x-show="modelColsMore" :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_fee')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" x-show="modelColsMore" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-show="modelColsMore" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-show="modelColsMore" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs"><span x-text="modelTokensBeforeText(m)"></span><span class="tm"> → </span><span x-text="modelTokensAfterText(m)" style="color:var(--fg)"></span><span class="txs tm" x-show="modelSavedPct(m)" style="margin-left:6px;color:var(--ok)" x-text="t('tokens_saved_pct',modelSavedPct(m))"></span></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-show="modelColsMore" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="ttftCellText(m)"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td><td class="mono txs" :style="(m.optimization_saved_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="fmtT(m.optimization_saved_tokens||0)"></td><td class="mono txs" x-show="modelColsMore" style="color:var(--ok)" x-text="modelSavedFeeText(m)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="15" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
   </div></template>
 </div>

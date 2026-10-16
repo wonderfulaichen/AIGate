@@ -90,6 +90,8 @@ function dashboard() {  return {
     themeMode: 'dark',
     analyticsRange: '29d',
     analyticsSpan: 'day', // 'hour' | 'day' | 'month' — 统一时间范围与粒度 (24h/30d/12m)
+    // 模型明细表的「更多列」开关 + 筛选 (2026-10-16 该表从拓扑里拆回来后需要)。
+    modelColsMore: false,
     modelDetailFilter: '',
     modelProviderFilter: '',
     modelTrendData: {keys:[],dates:[],legend:''},

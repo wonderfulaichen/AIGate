@@ -82,6 +82,18 @@ const { chromium } = require('playwright');
     return m ? m[0].replace(/\n/g, ' ') : null;
   });
 
+  // 动效实测: 读 **computed style** 而不是 grep CSS 源码 —— 后者在"选择器写错/被兜底覆盖"
+  // 时照样通过 (本项目已多次踩这类"写了但没生效")。
+  out.motion = await p.evaluate(() => {
+    const g = (sel, k) => { const e = document.querySelector(sel); return e ? getComputedStyle(e)[k] : null; };
+    return {
+      nodeAnim: g('.topo-node', 'animationName'),
+      edgeAnim: g('.topo-edge-line', 'animationName'),
+      edgeDur: g('.topo-edge-line', 'animationDuration'),
+      slowAnim: g('.topo-node-slowest', 'animationName'),
+    };
+  });
+
   console.log(JSON.stringify(out, null, 1));
   await b.close();
 })();
@@ -132,6 +144,12 @@ ck(dm.get("hasSlowestTag"), "最慢的那行被标出: %r" % data.get("slowestTa
 # ⑥ 行上的数是该节点的 (总耗时各不相同, 不是同一个全局值)
 ts = tp.get("totals") or []
 ck(len(set(ts)) >= 2, "各模型总耗时互不相同 (节点自己的数): %s" % ts)
+# ── 动效 (用户: "拓扑图一点视觉动效都没有") ──
+mo = data.get("motion") or {}
+ck("topoNodeIn" in (mo.get("nodeAnim") or ""), "节点有进入动画: %s" % mo.get("nodeAnim"))
+ck("topoFlow" in (mo.get("edgeAnim") or ""), "连线有流量流动动画: %s" % mo.get("edgeAnim"))
+ck(mo.get("edgeDur") not in (None, "0s"), "流动动画时长非零: %s" % mo.get("edgeDur"))
+ck("topoPulse" in (mo.get("slowAnim") or ""), "最慢节点有脉动: %s" % mo.get("slowAnim"))
 
 print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
 sys.exit(1 if fails else 0)

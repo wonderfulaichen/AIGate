@@ -460,7 +460,30 @@
       const map = { overview: 'an_tab_hint_overview', cost: 'an_tab_hint_cost' };
       return t(map[this.analyticsTab] || 'an_tab_hint_overview');
     },
-    /// 该行是否本窗口最慢 (供融合视图高亮) —— 融合的意义就是"一眼看出谁慢"
+    /// 规范化页签值 —— **必须**处理非法值, 否则所有面板的 x-show 全为假 → **整页空白**。
+    /// 触发场景: 代码里删掉一个页签后, 别处仍引用旧值 (本轮删 `perf` 就差点如此);
+    /// 或将来某处持久化了页签选择。规律: "面板可见性由枚举值驱动"时, 非法值不是无操作,
+    /// 而是**全隐藏** —— 界面看着像加载失败。
+    normalizeAnalyticsTab() {
+      if (this.analyticsTab !== 'overview' && this.analyticsTab !== 'cost') {
+        this.analyticsTab = 'overview';
+      }
+    },
+    /// 模型明细表的筛选结果 (按模型名/供应商过滤) —— 表从拓扑拆回来后需要。
+    get filteredModelStats() {
+      const q = (this.modelDetailFilter || '').toLowerCase();
+      const pv = this.modelProviderFilter || '';
+      return (this.stats && this.stats.per_model || []).filter(m => {
+        if (pv && m.provider !== pv) return false;
+        if (!q) return true;
+        return String(m.upstream_model || m.model || '').toLowerCase().includes(q)
+          || String(m.model || '').toLowerCase().includes(q);
+      });
+    },
+    get modelDetailProviders() {
+      return Array.from(new Set((this.stats && this.stats.per_model || []).map(m => m.provider).filter(Boolean)));
+    },
+    /// 逐模型归属 (供"该模型是否本窗口最慢"判断)
     isSlowest(r) {
       const m = this.topoFlowMax;
       return !!(r && m && r.total === m && m > 0);

@@ -54,6 +54,21 @@ const { chromium } = require('playwright');
     return { h: main ? main.scrollHeight : 0, titles: titles.filter(x => x.t) };
   });
 
+  // 非法页签值自愈 (防整页空白)
+  out.invalidTab = await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    const before = st.analyticsTab;
+    st.analyticsTab = 'perf';           // 本轮已删除的页签值
+    st.normalizeAnalyticsTab();
+    const after = st.analyticsTab;
+    const vis = Array.from(document.querySelectorAll('.pnl'))
+      .filter(el => el.closest('main.main') && getComputedStyle(el).display !== 'none'
+                    && el.offsetHeight > 0).length;
+    st.analyticsTab = before;
+    return { before: 'perf', after, visiblePanels: vis };
+  });
+  await p.waitForTimeout(400);
+
   // 页签按钮
   out.tabs = await p.evaluate(() => Array.from(document.querySelectorAll('[role="tab"]'))
     .map(e => ({ txt: (e.innerText || '').trim(), sel: e.getAttribute('aria-selected'), a: e.className.indexOf(' a') >= 0 || e.className.endsWith('a') })));
@@ -96,12 +111,22 @@ const { chromium } = require('playwright');
   // ⚠️ 必须先切到 perf 页签: 融合卡只在 perf 显示, 在别的页签下它是 display:none,
   //    里面的条宽度为 0 → 按可见性数会数出 0 (探针曾因此在错误的页签下判定"没渲染")。
   await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'cost'; });
-  await p.waitForTimeout(500);
+  await p.waitForTimeout(900);
+  // 等表体真的渲染出来 (切页签后 Alpine 需一次重渲染; 固定 sleep 曾不够)
+  await p.waitForFunction(() => {
+    const t = Array.from(document.querySelectorAll('table')).find(x => (x.innerText || '').indexOf('上游模型') >= 0);
+    return !!t && t.querySelectorAll('tbody tr').length > 0;
+  }, null, { timeout: 5000 }).catch(() => {});
   out.merged = await p.evaluate(() => {
     const all = Array.from(document.querySelectorAll('.pnl'));
     const txt = el => (el ? (el.innerText || '') : '');
     const fuse = all.find(el => txt(el).indexOf('链路与耗时') >= 0);
-    const modelTbl = all.find(el => txt(el).indexOf('模型明细') >= 0);
+    // ⚠️ 必须按**标题**精确匹配: 拓扑卡里也含"模型明细"字样 (hint 文案提到它),
+    //    用 indexOf 会先命中拓扑卡 → 那张卡里没有 table → 表体行数恒 0 (真踩过)。
+    const modelTbl = all.find(el => {
+      const h = el.querySelector('.pnl-ht');
+      return h && (h.innerText || '').trim().indexOf('模型明细') === 0;
+    });
     const f = txt(fuse);
     const vis = e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return getComputedStyle(e).display !== 'none'; };
     const barVisible = b => {
@@ -123,19 +148,16 @@ const { chromium } = require('playwright');
       modelRows: fuse ? Array.from(fuse.querySelectorAll('.mono.txs[title]')).filter(
         e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return e.getBoundingClientRect().width > 0; }).length : 0,
       noDonutPanel: !all.some(el => /^调用分布$/.test(txt(el).trim())),
-      noTablesLeft: !all.some(el => /^模型明细$/.test(txt(el).trim())) &&
-                    !all.some(el => /^供应商性能$/.test(txt(el).trim())),
-      // 列并入拓扑: 模型行里应出现原表的列 (输入/费用/省量)
-      fuseHasTableCols: /原始/.test(f) && /费用|Cost/.test(f) && /优化省/.test(f),
-      // 采集费用列的实际取值 —— 只测"文案存在"会放过空壳列 (漏带字段时全 0 也照样通过)
-      fuseCostVals: (() => {
-        const out = [];
-        fuse.querySelectorAll('.txs.tm span').forEach(sp => {
-          if (!/^费用|^Cost/.test((sp.innerText || '').trim())) return;
-          const b = sp.parentElement && sp.parentElement.querySelector('b.mono');
-          if (b) out.push((b.innerText || '').trim());
+      // 明细列应回到**表**里 (2026-10-16 用户: 那是表的内容, 不该塞进拓扑)
+      modelTableBack: !!modelTbl && !!modelTbl.querySelector('table'),
+      tableVals: (() => {
+        if (!modelTbl) return [];
+        // 取表体每行"费用"列的实际文本 —— 只测"文案存在"会放过空壳 (漏带字段全 0 也通过)
+        const rows = Array.from(modelTbl.querySelectorAll('tbody tr'));
+        return rows.slice(0, 5).map(tr => {
+          const tds = Array.from(tr.querySelectorAll('td'));
+          return tds.map(td => (td.innerText || '').trim()).join('|');
         });
-        return out;
       })(),
     };
   });
@@ -212,6 +234,13 @@ ck(not data.get("pageerrors"), "无 pageerror: %s" % data.get("pageerrors"))
 ck(not data.get("errs"), "window.__ERRS 为空: %s" % data.get("errs"))
 tb = data.get("tabs") or []
 ck(len(tb) == 2, "两个页签按钮都在 (省量与性能已合并): %s" % [x.get("txt") for x in tb])
+# 非法页签值必须自愈 —— 否则所有面板 x-show 全为假 → **整页空白** (本轮删 perf 后真踩过:
+# 截图脚本仍切 'perf', 页面一片空白, 看着像加载失败而不是"值非法")。
+inv = data.get("invalidTab") or {}
+ck(inv.get("after") in ("overview", "cost"),
+   "非法页签值自愈为合法值: %s → %s" % (inv.get("before"), inv.get("after")))
+ck((inv.get("visiblePanels") or 0) > 0,
+   "非法值下仍有面板可见 (不是整页空白): %s" % inv.get("visiblePanels"))
 ck(sum(1 for x in tb if x.get("a")) == 1, "有且仅有一个页签高亮")
 
 pt = data.get("perTab") or {}
@@ -238,21 +267,21 @@ ck((merged.get("fuseBars") or 0) >= 3, "融合卡含 >=3 条可见比例条, 实
 ck((merged.get("modelRows") or 0) >= 2,
    "每个模型行都带自己的条 (可见模型行 >=2), 实得 %s" % merged.get("modelRows"))
 ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删")
-ck(merged.get("noTablesLeft"), "两张明细表已删 (列并入拓扑行, 不再重复列同一批实体)")
 # 未翻译的 i18n 键会**原样显示成键名** (如 "an_tab_hint_perf"), 而没有任何报错 ——
 # 与本项目踩过的 "占位符残留" 同一类静默缺陷: 界面看着"有字", 但那是键名不是文案。
 # 判据: 整页可见文本里不得出现形如 an_/gw_/tbl./topo_/fuse_ 的裸键名。
 ck(not (data.get("literalKeys") or []),
    "界面无未翻译的裸键名: %s" % (data.get("literalKeys") or [])[:6])
-ck(merged.get("fuseHasTableCols"), "原表的列 (输入原始→实发/费用/优化省) 已并入拓扑模型行")
+ck(merged.get("modelTableBack"), "「模型明细」表已回到页面上 (明细列不该塞进拓扑)")
+# 表里必须有**真实值**且逐模型不同 —— 只测"文案存在"会放过空壳
+# (本轮真踩过: 字段漏带时列全 0, 而"文案在不在"照样通过)
+tv = merged.get("tableVals") or []
+ck(len(tv) >= 2, "表体有 >=2 行: %s" % tv[:2])
+ck(all(("→" in r) or ("¥" in r) for r in tv[:2]), "表行含 原始→实发 或 费用: %s" % tv[:2])
+ck(len(set(tv)) >= 2, "各行内容互不相同 (不是空壳/共用值): %s" % tv[:2])
 # 并入的列必须有**真实值**且逐模型不同 —— 只测"文案存在"会放过空壳列
 # (本轮真踩过: topoFlowRows 漏带 modelStat, 列全显示 0, 而"文案在不在"照样通过)
-ck((merged.get("fuseCostVals") or []).length if False else len(merged.get("fuseCostVals") or []) >= 2,
-   "并入的费用列逐模型取值 (>=2 个不同值): %s" % merged.get("fuseCostVals"))
-ck(len(set(merged.get("fuseCostVals") or [])) >= 2,
-   "各模型费用互不相同 (不是空壳/共用值): %s" % merged.get("fuseCostVals"))
-ck(all(v != "¥0.00" for v in (merged.get("fuseCostVals") or [])[:3]),
-   "并入的费用列非全 0 (漏带字段会全 0): %s" % (merged.get("fuseCostVals") or [])[:3])
+
 
 # ── 时间轴按节点 (本轮核心) ──
 nodes = data.get("axisNodes") or []
