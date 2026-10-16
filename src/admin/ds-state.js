@@ -58,24 +58,10 @@ function dashboard() {  return {
     // 每组 1-2 屏; 诊断类卡片（省量审计/网关开销/拓扑）再各自默认折叠。
     // 'overview'(用量概览) | 'cost'(省量与性能)  —— 2026-10-16 由三个页签合并为两个
     analyticsTab: 'overview',
-    // 请求时间轴当前选中的**节点** (2026-10-16): { provider, model } 或 null (= 全局)。
-    // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算" ——
-    // 全局平均会稀释掉慢的那条链路, 故默认落在第一个有数据的节点上, 可随时切换。
-    axisNode: null,
-    // 流程拓扑 (2026-10-16): 客户端 → 网关 → 供应商 → 该供应商下的模型。
-    // 用户: "我说的是搞流程拓扑图，图中不是有供应商吗？供应商里面不是有模型吗？模型不应该有详情吗？"
-    // 展开态: 供应商默认全展开 (两级结构要一眼看全), 模型节点点"详情"才展开它的耗时拆分。
-    topoOpenProviders: {},   // { [provider]: bool } —— 默认 undefined = 展开
-    topoOpenModels: {},      // { 'prov/model': bool } —— 默认 undefined = 收起 (详情按需展开)
-    // 该节点的模型侧四段 (选中后由 stageRowsFor 算出)
+    // 该节点的模型侧四段 —— **段色图例**用它 (图例只解释颜色, 与选中哪个节点无关,
+    // 故固定取全局那四段的 label/color; 具体数值条在「模型明细」表里逐行给)。
     get axisStageRows() {
-      const n = this.axisNode;
-      return n ? (this.stageRowsFor(n.provider, n.model) || []) : this.stageWinRows;
-    },
-    // 该节点的网关侧五段
-    get axisGwRows() {
-      const n = this.axisNode;
-      return n ? (this.gwRowsFor(n.provider, n.model) || []) : this.gwStageWinRows;
+      return this.stageWinRows;
     },
     // 诊断类面板的展开态 (默认全收起, 2026-10-16)。
     // 这些卡回答的是"出问题时才问"的问题 (省量审计 / 网关自身开销 / 链路拓扑),

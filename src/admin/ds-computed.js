@@ -352,16 +352,6 @@
     // 这样"选中某个模型"时能看到它自己的数, 未选中时看到该供应商的数。
     /// 时间轴可选节点列表: 每个「供应商 + 上游模型」一个 (拓扑的末端节点)。
     /// 后端 per_model 已按 (provider, upstream_model) 分组, 直接拿来当节点。
-    get axisNodes() {
-      return (this.stats && this.stats.per_model || [])
-        .filter(m => (m.requests || 0) > 0)
-        .slice(0, 8)
-        .map(m => ({
-          provider: m.provider,
-          model: m.upstream_model || m.model,
-          label: m.provider + '/' + (m.upstream_model || m.model),
-        }));
-    },
     // ─── 流程拓扑 (2026-10-16) ───
     // 客户端 → 网关 → **每个供应商** (卡片) → 该供应商下的**每个模型** (行)。
     // 用户: "我说的是搞流程拓扑图，图中不是有供应商吗？供应商里面不是有模型吗？模型不应该有详情吗？"
@@ -483,6 +473,25 @@
     get modelDetailProviders() {
       return Array.from(new Set((this.stats && this.stats.per_model || []).map(m => m.provider).filter(Boolean)));
     },
+    /// 按 ModelStats 取它的融合行 (含条宽/总耗时/网关去程) —— 供**模型明细表**使用。
+    /// 拓扑里已不显示逐模型信息 (那是明细), 故表必须能自己拿到这两项,
+    /// 否则丢了"一眼看出谁慢" 的能力。
+    flowRowOf(m) {
+      if (!m) return null;
+      const key = (m.provider || '') + '/' + (m.upstream_model || m.model || '');
+      return (this.topoFlowRows || []).find(r => r.key === key) || null;
+    },
+    /// 该 ModelStats 是否本窗口最慢模型
+    isSlowestRow(m) {
+      const r = this.flowRowOf(m);
+      return this.isSlowest(r);
+    },
+    /// 网关去程的可读文本 (含在「等首字」内, 不重复计时)
+    gwLegText(m) {
+      const r = this.flowRowOf(m);
+      if (!r || !r.gw || !r.gw.length) return '';
+      return t('fuse_gw_leg') + ' ' + r.gw.map(s => s.label + ' ' + this.msText(s.avg)).join(' · ');
+    },
     /// 逐模型归属 (供"该模型是否本窗口最慢"判断)
     isSlowest(r) {
       const m = this.topoFlowMax;
@@ -509,10 +518,6 @@
     },
     /// 当前选中节点的可读名 (未选中 = "全部")
     /// 当前选中节点的可读名 (未选中 = "全部")
-    get axisNodeLabel() {
-      const n = this.axisNode;
-      return n ? (n.provider + '/' + n.model) : t('perf_axis_all');
-    },
     /// 按 (provider, upstream_model) 取一个节点的模型侧四段行
     stageRowsFor(prov, model) {
       const s = this._nodeSummary(prov, model, 'stage_summary');

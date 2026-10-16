@@ -120,7 +120,7 @@ const { chromium } = require('playwright');
   out.merged = await p.evaluate(() => {
     const all = Array.from(document.querySelectorAll('.pnl'));
     const txt = el => (el ? (el.innerText || '') : '');
-    const fuse = all.find(el => txt(el).indexOf('链路与耗时') >= 0);
+    const fuse = all.find(el => txt(el).indexOf('链路拓扑') >= 0);
     // ⚠️ 必须按**标题**精确匹配: 拓扑卡里也含"模型明细"字样 (hint 文案提到它),
     //    用 indexOf 会先命中拓扑卡 → 那张卡里没有 table → 表体行数恒 0 (真踩过)。
     const modelTbl = all.find(el => {
@@ -140,7 +140,11 @@ const { chromium } = require('playwright');
       hasFuse: !!fuse,
       // 融合卡必须同时含: 链路三级 + 每模型一条的耗时条 + 段色图例 + 首字分布
       fuseChain: /客户端\s*\/\s*Agent/.test(f) && /AIGate 网关/.test(f),
+      topoNodes: fuse ? fuse.querySelectorAll('.topo-node').length : 0,
+      topoEdges: fuse ? fuse.querySelectorAll('.topo-edge-line').length : 0,
       fuseLegend: /段色/.test(f),
+      // 段色图例已随条移到表里 (图例必须与它解释的东西同处一卡)
+      tableHasLegend: !!modelTbl && /段色/.test(modelTbl.innerText || ''),
       fuseTtftDist: /首字延迟分布/.test(f),
       fuseText: f.slice(0, 400),
       fuseBars: fuse ? Array.from(fuse.querySelectorAll('.prop-bar')).filter(barVisible).length : 0,
@@ -150,6 +154,12 @@ const { chromium } = require('playwright');
       noDonutPanel: !all.some(el => /^调用分布$/.test(txt(el).trim())),
       // 明细列应回到**表**里 (2026-10-16 用户: 那是表的内容, 不该塞进拓扑)
       modelTableBack: !!modelTbl && !!modelTbl.querySelector('table'),
+      // 表里也必须有"条 + 最慢 + 网关去程" —— 否则删拓扑模型行就丢了"一眼看出谁慢"
+      tableBars: modelTbl ? Array.from(modelTbl.querySelectorAll('.prop-bar')).filter(
+        b => { let x = b; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; }
+               return b.getBoundingClientRect().width > 0; }).length : 0,
+      tableHasSlowest: !!modelTbl && /最慢/.test(modelTbl.innerText || ''),
+      tableHasGwLeg: !!modelTbl && /网关去程/.test(modelTbl.innerText || ''),
       tableVals: (() => {
         if (!modelTbl) return [];
         // 取表体每行"费用"列的实际文本 —— 只测"文案存在"会放过空壳 (漏带字段全 0 也通过)
@@ -162,34 +172,19 @@ const { chromium } = require('playwright');
     };
   });
 
-  // ── 时间轴按节点 (2026-10-16 本轮核心) ──
-  // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算"。
-  // 关键判据: 切节点后**数字必须真的变** —— 若各节点共用一份全局样本,
-  // 表面有数据但看哪个都一样, 等于没分 (单测也盯了这条)。
-  out.axisNodes = await p.evaluate(() => {
-    const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.analyticsTab = 'cost';
-    return (st.axisNodes || []).slice(0, 4).map(n => n.label);
+  // 过期文案扫描: 拓扑卡里若出现"点模型行可展开"这类指引, 而该卡已无模型行 → 失效
+  out.staleHints = await p.evaluate(() => {
+    const card = Array.from(document.querySelectorAll('.pnl'))
+      .find(el => { const h = el.querySelector('.pnl-ht'); return h && (h.innerText || '').trim().indexOf('链路拓扑') === 0; });
+    if (!card) return [];
+    const t = card.innerText || '';
+    const hasModelRows = card.querySelectorAll('.prop-bar').length > 1;
+    const hits = [];
+    if (!hasModelRows && /模型行/.test(t)) hits.push('提到"模型行"但卡片无模型行');
+    if (!hasModelRows && /可展开/.test(t)) hits.push('提到"可展开"但卡片无可展开项');
+    if (/省量与成本/.test(t)) hits.push('指向旧页签名"省量与成本"');
+    return hits;
   });
-  await p.waitForTimeout(400);
-  const readAxis = () => p.evaluate(() => {
-    const st = document.querySelector('[x-data]')._x_dataStack[0];
-    return {
-      label: st.axisNodeLabel,
-      stage: (st.axisStageRows || []).map(r => r.k + ':' + r.avg).join(','),
-      gw: (st.axisGwRows || []).map(r => r.k + ':' + r.avg).join(','),
-      n: (st.axisStageRows || []).reduce((a, x) => Math.max(a, x.n || 0), 0),
-    };
-  });
-  out.axisAll = await readAxis();
-  out.axisByNode = {};
-  for (const lab of (out.axisNodes || [])) {
-    const [prov, model] = lab.split('/');
-    await p.evaluate(n => { document.querySelector('[x-data]')._x_dataStack[0].axisNode = n; },
-                     { provider: prov, model });
-    await p.waitForTimeout(350);
-    out.axisByNode[lab] = await readAxis();
-  }
 
   // 裸 i18n 键名扫描 (未翻译的键会原样显示)
   out.literalKeys = await p.evaluate(() => {
@@ -249,7 +244,7 @@ co = {x["t"] for x in (pt.get("cost") or {}).get("titles", []) if x["v"]}
 pf = {x["t"] for x in (pt.get("perf") or {}).get("titles", []) if x["v"]}
 ck("Token 趋势" in ov and "Token 趋势" not in co and "Token 趋势" not in pf, "趋势只在概览页: ov=%s" % sorted(ov))
 ck("省量审计" in co, "成本页含省量审计: co=%s" % sorted(co))
-ck("链路与耗时" in co, "融合卡在「省量与性能」页: co=%s" % sorted(co))
+ck("链路拓扑" in co, "拓扑卡在「省量与性能」页: co=%s" % sorted(co))
 ck(not (ov & co), "两组面板互斥 (无重复)")
 
 cl = data.get("collapse") or {}
@@ -259,17 +254,33 @@ ck(cla.get("flag") is True and cla.get("bodyVisible") is True, "点标题后展�
 
 # ── 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张) ──
 merged = data.get("merged") or {}
-ck(merged.get("hasFuse"), "融合卡「链路与耗时」存在")
-ck(merged.get("fuseChain"), "融合卡含链路三级 (客户端/网关)")
-ck(merged.get("fuseLegend"), "融合卡含共用段色图例 (只印一次, 不逐行重复)")
-ck(merged.get("fuseTtftDist"), "融合卡含首字延迟分布")
-ck((merged.get("fuseBars") or 0) >= 3, "融合卡含 >=3 条可见比例条, 实得 %s" % merged.get("fuseBars"))
-ck((merged.get("modelRows") or 0) >= 2,
-   "每个模型行都带自己的条 (可见模型行 >=2), 实得 %s" % merged.get("modelRows"))
+ck(merged.get("hasFuse"), "拓扑卡「链路拓扑」存在")
+ck(merged.get("fuseChain"), "拓扑卡含链路三级 (客户端/网关)")
+# 拓扑"该有的东西"必须有替代判据 (退役 probe_flow_topo 前先补上, 否则覆盖会丢)
+ck((merged.get("topoNodes") or 0) >= 3, "拓扑卡含 >=3 个节点, 实得 %s" % merged.get("topoNodes"))
+ck((merged.get("topoEdges") or 0) >= 2, "拓扑卡含 >=2 条连接线, 实得 %s" % merged.get("topoEdges"))
+ck(merged.get("tableHasLegend"), "段色图例存在 (已随条移到表里)")
+ck(merged.get("fuseTtftDist"), "拓扑卡含首字延迟分布 (链路整体口径)")
+# ⚠️ 用户两次指出: **明细(逐模型的行/列) 不该在拓扑卡里**。
+# 拓扑只留"节点 + 连线"回答"链路怎么走、哪一跳慢"; 逐模型信息全在「模型明细」表。
+# 故这几条判据必须落在**表**上, 而不是拓扑卡上 (写成拓扑卡上就是复现用户抱怨的那个结构)。
+ck((merged.get("fuseBars") or 0) <= 2,
+   "拓扑卡里不再堆叠逐模型条 (只该有首字分布那 1 条), 实得 %s" % merged.get("fuseBars"))
+ck((merged.get("modelRows") or 0) == 0,
+   "拓扑卡里没有逐模型行 (那是明细), 实得 %s" % merged.get("modelRows"))
+ck((merged.get("tableBars") or 0) >= 2,
+   "「模型明细」表里每行带自己的耗时条 (>=2), 实得 %s" % merged.get("tableBars"))
+ck(merged.get("tableHasSlowest"), "表里保留了「最慢」标记 (否则丢了'一眼看出谁慢')")
+ck(merged.get("tableHasGwLeg"), "表里保留了网关去程文本")
 ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删")
 # 未翻译的 i18n 键会**原样显示成键名** (如 "an_tab_hint_perf"), 而没有任何报错 ——
 # 与本项目踩过的 "占位符残留" 同一类静默缺陷: 界面看着"有字", 但那是键名不是文案。
 # 判据: 整页可见文本里不得出现形如 an_/gw_/tbl./topo_/fuse_ 的裸键名。
+# 过期文案: 描述已被删除的 UI 的说明文字 ("点模型行可展开…" 而那些行已删)。
+# 与本项目其他静默缺陷同类: 文字还在、不报错, 但用户照着找不到东西。
+# 判据: 拓扑卡里不得出现"可展开/点击模型行"这类已失效的交互指引 (该卡现在没有可点的模型行)。
+ck(not (data.get("staleHints") or []),
+   "拓扑卡无失效交互指引 (提到已删的模型行交互): %s" % (data.get("staleHints") or [])[:4])
 ck(not (data.get("literalKeys") or []),
    "界面无未翻译的裸键名: %s" % (data.get("literalKeys") or [])[:6])
 ck(merged.get("modelTableBack"), "「模型明细」表已回到页面上 (明细列不该塞进拓扑)")
@@ -284,19 +295,5 @@ ck(len(set(tv)) >= 2, "各行内容互不相同 (不是空壳/共用值): %s" % 
 
 
 # ── 时间轴按节点 (本轮核心) ──
-nodes = data.get("axisNodes") or []
-ck(len(nodes) >= 2, "时间轴提供多个可选节点: %s" % nodes)
-by = data.get("axisByNode") or {}
-ck(len(by) >= 2, "至少两个节点取到了数据: %s" % list(by.keys()))
-# 核心: 不同节点的**值必须不同** (若相同说明共用全局样本, 等于没分)
-vals = [ (v.get("stage") or "") + "|" + (v.get("gw") or "") for v in by.values() ]
-ck(len(set(vals)) >= 2, "各节点的耗时值互不相同 (没被全局平均稀释): %s" % vals)
-ck(all(v.get("label") and v.get("label") != "全部（混合）" for v in by.values()),
-   "选中节点后标题显示该节点名: %s" % [v.get("label") for v in by.values()])
-# 节点样本数应小于全局 (它是全局的一个子集)
-allN = (data.get("axisAll") or {}).get("n") or 0
-ck(all(x.get("n", 0) <= allN for x in by.values()),
-   "节点样本数 ≤ 全局样本数 (它是子集): 节点 %s vs 全局 %s" % ([x.get("n") for x in by.values()], allN))
-
 print("\n%s (%d 项判据, %d 失败)" % ("ALL PASS" if not fails else "FAILED", NCHK[0], len(fails)))
 sys.exit(1 if fails else 0)

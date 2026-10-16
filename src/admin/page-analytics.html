@@ -117,17 +117,9 @@
            ④ 首字延迟分布 + 拓扑三跳 (收尾两块)
          ⚠️ 前提是 ② 的第一段必须是**真正的首字延迟**; 此前它记的是"首字之后"的时长
             (proxy.rs::stage_timings 的 t0.elapsed() bug, 本轮已修), 否则拼不成连续轴。 -->
-    <div class="pnl mb4" x-show="analyticsTab==='cost'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('fuse_title')"></span><div class="txs tm" style="margin-top:3px" x-text="t('fuse_desc')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:14px">
+    <div class="pnl mb4" x-show="analyticsTab==='cost'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('fuse_title2')"></span><div class="txs tm" style="margin-top:3px" x-text="t('fuse_desc2')"></div></div><span class="txs tm" x-show="ttftHasData" x-text="t('ttft_samples',ttftSummary.samples)"></span></div><div class="pnl-b" style="display:flex;flex-direction:column;gap:14px">
       <template x-if="!topoFlowRows.length"><div class="empty-state" style="padding:8px 0"><div class="empty-t" x-text="t('ttft_no_data')"></div><div class="empty-d" x-text="t('ttft_no_data_hint')"></div></div></template>
 
-      <!-- 共用图例: 段色只解释一次, 下面是每个节点自己的条 -->
-      <div x-show="topoFlowRows.length" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:var(--fill-2);border-radius:var(--rs);padding:8px 12px">
-        <span class="txs fw6" style="color:var(--fg)" x-text="t('fuse_legend')"></span>
-        <template x-for="s in axisStageRows" :key="'lg'+s.k">
-          <span class="txs tm" style="display:inline-flex;align-items:center;gap:6px;margin-right:2px"><i :style="'width:9px;height:9px;border-radius:2px;flex:0 0 9px;background:'+s.color"></i><span x-text="s.label"></span></span>
-        </template>
-        <span class="txs tm" style="margin-left:auto" x-text="t('fuse_scale')"></span>
-      </div>
 
       <!-- 链路: 客户端 → 网关 两跳头 + 供应商分组 (每组内是模型行, 行自带条) -->
       <div x-show="topoFlowRows.length" style="display:flex;flex-direction:column;gap:0">
@@ -169,45 +161,7 @@
             </div>
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:2px;margin-top:10px">
-          <template x-for="p in topoProviders" :key="'fp'+p.provider">
-            <div>
-              <!-- 供应商行: 名字 + 汇总, 不重复画条 (条在它下面每个模型行上) -->
-              <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--fill-3);border-radius:var(--rs);margin-top:6px">
-                <span class="fw6 txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="p.provider"></span>
-                <span class="txs tm" x-text="t('gw_topo_requests')+' '+p.requests"></span>
-                <span class="txs tm" :style="p.errors?'color:var(--err)':'color:var(--muted)'" x-text="t('gw_topo_errors')+' '+p.errors"></span>
-                <span class="txs tm" x-show="p.rateLimited>0" style="color:var(--warn-fg)" x-text="t('gw_topo_rl')+' '+p.rateLimited"></span>
-                <span class="txs tm" x-text="t('tbl.cost')+' '+fmtMoney(p.cost||0)"></span>
-                <span class="txs tm" style="color:var(--ok)" x-text="t('optimization_saved_tokens')+' '+fmtT(p.savedTokens||0)"></span>
-              </div>
-              <!-- 模型行 = 该节点自己的时间轴 -->
-              <template x-for="r in (p.models||[]).map(mm => topoFlowRows.find(x => x.key === mm.key)).filter(Boolean)" :key="'fr'+r.key">
-                <div style="padding:6px 10px 6px 20px;border-left:2px solid var(--primary);margin-left:14px;opacity:.98">
-                  <div style="display:flex;align-items:center;gap:8px">
-                    <span class="mono txs" style="width:150px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.model" x-text="r.model"></span>
-                    <!-- 这条 = 该模型的时间轴 (宽度按占最慢节点的比例) -->
-                    <div style="flex:1;min-width:120px">
-                      <div class="prop-bar" :style="'max-width:'+r.widthPct+'%'" x-html="flowBarHtml(r)"></div>
-                    </div>
-                    <span class="mono txs" style="text-align:right;min-width:64px" :style="isSlowest(r)?'color:var(--warn)':''" x-text="msText(r.total)"></span>
-                    <span class="txs tm" style="min-width:86px" x-text="t('topo_ttft')+' '+msText(r.ttft!=null?Math.round(r.ttft):null)"></span>
-                    <span class="txs tm" style="min-width:76px" x-text="t('gw_topo_requests')+' '+r.requests"></span>
-                    <span class="txs tm" style="min-width:34px" :style="r.errors?'color:var(--err)':'color:var(--muted)'" x-text="'✕'+r.errors"></span>
-                    <span class="txs tm" x-show="isSlowest(r)" style="color:var(--warn);min-width:38px" x-text="t('fuse_slowest')"></span>
-                  </div>
-                  <!-- 该模型的网关去程 (含在「等首字」里): 一行小字, 不重复计时 -->
-                  <div class="txs tm" style="margin-top:3px;padding-left:158px" x-show="r.gw.length">
-                    <span x-text="t('fuse_gw_leg')+' '"></span>
-                    <template x-for="s in r.gw" :key="'gl'+r.key+s.k">
-                      <span style="margin-right:10px"><span x-text="s.label"></span> <b class="mono" x-text="msText(s.avg)"></b></span>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
+
       </div>
 
       <!-- 首字延迟分布: 与上面同源 (ttft), 放收尾而不是单独一张卡 -->
@@ -223,6 +177,16 @@
     <!-- ── 模型明细表 (2026-10-16 从拓扑里拆回来) ──
          拓扑回答"链路哪一跳慢"(图), 这张表回答"逐模型多列对比"(表) —— 两种读法, 分开。
          上一轮把明细列塞进拓扑节点是错的: 用户要按列扫、要横向比较, 而节点行做不了这件事。 -->
-    <div class="pnl" x-show="analyticsTab==='cost'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="cg" style="gap:8px"><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 9px" @click="modelColsMore=!modelColsMore" :aria-pressed="modelColsMore" x-text="modelColsMore?t('cols_less'):t('cols_more')"></button></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div><div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th x-text="t('balance_provider')"></th><th x-show="modelColsMore" x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-show="modelColsMore" x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-show="modelColsMore" x-text="t('tbl.avg_latency')"></th><th :title="t('tbl.tokens_in_out_hint')" x-text="t('tbl.tokens_in_out')"></th><th x-text="t('tbl.output_tokens')"></th><th x-show="modelColsMore" x-text="t('tbl.cache_hit')"></th><th x-show="modelColsMore" x-text="t('tbl.gen_speed')"></th><th x-show="modelColsMore" x-text="t('ttft_col_avg')"></th><th x-text="t('tbl.cost')"></th><th :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_tokens')"></th><th x-show="modelColsMore" :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_fee')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" x-show="modelColsMore" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-show="modelColsMore" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-show="modelColsMore" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs"><span x-text="modelTokensBeforeText(m)"></span><span class="tm"> → </span><span x-text="modelTokensAfterText(m)" style="color:var(--fg)"></span><span class="txs tm" x-show="modelSavedPct(m)" style="margin-left:6px;color:var(--ok)" x-text="t('tokens_saved_pct',modelSavedPct(m))"></span></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-show="modelColsMore" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="ttftCellText(m)"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td><td class="mono txs" :style="(m.optimization_saved_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="fmtT(m.optimization_saved_tokens||0)"></td><td class="mono txs" x-show="modelColsMore" style="color:var(--ok)" x-text="modelSavedFeeText(m)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="15" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
+    <div class="pnl" x-show="analyticsTab==='cost'"><div class="pnl-h"><div><span class="pnl-ht" x-text="t('model_details')"></span><div class="txs tm" style="margin-top:3px" x-text="t('model_details_desc')"></div></div><span class="cg" style="gap:8px"><span class="txs tm" x-text="filteredModelStats.length+' / '+(stats.per_model||[]).length"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:3px 9px" @click="modelColsMore=!modelColsMore" :aria-pressed="modelColsMore" x-text="modelColsMore?t('cols_less'):t('cols_more')"></button></span></div><div class="an-filter"><input class="inp" style="width:260px" :placeholder="t('analytics_search_models')" x-model="modelDetailFilter"><select class="sel" x-model="modelProviderFilter"><option value="" x-text="t('provider_all')"></option><template x-for="p in modelDetailProviders" :key="p"><option :value="p" x-text="p"></option></template></select><span class="txs tm" x-text="t('instant_filter',filteredModelStats.length)"></span></div>
+      <!-- 段色图例: 与它解释的条同处一卡 (2026-10-16 从拓扑卡移来) -->
+      <!-- 共用图例: 段色只解释一次, 下面是每个节点自己的条 -->
+      <div x-show="topoFlowRows.length" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:var(--fill-2);border-radius:var(--rs);padding:8px 12px">
+        <span class="txs fw6" style="color:var(--fg)" x-text="t('fuse_legend')"></span>
+        <template x-for="s in axisStageRows" :key="'lg'+s.k">
+          <span class="txs tm" style="display:inline-flex;align-items:center;gap:6px;margin-right:2px"><i :style="'width:9px;height:9px;border-radius:2px;flex:0 0 9px;background:'+s.color"></i><span x-text="s.label"></span></span>
+        </template>
+        <span class="txs tm" style="margin-left:auto" x-text="t('fuse_scale')"></span>
+      </div>
+<div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th :title="t('model_span_hint')" x-text="t('model_span')"></th><th x-text="t('balance_provider')"></th><th x-show="modelColsMore" x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-show="modelColsMore" x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th x-show="modelColsMore" x-text="t('tbl.avg_latency')"></th><th :title="t('tbl.tokens_in_out_hint')" x-text="t('tbl.tokens_in_out')"></th><th x-text="t('tbl.output_tokens')"></th><th x-show="modelColsMore" x-text="t('tbl.cache_hit')"></th><th x-show="modelColsMore" x-text="t('tbl.gen_speed')"></th><th x-show="modelColsMore" x-text="t('ttft_col_avg')"></th><th x-text="t('tbl.cost')"></th><th :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_tokens')"></th><th x-show="modelColsMore" :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_fee')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td><div style="display:flex;align-items:center;gap:8px;min-width:210px"><div style="flex:1;min-width:90px"><div class="prop-bar" :style="'max-width:'+(flowRowOf(m)||{}).widthPct+'%'" x-html="flowBarHtml(flowRowOf(m))"></div></div><span class="mono txs" style="min-width:56px;text-align:right" :style="isSlowestRow(m)?'color:var(--warn)':''" x-text="msText((flowRowOf(m)||{}).total)"></span><span class="txs" x-show="isSlowestRow(m)" style="color:var(--warn);min-width:36px" x-text="t('fuse_slowest')"></span></div><div class="txs tm" style="margin-top:3px" x-show="gwLegText(m)" x-text="gwLegText(m)"></div></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" x-show="modelColsMore" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-show="modelColsMore" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs" x-show="modelColsMore" x-text="fmtMs(m.avg_latency_ms)"></td><td class="mono txs"><span x-text="modelTokensBeforeText(m)"></span><span class="tm"> → </span><span x-text="modelTokensAfterText(m)" style="color:var(--fg)"></span><span class="txs tm" x-show="modelSavedPct(m)" style="margin-left:6px;color:var(--ok)" x-text="t('tokens_saved_pct',modelSavedPct(m))"></span></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><td class="txs" x-show="modelColsMore" x-text="m.total_cache_hit_tokens?fmtPct(m.total_cache_hit_tokens/(m.total_prompt_tokens||1)*100):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="m.gen_speed?(m.gen_speed.toFixed(1)+' '+t('unit_tokps')):'—'"></td><td class="mono txs" x-show="modelColsMore" x-text="ttftCellText(m)"></td><td class="mono txs" x-text="fmtMoney(m.total_cost||0)"></td><td class="mono txs" :style="(m.optimization_saved_tokens||0)>0?'color:var(--ok)':'color:var(--muted)'" x-text="fmtT(m.optimization_saved_tokens||0)"></td><td class="mono txs" x-show="modelColsMore" style="color:var(--ok)" x-text="modelSavedFeeText(m)"></td></tr></template><template x-if="!filteredModelStats.length"><tr><td colspan="16" style="text-align:center;padding:32px" class="tm" x-text="(stats.per_model||[]).length?t('no_match'):t('no_data')"></td></tr></template></tbody></table></div></div>
   </div></template>
 </div>
