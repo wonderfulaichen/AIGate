@@ -41,7 +41,7 @@ const { chromium } = require('playwright');
   const out = { pageerrors: errs };
   out.errs = await p.evaluate(() => (window.__ERRS || []).slice(0, 8));
 
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'perf'; });
+  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'cost'; });
   await p.waitForTimeout(600);
 
   out.topo = await p.evaluate(() => {

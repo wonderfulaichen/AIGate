@@ -451,6 +451,15 @@
       rows.forEach(r => { if (!best || r.total > best.total) best = r; });
       return best ? (best.provider + '/' + best.model) : '—';
     },
+    /// 分析页页签的提示语。
+    ///
+    /// ⚠️ 刻意**不用** `t('an_tab_hint_'+analyticsTab)` 这种拼键写法 (2026-10-16 踩过):
+    /// 拼出来的键一旦不存在 (改名/删页签), `t()` 会**原样返回键名** —— 界面上就出现
+    /// 字面量 "an_tab_hint_perf", 而没有任何报错。显式映射 + 兜底是这里唯一稳的写法。
+    get anTabHint() {
+      const map = { overview: 'an_tab_hint_overview', cost: 'an_tab_hint_cost' };
+      return t(map[this.analyticsTab] || 'an_tab_hint_overview');
+    },
     /// 该行是否本窗口最慢 (供融合视图高亮) —— 融合的意义就是"一眼看出谁慢"
     isSlowest(r) {
       const m = this.topoFlowMax;

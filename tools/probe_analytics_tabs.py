@@ -60,7 +60,7 @@ const { chromium } = require('playwright');
 
   // 逐页签: 切过去, 记录可见面板 + 高度
   out.perTab = {};
-  for (const tab of ['overview', 'cost', 'perf']) {
+  for (const tab of ['overview', 'cost', 'cost']) {
     await p.evaluate(t => {
       const root = document.querySelector('[x-data]');
       const st = root._x_dataStack[0];
@@ -95,7 +95,7 @@ const { chromium } = require('playwright');
   // 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张)
   // ⚠️ 必须先切到 perf 页签: 融合卡只在 perf 显示, 在别的页签下它是 display:none,
   //    里面的条宽度为 0 → 按可见性数会数出 0 (探针曾因此在错误的页签下判定"没渲染")。
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'perf'; });
+  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].analyticsTab = 'cost'; });
   await p.waitForTimeout(500);
   out.merged = await p.evaluate(() => {
     const all = Array.from(document.querySelectorAll('.pnl'));
@@ -146,7 +146,7 @@ const { chromium } = require('playwright');
   // 表面有数据但看哪个都一样, 等于没分 (单测也盯了这条)。
   out.axisNodes = await p.evaluate(() => {
     const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.analyticsTab = 'perf';
+    st.analyticsTab = 'cost';
     return (st.axisNodes || []).slice(0, 4).map(n => n.label);
   });
   await p.waitForTimeout(400);
@@ -168,6 +168,17 @@ const { chromium } = require('playwright');
     await p.waitForTimeout(350);
     out.axisByNode[lab] = await readAxis();
   }
+
+  // 裸 i18n 键名扫描 (未翻译的键会原样显示)
+  out.literalKeys = await p.evaluate(() => {
+    const re = /\b(an_|gw_|tbl\.|topo_|fuse_|stages_|ttft_|audit_|perf_)[a-z_]+\b/g;
+    const hits = new Set();
+    document.querySelectorAll('.pnl, .phd, .pnl-h, .an-filter').forEach(el => {
+      const t = (el.innerText || '');
+      (t.match(re) || []).forEach(x => hits.add(x));
+    });
+    return Array.from(hits).slice(0, 10);
+  });
 
   console.log(JSON.stringify(out, null, 1));
   await b.close();
@@ -200,7 +211,7 @@ print("\n== 判据 ==")
 ck(not data.get("pageerrors"), "无 pageerror: %s" % data.get("pageerrors"))
 ck(not data.get("errs"), "window.__ERRS 为空: %s" % data.get("errs"))
 tb = data.get("tabs") or []
-ck(len(tb) == 3, "三个页签按钮都在: %s" % [x.get("txt") for x in tb])
+ck(len(tb) == 2, "两个页签按钮都在 (省量与性能已合并): %s" % [x.get("txt") for x in tb])
 ck(sum(1 for x in tb if x.get("a")) == 1, "有且仅有一个页签高亮")
 
 pt = data.get("perTab") or {}
@@ -209,8 +220,8 @@ co = {x["t"] for x in (pt.get("cost") or {}).get("titles", []) if x["v"]}
 pf = {x["t"] for x in (pt.get("perf") or {}).get("titles", []) if x["v"]}
 ck("Token 趋势" in ov and "Token 趋势" not in co and "Token 趋势" not in pf, "趋势只在概览页: ov=%s" % sorted(ov))
 ck("省量审计" in co, "成本页含省量审计: co=%s" % sorted(co))
-ck("链路与耗时" in pf and "链路与耗时" not in ov, "融合卡只在性能页: pf=%s" % sorted(pf))
-ck(not (ov & co) and not (co & pf) and not (ov & pf), "三组面板互斥 (无重复)")
+ck("链路与耗时" in co, "融合卡在「省量与性能」页: co=%s" % sorted(co))
+ck(not (ov & co), "两组面板互斥 (无重复)")
 
 cl = data.get("collapse") or {}
 cla = data.get("collapseAfter") or {}
@@ -228,6 +239,11 @@ ck((merged.get("modelRows") or 0) >= 2,
    "每个模型行都带自己的条 (可见模型行 >=2), 实得 %s" % merged.get("modelRows"))
 ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删")
 ck(merged.get("noTablesLeft"), "两张明细表已删 (列并入拓扑行, 不再重复列同一批实体)")
+# 未翻译的 i18n 键会**原样显示成键名** (如 "an_tab_hint_perf"), 而没有任何报错 ——
+# 与本项目踩过的 "占位符残留" 同一类静默缺陷: 界面看着"有字", 但那是键名不是文案。
+# 判据: 整页可见文本里不得出现形如 an_/gw_/tbl./topo_/fuse_ 的裸键名。
+ck(not (data.get("literalKeys") or []),
+   "界面无未翻译的裸键名: %s" % (data.get("literalKeys") or [])[:6])
 ck(merged.get("fuseHasTableCols"), "原表的列 (输入原始→实发/费用/优化省) 已并入拓扑模型行")
 # 并入的列必须有**真实值**且逐模型不同 —— 只测"文案存在"会放过空壳列
 # (本轮真踩过: topoFlowRows 漏带 modelStat, 列全显示 0, 而"文案在不在"照样通过)
