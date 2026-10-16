@@ -377,6 +377,10 @@
         requests: p.requests || 0,
         errors: p.errors || 0,
         rateLimited: p.rate_limited || 0,
+        // 原「供应商性能」表的汇总列 (2026-10-16 并入拓扑行, 表已删)
+        cost: p.total_cost || 0,
+        savedTokens: p.today_opt_saved_tokens || 0,
+        cacheSaved: p.billing ? (p.cache_saved || 0) : null,
         successPct: (p.requests || 0) > 0
           ? Math.max(0, (p.requests - (p.errors || 0)) / p.requests * 100) : null,
         // 该供应商的模型节点 (含各自的阶段耗时, 供"详情"展开)
@@ -387,6 +391,8 @@
             provider: p.provider,
             model: m.upstream_model || m.model,
             key: p.provider + '/' + (m.upstream_model || m.model),
+            // 原「模型明细」表的整行引用 —— 并入的列直接读它, 不复制字段 (避免两处口径漂移)
+            modelStat: m,
             requests: m.requests || 0,
             errors: m.errors || 0,
             avgLatency: m.avg_latency_ms || 0,
@@ -420,6 +426,10 @@
           const gwSum = gw.reduce((a, s) => a + s.avg, 0);
           rows.push({
             provider: m.provider, model: m.model, key: m.key,
+            // modelStat: 原「模型明细」表的整行引用 —— 并入的列 (输入/输出/费用/省量) 直接读它。
+            // ⚠️ 必须在这里也带上: topoProviders 上有, 但融合行是**另一条**构造路径
+            //    (经 stageRowsFor 重新组装), 漏带会让那些列全显示 0 (真踩过)。
+            modelStat: m.modelStat,
             segs, gw, total, gwSum,
             requests: m.requests, errors: m.errors,
             latency: m.avgLatency, ttft: m.avgTtft, cost: m.cost,
@@ -433,6 +443,13 @@
     /// 融合行的最大值 (供"最慢"标记)
     get topoFlowMax() {
       return (this.topoFlowRows || []).reduce((a, r) => Math.max(a, r.total), 0);
+    },
+    /// 最慢节点的可读名 (供拓扑的供应商节点标注) —— "一眼看出哪条链路最慢"
+    get topoSlowestLabel() {
+      const rows = this.topoFlowRows || [];
+      let best = null;
+      rows.forEach(r => { if (!best || r.total > best.total) best = r; });
+      return best ? (best.provider + '/' + best.model) : '—';
     },
     /// 该行是否本窗口最慢 (供融合视图高亮) —— 融合的意义就是"一眼看出谁慢"
     isSlowest(r) {

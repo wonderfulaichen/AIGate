@@ -58,9 +58,6 @@ function dashboard() {  return {
     // 每组 1-2 屏; 诊断类卡片（省量审计/网关开销/拓扑）再各自默认折叠。
     // 'overview'(用量概览) | 'cost'(省量与成本) | 'perf'(性能与延迟)
     analyticsTab: 'overview',
-    // 明细表的「更多列」开关 (两张表各一个)。默认关: 默认只给核心列, 不再横向滚动。
-    modelColsMore: false,
-    provColsMore: false,
     // 请求时间轴当前选中的**节点** (2026-10-16): { provider, model } 或 null (= 全局)。
     // 用户: "时间轴不应该统计全部模型的，应该按供应商里面的各模型来算" ——
     // 全局平均会稀释掉慢的那条链路, 故默认落在第一个有数据的节点上, 可随时切换。

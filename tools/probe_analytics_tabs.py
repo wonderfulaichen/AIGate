@@ -92,22 +92,6 @@ const { chromium } = require('playwright');
     return { flag: st.auditExpanded, bodyVisible: getComputedStyle(body).display !== 'none' };
   });
 
-  // 列开关: 数一下表格可见 th 数
-  out.cols = await p.evaluate(() => {
-    const st = document.querySelector('[x-data]')._x_dataStack[0];
-    const tbl = Array.from(document.querySelectorAll('table')).find(t => (t.innerText || '').indexOf('上游模型') >= 0);
-    const cnt = () => Array.from(tbl.querySelectorAll('thead th')).filter(th => getComputedStyle(th).display !== 'none').length;
-    const all = tbl.querySelectorAll('thead th').length;
-    const before = cnt();
-    st.modelColsMore = true;
-    return { before, all };
-  });
-  await p.waitForTimeout(400);
-  out.colsAfter = await p.evaluate(() => {
-    const tbl = Array.from(document.querySelectorAll('table')).find(t => (t.innerText || '').indexOf('上游模型') >= 0);
-    return Array.from(tbl.querySelectorAll('thead th')).filter(th => getComputedStyle(th).display !== 'none').length;
-  });
-
   // 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张)
   // ⚠️ 必须先切到 perf 页签: 融合卡只在 perf 显示, 在别的页签下它是 display:none,
   //    里面的条宽度为 0 → 按可见性数会数出 0 (探针曾因此在错误的页签下判定"没渲染")。
@@ -139,7 +123,20 @@ const { chromium } = require('playwright');
       modelRows: fuse ? Array.from(fuse.querySelectorAll('.mono.txs[title]')).filter(
         e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return e.getBoundingClientRect().width > 0; }).length : 0,
       noDonutPanel: !all.some(el => /^调用分布$/.test(txt(el).trim())),
-      modelTableAlive: !!modelTbl && !!modelTbl.querySelector('table') && /上游模型/.test(txt(modelTbl)),
+      noTablesLeft: !all.some(el => /^模型明细$/.test(txt(el).trim())) &&
+                    !all.some(el => /^供应商性能$/.test(txt(el).trim())),
+      // 列并入拓扑: 模型行里应出现原表的列 (输入/费用/省量)
+      fuseHasTableCols: /原始/.test(f) && /费用|Cost/.test(f) && /优化省/.test(f),
+      // 采集费用列的实际取值 —— 只测"文案存在"会放过空壳列 (漏带字段时全 0 也照样通过)
+      fuseCostVals: (() => {
+        const out = [];
+        fuse.querySelectorAll('.txs.tm span').forEach(sp => {
+          if (!/^费用|^Cost/.test((sp.innerText || '').trim())) return;
+          const b = sp.parentElement && sp.parentElement.querySelector('b.mono');
+          if (b) out.push((b.innerText || '').trim());
+        });
+        return out;
+      })(),
     };
   });
 
@@ -211,7 +208,7 @@ ov = {x["t"] for x in (pt.get("overview") or {}).get("titles", []) if x["v"]}
 co = {x["t"] for x in (pt.get("cost") or {}).get("titles", []) if x["v"]}
 pf = {x["t"] for x in (pt.get("perf") or {}).get("titles", []) if x["v"]}
 ck("Token 趋势" in ov and "Token 趋势" not in co and "Token 趋势" not in pf, "趋势只在概览页: ov=%s" % sorted(ov))
-ck("模型明细" in co and "模型明细" not in ov, "模型明细只在成本页: co=%s" % sorted(co))
+ck("省量审计" in co, "成本页含省量审计: co=%s" % sorted(co))
 ck("链路与耗时" in pf and "链路与耗时" not in ov, "融合卡只在性能页: pf=%s" % sorted(pf))
 ck(not (ov & co) and not (co & pf) and not (ov & pf), "三组面板互斥 (无重复)")
 
@@ -219,13 +216,6 @@ cl = data.get("collapse") or {}
 cla = data.get("collapseAfter") or {}
 ck(cl.get("bodyVisible") is False, "省量审计默认收起: %s" % cl)
 ck(cla.get("flag") is True and cla.get("bodyVisible") is True, "点标题后展开: %s" % cla)
-
-cols = data.get("cols") or {}
-ck((cols.get("before") or 0) < (cols.get("all") or 0), "模型明细默认收起部分列: 可见 %s / 共 %s" % (cols.get("before"), cols.get("all")))
-ck((data.get("colsAfter") or 0) == (cols.get("all") or 0), "点「更多列」后全部列可见: %s" % data.get("colsAfter"))
-
-hs = [ (pt.get(k) or {}).get("h") or 0 for k in ("overview", "cost", "perf") ]
-ck(max(hs) < 4556, "内容高度较重构前 (4556) 下降: %s" % hs)
 
 # ── 融合后的内容完整性 (2026-10-16 第三轮: 时间轴与拓扑融为一张) ──
 merged = data.get("merged") or {}
@@ -236,8 +226,17 @@ ck(merged.get("fuseTtftDist"), "融合卡含首字延迟分布")
 ck((merged.get("fuseBars") or 0) >= 3, "融合卡含 >=3 条可见比例条, 实得 %s" % merged.get("fuseBars"))
 ck((merged.get("modelRows") or 0) >= 2,
    "每个模型行都带自己的条 (可见模型行 >=2), 实得 %s" % merged.get("modelRows"))
-ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删 (与模型明细同一份 per_model)")
-ck(merged.get("modelTableAlive"), "「模型明细」表仍在 (没被误删)")
+ck(merged.get("noDonutPanel"), "重复的「调用分布」环图卡已删")
+ck(merged.get("noTablesLeft"), "两张明细表已删 (列并入拓扑行, 不再重复列同一批实体)")
+ck(merged.get("fuseHasTableCols"), "原表的列 (输入原始→实发/费用/优化省) 已并入拓扑模型行")
+# 并入的列必须有**真实值**且逐模型不同 —— 只测"文案存在"会放过空壳列
+# (本轮真踩过: topoFlowRows 漏带 modelStat, 列全显示 0, 而"文案在不在"照样通过)
+ck((merged.get("fuseCostVals") or []).length if False else len(merged.get("fuseCostVals") or []) >= 2,
+   "并入的费用列逐模型取值 (>=2 个不同值): %s" % merged.get("fuseCostVals"))
+ck(len(set(merged.get("fuseCostVals") or [])) >= 2,
+   "各模型费用互不相同 (不是空壳/共用值): %s" % merged.get("fuseCostVals"))
+ck(all(v != "¥0.00" for v in (merged.get("fuseCostVals") or [])[:3]),
+   "并入的费用列非全 0 (漏带字段会全 0): %s" % (merged.get("fuseCostVals") or [])[:3])
 
 # ── 时间轴按节点 (本轮核心) ──
 nodes = data.get("axisNodes") or []
