@@ -68,6 +68,7 @@
         const d=await r.json();
         if(r.ok) {
           this.tooltipMsg=t('saved');
+          this.tooltipDirty = false;
           setTimeout(()=>this.tooltipMsg='',3000);
           toast(t('saved'), 'success');
         } else {
@@ -158,6 +159,7 @@
         const r = await fetch('/admin/api/peak-schedule', {method:'POST', headers:authHeaders(), body:JSON.stringify({config:this.peakSchedule})});
         const d = await r.json();
         this.peakMsgOk = !!(r.ok && d.success !== false);
+        if (this.peakMsgOk) this.peakDirty = false;
         this.peakMsg = this.peakMsgOk ? t('saved') : (d.error || t('save_failed'));
         setTimeout(()=>this.peakMsg='', 3000);
       } catch(e){ this.peakMsgOk=false; this.peakMsg=t('network_error'); }

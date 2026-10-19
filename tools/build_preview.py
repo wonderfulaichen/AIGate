@@ -206,9 +206,25 @@ STUB = r"""<script>
   var cur = FIX[sc] || FIX.empty;
   // 预览不经过 Rust 的 marker 替换, 手工提供版本号 —— 版本键清理 (ds-core.init) 与头部版本显示需要它
   window.AIGATE_VERSION = window.AIGATE_VERSION || { version: 'PREVIEW' };
+  // 桩的**有状态**存储: 这些 setter 会把后端回值写回前端状态 (以服务端为准, 避免
+  // "界面显示开了但实际没开")。桩若对 POST 也返回固定值, 点击就不会翻转 ——
+  // 看起来像"开关坏了", 实际是桩没模拟服务端行为。故这里记住提交值并回显。
+  var STUB_STATE = {
+    stripReasoning: true, thinkingPurify: 'rule', stripTcChat: true, stripTcResp: false,
+    maxHistoryTurns: 20, autoContinue: 2, streamTimeoutSecs: 120, retryMax: 2, retryBackoffMs: 200,
+    toolOutputLimit: 0, cacheEnabled: true, recallEnabled: true,
+    cache: { enabled: true, entries: 42, hits: 300, misses: 60, bytes: 524288, evicted: 3,
+             max_entries: 200, max_entry_bytes: 262144, saved_tokens: 120000,
+             enabled_saved_tokens: 98000, ttl_secs: 600, recalls: 2 },
+    recall: { enabled: true, entries: 7, bytes: 4096, evicted: 0, recalls: 2,
+              max_entries: 200, max_entry_bytes: 262144 }
+  };
   var orig = window.fetch;
-  window.fetch = function (url) {
+  window.fetch = function (url, opts) {
     var u = String(url);
+    // POST 时解析提交体, 写进 STUB_STATE 再回显 —— 模拟真实后端的"照实返回"。
+    var sent = null;
+    try { if (opts && opts.method === 'POST' && opts.body) sent = JSON.parse(opts.body); } catch (e) {}
     if (u.indexOf('/admin/api/') >= 0) {
       var body = {};
       if (u.indexOf('/fetch-models') >= 0) {
@@ -237,9 +253,63 @@ STUB = r"""<script>
         windows: [{start:'09:00',end:'12:00'},{start:'14:00',end:'18:00'}] };
       else if (u.indexOf('/currency') >= 0) body = { currency: 'CNY', rates: { CNY: 1, USD: 7.2 } };
       else if (u.indexOf('/seen-version') >= 0) body = { version: 'PREVIEW' };
-      else if (u.indexOf('/strip-reasoning') >= 0 || u.indexOf('/strip-tc') >= 0 || u.indexOf('/max-history') >= 0
-               || u.indexOf('/auto-continue') >= 0 || u.indexOf('/conn-params') >= 0 || u.indexOf('/cache') >= 0
-               || u.indexOf('/recall') >= 0) body = {};
+      // 设置页这批开关的桩: 字段必须与**后端真实返回结构**逐个对齐 (见 admin.rs 的 json! 键),
+      // 否则前端读到 undefined —— 表现是"开关永远是关的 / 数字永远是 0", 而且**不报错**。
+      // (这里曾一律返回 {}, 于是 9 个开关在预览里点了毫无反应, 是桩不合格而非产品 bug。)
+      else if (u.indexOf('/strip-reasoning') >= 0) {
+        if (sent && 'enabled' in sent) STUB_STATE.stripReasoning = !!sent.enabled;
+        body = { enabled: STUB_STATE.stripReasoning };
+      }
+      else if (u.indexOf('/thinking-purify') >= 0) {
+        if (sent && sent.mode) STUB_STATE.thinkingPurify = sent.mode;
+        // effective = 配置开 且 recall 开 (与后端 purify_params 同判据), 桩必须一致,
+        // 否则预览里"提纯生效"的显示与真实行为不符。
+        body = { mode: STUB_STATE.thinkingPurify, recall_on: STUB_STATE.recallEnabled,
+                 effective: STUB_STATE.thinkingPurify === 'rule' && STUB_STATE.recallEnabled,
+                 min_chars: 400, max_nodes: 6 };
+      }
+      else if (u.indexOf('/strip-toolcall-protocols') >= 0) {
+        if (sent) { if ('chat' in sent) STUB_STATE.stripTcChat = !!sent.chat;
+                    if ('responses' in sent) STUB_STATE.stripTcResp = !!sent.responses; }
+        body = { chat: STUB_STATE.stripTcChat, responses: STUB_STATE.stripTcResp };
+      }
+      else if (u.indexOf('/max-history-turns') >= 0) {
+        if (sent && 'turns' in sent) STUB_STATE.maxHistoryTurns = Math.max(0, sent.turns | 0);
+        body = { turns: STUB_STATE.maxHistoryTurns };
+      }
+      else if (u.indexOf('/auto-continue') >= 0) {
+        if (sent && 'count' in sent) STUB_STATE.autoContinue = Math.max(0, sent.count | 0);
+        body = { count: STUB_STATE.autoContinue };
+      }
+      else if (u.indexOf('/stream-timeout') >= 0) {
+        if (sent && 'secs' in sent) STUB_STATE.streamTimeoutSecs = Math.max(30, sent.secs | 0);
+        body = { secs: STUB_STATE.streamTimeoutSecs };
+      }
+      else if (u.indexOf('/retry') >= 0) {
+        if (sent) { if ('max' in sent) STUB_STATE.retryMax = Math.max(0, sent.max | 0);
+                    if ('backoff_ms' in sent) STUB_STATE.retryBackoffMs = Math.max(0, sent.backoff_ms | 0); }
+        body = { max: STUB_STATE.retryMax, backoff_ms: STUB_STATE.retryBackoffMs };
+      }
+      else if (u.indexOf('/tool-output-limit') >= 0) {
+        if (sent && 'bytes' in sent) STUB_STATE.toolOutputLimit = Math.max(0, sent.bytes | 0);
+        body = { bytes: STUB_STATE.toolOutputLimit };
+      }
+      // 缓存/recall: 前端直接 `this.cache = await r.json()` (整体替换), 故字段必须齐 ——
+      // 缺一个就是 undefined, 且**不报错**。
+      else if (u.indexOf('/cache') >= 0) {
+        if (sent) {
+          if ('enabled' in sent) STUB_STATE.cache.enabled = !!sent.enabled;
+          if ('ttl_secs' in sent) STUB_STATE.cache.ttl_secs = Math.max(1, sent.ttl_secs | 0);
+          if ('max_entries' in sent) STUB_STATE.cache.max_entries = Math.max(1, sent.max_entries | 0);
+        }
+        body = STUB_STATE.cache;
+      }
+      else if (u.indexOf('/recall') >= 0) {
+        if (sent) {
+          if ('enabled' in sent) { STUB_STATE.recall.enabled = !!sent.enabled; STUB_STATE.recallEnabled = !!sent.enabled; }
+        }
+        body = STUB_STATE.recall;
+      }
       else if (u.indexOf('/degradations') >= 0) body = [];
       var resp = new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
       // ?delay=N: 桩响应延迟 N ms — 用于观察首次加载骨架三态 (P1 p1-load-states)

@@ -4,7 +4,16 @@
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
     async fetchCache() {
-      try { const r=await fetch('/admin/api/cache', {headers:authHeaders()}); if(r.ok) this.cache=await r.json(); } catch(e){}
+      // ⚠️ 合并而不是整体替换: 后端若返回**不完整**的 JSON (旧版本 / 出错路径),
+      // 整体替换会让所有字段变 undefined → 界面显示空白, 且**不报错**。
+      // 合并保留已知旧值, 只覆盖后端实际给出的字段。
+      try {
+        const r=await fetch('/admin/api/cache', {headers:authHeaders()});
+        if(r.ok) {
+          const d = await r.json();
+          this.cache = Object.assign({}, this.cache || {}, d);
+        }
+      } catch(e){}
     },
     async setCacheEnabled(val) {
       await this.setCacheConfig({enabled: val});
@@ -20,6 +29,44 @@
     // 常态截断超长 tool 输出 (0 = 关闭). 与"紧急瘦身"不同: 不等请求体超上限即生效.
     async fetchToolOutputLimit() {
       try { const r=await fetch('/admin/api/tool-output-limit',{headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.toolOutputLimit=Math.max(0,d.bytes|0); } } catch(e){}
+    },
+    /// 数字输入框的统一入口: `@change="onNumInput($event, min, max, v => setXxx(v), oldVal)"`。
+    ///
+    /// 行为: 解析无效 (清空 / 非数字) → **不提交**, 把控件回填成旧值并 toast 说明;
+    /// 解析有效 → 夹到 [min,max] 后调用 setter。
+    /// ⚠️ 必须回填**旧值**而不是清空: 清空会让界面显示空白, 而实际配置没变 ——
+    ///    又是"界面与现实不一致"。旧值由调用方传入 (它能从状态里取到)。
+    onNumInput(ev, min, max, apply, oldVal) {
+      const el = ev && ev.target;
+      const v = this.parseNumInput(el ? el.value : '', { min, max });
+      if (v == null) {
+        toast(t('num_input_invalid', min, max), 'warn', 'num_invalid');
+        if (el) el.value = (oldVal == null ? '' : String(oldVal));
+        return;
+      }
+      return apply(v);
+    },
+    /// 数字输入框的安全解析 —— **空值/非法值不提交**, 而不是静默回落成 0。
+    ///
+    /// 为什么必须有这个 (2026-10-19 实测踩到): 输入框写的是
+    /// `@change="setX(parseInt($event.target.value)||0)"`。用户想把 20 改成 30 时,
+    /// 只要中间出现一次 `change` (全选后输入、或按清空键), `parseInt('')` 是 NaN,
+    /// `NaN || 0` = **0** —— 于是"长会话历史裁剪"被**静默关掉**: 开关变灰、配置区消失、
+    /// **没有任何提示**。实测确认: 清空输入框 → turns 从 20 变 0, 无 toast。
+    /// 同类问题在 8 个数字输入框上完全一样 (裁剪/续写/截断/超时/重试×2/缓存×2)。
+    ///
+    /// 语义: 返回 `null` = "这次输入无效, 不要提交", 调用方原样保留旧值并把控件回填,
+    /// 用户看得见自己输错了什么, 而不是功能悄悄消失。
+    parseNumInput(raw, opts) {
+      const s = String(raw == null ? '' : raw).trim();
+      if (s === '') return null;                 // 清空 ≠ 归零, 更 ≠ 关功能
+      const n = Number(s);
+      if (!Number.isFinite(n)) return null;      // 非数字
+      const min = opts && opts.min != null ? opts.min : null;
+      const max = opts && opts.max != null ? opts.max : null;
+      if (min != null && n < min) return min;    // 越界夹取 (与 min/max 属性同口径)
+      if (max != null && n > max) return max;
+      return n;
     },
     async setToolOutputLimit(bytes) {
       // 开启前确认: 截断有损, 但被截掉的原文可由「降级可回取」留存回看.
@@ -122,7 +169,14 @@
     },
     // ── 降级可回取 (recall): 留存被优化剔离的原文, 供事后核查 ──
     async fetchRecall() {
-      try { const r=await fetch('/admin/api/recall', {headers:authHeaders()}); if(r.ok) this.recall=await r.json(); } catch(e){}
+      // 同 fetchCache: 合并而非整体替换, 避免后端返回不完整时字段变 undefined。
+      try {
+        const r=await fetch('/admin/api/recall', {headers:authHeaders()});
+        if(r.ok) {
+          const d = await r.json();
+          this.recall = Object.assign({}, this.recall || {}, d);
+        }
+      } catch(e){}
     },
     async setRecall(val) {
       // 开启前必须明确告知隐私影响: 留存内容是推理链/tool 输出明文, 会写到磁盘.

@@ -89,6 +89,10 @@ function dashboard() {  return {
     // Proxy policy status
     proxyStatus: null,
     // 历史推理链剥离开关 (运行时, 重启回到环境变量默认)
+    // 未保存标记 (2026-10-19): 高峰计价 / Tooltip 两块是"整块改完点保存才生效",
+    // 而其中的开关与输入框看起来是即时的 —— 不标记就会让人以为已经生效。
+    peakDirty: false,
+    tooltipDirty: false,
     stripReasoning: false,
     // thinking 提纯 (2026-10-17): 'off' | 'rule'。recall_on/effective 来自后端 ——
     // effective=false 表示"配置开了但 recall 没开, 因此不生效", 前端要显示这条而不是让用户猜。
