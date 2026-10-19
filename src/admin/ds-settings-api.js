@@ -210,6 +210,25 @@
         else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
       } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
     },
+    // ── thinking 提纯 (2026-10-17) ──
+    // 提纯是**剥离的另一种模式**: 开 `rule` 时历史推理链被压成节点链再留下, 而不是整段删除。
+    // ⚠️ `effective` = 配置开 **且** recall 也开 (recall 是硬性前提: 提纯有损, 原文是唯一
+    //    可逆通道)。前端据此显示"需要先开降级可回取" —— 否则用户开了却没生效, 只能猜。
+    async fetchThinkingPurify() {
+      try {
+        const r=await fetch('/admin/api/thinking-purify', {headers:authHeaders()});
+        if(r.ok) { const d=await r.json(); this.thinkingPurify=d.mode||'off'; this.purifyRecallOn=!!d.recall_on; this.purifyEffective=!!d.effective; }
+      } catch(e){}
+    },
+    async setThinkingPurify(val) {
+      const mode = (val==='rule') ? 'rule' : 'off';
+      // 同 setStripReasoning: 失败要提示, 否则开关弹回原位没人知道原因。
+      try {
+        const r=await fetch('/admin/api/thinking-purify',{method:'POST',headers:authHeaders(),body:JSON.stringify({mode})});
+        if(r.ok) { const d=await r.json(); this.thinkingPurify=d.mode||'off'; this.purifyRecallOn=!!d.recall_on; this.purifyEffective=!!d.effective; }
+        else { toast(await errToastMsg(r, t('save_failed')), 'error', 'save_fail'); }
+      } catch(e){ toast(t('network_error'), 'error', 'net_err'); }
+    },
     async fetchStripTcProtocols() {
       try { const r=await fetch('/admin/api/strip-toolcall-protocols', {headers:authHeaders()}); if(r.ok) { const d=await r.json(); this.stripTcChat=!!d.chat; this.stripTcResp=!!d.responses; } } catch(e){}
     },

@@ -85,6 +85,12 @@ pub struct AppState {
     pub strip_toolcall_on_responses: Arc<AtomicBool>,
     /// 降级可回取: 留存被优化剔离/截断的原文 (见 `recall` 模块与 `Config::recall_enabled`).
     pub recall: Arc<crate::recall::RecallStore>,
+    /// thinking 提纯开关 (见 `Config::thinking_purify`): `"off"` / `"rule"`。
+    /// 默认 `off` —— 行为与今天逐字节一致; 开启后历史推理链改为"提纯成节点链"而非整删。
+    pub thinking_purify: Arc<tokio::sync::RwLock<String>>,
+    /// 提纯阈值 (见 `Config::thinking_purify_min_chars` / `_max_nodes`)。运行时可调。
+    pub purify_min_chars: Arc<AtomicUsize>,
+    pub purify_max_nodes: Arc<AtomicUsize>,
     /// 常态截断超长 tool 输出的阈值 (0 = 不截断; 见 `Config::tool_output_max_bytes`).
     pub tool_output_max_bytes: Arc<AtomicUsize>,
     /// 模型元信息缓存 (models.dev): 面板悬停展示上下文/输出限制与视觉标签.
@@ -102,6 +108,37 @@ pub struct AppState {
     pub guard_config: Arc<tokio::sync::RwLock<Option<crate::guard::GuardConfig>>>,
     /// 隐私护栏规则表 (编译期内置; 独立 field 免得每请求重建正则)。
     pub guard_rules: std::sync::Arc<Vec<crate::guard::GuardRule>>,
+}
+
+impl AppState {
+    /// thinking 提纯参数: `Some((min_chars, max_nodes))` = 生效; `None` = 整段删除 (现状)。
+    ///
+    /// 生效应同时满足两个条件:
+    ///   ① `thinking_purify == "rule"`(配置层开启);
+    ///   ② **recall 已启用** —— 提纯有损, 原文是唯一的可逆通道。未开 recall 时提纯等于
+    ///      不可逆地丢信息, 与本项目"以质量换成本必须显式且可回退"的纪律冲突。
+    /// 未满足时返回 None, 转发路径与今天**零行为差异**(不 warn: 每次请求打日志是噪声,
+    /// 真正的防线是让它根本不生效, 面板上另有一处显式说明)。
+    pub fn purify_params(&self) -> Option<(usize, usize)> {
+        if !self.recall.is_enabled() {
+            return None;
+        }
+        // 用 try_read: 本函数是**同步**上下文 (转发热路径, 不能 await)。
+        // 锁只在面板改配置那一瞬被写占住, 抢不到就按"未生效"处理 —— 转发路径宁可退回
+        // 整删, 也不为一个配置项阻塞请求。
+        let mode = self
+            .thinking_purify
+            .try_read()
+            .map(|g| g.as_str().eq_ignore_ascii_case("rule"))
+            .unwrap_or(false);
+        if !mode {
+            return None;
+        }
+        Some((
+            self.purify_min_chars.load(Ordering::Relaxed),
+            self.purify_max_nodes.load(Ordering::Relaxed),
+        ))
+    }
 }
 
 /// 熔断器表类型别名.
@@ -538,6 +575,12 @@ pub async fn chat_completions(
         },
         // 首条必须是 system 的上游 (实测 WorkBuddy 国际版 400/11128).
         provider.require_system_first.unwrap_or(false),
+        // thinking 提纯: 仅当配置开启**且** recall 已开时生效。
+        //
+        // ⚠️ recall 是硬性前提: 提纯有损, 原文是唯一的可逆通道。未开 recall 时提纯等于
+        //    不可逆地丢信息 —— 这与本项目"以质量换成本必须显式且可回退"的纪律冲突, 故
+        //    强制联动 (不是 warn 了事: warn 会被忽略, 真正的防线是让它根本不生效)。
+        state.purify_params(),
     );
     let after_inject_len = bytes.len(); // 注入后请求体大小 (诊断用)
     // ── 隐私护栏 (方案 B, 2026-10-13) ──
@@ -4821,10 +4864,15 @@ fn has_payload_after_strip(m: &serde_json::Map<String, serde_json::Value>) -> bo
 /// `on_removed`: 可选回调, 每移除一条消息的推理链时调用 `(内容, 是否带 tool_calls)`.
 /// 供「降级可回取」留存原文 —— 剥离是**有损且不可逆**的, 留档后用户才能事后核查
 /// "这次到底删了什么" (见 `recall` 模块). 传 `None` 则零开销.
+///
+/// `purify`: `Some((min_chars, max_nodes))` 时进入**提纯模式** —— 不删除推理链,
+/// 改为把它压成节点链再留下 (见 [`purify_reasoning_text`])。传 `None` = 整段删除 (现状)。
+/// 提纯模式下 `on_removed` 仍会收到**原文** (留档的是被压掉的那部分, 不是节点链)。
 fn strip_history_reasoning_messages(
     body: &mut serde_json::Value,
     strip_with_tool_calls: bool,
     mut on_removed: Option<&mut dyn FnMut(&str, bool)>,
+    purify: Option<(usize, usize)>,
 ) -> (usize, usize, usize) {
     let Some(obj) = body.as_object_mut() else {
         return (0, 0, 0);
@@ -4869,7 +4917,16 @@ fn strip_history_reasoning_messages(
                 cb(&snapshot, has_tool_calls);
             }
         }
-        let removed = remove_reasoning_fields(m);
+        let removed = match purify {
+            // 提纯模式: 留下节点链, 省下的是"原文 − 节点链"的差额。
+            // ⚠️ 提纯失败 (返回 None) 必须退回整删路径 —— 若把 None 当成"留空", 历史里会
+            //    出现空 reasoning_content, 那是比整删更糟的结果 (信息没了、字段还在)。
+            Some((min_chars, max_nodes)) => purify_reasoning_field(m, min_chars, max_nodes),
+            None => {
+                let r = remove_reasoning_fields(m);
+                r
+            }
+        };
         if has_tool_calls {
             saved_toolcall_chars += removed;
         } else {
@@ -4893,6 +4950,243 @@ fn reasoning_snapshot(m: &serde_json::Map<String, serde_json::Value>) -> String 
         }
     }
     parts.join("\n")
+}
+
+// ─── thinking 提纯 (2026-10-17, 方案 A: 纯规则) ───
+//
+// 借鉴 `github.com/Roninton/IoT-items-of-thoughts` 的裁定 (该仓库**无 LICENSE**, 故只借鉴
+// 机制与裁定, 不参考其代码)。核心主张一句话: **推理链里真正贵的是"哪条路被否了、为什么否"**
+// —— 它拦住的是"下一轮重新走一遍已经被否掉的贵路"。我们现有的 `strip_history_reasoning`
+// 是整段删除, 恰好把这类信息丢得最狠; 提纯模式改为"压掉填充、留下节点"。
+//
+// 四条纪律 (每条都对应一次具体失败模式, 详见 `.openbitfun/plans/iot-thinking-purify.plan.md`):
+//   ① **只摘不补** —— 节点必须能在原文里找到出处。上游实测过"加了规则之后压缩器写出原文
+//      里根本没有的节点"; 我们的规则实现天然满足, 但仍保留 `is_grounded` 的语义检查。
+//   ② **失败回原文** —— 提纯结果是空、或不比原文短, 就原样放行。宁可不压, 不可丢。
+//   ③ **否决保底** —— 超量截断时 `[否决]` 类节点先留。漏记一条会重走贵路的否决, 比多几条
+//      噪声贵得多 (代价不对称)。
+//   ④ **零成本闸门** —— 短于 `min_chars` 直接跳过, 不为短链白跑一遍扫描。
+
+/// 提纯后的节点类型; 排序即保留优先级 (数字越小越先留)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ThinkKind {
+    Rejected, // [否决] —— 最贵的一类, 保底不裁
+    Decided,  // [决定]
+    Open,     // [待定]
+    Risk,     // [风险]
+}
+
+impl ThinkKind {
+    fn tag(self) -> &'static str {
+        match self {
+            ThinkKind::Rejected => "[否决]",
+            ThinkKind::Decided => "[决定]",
+            ThinkKind::Open => "[待定]",
+            ThinkKind::Risk => "[风险]",
+        }
+    }
+}
+
+/// 标志词表。**英文必须有** —— 实测本项目流量的推理链 98.8% 是英文 (2026-10-16 逐字测量
+/// `data/recall/` 15 份原文), 只配中文标志词会几乎全部漏掉。
+/// 措辞取自"推理里真的会这么写"的那批, 不用生僻词; 命中即视为该类候选。
+const MARKERS: &[(ThinkKind, &[&str])] = &[
+    (
+        ThinkKind::Rejected,
+        &[
+            // 中文
+            "不行", "否掉", "否决", "不采用", "不采纳", "放弃", "排除", "放弃这个", "改用", "换个",
+            "不能", "不适合", "走不通", "会失败", "失败原因", "不行因为", "所以不能",
+            // 英文
+            "won't work", "wont work", "doesn't work", "does not work", "not going to work",
+            "ruled out", "rule out", "reject", "rejected", "abandon", "abandoned", "skip this",
+            "instead of", "rather than", "not viable", "dead end", "would fail", "would break",
+            "can't use", "cannot use", "no longer", "drop the", "discard", "not suitable",
+        ],
+    ),
+    (
+        ThinkKind::Decided,
+        &[
+            // 中文
+            "决定", "就用", "采用", "选定", "定下来", "最终", "方案是", "选择了", "结论是", "因此",
+            // 英文
+            "decided", "decide", "i'll use", "i will use", "going with", "go with", "chose",
+            "choose", "settled on", "the approach is", "final", "therefore", "so i will",
+            "let's use", "we use", "this means",
+        ],
+    ),
+    (
+        ThinkKind::Open,
+        &[
+            // 中文
+            "待定", "还没确定", "尚未", "待确认", "两个方案", "先试", "不确定", "再看", "存疑",
+            // 英文
+            "tbd", "to be determined", "not sure", "unclear", "open question", "still deciding",
+            "either", "maybe", "pending", "undecided", "yet to", "not yet", "need to confirm",
+        ],
+    ),
+    (
+        ThinkKind::Risk,
+        &[
+            // 中文
+            "风险", "边界", "注意", "未验证", "假设", "如果", "可能崩", "隐患", "前提",
+            // 英文
+            "risk", "edge case", "boundary", "caveat", "assumption", "untested", "unverified",
+            "might break", "could break", "watch out", "beware", "note that",
+        ],
+    ),
+];
+
+/// 单个节点: 类型 + 文本 + 原文出处偏移 (用于"只摘不补"的溯源检查)。
+struct ThinkNode {
+    kind: ThinkKind,
+    text: String,
+    /// 该句在原文中的起始字节偏移; `None` = 兜底节点 (无出处)。
+    origin: Option<usize>,
+}
+
+/// 把一条推理链文本提纯成节点链文本。
+///
+/// 返回 `None` 表示**不该提纯** (太短 / 没摘到节点 / 提纯结果不比原文短) —— 调用方据此
+/// 原样放行, 这是"失败回原文"的接口形态 (而不是返回空串, 空串会被误当成"提纯成功但无内容")。
+fn purify_reasoning_text(text: &str, max_nodes: usize) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    // 按句切: 中英句末 + 换行都算边界。保留偏移以便溯源。
+    let mut nodes: Vec<ThinkNode> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut start = 0usize;
+    for (i, _) in text.char_indices() {
+        let ch = text[i..].chars().next()?;
+        let is_break = matches!(ch, '\n' | '。' | '！' | '？' | '；' | '.' | '!' | '?' | ';');
+        if !is_break && i + 1 != text.len() {
+            continue;
+        }
+        let end = if is_break { i + ch.len_utf8() } else { text.len() };
+        let piece = &text[start..end];
+        let trimmed = piece.trim();
+        if !trimmed.is_empty() {
+            if let Some(kind) = classify_sentence(trimmed) {
+                if let Some(t) = clip_text(trimmed) {
+                    nodes.push(ThinkNode { kind, text: t, origin: (start <= bytes.len()).then_some(start) });
+                }
+            }
+        }
+        start = end;
+    }
+    // 末句无标点时补最后一段
+    if start < text.len() {
+        let trimmed = text[start..].trim();
+        if !trimmed.is_empty() {
+            if let Some(kind) = classify_sentence(trimmed) {
+                if let Some(t) = clip_text(trimmed) {
+                    nodes.push(ThinkNode { kind, text: t, origin: Some(start) });
+                }
+            }
+        }
+    }
+
+    if nodes.is_empty() {
+        // 一条标志句都没命中 → 这段多半是纯填充; 按"失败回原文"退回。
+        // ⚠️ 不能返回空串: 空串会让调用方以为"提纯成功、内容为空" → 历史里出现空 reasoning。
+        return None;
+    }
+
+    // 去重 (同一句可能因多个标志词重复命中; 按文本去重, 保留首个)
+    let mut seen = std::collections::HashSet::new();
+    nodes.retain(|n| seen.insert(n.text.clone()));
+
+    // 超量截断: 先按类型排序 (否决优先), 同类型内保持原文顺序 (稳定排序, 不倒乱时序)
+    nodes.sort_by_key(|n| n.kind);
+    nodes.truncate(max_nodes);
+    nodes.sort_by_key(|n| n.origin.unwrap_or(usize::MAX));
+
+    // 只摘不补: 兜底节点 (无出处) 不允许单独成链
+    nodes.retain(|n| n.origin.is_some());
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let out: String = nodes
+        .iter()
+        .map(|n| format!("{} {}", n.kind.tag(), n.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // 不比原文短就别压 —— 压了没收益, 还丢了原文细节。
+    if out.len() >= text.len() {
+        return None;
+    }
+    Some(out)
+}
+
+/// 判断一句属于哪类节点; 无标志词 → None (不摘)。
+/// 多类命中时取**优先级最高**的那类 (否决 > 决定 > 待定 > 风险) —— 与截断优先级一致。
+fn classify_sentence(s: &str) -> Option<ThinkKind> {
+    let lower = s.to_lowercase();
+    let mut best: Option<ThinkKind> = None;
+    for (kind, words) in MARKERS {
+        if words.iter().any(|w| lower.contains(w)) {
+            if best.map_or(true, |b| *kind < b) {
+                best = Some(*kind);
+            }
+        }
+    }
+    best
+}
+
+/// 单条节点文本裁剪到 ~80 字 (按字符数, 避免切坏多字节字符); 过短 (<12 字符) 判为
+/// "单词节点/退化"直接丢弃 —— 借鉴上游的退化保护 (它实测压缩器会吐出"好/现在/写"这种
+/// 单词节点, 四道闸门里有一道就是这个)。
+fn clip_text(s: &str) -> Option<String> {
+    let t = s.trim();
+    let chars: Vec<char> = t.chars().collect();
+    if chars.len() < 12 {
+        return None;
+    }
+    if chars.len() <= 80 {
+        return Some(t.to_string());
+    }
+    let cut: String = chars[..80].iter().collect();
+    Some(format!("{}…", cut.trim_end()))
+}
+
+/// 对单条消息走提纯: 把它的推理链字段替换成节点链, 返回"省下的字节数"。
+///
+/// ⚠️ 提纯**不适用**时 (字段缺失 / 太短 / 没摘到节点 / 结果不比原文短) 一律退回**整段删除**,
+/// 而不是留空 —— 留空会让历史里出现空的 `reasoning_content`: 信息没了、字段还在,
+/// 比整删更糟 (整删至少字段是干净的)。这是"失败回原文"在本网关形态下的正确落法。
+fn purify_reasoning_field(
+    m: &mut serde_json::Map<String, serde_json::Value>,
+    min_chars: usize,
+    max_nodes: usize,
+) -> usize {
+    // 找出本条消息上实际存在的推理链字段 (沿用 remove_reasoning_fields 的同源判据)。
+    let key = REASONING_FIELDS
+        .iter()
+        .find(|k| {
+            m.get(**k)
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+        })
+        .copied();
+    let Some(key) = key else {
+        return remove_reasoning_fields(m);
+    };
+    let original = m.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // 零成本闸门: 短于阈值多半是纯填充, 直接走整删 (连扫描都不跑)。
+    if original.chars().count() < min_chars {
+        return remove_reasoning_fields(m);
+    }
+    match purify_reasoning_text(&original, max_nodes) {
+        Some(nodes) => {
+            let saved = original.len().saturating_sub(nodes.len());
+            m.insert((*key).to_string(), serde_json::Value::String(nodes));
+            saved
+        }
+        None => remove_reasoning_fields(m),
+    }
 }
 
 /// 剥离 Responses 协议 `input` 里的历史 `reasoning` item (转发优化, 默认关).
@@ -5347,6 +5641,10 @@ fn inject_model_params(
     recall: Option<(&crate::recall::RecallStore, Option<&str>)>,
     // 是否保证首条为 system (见 ProviderConfig::require_system_first).
     require_system_first: bool,
+    // thinking 提纯: Some((min_chars, max_nodes)) = 提纯模式; None = 整段删除 (现状)。
+    // 由配置层 `thinking_purify` + `recall_enabled` 联合决定 (提纯必须可逆, 故未开 recall 时
+    // 调用方传 None)。
+    purify: Option<(usize, usize)>,
 ) -> (bytes::Bytes, bool, usize, usize, TokenAudit, Option<String>) {
     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         // 注: 此分支**正常不可达** —— 调用前 `parse_model` 已用同一个 `serde_json::from_slice`
@@ -5387,8 +5685,9 @@ fn inject_model_params(
                 &mut v,
                 strip_toolcall_reasoning,
                 Some(&mut **cb),
+                purify,
             ),
-            None => strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning, None),
+            None => strip_history_reasoning_messages(&mut v, strip_toolcall_reasoning, None, purify),
         };
         strip_saved = saved + saved_tc;
         audit.exempt_reasoning_tokens = (exempt / 4) as u32;
@@ -6122,7 +6421,7 @@ mod tests {
     fn thinking_false_suppresses_config_effort() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "thinking": false }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false, None);
         let v = parse(out);
         assert!(v.get("thinking").is_none());
         assert!(v.get("reasoning_effort").is_none());
@@ -6191,7 +6490,7 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}]
         }).to_string();
         let (out, _, _, _, _, _) =
-            inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, true);
+            inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, true, None);
         let v = parse(out);
         assert_eq!(v["messages"][0]["role"], "system", "短路返回分支也必须补上 system");
     }
@@ -6201,7 +6500,7 @@ mod tests {
     fn no_thinking_injects_config_default() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "max");
     }
@@ -6211,7 +6510,7 @@ mod tests {
     fn client_effort_wins_over_config() {
         let cfg = cfg_with_effort("max");
         let body = serde_json::json!({ "model": "x", "reasoning_effort": "low" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false, None);
         let v = parse(out);
         assert_eq!(v["reasoning_effort"], "low");
     }
@@ -6221,7 +6520,7 @@ mod tests {
     fn no_config_no_client_stays_clean() {
         let cfg = cfg_no_effort();
         let body = serde_json::json!({ "model": "x" }).to_string();
-        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false);
+        let (out, _, _, _, _, _) = inject_model_params(bytes::Bytes::from(body), &cfg, false, 0, false, 0, None, false, None);
         let v = parse(out);
         assert!(v.get("reasoning_effort").is_none());
     }
@@ -6300,7 +6599,7 @@ mod tests {
             "messages": [ { "role": "assistant", "content": null,
                             "reasoning_details": [{"type":"reasoning.text","text":"only"}] } ]
         });
-        strip_history_reasoning_messages(&mut b, false, None);
+        strip_history_reasoning_messages(&mut b, false, None, None);
         let m = &b["messages"][0];
         assert!(m.get("reasoning_details").is_none(), "推理字段应被剥离");
         assert_eq!(m.get("content").and_then(|v| v.as_str()), Some(""),
@@ -6310,7 +6609,7 @@ mod tests {
         let mut b2 = serde_json::json!({
             "messages": [ { "role": "assistant", "content": null, "reasoning": "only" } ]
         });
-        strip_history_reasoning_messages(&mut b2, false, None);
+        strip_history_reasoning_messages(&mut b2, false, None, None);
         assert_eq!(b2["messages"][0].get("content").and_then(|v| v.as_str()), Some(""));
 
         // 反例: 带 tool_calls 时**不得**改 content (tool_calls 本身就是合法载荷)
@@ -6318,7 +6617,7 @@ mod tests {
             "messages": [ { "role": "assistant", "content": null,
                             "tool_calls": [{"id":"1"}], "reasoning_content": "x" } ]
         });
-        strip_history_reasoning_messages(&mut b3, true, None);
+        strip_history_reasoning_messages(&mut b3, true, None, None);
         assert!(b3["messages"][0]["content"].is_null(),
                 "有 tool_calls 时 content 应保持原样 (null 合法)");
 
@@ -6326,7 +6625,7 @@ mod tests {
         let mut b4 = serde_json::json!({
             "messages": [ { "role": "assistant", "content": "正文", "reasoning_content": "x" } ]
         });
-        strip_history_reasoning_messages(&mut b4, false, None);
+        strip_history_reasoning_messages(&mut b4, false, None, None);
         assert_eq!(b4["messages"][0]["content"], "正文");
     }
 
@@ -6341,7 +6640,7 @@ mod tests {
                 { "role": "assistant", "content": "b", "tool_calls": [{ "id": "1" }], "reasoning_content": "keep" }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None, None);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[1].get("reasoning_content").is_none());
         assert!(msgs[1].get("reasoning").is_none());
@@ -6368,7 +6667,7 @@ mod tests {
                   "reasoning_details": [ {"type":"reasoning.text","text":"rd"} ] }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, false, None, None);
         let m = &body["messages"][0];
         for k in ["reasoning_content", "reasoning", "reasoning_details"] {
             assert!(m.get(k).is_none(), "{k} 应被剥离");
@@ -6391,13 +6690,13 @@ mod tests {
         });
         // 豁免: 保留且计入 exempt
         let mut b1 = mk();
-        let (sv, tc, ex) = strip_history_reasoning_messages(&mut b1, false, None);
+        let (sv, tc, ex) = strip_history_reasoning_messages(&mut b1, false, None, None);
         assert!(b1["messages"][0].get("reasoning_details").is_some(), "未开启应保留");
         assert_eq!((sv, tc), (0, 0));
         assert!(ex > 0, "豁免量应计入");
         // 剥离: 归入 tool_calls 桶
         let mut b2 = mk();
-        let (sv2, tc2, ex2) = strip_history_reasoning_messages(&mut b2, true, None);
+        let (sv2, tc2, ex2) = strip_history_reasoning_messages(&mut b2, true, None, None);
         assert!(b2["messages"][0].get("reasoning_details").is_none(), "开启应剥离");
         assert_eq!((sv2, ex2), (0, 0));
         assert!(tc2 > 0, "应归入 tool_calls 桶以在面板单列");
@@ -6462,6 +6761,157 @@ mod tests {
         assert_eq!(strip_responses_reasoning_items(&mut n), (0, 0, String::new()));
     }
 
+    // ═══ thinking 提纯 (方案 A 规则实现) 的验收单测 ═══
+    // 判据对齐 `.openbitfun/plans/iot-thinking-purify.plan.md` §5; 每条都对应一次具体
+    // 失败模式, 不是"跑通就算"。
+
+    fn body_with_reasoning(text: &str) -> serde_json::Value {
+        serde_json::json!({
+            "model": "m1",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "ok", "reasoning_content": text}
+            ]
+        })
+    }
+
+    /// 判据: **否决节点保底** —— 超量截断时 [否决] 先留。
+    /// 上游原话: "漏记一条会重走贵路的否决, 比多一条噪声贵得多 (代价不对称)"。
+    #[test]
+    fn purify_keeps_rejected_nodes_first_when_truncating() {
+        // 10 个候选: 2 条否决 + 8 条决定; max_nodes=3 时两条否决必须都在。
+        let mut s = String::new();
+        for i in 0..8 {
+            s.push_str(&format!("Decided to use approach number {i} for this part of the work.\n"));
+        }
+        s.push_str("This alternative approach won't work because the API does not support it.\n");
+        s.push_str("Ruled out the other library since it would break the build.\n");
+        let out = purify_reasoning_text(&s, 3).expect("应能提纯");
+        assert!(out.contains("[否决]"), "截断后必须仍有否决节点:\n{out}");
+        assert_eq!(out.matches("[否决]").count(), 2, "两条否决都必须保住:\n{out}");
+        assert!(out.matches("[决定]").count() <= 1, "决定类应让位给否决:\n{out}");
+    }
+
+    /// 判据: **只摘不补** —— 节点链的每条都必须能在原文里找到出处。
+    /// 上游实测过"加了规则之后压缩器写出原文里根本没有的节点", 故这条必须钉死。
+    #[test]
+    fn purify_only_extracts_never_invents() {
+        let src = "Let me think about this. The user wants a tool.\n\
+                   I will use divmod because it handles the carry cleanly.\n\
+                   The float approach would fail on large values so it is ruled out.\n";
+        let out = purify_reasoning_text(src, 6).expect("应能提纯");
+        for line in out.lines() {
+            let body = line.split_once(' ').map(|(_, b)| b).unwrap_or("").trim();
+            // 原文必须包含该节点文本的**主体** (节点可能被裁到 80 字并加 …, 故取前 20 字比对)
+            let probe: String = body.chars().take(20).collect();
+            assert!(
+                src.contains(probe.trim_end_matches('…')),
+                "节点正文必须出自原文: {line:?} (探针 {probe:?}) 不在原文中"
+            );
+        }
+    }
+
+    /// 判据: **失败回原文** —— 没摘到节点 / 结果不比原文短, 都不许返回"成功但内容为空"。
+    /// 这是本方案最容易出错的一处: 返回空串会被调用方当成"提纯成功、内容为空",
+    /// 于是历史里出现空的 reasoning_content (信息没了、字段还在, 比整删更糟)。
+    ///
+    /// ⚠️ 本条**必须存在**: e2e (`probe_thinking_purify`) 的 B 臂总能摘到节点,
+    ///    走不到"摘不到"的分支 —— 实测把 `None` 改成 `Some(String::new())` 后 e2e 仍全绿
+    ///    (假通过)。故由本单测直接构造"摘不到"的输入来钉死 (改坏验证见 HANDOFF 10-17)。
+    #[test]
+    fn purify_returns_none_instead_of_empty_when_nothing_extractable() {
+        // 纯填充: 没有任何标志句
+        let filler = "Let me see. Hmm, okay. So basically the user wants me to do something here and I should think about it carefully.\n";
+        assert!(
+            purify_reasoning_text(filler, 6).is_none(),
+            "无标志句时必须返回 None (让调用方退回整删), 不能返回空串"
+        );
+        // 极短文本
+        assert!(purify_reasoning_text("ok", 6).is_none());
+        assert!(purify_reasoning_text("", 6).is_none());
+        // 提纯结果不比原文短 (原文就是一小句标志句, 压不出收益)
+        let tiny = "Decided to use divmod here.\n";
+        assert!(
+            purify_reasoning_text(tiny, 6).is_none(),
+            "压不出收益时必须回退"
+        );
+    }
+
+    /// 判据: 字段层面 —— 提纯失败时退回**整段删除**, 而不是留空字段。
+    #[test]
+    fn purify_falls_back_to_full_strip_never_leaves_empty_field() {
+        let mut body = body_with_reasoning(
+            "Let me think. The user wants a tool. I should consider the options here.\n",
+        );
+        let saved = purify_reasoning_field(
+            body["messages"][1].as_object_mut().unwrap(),
+            10, // 低于阈值 → 走整删
+            6,
+        );
+        let msg = &body["messages"][1];
+        assert!(
+            msg.get("reasoning_content").is_none(),
+            "提纯不适用时必须整删干净, 不能留下空 reasoning_content: {msg}"
+        );
+        assert!(saved > 0, "整删也要如实记账");
+    }
+
+    /// 判据: 开关关闭 (= 传 None) 时行为与今天**零差异** —— 字段被整删。
+    #[test]
+    fn strip_mode_none_is_unchanged_behavior() {
+        let mut body = body_with_reasoning("Decided to use divmod. The float path would fail.\n");
+        let (saved, saved_tc, exempt) =
+            strip_history_reasoning_messages(&mut body, false, None, None);
+        let msg = &body["messages"][1];
+        assert!(msg.get("reasoning_content").is_none(), "整删模式下字段必须消失");
+        assert!(saved > 0);
+        assert_eq!((saved_tc, exempt), (0, 0));
+    }
+
+    /// 判据: **英文标志词必须有效** —— 实测本项目推理链 98.8% 是英文,
+    /// 只配中文会几乎全部漏掉; 这条防止以后有人"顺手只加中文词"。
+    #[test]
+    fn purify_works_on_english_reasoning() {
+        let en = "Let me think about this for a moment.\n\
+                  I'll use the rule-based approach because it is deterministic and testable.\n\
+                  The LLM-based approach won't work here because it adds a call per block.\n\
+                  Edge case: empty reasoning blocks should be skipped entirely.\n\
+                  Still deciding whether to expose this as a setting or always on.\n";
+        let out = purify_reasoning_text(en, 6).expect("英文推理链必须能提纯");
+        assert!(out.contains("[决定]"), "应识别决定类: {out}");
+        assert!(out.contains("[否决]"), "应识别否决类: {out}");
+        assert!(out.contains("[风险]"), "应识别风险类: {out}");
+        assert!(out.contains("[待定]"), "应识别待定类: {out}");
+    }
+
+    /// 判据: 提纯确实省下字节, 且省量记账 = 原文 − 节点链 (口径与 strip 一致, 账本可核对)。
+    #[test]
+    fn purify_saved_bytes_match_original_minus_nodes() {
+        let src = "Let me think about this. The user wants a tool.\n\
+                   Decided to use divmod because it handles the carry cleanly for all inputs.\n\
+                   The float approach would fail on large values so it is ruled out entirely.\n";
+        let out = purify_reasoning_text(src, 6).expect("应能提纯");
+        let mut body = body_with_reasoning(src);
+        let saved = purify_reasoning_field(body["messages"][1].as_object_mut().unwrap(), 10, 6);
+        assert_eq!(
+            saved,
+            src.len() - out.len(),
+            "省量必须是 原文字节 − 节点链字节, 与 strip 同口径"
+        );
+        assert!(saved < src.len(), "提纯省下的必然少于整删 (用 token 买信息)");
+    }
+
+    /// 判据: 退化保护 —— 过短/单词句子不成节点 (上游实测压缩器会吐出"好/现在/写"这种)。
+    #[test]
+    fn purify_drops_degenerate_one_word_sentences() {
+        let src = "Decided. Also ruled out. Then risk here. And open question about the thing.\n";
+        // 全部是短句 (<12 字符) → 一条都留不下 → 返回 None 让调用方整删
+        assert!(
+            purify_reasoning_text(src, 6).is_none(),
+            "单词节点必须被丢弃, 不能写出这种链"
+        );
+    }
+
     /// 开关打开时, 带 tool_calls 的 assistant 消息推理链也被剥离 (默认保留).
     #[test]
     fn strip_toolcall_reasoning_when_enabled() {        let mut body = serde_json::json!({
@@ -6471,7 +6921,7 @@ mod tests {
                   "reasoning_content": "R".repeat(300) }
             ]
         });
-        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, true, None);
+        let (saved, saved_tc, exempt) = strip_history_reasoning_messages(&mut body, true, None, None);
         let msgs = body["messages"].as_array().unwrap();
         assert!(msgs[0].get("reasoning_content").is_none(), "开启后应被剥离");
         assert_eq!(saved, 0, "非 tool_calls 轮次无省量");

@@ -1,0 +1,17 @@
+   Compiling AIGate v0.7.2 (D:\Office software\Development Project\AIGate)
+error: this file contains an unclosed delimiter
+    --> src\proxy.rs:8146:2
+     |
+5052 | fn purify_reasoning_text(text: &str, max_nodes: usize) -> Option<String> {
+     |                                                                          - unclosed delimiter
+...
+5090 |     if nodes.is_empty() {
+     |                         - this delimiter might not be properly closed...
+...
+5118 | }
+     | - ...as it matches this but it has different indentation
+...
+8146 |
+     | ^
+
+error: could not compile `AIGate` (bin "AIGate" test) due to 1 previous error

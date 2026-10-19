@@ -220,7 +220,7 @@
       if (tabId==='analytics') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchDegradations(); this.fetchHeatmap(); }
       // 记录页的统计来自 logs (不走 stats): 已加载过才重播 —— 首访让骨架→内容自然出现, 不从 0 滚.
       if (tabId==='records') { if (this.logsFetched) this.replayNumTweens(); this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.refreshProviders(); this.fetchKeys(); this.fetchAccounts(); this.fetchPresets(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
+      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.refreshProviders(); this.fetchKeys(); this.fetchAccounts(); this.fetchPresets(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchThinkingPurify(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
     },
 
     startPoll() {

@@ -71,6 +71,26 @@ pub struct Config {
     /// 并存, 剥掉上游直接 400 (见 proxy.rs 中 anthropic 模式分支)。
     pub strip_toolcall_on_chat: bool,
     pub strip_toolcall_on_responses: bool,
+    /// **thinking 提纯模式** (2026-10-17, 借鉴 IoT-items-of-thoughts 的裁定; 方案见
+    /// `.openbitfun/plans/iot-thinking-purify.plan.md`)。
+    ///
+    /// 与 `strip_history_reasoning` 的区别: 后者把历史推理链**整段删除**(省量最大, 但模型
+    /// 不知道之前否掉了什么路); 本项改为把推理链**提纯成一小撮思维节点链**再留下 ——
+    /// `[决定]/[否决]/[待定]/[风险]`, 压掉的只是填充 (`let me…` / 复述), 保留"为什么"。
+    /// 代价: 节点链仍占 token (实测提纯比约 0.11~0.32 量级), 省量**小于**整删 ——
+    /// 这是**用 token 买回"为什么"**。
+    ///
+    /// 取值: `"off"`(默认, 行为与今天完全一致) / `"rule"`(纯规则提纯, 零 LLM 调用)。
+    /// 未做 `"llm"` 形态: 那需要每次多一次模型调用 + 一套退化闸门, 见方案文档 §4。
+    ///
+    /// ⚠️ **必须同时开启 `recall_enabled`** 才生效: 提纯有损, 原文是唯一的可逆通道。
+    /// 未开 recall 时本项自动不生效 (并在面板/日志说明), 避免不可逆地丢信息。
+    pub thinking_purify: String,
+    /// 提纯的最小字符阈值: 短于此的推理链直接原样放行 (它多半不含值得摘的节点)。
+    /// 借鉴上游项目的 `minChars=400`, 同时是"零成本闸门" —— 避免为短链白跑一遍扫描。
+    pub thinking_purify_min_chars: usize,
+    /// 单条推理链最多保留几个节点 (超量按优先级截断: 否决 > 决定 > 待定 > 风险)。
+    pub thinking_purify_max_nodes: usize,
     /// 降级可回取: 是否留存被「转发优化」剔离/截断的原文, 供事后在面板核查.
     ///
     /// **默认关闭** —— 留存内容是模型推理链与 tool 输出**明文**, 落盘等于把对话内容写到
@@ -173,6 +193,9 @@ impl Config {
             // 协议白名单: chat 默认开 (实测安全), responses 默认关 (未实测, 由用户试开).
             strip_toolcall_on_chat: env_bool("STRIP_TOOLCALL_ON_CHAT", true),
             strip_toolcall_on_responses: env_bool("STRIP_TOOLCALL_ON_RESPONSES", false),
+            thinking_purify: env_str("AIGATE_THINKING_PURIFY", "off"), // 默认 off = 行为与今天逐字节一致
+            thinking_purify_min_chars: env_usize("AIGATE_PURIFY_MIN_CHARS", 400),
+            thinking_purify_max_nodes: env_usize("AIGATE_PURIFY_MAX_NODES", 6),
             // 降级可回取: 默认关 (留存含推理链/工具输出明文, 属隐私取舍).
             recall_enabled: env_bool("AIGATE_RECALL_ENABLED", false),
             recall_max_entry_bytes: env_usize("AIGATE_RECALL_MAX_ENTRY_BYTES", 256 * 1024),
@@ -229,6 +252,14 @@ fn env_bool(key: &str, default: bool) -> bool {
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES") => true,
         Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("NO") => false,
         _ => default,
+    }
+}
+
+/// 读取字符串环境变量, 缺失/空时回退默认值 (大小写保留, 由调用方自行归一化)。
+fn env_str(key: &str, default: &str) -> String {
+    match env::var(key).ok().as_deref() {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => default.to_string(),
     }
 }
 

@@ -3138,6 +3138,45 @@ pub async fn api_strip_reasoning_set(
 
 // ─── 「带 tool_calls 的历史推理链」协议白名单 ───
 
+/// GET /admin/api/thinking-purify — 返回提纯模式与联动状态。
+///
+/// `mode`: `"off"` / `"rule"`; `recall_on`: recall 是否已开（**提纯的硬性前提**）。
+/// 前端据此显示"需要先开降级可回取"的提示 —— 而不是让用户开了却没生效再猜。
+pub async fn api_thinking_purify_get(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let mode = state.thinking_purify.try_read().map(|g| g.clone()).unwrap_or_default();
+    Json(serde_json::json!({
+        "mode": mode,
+        "recall_on": state.recall.is_enabled(),
+        "effective": state.purify_params().is_some(),
+        "min_chars": state.purify_min_chars.load(std::sync::atomic::Ordering::Relaxed),
+        "max_nodes": state.purify_max_nodes.load(std::sync::atomic::Ordering::Relaxed),
+    }))
+}
+
+/// POST /admin/api/thinking-purify — 运行时切换提纯模式 (`off` / `rule`)。
+#[derive(serde::Deserialize)]
+pub struct ThinkingPurifyReq {
+    pub mode: String,
+}
+
+pub async fn api_thinking_purify_set(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<ThinkingPurifyReq>,
+) -> Json<serde_json::Value> {
+    // 只接受白名单值: 其它一律回退 `off`（不报错 —— 前端传错时宁可关掉也不半生效）。
+    let mode = if payload.mode.eq_ignore_ascii_case("rule") { "rule" } else { "off" };
+    if let Ok(mut g) = state.thinking_purify.try_write() {
+        *g = mode.to_string();
+    }
+    Json(serde_json::json!({
+        "mode": mode,
+        "recall_on": state.recall.is_enabled(),
+        "effective": state.purify_params().is_some(),
+    }))
+}
+
 /// GET /admin/api/strip-toolcall-protocols — 返回按协议剥离的开关状态.
 ///
 /// 注意这里返回的是**协议**维度 (chat / responses), 不是供应商维度:

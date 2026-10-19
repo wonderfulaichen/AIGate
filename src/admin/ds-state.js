@@ -90,6 +90,11 @@ function dashboard() {  return {
     proxyStatus: null,
     // 历史推理链剥离开关 (运行时, 重启回到环境变量默认)
     stripReasoning: false,
+    // thinking 提纯 (2026-10-17): 'off' | 'rule'。recall_on/effective 来自后端 ——
+    // effective=false 表示"配置开了但 recall 没开, 因此不生效", 前端要显示这条而不是让用户猜。
+    thinkingPurify: 'off',
+    purifyRecallOn: false,
+    purifyEffective: false,
     // 「带 tool_calls 的历史推理链」按协议白名单剥离 (运行时, 重启回默认).
     // 注意是协议维度: 供应商只换 endpoint, 协议才决定剥离是否安全.
     // anthropic 无开关 —— 该协议下剥离必然被上游拒绝.

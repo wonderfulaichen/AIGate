@@ -831,6 +831,9 @@ fn main() {
             },
         )),
         tool_output_max_bytes: Arc::new(AtomicUsize::new(config.tool_output_max_bytes)),
+        thinking_purify: Arc::new(tokio::sync::RwLock::new(config.thinking_purify.clone())),
+        purify_min_chars: Arc::new(AtomicUsize::new(config.thinking_purify_min_chars)),
+        purify_max_nodes: Arc::new(AtomicUsize::new(config.thinking_purify_max_nodes)),
         model_meta: Arc::new(model_meta::MetaCache::new()),
         // 进程级稳定 session id: 启动时生成一次, 用于 OpenCode Go 等
         // 要求 x-opencode-session 头的上游做兜底注入. 不覆盖客户端自传.
@@ -872,6 +875,7 @@ fn main() {
         .route("/admin/api/cache", get(admin::api_cache_get).post(admin::api_cache_set))
         .route("/admin/api/cache/clear", post(admin::api_cache_clear))
         .route("/admin/api/strip-reasoning", get(admin::api_strip_reasoning_get).post(admin::api_strip_reasoning_set))
+        .route("/admin/api/thinking-purify", get(admin::api_thinking_purify_get).post(admin::api_thinking_purify_set))
         .route("/admin/api/strip-toolcall-protocols", get(admin::api_strip_toolcall_protocols_get).post(admin::api_strip_toolcall_protocols_set))
         .route("/admin/api/max-history-turns", get(admin::api_max_history_turns_get).post(admin::api_max_history_turns_set))
         // 降级可回取: 配置开关 / 留存列表 / 取回原文 / 统计与清空.
