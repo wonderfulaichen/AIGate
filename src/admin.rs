@@ -2062,7 +2062,10 @@ pub async fn api_providers_test(
 ) -> Json<serde_json::Value> {
     let start = std::time::Instant::now();
     let endpoint = payload.endpoint.clone();
-    let models_url = endpoint.replace("/chat/completions", "/models");
+    // /models 端点推导: 见 providers::derive_models_url
+    // (opencode 的模型端点与协议段无关; 旧规则会把 /openai 带进去 → 404 → 误判"不可达",
+    //  而 404 其实说明主机活着。见 tools/probe_opencode_models_url.py)
+    let models_url = crate::providers::derive_models_url(&endpoint);
 
     // ① 凭据环节：优先用**该供应商的真实密钥**（这样"密钥对不对"才是被测项之一）。
     //    未给 name（或找不到）时退回旧的假密钥探活，并在结论里说明"未校验密钥"。

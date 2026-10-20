@@ -13,6 +13,44 @@
 失效自动切换。另含两处修复：**循环检测误报**（会让编程工具里的任务中途停住，本次报障的根因）与
 **账号型供应商的登录弹窗**丢失一键登录按钮。
 
+### 修复「拉取模型」对 opencode go 新端点必然 404（用户报障）
+
+- **用户原话**：「我发现我改了 go 的链接后模型获取失败了。」
+- **根因（URL 推导，不是网络/鉴权）**：上游 opencode 改了端点路径 ——
+  go 的正确端点是 `https://opencode.ai/inference/go/openai/v1/chat/completions`，
+  zen 是 `https://opencode.ai/inference/openai/v1/chat/completions`（旧 `/zen/*` 已迁移）。
+  而我们的 `/models` URL 推导是**把请求端点的末段 `/chat/completions` 换成 `/models`**，
+  于是 go 被推导成 `.../inference/go/openai/v1/models`。
+- **实测取证**（逐个 URL 打真实上游，见 `tools/probe_opencode_models_url.py`）：
+  - `/inference/go/v1/models`、`/inference/v1/models` → **200**（正确形态）
+  - `/zen/go/v1/models`、`/zen/v1/models`（旧路径，仍兼容） → **200**
+  - `/inference/go/openai/v1/models`、`/zen/go/openai/v1/models` → **404**
+  - 即：**opencode 的模型列表端点与协议段无关**，永远是 `<基址>/v1/models`；
+    协议段 `/openai` 只存在于**请求**端点。这是官方特有的形态，与 DeepSeek 等
+    通用 OpenAI 兼容网关（`/v1/chat/completions` → `/v1/models`）不同。
+- **修法**：新增 `derive_models_url()`（`src/providers.rs`）作为**三处 URL 推导的唯一来源**，
+  按 **host 含 `opencode.ai`**（域名骗不了人，供应商名可以随便起）走特例：剥掉协议段
+  (`/openai`、`/anthropic`、`/responses`) 只留 `<基址>/v1/models`，同时兼容新 `/inference[/go]`
+  与旧 `/zen[/go]` 两套基址。三处调用点全部改用它：面板「拉取模型」
+  (`admin.rs`)、启动连通性探测 (`proxy.rs`)、面板供应商「测试」(`admin.rs`)。
+- **为什么必须一次改三处**：旧推导在「测试」里同样把 `/openai` 带进 URL，虽然探测只看
+  「有没有 HTTP 响应」（404 也算可达）不影响判据，但三处口径不一致会让同一个
+  opencode 供应商在不同功能里请求不同 URL，属于埋雷。
+- **单测**：`derive_models_url_matches_upstream_shape` 钉 12 组端点 —— opencode 新/旧 ×
+  go/zen/anthropic/responses，外加 DeepSeek、MiniMax、OpenAI Responses、裸 base URL
+  （证明**非 opencode 行为不变**），并断言推导结果**不含**协议段。
+- **改坏验证**：去掉 `.replace("/openai", "")` → 测试转红，失败信息直指
+  「go 新端点 (用户当前配置, 曾 404)」。注：第一次改坏用 `false && let` 编译失败、
+  第二次 `None::<usize>().or_else(闭包)` 语义完全等价导致**假通过** ——
+  第三条纪律的实例：`exit != 0` 不等于判据有牙齿，但 `exit == 0` 也可能是破坏没生效。
+- **端到端拉通**：`tools/probe_go_models_url_e2e.py` 起隔离实例 + mock 上游，证明
+  「面板接口 → fetch_models_from_upstream → 解析合并」整条接线通、mock 返 4 个模型
+  就被完整拿到 4 个（`added=4`、`success=true`）。
+- **边界说明**：`derive_models_url` 按 host 判定，所以 mock 用 `127.0.0.1` 时走通用分支
+  （端到端脚本验证的是接线，不是 opencode 特例）；opencode 特例由真实上游探针 + 单测覆盖。
+- **仍未处理**：`providers.json` 与 `main.rs` 默认配置里的 opencode 端点仍是旧 `/zen/*` 形态
+  （实测仍 200，故不构成故障），用户部署实例已改为新端点。仓库配置是否同步留待决定。
+
 ### 修复 402 被上游 `server_error` 掩盖成「服务器内部错误」（用户报障）
 
 - **用户报障**：OpenCode GO 中转后报 `402 ... [server_error]: Upstream request failed: Insufficient account funds`。

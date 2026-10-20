@@ -395,11 +395,10 @@ pub fn sync_breakers(breakers: &BreakerMap, provider_names: &[String], cfg: &Cir
 /// 视为**可达**; 仅当连接层错误 (DNS 失败 / 连接被拒 / 超时) 才视为**不可达**.
 /// `/models` 仅返回模型列表元数据, 不消耗生成 token, 成本可忽略.
 pub async fn precheck_provider(client: &Client, endpoint: &str, timeout: Duration) -> bool {
-    // /models 端点推导: 兼容 OpenAI (/chat/completions), Anthropic (/messages), Responses (/responses) 三类端点.
-    let models_url = endpoint
-        .replace("/chat/completions", "/models")
-        .replace("/messages", "/models")
-        .replace("/responses", "/models");
+    // /models 端点推导: 见 providers::derive_models_url
+    // (opencode 的模型端点与协议段无关, `/openai` 混进去会 404 —— 但探测只看"有没有响应",
+    //  404 同样算可达, 故此处不影响判据; 仍走同一函数以保持三处口径一致)。
+    let models_url = crate::providers::derive_models_url(endpoint);
     match client.get(&models_url).timeout(timeout).send().await {
         // 任何 HTTP 响应 = TCP/TLS 已建连 = 可达.
         Ok(_) => true,

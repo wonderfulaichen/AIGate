@@ -1054,10 +1054,59 @@ pub async fn probe_protocols(
     found
 }
 
+/// 把供应商**请求端点**推导为它的 `/models` 端点.
+///
+/// 通用规则 (OpenAI / Anthropic / Responses 三类端点): 把路径末段的协议动作
+/// (`/chat/completions` / `/messages` / `/responses`) 换成 `/models`; 若 endpoint 是
+/// 裸 base URL (如 `https://api.xxx.com/v1`), 直接追加 `/models`。
+///
+/// ⚠️ **opencode (zen / go) 是例外, 必须特殊处理** (2026-10-21 用户报「改了 go 的
+/// 链接后模型获取失败」):
+/// 它的模型列表端点**与协议段无关**, 永远是 `<base>/v1/models` —— 协议段 `/openai`
+/// 只存在于**请求**端点。所以 `https://opencode.ai/inference/go/openai/v1/chat/completions`
+/// 按通用规则会推导出 `.../openai/v1/models` → **404**, 面板「拉取模型」必然失败。
+/// 实测 (见 tools/probe_opencode_models_url.py):
+/// `/inference/go/v1/models`、`/inference/v1/models` → 200;
+/// `/zen/go/v1/models`、`/zen/v1/models` (旧路径, 仍兼容) → 200;
+/// `/inference/go/openai/v1/models`、`/zen/go/openai/v1/models` → 404。
+/// 判据按 **host 域名**而不是供应商名 —— 用户可以给供应商起任意名字,
+/// 但 endpoint 里的 host 骗不了人。
+///
+/// 这是三处 URL 推导 (拉取模型 / 启动探测 / 面板「测试」) 的唯一来源, 改这里即可全站生效。
+pub fn derive_models_url(endpoint: &str) -> String {
+    let ep = endpoint.trim().trim_end_matches('/');
+    // opencode: 模型端点与协议段无关, 永远 <host><base>/v1/models。
+    // 基址两套都要兼容 (实测均 200): 新 `/inference[/go]`、旧 `/zen[/go]`。
+    // 判据按 **host 域名**而不是供应商名 —— 供应商可任意命名, host 骗不了人。
+    if let Some(idx) = ep.find("opencode.ai") {
+        let host_end = idx + "opencode.ai".len();
+        let rest = &ep[host_end..];
+        // 剥掉协议段 (/openai | /anthropic | /responses) —— 它只存在于请求端点,
+        // 混进模型端点就是 404 (用户报「拉取模型失败」的根因)。
+        let rest = rest
+            .replace("/openai", "")
+            .replace("/anthropic", "")
+            .replace("/responses", "");
+        if let Some(vpos) = rest.find("/v1") {
+            return format!("{}{}/v1/models", &ep[..host_end], &rest[..vpos]);
+        }
+        return format!("{}/models", &ep[..host_end]);
+    }
+    // 通用规则
+    let after = ep
+        .replace("/chat/completions", "/models")
+        .replace("/messages", "/models")
+        .replace("/responses", "/models");
+    if after != ep {
+        after
+    } else {
+        format!("{ep}/models")
+    }
+}
+
 /// 从上游 `/v1/models` 拉取模型 ID 列表.
 ///
-/// - 端点推导: 把 provider.endpoint 中的 `/chat/completions` 替换为 `/models`
-///   (兼容 DeepSeek / opencode(zen/go) 等 OpenAI 兼容网关).
+/// - 端点推导: 见 [`derive_models_url`] (opencode 的模型端点与协议段无关, 是特例).
 /// - 鉴权: 使用 provider 真实 key (`Bearer`) + provider.headers (如有).
 /// - 解析兼容 OpenAI 标准 `{object:"list", data:[{id}]}`、部分网关 `{models:[...]}`
 ///   及裸数组 `[...]`, 见 [`extract_model_ids`].
@@ -1077,19 +1126,8 @@ pub async fn fetch_models_from_upstream(
     if crate::presets::is_codebuddy_family(provider.preset.as_deref()) {
         return fetch_buddy_models(client, provider, key).await;
     }
-    // /models 端点推导: 兼容 OpenAI (/chat/completions) 与 Anthropic (/messages) 两类端点.
-    // 若 endpoint 是裸 base URL (如 https://api.xxx.com/v1), 替换无命中时自动追加 /models.
-    let ep = provider.endpoint.trim_end_matches('/');
-    let models_url = {
-        let after = ep
-            .replace("/chat/completions", "/models")
-            .replace("/messages", "/models");
-        if after != ep {
-            after // 已从已知后缀转换
-        } else {
-            format!("{ep}/models") // 裸 base URL → 追加 /models
-        }
-    };
+    // /models 端点推导: 见 derive_models_url (opencode 的模型端点与协议段无关, 是特例).
+    let models_url = derive_models_url(&provider.endpoint);
     let mut req = client.get(&models_url);
     // 鉴权头按 provider.auth 声明 (缺省 Authorization: Bearer)
     req = with_auth_header(req, provider.auth.as_ref(), key);
@@ -1315,6 +1353,55 @@ mod tests {
       ]
     }
     "#;
+
+    #[test]
+    fn derive_models_url_matches_upstream_shape() {
+        // (endpoint, 期望推导出的 /models URL, 说明)
+        let cases = [
+            // ── opencode: 模型端点与协议段无关, 永远 <host><base>/v1/models ──
+            ("https://opencode.ai/inference/go/openai/v1/chat/completions",
+             "https://opencode.ai/inference/go/v1/models",
+             "go 新端点 (用户当前配置, 曾 404)"),
+            ("https://opencode.ai/inference/openai/v1/chat/completions",
+             "https://opencode.ai/inference/v1/models",
+             "zen 新端点"),
+            ("https://opencode.ai/zen/go/v1/chat/completions",
+             "https://opencode.ai/zen/go/v1/models",
+             "go 旧端点 (仍 200, 需兼容)"),
+            ("https://opencode.ai/zen/v1/chat/completions",
+             "https://opencode.ai/zen/v1/models",
+             "zen 旧端点 (仍 200, 需兼容)"),
+            ("https://opencode.ai/inference/anthropic/v1/messages",
+             "https://opencode.ai/inference/v1/models",
+             "anthropic 段也要剥 (实测 /inference/anthropic/v1/models 返 404)"),
+            ("https://opencode.ai/inference/openai/v1/responses",
+             "https://opencode.ai/inference/v1/models",
+             "responses 协议段"),
+            ("https://opencode.ai/inference/go/v1/chat/completions",
+             "https://opencode.ai/inference/go/v1/models",
+             "go 新端点但无 /openai 段 (兼容两种写法)"),
+            // ── 非 opencode: 保持既有行为 (协议段就是 /models 的前缀) ──
+            ("https://api.deepseek.com/v1/chat/completions",
+             "https://api.deepseek.com/v1/models", "DeepSeek"),
+            ("https://api.minimaxi.io/anthropic/v1/messages",
+             "https://api.minimaxi.io/anthropic/v1/models", "MiniMax"),
+            ("https://api.openai.com/v1/responses",
+             "https://api.openai.com/v1/models", "OpenAI Responses"),
+            ("https://api.xxx.com/v1",
+             "https://api.xxx.com/v1/models", "裸 base URL"),
+            ("https://api.xxx.com/v1/",
+             "https://api.xxx.com/v1/models", "裸 base URL 带尾斜杠"),
+        ];
+        for (ep, want, why) in cases {
+            let got = derive_models_url(ep);
+            assert_eq!(got, want, "端点推导错误: {why} ({ep})");
+        }
+        // 负例: opencode 的推导结果绝不含协议段
+        let bad = derive_models_url("https://opencode.ai/inference/go/openai/v1/chat/completions");
+        assert!(!bad.contains("/openai"), "推导结果不该含协议段 /openai: {bad}");
+        let bad = derive_models_url("https://opencode.ai/inference/anthropic/v1/messages");
+        assert!(!bad.contains("/anthropic"), "推导结果不该含协议段 /anthropic: {bad}");
+    }
 
     #[test]
     fn is_free_detects_flag_and_name() {

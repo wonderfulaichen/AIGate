@@ -1,5 +1,10 @@
 # 交接文档 — AIGate
 
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-21 轮 ⑧」**：opencode 迁移端点路径，
+> 「拉取模型」对 go 新端点必然 404 —— 已修 `derive_models_url()` 三层推导唯一来源 + 单测/改坏/端到端三层验证）。
+> **待用户决定**：仓库 `providers.json` / `main.rs` 默认配置里 opencode 端点仍是旧 `/zen/*` 形态
+> （实测仍 200，不构成故障；部署实例已改新端点）。
+>
 > 最后更新 **2026-10-15**（三轮连做，细节都在 §8：
 > ① **10-15 网关去程阶段计时 + 链路拓扑**（方案 F 第三阶段）—— 回答"慢是网关照成的还是上游造成的"：
 > 五段互不重叠（路由/鉴权 → 护栏 → 协议转换 → 其他网关工作 → 上游首字节），记录详情出瀑布、
@@ -168,12 +173,23 @@
 
 > 🔎 **接手先看这里（2026-10-15 更新，数字均为当轮实测）**
 >
-> **状态**：版本 **0.7.2**，`cargo test --release` **382 绿**，`cargo build` 零警告，门禁全过
+> **状态**：版本 **0.7.2**，`cargo test --bin AIGate` **392 绿**，`cargo build --release` 零警告，
+> `cargo clippy` 77 条**基线债未新增**（我的区域零警告），门禁全过
 > （parts 38 件 / i18n **793 键** / balance / test_brands 47 / fmt_rules / pages / 主题三道 /
 > **verify_logo 五部分**）。
 > 构建份哈希见 §3.3（**每次构建都会变，引用前重新测**）。
 >
-> 🆕 **10-19 轮（最新，见 §8）**：**修设置页三类前端 bug**（用户「有一些 bug 还没修」）。
+> 🆕 **10-21 轮（最新，见 §8 轮 ⑧）**：**修「拉取模型」对 opencode go 新端点必然 404**。
+> 上游 opencode 迁移了端点路径（go → `/inference/go/openai/v1/chat/completions`），
+> 而我们的 `/models` URL 推导只换末段 → 推出 `/inference/go/openai/v1/models` → **404**。
+> 实测：**opencode 的模型端点与协议段无关**，永远是 `<基址>/v1/models`。
+> 修法 = 新增 `derive_models_url()` 作**三处推导的唯一来源**（拉取模型 / 启动探测 / 面板测试），
+> 按 host 含 `opencode.ai` 剥掉协议段，兼容新 `/inference[/go]` 与旧 `/zen[/go]` 两套基址。
+> 验证三层：单测 12 组端点 + 改坏验证（**两次假通过后才真转红**）+ 端到端接线拉通。392 项全绿。
+> ⚠️ **待用户决定**：仓库 `providers.json` / `main.rs` 默认配置的 opencode 端点仍是旧 `/zen/*`
+> （实测仍 200，不构成故障；部署实例已改新端点）—— 是否同步见 §8 轮 ⑧。
+>
+> 🆕 **10-19 轮（见 §8）**：**修设置页三类前端 bug**（用户「有一些 bug 还没修」）。
 > ① **数字输入框清空 → 静默关掉功能**（最严重）：8 处写的是 `parseInt(x)||0`，
 > `parseInt('')` 是 NaN → `||0` → **0** == 把功能关掉，且**零提示**（实测 `turns` 20→0）。
 > 已改为"空值/非法值不提交 + 回填旧值 + toast"，越界夹取。
@@ -637,6 +653,19 @@ python tools/shoot_deck.py 2             # 演示文稿第 3 页
 | `buddycred.py` | 公共 helper：`load_buddy_cred()` → buddy 真实凭据两级来源（`data/accounts.json` 优先，`%TEMP%\cb_plain.json` 兜底） |
 | `probe_auth_header.py` | **声明式鉴权头 8 断言**（判据 = mock 上游**实收头**）：默认 Bearer 不变 / `x-api-key` 裸值且不发 Authorization / 自定义前缀 / 拉取模型跟随声明 / 空 key 不挂头。牙齿 = 构造器忽略声明即红 4 条 |
 | `probe_stage_report.py` | **「哪个环节」14 断言**（判据 = 结论的**环节归因**）：密钥错→upstream 且真用了真钥匙 / 无密钥→key 且不发请求 / 连不上→connect / CF 1010 与挑战页→edge 且明说"不是模型权限" / 应用层 403→upstream 不误报边缘 / 429→可达 / 200→正常 / 转发路径文案也带环节。牙齿 = 摘掉边缘追加逻辑即红 |
+
+**10-21 新增（opencode 端点迁移轮，§8 轮 ⑧）**：
+
+| 脚本 | 用途 |
+|---|---|
+| `probe_opencode_models_url.py live` | 打**真实** opencode.ai 逐个 URL 固化端点形态（正确形态 200 / 含 `/openai` 404）。**自带哨兵**：全站返 403（限流/WAF）时判「本轮不可判别」并跳过，不产出假 200/404 结论 |
+| `probe_opencode_models_url.py rust` | 把 `derive_models_url` 的 12 组端点单测跑一遍；测试不在源码中时**临时插入 + finally 逐字节还原**（判据：还原后与改动前完全相同） |
+| `probe_go_models_url_e2e.py` | 隔离实例 + mock 上游的**接线**拉通：面板接口 → `fetch_models_from_upstream` → 解析合并，mock 返 4 个就必须拿到 4 个（`added=4`、`success=true`）。**注意**：隔离实例必须**复制 exe** 到隔离目录（`main.rs:636` 会 `set_current_dir(exe_dir())`，只设 cwd 无效，会读到 `target/release/providers.json` 那份 provA/provB 残留） |
+
+⚠️ **这三者的覆盖边界**：`derive_models_url` 按 **host 含 `opencode.ai`** 判定，所以 mock 用
+`127.0.0.1` 时走**通用分支** —— 端到端脚本验证的是「接线没断」，**不是** opencode 特例；
+opencode 特例（剥掉协议段）由真实上游探针 + 单测覆盖。**刻意不用 hosts 伪装域名**：
+临时改系统 hosts 有真实风险（进程崩溃会让 `opencode.ai` 一直指向 127.0.0.1）。
 
 ### 4.4 演示文稿生成
 
@@ -1506,6 +1535,67 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-21 轮 ⑧：opencode 改了端点路径，「拉取模型」必然 404（已修 + 三层验证）
+
+**用户原话**：「我发现我改了 go 的链接后模型获取失败了。」
+
+**根因：URL 推导，不是网络/鉴权**。上游 opencode 迁移了端点：go 的正确形态是
+`https://opencode.ai/inference/go/openai/v1/chat/completions`（zen 是
+`/inference/openai/v1/chat/completions`）。而我们的 `/models` 推导是
+"把请求端点末段的 `/chat/completions` 换成 `/models`"，于是 go 被推成
+`/inference/go/openai/v1/models` → **404**。
+
+**实测取证**（`tools/probe_opencode_models_url.py` live 部分，逐个 URL 打真实上游）：
+
+| URL | 状态 |
+|---|---|
+| `/inference/go/v1/models`、`/inference/v1/models` | **200** |
+| `/zen/go/v1/models`、`/zen/v1/models`（旧路径仍兼容） | **200** |
+| `/inference/go/openai/v1/models`、`/zen/go/openai/v1/models` | **404** |
+| `/inference/anthropic/v1/models` | **404** |
+
+→ 结论：**opencode 的模型列表端点与协议段无关**，永远是 `<基址>/v1/models`；
+`/openai` 只存在于**请求**端点。这与 DeepSeek 等通用网关（`/v1/chat/completions` → `/v1/models`）不同。
+
+**修法**：新增 `derive_models_url()`（`src/providers.rs`）作**三处推导的唯一来源**，
+按 **host 含 `opencode.ai`** 判定（域名骗不了人，供应商名可随便起）→ 剥掉协议段
+(`/openai` `/anthropic` `/responses`) 只留 `<基址>/v1/models`，同时兼容新 `/inference[/go]`
+与旧 `/zen[/go]` 两套基址。三处调用点全部改用它：
+- `admin.rs` 面板「拉取模型」
+- `proxy.rs` 启动连通性探测 `precheck_provider`
+- `admin.rs` 面板供应商「测试」
+
+**为什么必须一次改三处**：旧推导在「测试」里也把 `/openai` 带进 URL。探测只看"有没有响应"
+（404 也算可达）所以不影响判据，但**三处口径不一致 = 同一供应商在不同功能里请求不同 URL**，是埋雷。
+
+**验证三层**：
+1. **单测** `derive_models_url_matches_upstream_shape`：12 组端点 —— opencode 新/旧 ×
+   go/zen/anthropic/responses + DeepSeek/MiniMax/OpenAI Responses/裸 base（证明**非 opencode 行为不变**），
+   并断言推导结果**不含**协议段。392 项全过。
+2. **改坏验证**（两次假通过，第三次才真转红）：
+   - 第一次 `false && let ...` → **编译失败**（不是判据转红）
+   - 第二次 `None::<usize>().or_else(|| ep.find(...))` → **语义完全等价，假通过**
+   - 第三次去掉 `.replace("/openai", "")` → 真转红，失败信息直指「go 新端点（用户当前配置，曾 404）」
+   - **教训（第三条纪律的新形态）**：`exit != 0` 不等于判据有牙齿（可能是编译错），
+     `exit == 0` 也不等于破坏生效（可能是破坏没改到行为）。
+3. **端到端**（`tools/probe_go_models_url_e2e.py`）：隔离实例 + mock 上游，证明
+   「面板接口 → `fetch_models_from_upstream` → 解析合并」整条接线通（mock 返 4 个 → `added=4`、`success=true`）。
+
+**已知探针边界（不是缺陷）**：`derive_models_url` 按 host 判定，所以 mock 用 `127.0.0.1` 时
+走**通用分支**（端到端验证的是接线，不是 opencode 特例）；opencode 特例由真实上游探针 + 单测覆盖。
+**刻意不用 hosts 伪装**：临时改系统 hosts 有真实风险（进程崩溃会让 `opencode.ai` 一直指向 127.0.0.1）。
+
+**顺带查出的两件事（未处理，留记录）**：
+- `providers.json` 与 `main.rs` 默认配置里 opencode 端点仍是旧 `/zen/*` 形态（实测仍 200，不构成故障）；
+  用户部署实例（`D:\...\AI中转\providers.json`）已改为新端点。**仓库配置是否同步，待用户决定。**
+- `target/release/providers.json` 是一份 `provA/provB` 测试残留（`ensure_default_configs` 在
+  exe 同目录自动播种的）。排查中一度以为是"隔离实例读错配置"，实为 `main.rs:636`
+  `set_current_dir(exe_dir())` 把 cwd 强制改成 exe 目录 —— **隔离实例必须复制 exe 到隔离目录**，
+  不能只设 cwd（这条已写进端到端脚本注释）。
+
+**未实测**：用户部署实例上「拉取模型」的真实结果（需要真实 key + 用户自行操作）。
+本机无 `OPENCODE_GO_KEY`，隔离实例报 "API key not set" 已按预期拦截，不外泄任何 key。
 
 ### 🆕 10-16 轮 ⑦：流程拓扑图（客户端 → 网关 → 供应商 → 模型）
 
