@@ -1177,6 +1177,26 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-21 轮：修 402 被上游 `server_error` 掩盖成「服务器内部错误」（用户报障）
+
+**用户报障**：`402 Payment Required: ... [server_error]: Upstream request failed: Insufficient account funds`
+—— "为什么我们软件中转后的 opencode GO 出 bug 了？"
+
+**取证**（5000 条日志实测）：`go` 供应商 402 共 **43 条**，`error.type` **43/43 全是 `server_error`**；
+报障时最近 20 条成功率 **0%**（正处于余额不足状态）。同供应商 2426 次成功 → 中转链路本身正常。
+
+**根因（我们的展示 bug）**：`format_error_line` 优先级是「error.type 中文 > 状态码中文」，
+上游把 402 的 type 标成 `server_error` → 被翻译成「服务器内部错误（供应商服务异常）」，
+**掩盖"余额不足"**。用户照这句话去查供应商服务异常，是白排查。
+
+**修法**：402 是 HTTP 里唯一专表"需要付费"的状态码，比上游自定义 type 更可信 →
+新增 `payment_status_expl()`，在 `format_error_line` 里**优先于 type 判断**。
+（与既有的 `FreeTierError` 同一思路：按可信度更高的信号优先，不盲信上游的 type。）
+
+> **规律（值得记）**：上游给的 `error.type` **不一定可信**——实测 `go` 网关把付费失败标成
+> `server_error`、把客户端来源限制标成 `FreeTierError`、把 11128 说成"渠道校验未通过"。
+> 凡是"type 与 HTTP 状态码语义冲突"的场景，都应按**状态码**解释（402/403/429/503 各有明确语义）。
+
 ### 🆕 10-19 轮：修设置页三类前端 bug（用户指出）
 
 **用户原话**：「设置页前端有一些 bug 还没修，你看看代码？」

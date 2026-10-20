@@ -13,6 +13,25 @@
 失效自动切换。另含两处修复：**循环检测误报**（会让编程工具里的任务中途停住，本次报障的根因）与
 **账号型供应商的登录弹窗**丢失一键登录按钮。
 
+### 修复 402 被上游 `server_error` 掩盖成「服务器内部错误」（用户报障）
+
+- **用户报障**：OpenCode GO 中转后报 `402 ... [server_error]: Upstream request failed: Insufficient account funds`。
+- **根因（我们的展示 bug，不是中转 bug）**：上游 OpenCode 的 `go` 网关在账户余额不足时返回
+  **HTTP 402**，但把 `error.type` 标成 `server_error`。而 `format_error_line` 的优先级是
+  「error.type 中文 > 状态码中文」，于是 `i18n::error_type("server_error")` 命中
+  「服务器内部错误（供应商服务异常）」——**掩盖了"余额不足"的真实语义**。
+  用户照这句话去查"供应商服务异常"是白排查，真相只是 account 没钱了。
+- **实测取证**（部署实例 5000 条日志）：`go` 供应商 402 共 **43 条**，`error.type` 分布
+  **43/43 全是 `server_error`**；最近 20 条成功率 0% —— 报障当时正处于"余额不足"状态。
+- **修法**：402 是 HTTP 语义里唯一专门表示"需要付费"的状态码，比上游自定义的 type 更可信。
+  新增 `payment_status_expl()`，在 `format_error_line` 里**优先于 type 优先级**判断，
+  与既有的 `FreeTierError` 同类问题同一思路：按可信度更高的信号优先，不盲信上游的 type。
+- **单测**：`test_format_upstream_error` 加 402 用例，钉死"必须出现需要付费/余额不足语义、
+  **不得**出现服务器内部错误、保留上游原文"。改坏验证：去掉 402 优先 → 测试转红。
+- **另外核实**：`Insufficient account funds` 不在我们的代码里（是上游原文），且日志里
+  `usage_estimated` 无关 —— 与我们的 token 记账、协议转换、KV 缓存均无关系，
+  纯属错误文案的语义映射问题。go 的 2426 次成功说明中转链路本身正常。
+
 ### 修复设置页三类前端 bug（用户指出「有一些 bug 还没修」）
 
 - **用户原话**：「设置页前端有一些 bug 还没修，你看看代码？」

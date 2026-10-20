@@ -6077,8 +6077,26 @@ fn format_error_chain(e: &dyn std::error::Error) -> String {
     msg
 }
 
-/// 构造单行格式化错误信息 (type 中文优先, 其次 code, 其次状态码中文).
+/// 支付类状态码 (402) 的说明 —— **优先于 error.type**。
+///
+/// 为什么必须优先 (2026-10-21 实测踩到): OpenCode 的 `go` 网关账户余额不足时返回 `402` + `error.type = "server_error"`(它把下游的付费失败一律标成 server_error)。
+/// 而 `format_error_line` 的优先级是「error.type 中文 > 状态码中文」, 于是真实语义「余额不足」被说成「服务器内部错误（供应商服务异常）」——
+/// 用户照着"供应商服务异常"的方向白排查 (实测报障即如此), 而真相只是 account 没钱了。
+///
+/// 类比: 这与 `FreeTierError` 是同一类问题 (上游给的 type 与真实原因不符), 已用同样的思路处理 —— 按**可信度更高**的信号 (HTTP 状态码) 优先, 而不是盲信 type。
+fn payment_status_expl(status: u16) -> Option<&'static str> {
+    if status != 402 {
+        return None;
+    }
+    Some(crate::i18n::http_status(402))
+}
+
+/// 构造单行格式化错误信息 (402 支付类优先, 其次 type 中文, 其次 code, 其次状态码中文).
 fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_expl: &str) -> String {
+    // ⚠️ 402 优先: 先判支付类状态码, 再走 type 优先级 (理由见 payment_status_expl 注释)。
+    if let Some(expl) = payment_status_expl(status) {
+        return format!("{status} {expl}: {msg}");
+    }
     if !err_type.is_empty() && !crate::i18n::error_type(err_type).is_empty() {
         format!("{status} {} [{err_type}]: {msg}", crate::i18n::error_type(err_type))
     } else if !code.is_empty() {
@@ -6091,6 +6109,8 @@ fn format_error_line(status: u16, msg: &str, err_type: &str, code: &str, status_
         format!("{status}: {msg}")
     }
 }
+
+/// 与 [`format_error_line`] 配套: 翻译上游 message 里的 "Upstream request failed: X" 前缀。
 
 /// 格式化上游错误信息: 解析 JSON 错误响应，添加中文说明.
 ///
@@ -7349,6 +7369,22 @@ mod tests {
         assert!(result.contains("401"));
         assert!(result.contains("认证失败"));
         assert!(result.contains("Invalid API key"));
+
+        // 测试 2b: 402 状态码优先于 error.type —— 上游 (OpenCode go) 把付费失败标成
+        // `server_error`, 若照 type 说会变成"服务器内部错误", 掩盖"余额不足"的真实语义。
+        // 判据: 必须出现"402"与"需要付费/余额不足"语义, 且**不得**出现"服务器内部错误"。
+        let err_body = r#"{"error":{"message":"Upstream request failed: Insufficient account funds","type":"server_error"}}"#;
+        let result = format_upstream_error(402, err_body);
+        assert!(result.contains("402"), "应含状态码: {result}");
+        assert!(
+            result.contains("需要付费") || result.contains("余额不足") || result.contains("Payment required"),
+            "402 应解释为需要付费/余额不足, 实得: {result}"
+        );
+        assert!(
+            !result.contains("服务器内部错误"),
+            "402 不得被 server_error 掩盖成服务器内部错误: {result}"
+        );
+        assert!(result.contains("Insufficient account funds"), "应保留上游原文: {result}");
 
         // 测试 3: rate_limit_error - 应包含频率限制说明; 上游英文正文应被翻译为中文
         let err_body = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#;
