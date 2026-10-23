@@ -118,6 +118,64 @@ impl StageTimings {
 
 }
 
+/// 一次**上游尝试**的简要记录 (2026-10-21, 借鉴 WaLiAPI 的 attempt 明细).
+///
+/// # 为什么需要
+/// 重试此前只在 `aigate.log` 里留 `warn!` 行, 面板记录的永远是**最终那一次**结果。
+/// 于是"这次 8 秒是谁的锅"无法回答: 可能是第 1 次 500ms 就失败、第 2 次 7.5s 才通,
+/// 也可能是单次就慢 —— 两种情形在面板上长得一模一样。
+///
+/// # 体积纪律 (必须守)
+/// `logs.jsonl` 的滚动阈值只有 2MB / 5000 行 (`store::ROTATE_BYTES`), 每次尝试都记
+/// 详细内容会让滚动显著加快、历史窗口变短。故:
+/// · 每次尝试只存**状态码 + 结果分类 + 耗时**, 不存请求/响应体片段;
+/// · 条数在写入侧夹到 [`MAX_ATTEMPTS_KEPT`];
+/// · 典型"一次成功"只有 **1 条**(那次真实发出的请求, 约 60-80 字节) ——
+///   它回答的是"这条记录到底有没有真的打上游", 因此**不省略**;
+///   缓存回放的记录为 **0 条**(压根没打上游), 两者可据此区分。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AttemptBrief {
+    /// 第几次尝试 (从 1 开始).
+    pub seq: u32,
+    /// 上游 HTTP 状态码; `None` = 没拿到响应 (连接失败/超时).
+    #[serde(default)]
+    pub status: Option<u16>,
+    /// 结果分类, 取值见 [`AttemptOutcome`] 的 `as_str`.
+    pub outcome: String,
+    /// 本次尝试耗时 (毫秒).
+    pub ms: u64,
+    /// 失败原因摘要 (已归一化, 不含上游响应体原文).
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// 尝试结果分类. 与 `outcome.as_str()` 的字符串一一对应。
+pub enum AttemptOutcome {
+    /// 拿到 2xx.
+    Ok,
+    /// 拿到 4xx/5xx (上游明确回了状态码).
+    HttpError,
+    /// 连接层失败 / 超时 (没有状态码).
+    TransportError,
+}
+
+impl AttemptOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AttemptOutcome::Ok => "ok",
+            AttemptOutcome::HttpError => "http_error",
+            AttemptOutcome::TransportError => "transport_error",
+        }
+    }
+}
+
+/// 单条请求最多保留几次尝试明细。
+///
+/// 8 的依据: 默认 `RETRY_MAX=1` (共 2 次) + 多账号换号通常不超过 2-3 轮, 8 已覆盖
+/// 真实排障需要的"看前几次怎么失败的"; 再多属于病态重试, 记前 8 次 + 在详情里
+/// 用实际总数说明即可, 不必为极端情况撑大日志。
+pub const MAX_ATTEMPTS_KEPT: usize = 8;
+
 /// 单条请求日志.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RequestLog {
@@ -129,6 +187,42 @@ pub struct RequestLog {
     pub latency_ms: u64,
     pub body_len: usize,
     pub error: Option<String>,
+    /// **调用来源名** (2026-10-21, 借鉴 WaLiAPI 的 client_name)。
+    ///
+    /// 用户报障「我明明没调用这个供应商的模型，结果却突然显示有调用」时, 面板只能给出
+    /// 「某供应商某模型有 N 条记录」, 回答不了"是谁发的" —— 本字段补的就是这个。
+    ///
+    /// ⚠️ **这是推断, 不是身份**: 由 `x-aigate-client` 显式头或 User-Agent 特征得出,
+    /// 两者都能被调用方任意伪造。故它只用于展示与归因, **不参与**路由/鉴权/计费。
+    /// `None` = 客户端没给可识别信息 (前端显示 `—`, 不硬造"未知客户端")。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    /// **本地关联键** (`req_<...>`): 本次请求在网关侧的稳定标识。
+    ///
+    /// 客户端带了合法 `X-Request-Id` 就沿用它 (便于与客户端日志对上), 否则网关自生成;
+    /// 两种情况下这一条记录的详情与响应头**回显的是同一个值**, 用户拿报错去核对时
+    /// 双方指向同一次调用。非法值 (含 CRLF/非 ASCII) 一律丢弃并重新生成 —— 见
+    /// [`crate::client_id::sanitize_request_id`]。
+    #[serde(default)]
+    pub trace_id: String,
+    /// **上游自己的请求号** (若上游在响应头里给了)。
+    ///
+    /// 与 [`Self::trace_id`] 配对使用: 前者是"我们这边的号", 后者是"上游那边的号"。
+    /// 用户在面板看到一条失败记录后, 可以拿这个号去上游工单/后台对账 —— 此前
+    /// 只有网关自造的号, 上游侧根本查不到。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_request_id: Option<String>,
+    /// **逐次上游尝试明细** (2026-10-21)。`len()` = 真实发往上游的次数。
+    ///
+    /// 判据 (别读反):
+    /// · **1 条** = 一次成功 (典型情况), 那 1 条就是真实发出的请求;
+    /// · **N 条** = 重试过 N 次, 前 N-1 条是失败, 最后一条是最终结果;
+    /// · **0 条** = 压根没打上游 —— 目前只有缓存回放与极早失败路径 (未采集)。
+    ///
+    /// 所以"空数组"不是"重试了 0 次", 而是"没发过上游请求"。前端据此区分
+    /// 「真实调用」与「缓存回放」。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempts: Vec<AttemptBrief>,
     /// 输入 token 数 (从上游响应 usage 中提取).
     #[serde(default)]
     pub prompt_tokens: u32,
@@ -295,6 +389,38 @@ pub struct RequestLog {
     /// `0` = 未采集。
     #[serde(default)]
     pub req_bytes_orig: usize,
+}
+
+/// 请求来源上下文 (2026-10-21): 入口一次性采集, 之后所有记录点共用。
+///
+/// # 为什么打包成结构体而不是继续加参数
+/// `record_request_with_tokens_status` 已有 25 个参数。再加三个来源字段会让调用点
+/// 更难读、更容易错位 (本项目多次因参数位置错位踩坑)。打包后:
+/// · 调用点只多一个实参, 语义自明 (`origin`);
+/// · 旧的"一次成功/未采集"场景统一传 `Default::default()`, 字段全空, 前端显示 `—`。
+#[derive(Debug, Clone, Default)]
+pub struct RequestOrigin {
+    /// 调用来源名 (推断; 见 [`RequestLog::client_name`]).
+    pub client_name: Option<String>,
+    /// 本地关联键; 空 = 未采集 (旧调用点/单测).
+    pub trace_id: String,
+    /// 上游自己的请求号; `None` = 上游没给或未采集.
+    pub upstream_request_id: Option<String>,
+    /// 逐次尝试明细; 空 = 没发出过上游请求 (缓存回放/极早失败), 不是"重试 0 次".
+    pub attempts: Vec<AttemptBrief>,
+}
+
+impl RequestOrigin {
+    /// 写入前把尝试明细夹到 [`MAX_ATTEMPTS_KEPT`], 守住日志体积。
+    ///
+    /// 为什么在**写入侧**夹而不是在采集侧: 采集侧不知道会不会被落盘 (有测试路径),
+    /// 而体积是落盘才产生的成本 —— 约束就放在真正产生成本的地方。
+    pub fn capped(mut self) -> Self {
+        if self.attempts.len() > MAX_ATTEMPTS_KEPT {
+            self.attempts.truncate(MAX_ATTEMPTS_KEPT);
+        }
+        self
+    }
 }
 
 #[inline]
@@ -706,6 +832,11 @@ pub fn now_ts() -> u64 {
 }
 
 /// 记录一次请求结果到日志缓冲区 (供 proxy.rs 调用).
+///
+/// `origin`: 请求来源上下文 (来源名/关联键/尝试明细)。
+/// 传 `Default::default()` = 未采集 (旧调用点、单测、极早失败路径) —— 字段全空,
+/// 前端显示 `—`, **不是**"客户端是 None 类型"这种假值。
+#[allow(clippy::too_many_arguments)]
 pub async fn record_request(
     log_buffer: &LogBuffer,
     model: &str,
@@ -716,7 +847,9 @@ pub async fn record_request(
     start: Instant,
     body_len: usize,
     error: Option<String>,
+    origin: RequestOrigin,
 ) {
+    let origin = origin.capped();
     let log = RequestLog {
         timestamp: now_ts(),
         model: model.to_string(),
@@ -726,6 +859,10 @@ pub async fn record_request(
         latency_ms: start.elapsed().as_millis() as u64,
         body_len,
         error,
+        client_name: origin.client_name,
+        trace_id: origin.trace_id,
+        upstream_request_id: origin.upstream_request_id,
+        attempts: origin.attempts,
         prompt_tokens: 0,
         completion_tokens: 0,
         reasoning_tokens: 0,
@@ -799,6 +936,8 @@ pub async fn record_request_with_tokens(
     // 实际发往上游的请求体字节 / 客户端原始字节 (见 [`RequestLog::req_bytes`]).
     req_bytes: usize,
     req_bytes_orig: usize,
+    // 请求来源上下文 (来源名/关联键/尝试明细); `Default::default()` = 未采集.
+    origin: RequestOrigin,
 ) {
     record_request_with_tokens_status(
         log_buffer,
@@ -829,6 +968,7 @@ pub async fn record_request_with_tokens(
         session,
         req_bytes,
         req_bytes_orig,
+        origin,
     )
     .await;
 }
@@ -873,9 +1013,12 @@ pub async fn record_request_with_tokens_status(
     req_bytes: usize,
     // 客户端原始请求体字节 (剥离/裁剪之前). 0 = 未采集.
     req_bytes_orig: usize,
+    // 请求来源上下文 (来源名/关联键/尝试明细); `Default::default()` = 未采集.
+    origin: RequestOrigin,
 ) {
     let audit_is_observed = audit.is_some();
     let audit = audit.unwrap_or_default();
+    let origin = origin.capped();
     let log = RequestLog {
         timestamp: now_ts(),
         model: model.to_string(),
@@ -885,6 +1028,10 @@ pub async fn record_request_with_tokens_status(
         latency_ms: start.elapsed().as_millis() as u64,
         body_len: response_body_len,
         error,
+        client_name: origin.client_name,
+        trace_id: origin.trace_id,
+        upstream_request_id: origin.upstream_request_id,
+        attempts: origin.attempts,
         prompt_tokens,
         completion_tokens,
         reasoning_tokens,
@@ -2380,6 +2527,11 @@ pub async fn api_mock(
             latency_ms: rng.gen_range(300, 6000),
             body_len: rng.gen_range(50, 2000) as usize,
             error: None,
+            // 演示数据不含来源与关联键 (与"未采集"同形, 面板显示 —).
+            client_name: None,
+            trace_id: String::new(),
+            upstream_request_id: None,
+            attempts: Vec::new(),
             prompt_tokens: rng.gen_range(50, 500) as u32,
             completion_tokens: rng.gen_range(100, 2000) as u32,
             // 演示数据: 让思考占约 1/3, 面板上能看出「吐字速度」已剔除它.
@@ -2428,6 +2580,11 @@ pub async fn api_mock(
             latency_ms: rng.gen_range(100, 3000),
             body_len: rng.gen_range(50, 2000) as usize,
             error: Some(err_msgs[i % err_msgs.len()].to_string()),
+            // 演示数据不含来源与关联键 (与"未采集"同形, 面板显示 —).
+            client_name: None,
+            trace_id: String::new(),
+            upstream_request_id: None,
+            attempts: Vec::new(),
             prompt_tokens: 0,
             completion_tokens: 0,
             reasoning_tokens: 0,
@@ -2692,6 +2849,8 @@ mod changelog_tests {
         let mk = |status: u16, err: Option<&str>, out_tok: u32| RequestLog {
             timestamp: 0, model: "m".into(), provider: "p".into(), endpoint: "e".into(),
             status, latency_ms: 0, body_len: 0, error: err.map(|s| s.to_string()),
+            client_name: None, trace_id: String::new(), upstream_request_id: None,
+            attempts: Vec::new(),
             prompt_tokens: 0, completion_tokens: out_tok, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
@@ -6439,6 +6598,8 @@ mod tests {
             latency_ms: 10,
             body_len: 100,
             error: None,
+            client_name: None, trace_id: String::new(), upstream_request_id: None,
+            attempts: Vec::new(),
             prompt_tokens: 100,
             completion_tokens: 50,
             // mk() 是通用夹具: 默认无思考. 需要思考样本用 mk_ttft_rt().

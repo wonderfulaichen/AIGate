@@ -60,6 +60,7 @@ mod recall;
 mod events;
 mod notify;
 mod traces;
+mod client_id;
 mod guard;
 mod provider_catalog;
 mod presets;

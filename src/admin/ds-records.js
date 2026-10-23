@@ -116,6 +116,38 @@
         { k: 'ttfb', label: t('gw_ttfb'), v: num(s.upstream_ttfb_ms), color: 'var(--warn-fg)' },
       ];
     },
+    // ── 上游尝试明细 (2026-10-21) ──
+    // 回答"这条请求到底打了几次上游、每次结果如何"。此前重试只留在 aigate.log 里,
+    // 面板永远只显示最终那一次 —— "这次 8 秒是谁的锅"无法回答。
+    //
+    // 判据 (别读反):
+    //   · hasAttemptRetry = 有 **多于 1** 条 = 真的重试过 → 才展示时间线;
+    //   · 1 条 = 一次成功, 列表行已有的"耗时/状态"足以表达, 不再占位;
+    //   · 0 条 = 压根没打上游 (缓存回放) —— 用 attemptsNote 明说, 不含糊。
+    hasAttemptRetry(log) {
+      const a = (log && log.attempts) || [];
+      return a.length > 1;
+    },
+    // 无尝试记录时的说明: 区分"缓存回放(确实没打上游)"与"未采集(旧记录)"。
+    // 口径红线: 未采集 ≠ 0 次, 不许把两者写成同一句话。
+    attemptsNote(log) {
+      const a = (log && log.attempts) || [];
+      if (a.length > 1) return '';
+      if (!a.length) return log && log.cached ? t('attempt_cached') : t('attempt_uncollected');
+      return '';
+    },
+    attemptOutcomeText(a) {
+      const k = a && a.outcome;
+      const map = { ok: 'attempt_ok', http_error: 'attempt_http_error', transport_error: 'attempt_transport' };
+      return map[k] ? t(map[k]) : (k || '—');
+    },
+    // 尝试行的颜色: 成功绿 / 4xx-5xx 黄 / 传输失败红。
+    attemptColor(a) {
+      const k = a && a.outcome;
+      if (k === 'ok') return 'var(--ok)';
+      if (k === 'transport_error') return 'var(--err)';
+      return 'var(--warn)';
+    },
     hasGatewayData(log) { return this._gwSegs(log).some(s => s.v != null); },
     gwBarHtml(log) {
       const segs = this._gwSegs(log).filter(s => s.v != null && s.v > 0);

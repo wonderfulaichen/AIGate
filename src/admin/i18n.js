@@ -90,6 +90,18 @@ const I18N = {
     // 措辞纪律: 缺字段 = **未采集** → 显示「—」, 不得猜成"正常结束"
     // (那等于把正待排查的停止洗白成正常, 用户就再也查不出来了).
     'detail.end_reason': '结束方式',
+    // 请求来源与关联键 (2026-10-21): 回答"这条请求是谁发的、能否拿去和上游对账"。
+    'detail.client_name': '调用来源',
+    'detail.trace_id': '关联键',
+    'detail.trace_id_hint': '本次请求在网关侧的标识；客户端带了合法的 X-Request-Id 就沿用，否则由网关生成。凭它可以把面板记录、客户端日志与上游对账串起来。',
+    'detail.upstream_rid': '上游请求号',
+    'detail.upstream_rid_hint': '上游自己返回的请求标识（若有），可拿去供应商后台查这一笔。',
+    'attempts_title': '上游尝试',
+    'attempt_ok': '成功',
+    'attempt_http_error': '上游返回错误',
+    'attempt_transport': '连接失败',
+    'attempt_cached': '未请求上游（本地缓存回放）',
+    'attempt_uncollected': '未采集（旧记录或极早失败路径）',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
     'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
@@ -474,6 +486,19 @@ const I18N = {
     // Wording rule: a missing field means NOT COLLECTED, so it renders as an em dash —
     // never guess "finished normally" (that would launder an unexplained stop into a healthy one).
     'detail.end_reason': 'Ended by',
+    // Request origin & correlation (2026-10-21): answers "who sent this, and can I
+    // reconcile it against the upstream?" — keep wording equally factual in English.
+    'detail.client_name': 'Client',
+    'detail.trace_id': 'Request ID',
+    'detail.trace_id_hint': 'Gateway-side identifier for this request. A valid client-supplied X-Request-Id is reused; otherwise one is generated. Use it to tie the panel record, client logs and upstream together.',
+    'detail.upstream_rid': 'Upstream request ID',
+    'detail.upstream_rid_hint': 'Identifier returned by the upstream, if any. Use it to look up this call in the provider console.',
+    'attempts_title': 'Upstream attempts',
+    'attempt_ok': 'Succeeded',
+    'attempt_http_error': 'Upstream error',
+    'attempt_transport': 'Connection failed',
+    'attempt_cached': 'No upstream call (local cache replay)',
+    'attempt_uncollected': 'Not collected (older record or early failure)',
     'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',

@@ -417,6 +417,14 @@ pub async fn chat_completions(
 ) -> Result<Response, Response> {
     let start = std::time::Instant::now();
 
+    // ── 请求来源与关联键 (2026-10-21) ──
+    // 在**最前面**采集, 之后所有记录点共用同一份:
+    // 用户报「没调用却出现调用」时, 靠这两项才能回答"是谁发的、能不能和上游对账"。
+    // client_name 是推断 (UA 可伪造), 只用于展示与归因; trace_id 已过 sanitize,
+    // 回显到响应头也安全 (见 crate::client_id 模块文档)。
+    let client_name = crate::client_id::detect_client_name(&headers);
+    let trace_id = crate::client_id::resolve_request_id(&headers);
+
     // 1. 读取请求 body
     let (_, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, usize::MAX).await {
@@ -424,6 +432,7 @@ pub async fn chat_completions(
         Err(e) => {
             crate::admin::record_request(
                 &state.log_buffer, "-", "-", "-", None, 400, start, 0, Some(e.to_string()),
+                origin_pair(&client_name, &trace_id),
             ).await;
             return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
         }
@@ -447,6 +456,7 @@ pub async fn chat_completions(
                 start,
                 bytes.len(),
                 Some("请求体非法: 无法解析 model 字段 (非合法 JSON 或缺 model)".to_string()),
+                origin_pair(&client_name, &trace_id),
             )
             .await;
             return Err(error_response(StatusCode::BAD_REQUEST, "missing or invalid model field"));
@@ -459,6 +469,7 @@ pub async fn chat_completions(
         None => {
             crate::admin::record_request(
                 &state.log_buffer, &model, "-", "-", None, 404, start, bytes.len(), None,
+                origin_pair(&client_name, &trace_id),
             ).await;
             return Err(error_response(
                 StatusCode::NOT_FOUND,
@@ -528,6 +539,7 @@ pub async fn chat_completions(
         crate::admin::record_request(
             &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start, bytes.len(),
             Some("circuit breaker open".to_string()),
+            origin_pair(&client_name, &trace_id),
         ).await;
         return Err(circuit_open_response(&state, &provider_name));
     }
@@ -543,6 +555,7 @@ pub async fn chat_completions(
         Err(e) => {
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.clone()),
+                origin_pair(&client_name, &trace_id),
             ).await;
             return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e));
         }
@@ -604,6 +617,7 @@ pub async fn chat_completions(
                         &state.log_buffer, &model, &provider_name, &endpoint,
                         model_cfg.upstream_model.as_deref(), 400, start, bytes.len(),
                         Some(reason.clone()),
+                        origin_pair(&client_name, &trace_id),
                     ).await;
                     warn!("proxy: privacy guard blocked request (model={model}, provider={provider_name}): {reason}");
                     return Err(error_response(StatusCode::BAD_REQUEST, &reason));
@@ -663,6 +677,7 @@ pub async fn chat_completions(
                     Err(e) => {
                         crate::admin::record_request(
                             &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.to_string()),
+                            origin_pair(&client_name, &trace_id),
                         ).await;
                         return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
                     }
@@ -671,6 +686,7 @@ pub async fn chat_completions(
             Err(e) => {
                 crate::admin::record_request(
                     &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 400, start, bytes.len(), Some(e.to_string()),
+                    origin_pair(&client_name, &trace_id),
                 ).await;
                 return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
             }
@@ -735,6 +751,7 @@ pub async fn chat_completions(
                     Err(e) => {
                         crate::admin::record_request(
                             &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 500, start, bytes.len(), Some(e.to_string()),
+                            origin_pair(&client_name, &trace_id),
                         ).await;
                         return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
                     }
@@ -743,6 +760,7 @@ pub async fn chat_completions(
             Err(e) => {
                 crate::admin::record_request(
                     &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 400, start, bytes.len(), Some(e.to_string()),
+                    origin_pair(&client_name, &trace_id),
                 ).await;
                 return Err(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
             }
@@ -810,6 +828,7 @@ pub async fn chat_completions(
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
                 413, start, bytes.len(), Some(msg.clone()),
+                origin_pair(&client_name, &trace_id),
             ).await;
             return Err(error_response(StatusCode::PAYLOAD_TOO_LARGE, &msg));
         }
@@ -855,6 +874,7 @@ pub async fn chat_completions(
                         &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
                         start, strip_saved_tokens, trim_saved_tokens,
                         session_ref.clone(),
+                        origin_pair(&client_name, &trace_id),
                     ).await {
                         return Ok(resp);
                     }
@@ -879,6 +899,7 @@ pub async fn chat_completions(
             &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(),
             start, strip_saved_tokens, trim_saved_tokens,
             session_ref.clone(),
+            origin_pair(&client_name, &trace_id),
         ).await {
             return Ok(resp);
         }
@@ -944,6 +965,10 @@ pub async fn chat_completions(
     // upstream_ttfb = 最后一次尝试的"发出 → 收到响应头"(上游首字节)。
     let mut first_send_at: Option<std::time::Instant> = None;
     let mut upstream_ttfb_ms: Option<u64> = None;
+    // ── 逐次尝试明细 (2026-10-21) ──
+    // 只记"已经结束的尝试"。最后一次(成功/终态)在循环外补记, 因为它的耗时口径
+    // 与中间失败次数不同 (见下方 push_attempt)。
+    let mut attempt_log: Vec<crate::admin::AttemptBrief> = Vec::new();
     loop {
         attempt += 1;
         // 每次重试前复检熔断状态. 必须用**非消费式**的 breaker_allows_retry: 入口已认领
@@ -954,6 +979,12 @@ pub async fn chat_completions(
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint, model_cfg.upstream_model.as_deref(), 503, start,
                 body_len_val, Some("circuit breaker open".to_string()),
+                crate::admin::RequestOrigin {
+                    client_name: client_name.clone(),
+                    trace_id: trace_id.clone(),
+                    upstream_request_id: None,
+                    attempts: attempt_log.clone(),
+                },
             ).await;
             return Err(circuit_open_response(&state, &provider_name));
         }
@@ -1003,6 +1034,14 @@ pub async fn chat_completions(
                     // 5xx 可重试 (服务端瞬态故障); 不重试 4xx (含 429).
                     if attempt < total_attempts {
                         warn!("proxy: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
+                        // 记下这次失败的尝试 (仅状态码+耗时, 不存响应体 —— 体积纪律).
+                        attempt_log.push(crate::admin::AttemptBrief {
+                            seq: attempt,
+                            status: Some(status),
+                            outcome: crate::admin::AttemptOutcome::HttpError.as_str().to_string(),
+                            ms: attempt_start.elapsed().as_millis() as u64,
+                            error: Some(format!("upstream {status}")),
+                        });
                         retry_backoff(attempt, backoff_base).await;
                         continue;
                     }
@@ -1023,6 +1062,14 @@ pub async fn chat_completions(
                 let retryable = e.is_connect() || e.is_timeout() || e.is_request();
                 if retryable && attempt < total_attempts {
                     warn!("proxy: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
+                    attempt_log.push(crate::admin::AttemptBrief {
+                        seq: attempt,
+                        status: None,
+                        outcome: crate::admin::AttemptOutcome::TransportError.as_str().to_string(),
+                        ms: attempt_start.elapsed().as_millis() as u64,
+                        // 错误摘要已由 format_error_chain 归一化, 不含响应体原文.
+                        error: Some(chain.clone()),
+                    });
                     retry_backoff(attempt, backoff_base).await;
                     continue;
                 }
@@ -1054,8 +1101,22 @@ pub async fn chat_completions(
         let lb = state.log_buffer.clone();
         let s = start;
         let chain_clone = chain.clone();
+        // 最后一次尝试也是失败 (没拿到响应) —— 与中间失败同形, 一并记入明细.
+        attempt_log.push(crate::admin::AttemptBrief {
+            seq: attempt,
+            status: None,
+            outcome: crate::admin::AttemptOutcome::TransportError.as_str().to_string(),
+            ms: upstream_ttfb_ms.unwrap_or(0),
+            error: Some(chain.clone()),
+        });
+        let origin = crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: None,
+            attempts: attempt_log,
+        };
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &model2, &p2, &ep_clone, up2.as_deref(), 502, s, body_len_val, Some(chain_clone)).await;
+            crate::admin::record_request(&lb, &model2, &p2, &ep_clone, up2.as_deref(), 502, s, body_len_val, Some(chain_clone), origin).await;
         });
         return Err(error_response(StatusCode::BAD_GATEWAY, &format!("upstream error: {chain}")));
     }
@@ -1063,6 +1124,22 @@ pub async fn chat_completions(
     // 9. 检查 upstream 响应
     let upstream = upstream.expect("upstream response must be present after send loop");
     let upstream_status = upstream.status().as_u16();
+    // 上游自己的请求号 (若给) —— 与我们的 trace_id 配对, 用户可拿去上游对账.
+    let upstream_req_id = crate::client_id::upstream_request_id(upstream.headers());
+    // 最后一次尝试的明细 (成功或终态 4xx): 此时才能拿到上游请求号.
+    attempt_log.push(crate::admin::AttemptBrief {
+        seq: attempt,
+        status: Some(upstream_status),
+        outcome: if upstream_status < 400 {
+            crate::admin::AttemptOutcome::Ok
+        } else {
+            crate::admin::AttemptOutcome::HttpError
+        }
+        .as_str()
+        .to_string(),
+        ms: upstream_ttfb_ms.unwrap_or(0),
+        error: None,
+    });
 
     if upstream_status >= 400 {
         let err_body = upstream.text().await.unwrap_or_default();
@@ -1127,8 +1204,14 @@ pub async fn chat_completions(
         let up2 = model_cfg.upstream_model.clone();
         let ep2 = endpoint.clone();
         let lb = state.log_buffer.clone();
+        let origin = crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: upstream_req_id.clone(),
+            attempts: attempt_log.clone(),
+        };
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &model2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone)).await;
+            crate::admin::record_request(&lb, &model2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone), origin).await;
         });
         return Err(error_response(
             StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -1186,6 +1269,12 @@ pub async fn chat_completions(
                         session_ref.clone(),
                         body_len_val,
                         orig_body_len,
+                        crate::admin::RequestOrigin {
+                            client_name: client_name.clone(),
+                            trace_id: trace_id.clone(),
+                            upstream_request_id: upstream_req_id.clone(),
+                            attempts: attempt_log.clone(),
+                        },
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
                     let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
@@ -1200,6 +1289,7 @@ pub async fn chat_completions(
                     crate::admin::record_request(
                         &state.log_buffer, &model, &provider_name, &endpoint,
                         model_cfg.upstream_model.as_deref(), 502, start, 0, Some(msg.clone()),
+                        origin_pair(&client_name, &trace_id),
                     ).await;
                     return Err(error_response(StatusCode::BAD_GATEWAY, &msg));
                 }
@@ -1246,6 +1336,12 @@ pub async fn chat_completions(
                         session_ref.clone(),
                         body_len_val,
                         orig_body_len,
+                        crate::admin::RequestOrigin {
+                            client_name: client_name.clone(),
+                            trace_id: trace_id.clone(),
+                            upstream_request_id: upstream_req_id.clone(),
+                            attempts: attempt_log.clone(),
+                        },
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
                     let body_text = crate::guard::restore_redactions(&body_text, &guard_map).0;
@@ -1259,6 +1355,7 @@ pub async fn chat_completions(
                     crate::admin::record_request(
                         &state.log_buffer, &model, &provider_name, &endpoint,
                         model_cfg.upstream_model.as_deref(), 502, start, 0, Some(msg.clone()),
+                        origin_pair(&client_name, &trace_id),
                     ).await;
                     return Err(error_response(StatusCode::BAD_GATEWAY, &msg));
                 }
@@ -1308,6 +1405,13 @@ pub async fn chat_completions(
         session_ref,
         // 网关侧阶段 (2026-10-15): 流收尾记账时与模型侧阶段合并写入。
         gateway_stages,
+        // 请求来源与尝试明细 (2026-10-21): 流收尾 (含失败/断开) 时一并落账。
+        crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: upstream_req_id.clone(),
+            attempts: attempt_log,
+        },
     );
     Ok(resp)
 }
@@ -1380,6 +1484,12 @@ pub async fn messages_completions(
     req: Request<Body>,
 ) -> Result<Response, Response> {
     let start = std::time::Instant::now();
+    // 来源与关联键在入口采集一次 —— 同一请求的所有记录点必须共用同一个 trace_id,
+    // 否则用户拿报错去对账会发现"详情里的号"和"响应头里的号"不是同一个。
+    let origin = origin_pair(
+        &crate::client_id::detect_client_name(&headers),
+        &crate::client_id::resolve_request_id(&headers),
+    );
     let (_, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(b) => b,
@@ -1402,6 +1512,8 @@ pub async fn messages_completions(
             crate::admin::record_request(
                 &state.log_buffer, &model, "-", "-", None, 404, start, bytes.len(),
                 Some("unknown model".to_string()),
+                // 入口已采集 (见函数顶部 origin) —— 同一请求全程共用一个关联键.
+                origin.clone(),
             ).await;
             return Err(anthropic_error(
                 StatusCode::NOT_FOUND,
@@ -1455,6 +1567,11 @@ pub async fn responses_completions(
     req: Request<Body>,
 ) -> Result<Response, Response> {
     let start = std::time::Instant::now();
+    // 同 /v1/messages: 入口采集一次, 全流程共用 (见该函数顶部说明).
+    let origin = origin_pair(
+        &crate::client_id::detect_client_name(&headers),
+        &crate::client_id::resolve_request_id(&headers),
+    );
     let (_, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, usize::MAX).await {
         Ok(b) => b,
@@ -1480,6 +1597,8 @@ pub async fn responses_completions(
             crate::admin::record_request(
                 &state.log_buffer, &model, "-", "-", None, 404, start, bytes.len(),
                 Some("unknown model".to_string()),
+                // 入口已采集 (见函数顶部 origin).
+                origin.clone(),
             ).await;
             return Err(error_response(
                 StatusCode::NOT_FOUND,
@@ -1737,6 +1856,10 @@ async fn relay_native_passthrough(
     let session_ref = serde_json::from_slice::<serde_json::Value>(&body)
         .map(|parsed| crate::traces::classify_session(&headers, &parsed, &state.sessions))
         .unwrap_or_default();
+    // 请求来源与关联键: 直通路径独立采集 (本函数由 /v1/messages、/v1/responses 直接进入,
+    // 不经过 chat_completions; 漏这里会让整条直通链路的记录没有来源信息)。
+    let client_name = crate::client_id::detect_client_name(&headers);
+    let trace_id = crate::client_id::resolve_request_id(&headers);
     // 端点: 优先供应商独立协议端点, 否则改写 /chat/completions → /messages | /responses.
     let endpoint = proto.resolve_endpoint(&provider);
     let tag = proto.log_tag();
@@ -1748,6 +1871,7 @@ async fn relay_native_passthrough(
             &state.log_buffer, &model, &provider_name, &endpoint,
             model_cfg.upstream_model.as_deref(), 503, start, body.len(),
             Some("circuit breaker open".to_string()),
+            origin_pair(&client_name, &trace_id),
         ).await;
         return Err(proto.circuit_open_response(&state, &provider_name));
     }
@@ -1759,6 +1883,7 @@ async fn relay_native_passthrough(
             crate::admin::record_request(
                 &state.log_buffer, &model, &provider_name, &endpoint,
                 model_cfg.upstream_model.as_deref(), 500, start, body.len(), Some(e.clone()),
+                origin_pair(&client_name, &trace_id),
             ).await;
             return Err(proto.error_response(StatusCode::INTERNAL_SERVER_ERROR, &e));
         }
@@ -1834,6 +1959,7 @@ async fn relay_native_passthrough(
                             &state.log_buffer, &model, &provider_name, &endpoint,
                             model_cfg.upstream_model.as_deref(), 400, start, bytes.len(),
                             Some(reason.clone()),
+                            origin_pair(&client_name, &trace_id),
                         ).await;
                         warn!("{tag}: privacy guard blocked request (model={model}): {reason}");
                         return Err(proto.error_response(StatusCode::BAD_REQUEST, &reason));
@@ -1913,6 +2039,8 @@ async fn relay_native_passthrough(
     // 网关侧阶段计时 (2026-10-15): overhead/上游首字节。
     let mut first_send_at: Option<std::time::Instant> = None;
     let mut upstream_ttfb_ms: Option<u64> = None;
+    // 逐次尝试明细 (2026-10-21): 与 chat 路径同口径, 只记已结束的尝试。
+    let mut attempt_log: Vec<crate::admin::AttemptBrief> = Vec::new();
     loop {
         attempt += 1;
         // 非消费式复检 (入口已认领 HalfOpen 探测名额, 不能再调 check_breaker).
@@ -1921,6 +2049,12 @@ async fn relay_native_passthrough(
                 &state.log_buffer, &model, &provider_name, &endpoint,
                 model_cfg.upstream_model.as_deref(), 503, start, body_len_val,
                 Some("circuit breaker open".to_string()),
+                crate::admin::RequestOrigin {
+                    client_name: client_name.clone(),
+                    trace_id: trace_id.clone(),
+                    upstream_request_id: None,
+                    attempts: attempt_log.clone(),
+                },
             ).await;
             return Err(proto.circuit_open_response(&state, &provider_name));
         }
@@ -1966,6 +2100,13 @@ async fn relay_native_passthrough(
                 }
                 if status >= 500 && attempt < total_attempts {
                     warn!("{tag}: upstream {status} (attempt {attempt}/{total_attempts}), retrying");
+                    attempt_log.push(crate::admin::AttemptBrief {
+                        seq: attempt,
+                        status: Some(status),
+                        outcome: crate::admin::AttemptOutcome::HttpError.as_str().to_string(),
+                        ms: attempt_start.elapsed().as_millis() as u64,
+                        error: Some(format!("upstream {status}")),
+                    });
                     retry_backoff(attempt, backoff_base).await;
                     continue;
                 }
@@ -1978,6 +2119,13 @@ async fn relay_native_passthrough(
                 let retryable = e.is_connect() || e.is_timeout() || e.is_request();
                 if retryable && attempt < total_attempts {
                     warn!("{tag}: send() failed (attempt {attempt}/{total_attempts}): {chain}, retrying");
+                    attempt_log.push(crate::admin::AttemptBrief {
+                        seq: attempt,
+                        status: None,
+                        outcome: crate::admin::AttemptOutcome::TransportError.as_str().to_string(),
+                        ms: attempt_start.elapsed().as_millis() as u64,
+                        error: Some(chain.clone()),
+                    });
                     retry_backoff(attempt, backoff_base).await;
                     continue;
                 }
@@ -2006,14 +2154,42 @@ async fn relay_native_passthrough(
         let (m2, p2, ep2, up2) = (model.clone(), provider_name.clone(), endpoint.clone(), model_cfg.upstream_model.clone());
         let err_msg = format!("upstream error: {chain}");
         let chain_for_log = chain.clone();
+        attempt_log.push(crate::admin::AttemptBrief {
+            seq: attempt,
+            status: None,
+            outcome: crate::admin::AttemptOutcome::TransportError.as_str().to_string(),
+            ms: upstream_ttfb_ms.unwrap_or(0),
+            error: Some(chain.clone()),
+        });
+        let origin = crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: None,
+            attempts: attempt_log,
+        };
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), 502, start, body_len_val, Some(chain_for_log)).await;
+            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), 502, start, body_len_val, Some(chain_for_log), origin).await;
         });
         return Err(proto.error_response(StatusCode::BAD_GATEWAY, &err_msg));
     }
 
     let upstream = upstream.expect("upstream present after send loop");
     let upstream_status = upstream.status().as_u16();
+    // 上游请求号 + 最后一次尝试明细 (与 chat 路径同口径)。
+    let upstream_req_id = crate::client_id::upstream_request_id(upstream.headers());
+    attempt_log.push(crate::admin::AttemptBrief {
+        seq: attempt,
+        status: Some(upstream_status),
+        outcome: if upstream_status < 400 {
+            crate::admin::AttemptOutcome::Ok
+        } else {
+            crate::admin::AttemptOutcome::HttpError
+        }
+        .as_str()
+        .to_string(),
+        ms: upstream_ttfb_ms.unwrap_or(0),
+        error: None,
+    });
 
     if upstream_status >= 400 {
         let err_body = upstream.text().await.unwrap_or_default();
@@ -2028,8 +2204,14 @@ async fn relay_native_passthrough(
         let lb = state.log_buffer.clone();
         let (m2, p2, ep2, up2) = (model.clone(), provider_name.clone(), endpoint.clone(), model_cfg.upstream_model.clone());
         let err_clone = err_msg.clone();
+        let origin = crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: upstream_req_id.clone(),
+            attempts: attempt_log.clone(),
+        };
         tokio::spawn(async move {
-            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone)).await;
+            crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone), origin).await;
         });
         // 上游错误体保持本协议原样透传 (Anthropic {"type":"error",...} / Responses {"error":{...}}) 最保真.
         let code = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -2073,6 +2255,12 @@ async fn relay_native_passthrough(
             session_ref.clone(),
             bytes.len(),
             bytes.len(),
+            crate::admin::RequestOrigin {
+                client_name: client_name.clone(),
+                trace_id: trace_id.clone(),
+                upstream_request_id: upstream_req_id.clone(),
+                attempts: attempt_log.clone(),
+            },
         ).await;
         // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
         let text = crate::guard::restore_redactions(&text, &guard_map).0;
@@ -2098,6 +2286,12 @@ async fn relay_native_passthrough(
         gateway_stages,
         bytes.len(),
         bytes.len(),
+        crate::admin::RequestOrigin {
+            client_name: client_name.clone(),
+            trace_id: trace_id.clone(),
+            upstream_request_id: upstream_req_id.clone(),
+            attempts: attempt_log,
+        },
     );
     let mut resp = Response::builder()
         .status(status)
@@ -2212,6 +2406,8 @@ struct NativeTapStream {
     /// 网关侧阶段 (2026-10-15): route/guard/ttfb/overhead。直通路径**只有**这一段有值 ——
     /// 字节原样转发, 不解析模型阶段 (模型侧四段保持 None, 面板显示 "—")。
     gateway_stages: crate::admin::StageTimings,
+    /// 请求来源与尝试明细 (2026-10-21): 直通流式收尾时一并落账。
+    origin: crate::admin::RequestOrigin,
 }
 
 impl NativeTapStream {
@@ -2231,6 +2427,8 @@ impl NativeTapStream {
         gateway_stages: crate::admin::StageTimings,
         req_body_len: usize,
         req_body_len_orig: usize,
+        // 请求来源与尝试明细 (2026-10-21): 直通流式收尾时落账.
+        origin: crate::admin::RequestOrigin,
     ) -> Self
     where
         S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
@@ -2260,6 +2458,7 @@ impl NativeTapStream {
             session,
             guard_redactions,
             gateway_stages,
+            origin,
         }
     }
 
@@ -2357,8 +2556,10 @@ impl Stream for NativeTapStream {
                 let start = self.start;
                 let len = self.response_bytes;
                 self.logged = true;
+                // 流中途错误也要带来源 —— 否则"这条失败是谁发的"又成了盲区。
+                let origin = self.origin.clone();
                 tokio::spawn(async move {
-                    crate::admin::record_request(&lb, &m, &p, &ep, up.as_deref(), 502, start, len, Some(err_str)).await;
+                    crate::admin::record_request(&lb, &m, &p, &ep, up.as_deref(), 502, start, len, Some(err_str), origin).await;
                 });
                 Poll::Ready(Some(Err(std::io::Error::other(e))))
             }
@@ -2418,6 +2619,8 @@ impl Stream for NativeTapStream {
                     let stages = self.gateway_stages;
                     // 会话归属: 直通路径不断链 (入口已采集)。
                     let sess = self.session.clone();
+                    // 请求来源: 直通路径同样要带 (否则同一条链路里流式记录缺来源)。
+                    let origin = self.origin.clone();
                     tokio::spawn(async move {
                         crate::admin::record_request_with_tokens_status(
                             &lb, &m, &p, &ep, up.as_deref(), 200, start,
@@ -2429,6 +2632,7 @@ impl Stream for NativeTapStream {
                             sess,
                             req_bytes,
                             req_bytes_orig,
+                            origin,
                         ).await;
                     });
                 }
@@ -2883,6 +3087,8 @@ fn stream_response_with_tokens(
     // 网关侧阶段 (2026-10-15): handler 已采集的 route/guard/convert/ttfb/overhead,
     // 收尾记账时与流内采集的模型侧阶段合并 (见 TokenStream::stage_timings)。
     gateway_stages: crate::admin::StageTimings,
+    // 请求来源与尝试明细 (2026-10-21): 三条收尾路径 (正常结束/失败/Drop) 共用。
+    origin: crate::admin::RequestOrigin,
 ) -> Response {
     let status = StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::OK);
     let headers = upstream.headers().clone();
@@ -2987,6 +3193,7 @@ fn stream_response_with_tokens(
                 audit,
                 response_body_len: 0,
                 session,
+                origin,
             }),
     };
 
@@ -3025,6 +3232,9 @@ async fn try_replay_cache(
     strip_saved: u32,
     trim_saved: u32,
     session: crate::traces::SessionRef,
+    // 请求来源 (2026-10-21): 缓存回放同样要记"是谁发的" —— 否则同一份来源统计里
+    // 缓存命中的请求会全部缺失, 反而让"没有来源"看起来像异常。
+    origin: crate::admin::RequestOrigin,
 ) -> Option<Response> {
     let (cached, stored_usage) = state.cache.get(key)?;
     // 命中回放的 token 统计优先用缓存时回填的精确 usage; 无精确值时退回从缓存体解析.
@@ -3086,6 +3296,7 @@ async fn try_replay_cache(
         // 那是"不适用"而不是未采集 (该条另有 "缓存" 徽章可辨)。
         0,
         0,
+        origin,
     )
     .await;
     Some(serve_cached(&cached))
@@ -3113,6 +3324,8 @@ struct TokenLogData {
     audit: TokenAudit,
     /// 会话/轮次归属 (方案 F): 入口采集一次, 三条收尾路径 (结束/失败/Drop) 共用。
     session: crate::traces::SessionRef,
+    /// 请求来源与尝试明细 (2026-10-21): 同上, 三条收尾路径共用。
+    origin: crate::admin::RequestOrigin,
 }
 
 /// 装箱后的上游字节流错误: 生产为 IdleError<reqwest::Error>, 测试可注入任意 Error.
@@ -3817,6 +4030,7 @@ impl TokenStream {
         let stages = self.stage_timings(ld.start);
         // 会话归属从 ld 里取 (owned) —— 失败的那一跳也要挂在会话链上。
         let sess = ld.session.clone();
+        let origin = ld.origin.clone();
         tokio::spawn(async move {
             let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
@@ -3847,6 +4061,7 @@ impl TokenStream {
                 sess,
                 ld.req_body_len,
                 ld.req_body_len_orig,
+                origin,
             )
             .await;
         });
@@ -4277,6 +4492,7 @@ impl Stream for TokenStream {
                             let stages = this.stage_timings(ld.start);
                             // 会话归属从 ld 取 (owned) —— 正常收尾的那一跳也挂在会话链上。
                             let sess = ld.session.clone();
+                            let origin = ld.origin.clone();
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -4290,6 +4506,7 @@ impl Stream for TokenStream {
                                     sess,
                                     ld.req_body_len,
                                     ld.req_body_len_orig,
+                                    origin,
                                 ).await;
                             });
                         }
@@ -4443,6 +4660,7 @@ impl Drop for TokenStream {
         let stages = self.stage_timings(ld.start);
         // 会话归属 (方案 F): Drop 也要挂在会话链上 —— 客户端取消的那一跳同样是会话的一部分。
         let sess = ld.session.clone();
+        let origin = ld.origin.clone();
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -4456,6 +4674,7 @@ impl Drop for TokenStream {
                 sess,
                 ld.req_body_len,
                 ld.req_body_len_orig,
+                origin,
             ).await;
         });
     }
@@ -6024,6 +6243,23 @@ fn is_opencode_gateway(provider: &crate::providers::ProviderConfig) -> bool {
         }
     }
     false
+}
+
+/// 构造不带上游请求号的来源上下文 (早期失败路径用: 那时还没发出请求)。
+///
+/// 为什么单独一个 helper: 20 多处调用点若各自手写 `RequestOrigin { .. }`,
+/// 字段名一改就要全改, 且容易漏字段。这里只暴露"入口已采集的两项", 其余保持空 ——
+/// 空即"未采集", 前端显示 `—`, 不是假值。
+fn origin_pair(
+    client_name: &Option<String>,
+    trace_id: &str,
+) -> crate::admin::RequestOrigin {
+    crate::admin::RequestOrigin {
+        client_name: client_name.clone(),
+        trace_id: trace_id.to_string(),
+        upstream_request_id: None,
+        attempts: Vec::new(),
+    }
 }
 
 /// 构造 JSON 错误响应 (OpenAI 兼容格式).
