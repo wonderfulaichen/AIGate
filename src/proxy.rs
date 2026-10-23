@@ -4897,7 +4897,11 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32, u32) {
 ///
 /// 用于回答"还能从哪儿省 token", 由面板「省量审计」展示. 全部为估算值
 /// (字符数 / 4 ≈ token), 与既有的 strip/trim/响应缓存省量口径一致.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+///
+/// ⚠️ 不再 `Copy`（2026-10-24）: 新增的 `context` 里有 `Vec`, 无法 Copy。
+/// 调用点原本靠 Copy 隐式复制, 现已改为显式 `.clone()` —— 编译器会逐个报出来,
+/// 不会漏。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TokenAudit {
     /// 带 `tool_calls` 的 assistant 消息里的推理链: 当前实现豁免剥离,
     /// 在 agent 循环中这类消息占多数, 是最大的潜在省量池.
@@ -4912,6 +4916,13 @@ pub struct TokenAudit {
     /// 从"已生效省量"总数里单独列出来 —— 否则开关打开后只是总数变大 (或潜在池归零),
     /// 用户无法判断这个开关到底省了多少.
     pub strip_toolcall_saved_tokens: u32,
+    /// **上下文构成** (2026-10-24): 六类估算 (system/tools/injected/assistant/
+    /// tool_result/chat)。回答"输入大在哪里"。
+    ///
+    /// ⚠️ 全部是**估算**, 且**不做等比校准**到上游 prompt_tokens ——
+    /// 总和对得上不代表各部分对。详见 [`crate::context_breakdown`] 模块文档。
+    /// `None` = 未采集 (解析失败/原生直通未解析请求体)。
+    pub context: Option<crate::context_breakdown::ContextBreakdown>,
 }
 
 /// 低于此长度的块不参与重复检测 (避免 "ok" / "{}" 之类噪声).
@@ -5879,6 +5890,10 @@ fn inject_model_params(
         dup_block_tokens: (dup_chars / 4) as u32,
         dup_block_count: dup_count as u32,
         strip_toolcall_saved_tokens: 0,
+        // 上下文构成: 同样在剥离/裁剪**之前**统计, 反映客户端真实负载的形状。
+        // (剥离之后统计会让人以为是"发往上游客的构成", 而用户想看的是"我这一轮到底
+        //  把什么塞进了上下文" —— 那才是可优化对象。)
+        context: Some(crate::context_breakdown::classify(&v)),
     };
 
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).

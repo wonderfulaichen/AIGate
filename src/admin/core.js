@@ -273,6 +273,15 @@ const CHART_SEMANTIC = {
   kvHit: '#40c8e0',   // KV 命中
   kvMiss: '#ff9f0a',  // KV 未命中
   kvCreation: '#bf5af2', // KV 缓存写入
+  // ── 上下文构成六类 (2026-10-24) ──
+  // 必须与上面既有键**不同色**, 否则读者会把"工具定义"与"剥离省量"看成同一件事
+  // (它们是同一张卡里的两个不同区块)。取自同一套系统色, 只换分配。
+  ctxSystem: '#8e8e93',     // 系统提示词 —— systemGray
+  ctxTools: '#5e5ce6',      // 工具定义 —— systemIndigo
+  ctxInjected: '#ff9f0a',   // 注入内容 —— systemOrange (与 exempt 同色但不同区块)
+  ctxAssistant: '#30d158',  // 助手消息 —— systemGreen
+  ctxToolResult: '#0a84ff', // 工具结果 —— systemBlue (与 strip 同色但不同区块)
+  ctxChat: '#64d2ff',       // 用户消息 —— systemCyan
 };
 // ── 状态语义色表 (P2 badges) ──
 // 统一"状态 → 徽标类 / 圆点色 / 文字色"的映射, 避免各处手写 :class 三元链与内联硬编码色.

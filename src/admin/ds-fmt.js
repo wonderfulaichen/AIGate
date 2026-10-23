@@ -484,6 +484,59 @@
       ].filter(x=>x.v>0);
       return items.length>1?items:[];
     },
+    // ── 上下文构成 (2026-10-24) ──
+    // 回答"输入大在哪里": 工具 schema / 工具结果 / 历史助手消息 / 注入内容各占多少。
+    //
+    // ⚠️ 三条口径 (改之前先读 src/context_breakdown.rs 的模块文档):
+    // 1. 全部是**估算** —— 展示时一律带 ≈, 且**不与上游 prompt_tokens 对齐/校准**;
+    // 2. 只统计做过采集的请求 (`sampled_context_requests`), 未采集的不当 0 混入;
+    // 3. 六类里 injected 是重点: agent 框架塞进 user 消息的 `<system-reminder>` 等
+    //    不该算成"用户说的话", 否则用户会误以为自己输入很大。
+    get auditContextSegs() {
+      const a = (this.stats && this.stats.audit) || {};
+      const kinds = a.context_kinds || [];
+      const colors = {
+        system: CHART_SEMANTIC.ctxSystem,
+        tools: CHART_SEMANTIC.ctxTools,
+        injected: CHART_SEMANTIC.ctxInjected,
+        assistant: CHART_SEMANTIC.ctxAssistant,
+        tool_result: CHART_SEMANTIC.ctxToolResult,
+        chat: CHART_SEMANTIC.ctxChat,
+      };
+      return kinds
+        .filter(p => Number(p[1] || 0) > 0)
+        .map(p => ({
+          k: p[0],
+          label: t('ctx_' + p[0]),
+          v: Number(p[1] || 0),
+          color: colors[p[0]] || 'var(--muted)',
+        }));
+    },
+    // 构成区块的注脚: 采样率 + 估算声明。采样少时明说"比例可信、绝对量低估"。
+    auditContextNote() {
+      const a = (this.stats && this.stats.audit) || {};
+      const sampled = Number(a.sampled_context_requests || 0);
+      const total = Number(a.requests || 0);
+      if (!sampled) return '';
+      if (total > 0 && sampled < total) {
+        return t('audit_ctx_sampled', sampled, total);
+      }
+      return t('audit_ctx_all_sampled');
+    },
+    // 单类占"已采集合计"的百分比 —— 分母用构成自身的合计 (估算口径自洽),
+    // **不用** prompt_tokens (两者不是同一口径, 混用会造出对不上的百分比)。
+    auditCtxPct(v) {
+      const segs = this.auditContextSegs;
+      const sum = segs.reduce((s, x) => s + x.v, 0);
+      if (!sum) return '';
+      return (Number(v || 0) / sum * 100).toFixed(1) + '%';
+    },
+    // 含图片的请求数: 图片按像素折算 token, **不在**文本估算范围内 —— 必须如实说明,
+    // 否则用户会以为"构成里少了图片那部分"是我们算漏了。
+    auditCtxImages() {
+      const a = (this.stats && this.stats.audit) || {};
+      return Number(a.context_requests_with_images || 0);
+    },
     get auditPotentialSegs() {
       const a=(this.stats&&this.stats.audit)||{};
       const items=[

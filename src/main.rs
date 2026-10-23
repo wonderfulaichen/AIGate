@@ -61,6 +61,7 @@ mod events;
 mod notify;
 mod traces;
 mod client_id;
+mod context_breakdown;
 mod guard;
 mod provider_catalog;
 mod presets;

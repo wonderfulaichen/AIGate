@@ -87,6 +87,21 @@
           <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><span class="txsm" style="min-width:96px;color:var(--fg)" x-text="t('audit_dup_blocks')"></span><span class="txsm mono fw6" style="color:var(--warn)" x-text="fmtT((stats.audit||{}).dup_block_tokens||0)"></span><span class="txs tm" x-text="auditPctSampled((stats.audit||{}).dup_block_tokens)+((stats.audit||{}).dup_block_count?(' · '+t('audit_dup_count',(stats.audit||{}).dup_block_count)):'')"></span><span class="txs tm" style="color:var(--muted)" x-text="t('audit_dup_hint')"></span></div>
         </div>
       </div>
+      <!-- ── 上下文构成 (2026-10-24, 借鉴 WaLiAPI/magpie 的分类可观测性) ──
+           回答"输入大在哪里": 是工具 schema? 工具结果? 还是历史助手消息?
+           ⚠️ 口径: 全部是**估算**, 且**不与上游 prompt_tokens 做等比校准** ——
+           总和对得上不代表各部分对 (校准只是把误差均摊, 让估算伪装成实测)。 -->
+      <div style="border-top:1px solid var(--border);padding-top:10px" x-show="auditContextSegs.length">
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span class="txs fw7" style="color:var(--fg)" x-text="t('audit_ctx_title')"></span>
+          <span class="txs tm" x-text="auditContextNote()"></span>
+        </div>
+        <!-- 比例条: 六类按占比铺开 (相对形状可信, 绝对量是估算) -->
+        <div class="prop-bar"><template x-for="sg in auditContextSegs" :key="sg.k"><span :style="'flex-grow:'+Math.max(sg.v,1)+';background:'+sg.color" :title="sg.label+' ≈'+fmtT(sg.v)"></span></template></div>
+        <div class="prop-legend"><template x-for="sg in auditContextSegs" :key="sg.k"><span><i :style="'background:'+sg.color"></i><span x-text="sg.label"></span><span class="mono" x-text="'≈'+fmtT(sg.v)"></span><span class="tm" x-text="auditCtxPct(sg.v)"></span></span></template></div>
+        <div class="txs tm" style="margin-top:4px;color:var(--muted)" x-text="t('audit_ctx_hint')"></div>
+        <div class="txs tm" style="margin-top:2px;color:var(--warn)" x-show="auditCtxImages()>0" x-text="t('audit_ctx_images', auditCtxImages())"></div>
+      </div>
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <div class="txs fw7" style="color:var(--fg);margin-bottom:6px" x-text="t('audit_output_title')"></div>
         <div style="display:flex;gap:16px;flex-wrap:wrap">

@@ -295,6 +295,15 @@ pub struct RequestLog {
     /// 此时上面三个 audit_* 字段是"未测量", 不是"测得为 0", 聚合时须区分开.
     #[serde(default)]
     pub audit_observed: bool,
+    /// **上下文构成** (2026-10-24): 六类估算 (system/tools/injected/assistant/
+    /// tool_result/chat), 回答"输入大在哪里"。
+    ///
+    /// ⚠️ 三条口径 (改动前先读 [`crate::context_breakdown`] 模块文档):
+    /// 1. **全是估算**, 不是实测 —— 与 `prompt_tokens` 分开呈现, 不做等比校准;
+    /// 2. 在**剥离/裁剪之前**统计, 反映客户端真实负载的形状 (那才是可优化对象);
+    /// 3. `None` = 未采集 (旧记录 / 原生直通未解析请求体 / 缓存回放)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<crate::context_breakdown::ContextBreakdown>,
     /// 价格快照: **记录本条日志时**该模型生效的单价 (元/百万 token).
     ///
     /// 请求记录是历史账单 —— 费用在写入时结算并随本条落盘, 之后改价 / 删除模型 /
@@ -878,6 +887,7 @@ pub async fn record_request(
         audit_dup_block_tokens: 0,
         audit_dup_block_count: 0,
         audit_observed: false,
+        context: None,
         price: None,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
@@ -1047,6 +1057,8 @@ pub async fn record_request_with_tokens_status(
         audit_dup_block_tokens: audit.dup_block_tokens,
         audit_dup_block_count: audit.dup_block_count,
         audit_observed: audit_is_observed,
+        // 上下文构成: 随审计一起落到这一条 (未采集时 None, 前端不画假 0)。
+        context: audit.context,
         price: None,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
@@ -2648,6 +2660,7 @@ pub async fn api_mock(
             audit_dup_block_count: 0,
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
+            context: None,
             price: None,
             usage_estimated: false,
             seq: 0,
@@ -2700,6 +2713,7 @@ pub async fn api_mock(
             audit_dup_block_count: 0,
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
+            context: None,
             price: None,
             usage_estimated: false,
             seq: 0,
@@ -2951,6 +2965,7 @@ mod changelog_tests {
             status, latency_ms: 0, body_len: 0, error: err.map(|s| s.to_string()),
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(),
+            context: None,
             prompt_tokens: 0, completion_tokens: out_tok, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
@@ -4215,6 +4230,18 @@ pub struct AuditSummary {
     pub sampled_input_tokens: u64,
     /// 输出侧汇总 (全部来自既有日志字段, 无需新增请求路径埋点).
     pub output: OutputAudit,
+    /// **上下文构成汇总** (2026-10-24): 各类估算 token 的窗口合计。
+    ///
+    /// 回答"输入大在哪里" —— 是工具 schema? 工具结果? 还是历史助手消息?
+    ///
+    /// ⚠️ 口径: 只累加**做过构成采集**的请求 (`sampled_context_requests` 条),
+    /// 且全部是**估算**。`sampled_context_requests` 远小于 `requests` 时,
+    /// 各分类的绝对量会被低估, 但**比例形状仍然可信** —— 前端据此提示采样率。
+    pub context_kinds: Vec<(String, u64)>,
+    /// 参与构成汇总的请求数 (有 `context` 字段的那些).
+    pub sampled_context_requests: u64,
+    /// 这些请求里含图片的数量 (图片 token 不在文本估算内, 需如实说明).
+    pub context_requests_with_images: u64,
 }
 
 /// 输出侧审计: 输出单价通常是输入的数倍, 这里看输出花在哪.
@@ -5063,6 +5090,26 @@ fn compute_stats(
                     .count() as u64,
             }
         },
+        // 上下文构成汇总: 只累加有 context 的请求 (其余是未采集, 不是 0)。
+        // 六类固定顺序输出, 缺失补 0 —— 前端据此稳定渲染条形图与徽标。
+        context_kinds: {
+            let mut acc: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+            for l in logs.iter() {
+                let Some(c) = l.context.as_ref() else { continue };
+                for (k, st) in c.kinds.iter() {
+                    *acc.entry(k.as_str()).or_insert(0) += st.tokens;
+                }
+            }
+            crate::context_breakdown::ALL_KINDS
+                .iter()
+                .map(|k| (k.to_string(), *acc.get(*k).unwrap_or(&0)))
+                .collect()
+        },
+        sampled_context_requests: logs.iter().filter(|l| l.context.is_some()).count() as u64,
+        context_requests_with_images: logs
+            .iter()
+            .filter(|l| l.context.as_ref().is_some_and(|c| c.has_images))
+            .count() as u64,
     };
     let total_opt_saved_fee: f64 = logs
         .iter()
@@ -6707,6 +6754,7 @@ mod tests {
             error: None,
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(),
+            context: None,
             prompt_tokens: 100,
             completion_tokens: 50,
             // mk() 是通用夹具: 默认无思考. 需要思考样本用 mk_ttft_rt().
@@ -7624,4 +7672,89 @@ mod tests {
         // 表为空 (模型被删除) 时同样可用.
         assert!(entry_price(&PriceTable::default(), &e).is_some(), "删模型后条目仍应可结算");
     }
+
+    /// 上下文构成汇总的口径: **只累加有 context 的请求**, 且六类固定顺序齐备。
+    ///
+    /// 三条判据 (对应 context_breakdown 模块文档的口径纪律):
+    /// ① 未采集的请求 (context=None) 不计入任何分类 —— 不能当 0 混进去;
+    /// ② 六类始终齐备且顺序固定 (前端据此渲染, 少一类会让徽标/条形错位);
+    /// ③ `sampled_context_requests` 反映真实采样率, 与前端"占比分母"一致。
+    #[test]
+    fn context_breakdown_aggregates_only_sampled_requests() {
+        let mk_ctx = |kinds: &[(&str, u64)], img: bool| {
+            let mut v: Vec<(String, crate::context_breakdown::KindStat)> = kinds
+                .iter()
+                .map(|(k, t)| {
+                    (k.to_string(), crate::context_breakdown::KindStat { tokens: *t, items: 1 })
+                })
+                .collect();
+            v.sort_by_key(|(k, _)| {
+                crate::context_breakdown::ALL_KINDS
+                    .iter()
+                    .position(|x| x == k)
+                    .unwrap_or(99)
+            });
+            Some(crate::context_breakdown::ContextBreakdown {
+                total_estimated: kinds.iter().map(|(_, t)| *t).sum(),
+                kinds: v,
+                has_images: img,
+            })
+        };
+        let mk = |ts: u64| {
+            let mut l = ctx_fixture_log();
+            l.timestamp = ts;
+            l
+        };
+
+        let mut a = mk(100);
+        a.context = mk_ctx(&[("system", 10), ("chat", 20)], false);
+        let mut b = mk(200);
+        b.context = mk_ctx(&[("tools", 50), ("chat", 5)], true);
+        let c = mk(300); // 未采集: 不得影响任何分类
+
+        let logs = vec![a, b, c];
+        let stats = compute_stats(
+            &logs,
+            &PriceTable::default(),
+            &std::collections::HashSet::new(),
+        );
+        let get = |k: &str| {
+            stats
+                .audit
+                .context_kinds
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| *v)
+                .unwrap_or(u64::MAX)
+        };
+        assert_eq!(get("chat"), 25, "chat = 20+5 (只算有采集的两条)");
+        assert_eq!(get("system"), 10);
+        assert_eq!(get("tools"), 50);
+        assert_eq!(get("assistant"), 0, "缺失类补 0");
+        let keys: Vec<&str> = stats.audit.context_kinds.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, crate::context_breakdown::ALL_KINDS.to_vec(), "六类顺序固定");
+        assert_eq!(stats.audit.sampled_context_requests, 2);
+        assert_eq!(stats.audit.context_requests_with_images, 1);
+    }
+
+    /// 供上面的测试构造一条最小可用日志 (context 留空, 由用例自行填)。
+    fn ctx_fixture_log() -> RequestLog {
+        RequestLog {
+            timestamp: 0, model: "m".into(), provider: "p".into(), endpoint: "e".into(),
+            status: 200, latency_ms: 0, body_len: 0, error: None,
+            client_name: None, trace_id: String::new(), upstream_request_id: None,
+            attempts: Vec::new(), context: None,
+            prompt_tokens: 100, completion_tokens: 10, reasoning_tokens: 0, cached: false,
+            prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
+            prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
+            strip_saved_tokens: 0, trim_saved_tokens: 0, resp_cache_saved_tokens: 0,
+            audit_exempt_reasoning_tokens: 0, audit_dup_block_tokens: 0,
+            audit_dup_block_count: 0, strip_toolcall_saved_tokens: 0, audit_observed: false,
+            price: None, usage_estimated: false, seq: 0, effort: None, end_reason: None,
+            stages: StageTimings::default(),
+            session: crate::traces::SessionRef::default(),
+            req_bytes: 0, req_bytes_orig: 0,
+        }
+    }
+
 }

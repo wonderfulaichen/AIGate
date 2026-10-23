@@ -116,6 +116,18 @@ const I18N = {
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
     'balance_updated_at': '更新于 {0}',
     'balance_just_now': '刚刚',
+    // 上下文构成 (2026-10-24): 回答"输入大在哪里"。全部是估算, 展示一律带 ≈。
+    'audit_ctx_title': '上下文构成',
+    'audit_ctx_hint': '估算值（≈），不与上游 prompt_tokens 对齐 —— 比例形状可信，绝对量仅供比较。',
+    'audit_ctx_all_sampled': '窗口内全部请求已采集',
+    'audit_ctx_sampled': '取样 {0} / {1} 条（未采集的不计入，比例仍可信）',
+    'audit_ctx_images': '{0} 条请求含图片：图片按像素折算 token，不在文本估算内',
+    'ctx_system': '系统提示词',
+    'ctx_tools': '工具定义',
+    'ctx_injected': '框架注入',
+    'ctx_assistant': '助手历史',
+    'ctx_tool_result': '工具结果',
+    'ctx_chat': '用户消息',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
     'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
@@ -527,6 +539,18 @@ const I18N = {
     // Balance fetch time: a stale value must not look live.
     'balance_updated_at': 'Updated {0}',
     'balance_just_now': 'just now',
+    // Context breakdown (2026-10-24): answers "where does the input go?" All values are estimates.
+    'audit_ctx_title': 'Context breakdown',
+    'audit_ctx_hint': 'Estimated (≈), not aligned to upstream prompt_tokens — the shape is trustworthy, absolute values are for comparison only.',
+    'audit_ctx_all_sampled': 'All requests in window sampled',
+    'audit_ctx_sampled': 'Sampled {0} / {1} (unsampled excluded; proportions still hold)',
+    'audit_ctx_images': '{0} request(s) contain images: images are priced by pixels, not included in the text estimate',
+    'ctx_system': 'System prompt',
+    'ctx_tools': 'Tool schemas',
+    'ctx_injected': 'Framework-injected',
+    'ctx_assistant': 'Assistant history',
+    'ctx_tool_result': 'Tool results',
+    'ctx_chat': 'User messages',
     'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',

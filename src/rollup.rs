@@ -497,6 +497,7 @@ mod tests {
             trace_id: String::new(),
             upstream_request_id: None,
             attempts: Vec::new(),
+            context: None,
             prompt_tokens: 100,
             completion_tokens: 10,
             reasoning_tokens: 0,
