@@ -2147,6 +2147,23 @@ pub struct TestProviderReq {
     /// 旧调用方不传时退回假密钥探活（`key_checked: false`，结论里如实标注）。
     #[serde(default)]
     pub name: Option<String>,
+    /// **草稿里正在编辑的密钥**（2026-10-24 新增）。
+    ///
+    /// 为什么需要它：面板的密钥编辑是"改完即存"的，但端点/协议/模型表都停在表单草稿里。
+    /// 用户把端点从 A 改成 B 再点「测试」时，旧实现仍按**已保存的 provider** 找凭据 ——
+    /// 于是"我眼前改的东西"和"实际被测的东西"不是同一份，测试通过保存后却报错，
+    /// 而界面毫无提示。这是"测试通过、保存后不能用"这类返工的成因之一。
+    ///
+    /// 口径：
+    /// · 有值（非空）→ 用它测，`key_checked: true`，响应回带 `key_source: "draft"`；
+    /// · 空串 / 缺省 → 回落已保存凭据链（`keys.json → 环境变量 → api_key_default`），
+    ///   与旧行为一致（`key_source: "saved"`）；
+    /// · 两种来源都在响应里说明，面板据此显示"这次测的是哪个密钥"，不让用户猜。
+    ///
+    /// ⚠️ 该值**只进本次请求栈帧**，不落盘、不写日志、不进任何响应体回显
+    /// （隐私纪律与 `keys.rs` 一致）。
+    #[serde(default)]
+    pub api_key: Option<String>,
     /// 测试通过后**顺手关掉该供应商的熔断**（面板「测试并恢复」按钮）。
     ///
     /// 只在测试成功时生效；测试失败不关（没证据就不要动状态）。
@@ -2175,6 +2192,14 @@ pub struct TestProviderResp {
     pub status: String,
     /// 是否真的用真实密钥校验过（false = 没给 name / 找不到，只做了连通性探活）。
     pub key_checked: bool,
+    /// **这次测的是哪个密钥**（2026-10-24 新增）：
+    /// `"draft"` = 表单里正在编辑的密钥；`"saved"` = 已保存的凭据链
+    /// （`keys.json → 环境变量 → api_key_default`）；`"none"` = 没用密钥（假密钥探活）。
+    ///
+    /// 为什么必须回带：面板的密钥是"改完即存"、其余字段停在草稿，用户改完端点再测时
+    /// 无法从界面看出"这次到底用了哪个 key"。有了它，面板能直接写明
+    /// 「测试所用密钥：表单草稿 / 已保存 / 未使用」，把"测的和我改的是否同一份"变成可见事实。
+    pub key_source: &'static str,
     pub latency_ms: u64,
     /// 是否顺手关了熔断（仅 `recover=true` 且测试成功时）。
     pub recovered: bool,
@@ -2224,14 +2249,36 @@ pub async fn api_providers_test(
     //  而 404 其实说明主机活着。见 tools/probe_opencode_models_url.py)
     let models_url = crate::providers::derive_models_url(&endpoint);
 
-    // ① 凭据环节：优先用**该供应商的真实密钥**（这样"密钥对不对"才是被测项之一）。
-    //    未给 name（或找不到）时退回旧的假密钥探活，并在结论里说明"未校验密钥"。
+    // ① 凭据环节：**表单草稿里的密钥优先**，其次才是已保存的凭据链。
+    //
+    // 为什么草稿优先 (2026-10-24): 面板的密钥编辑是"改完即存"的，但端点/协议/模型表
+    // 都停在表单草稿里。用户改完端点再点「测试」时，若仍按已保存的 provider 找凭据，
+    // "我眼前改的东西"与"实际被测的东西"就不是同一份 —— 测试通过、保存后却报错，
+    // 而界面毫无提示。草稿优先让"测的"与"看的"对齐。
+    //
+    // `key_source` 三种取值回带给前端, 面板据此显示"这次测的是哪个密钥":
+    //   draft = 表单草稿 / saved = 已保存链 / none = 假密钥探活
     let stage;
     let detail;
     let reachable;
     let mut key_checked = false;
+    // 用了真实密钥却被上游拒 (401/403): reachable 仍为 true (上游在工作),
+    // 但 success 必须为 false —— "密钥对不对"这个被测项没通过。
+    let mut key_rejected = false;
     let mut key: Option<String> = None;
-    if let Some(n) = payload.name.as_deref().filter(|s| !s.is_empty()) {
+    let mut key_source: &'static str = "none";
+    // 草稿密钥: 只认非空 (空串 = 用户清空了输入框, 语义是"没有草稿密钥", 回落已保存链).
+    let draft_key = payload
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(dk) = draft_key {
+        key = Some(dk);
+        key_checked = true;
+        key_source = "draft";
+    } else if let Some(n) = payload.name.as_deref().filter(|s| !s.is_empty()) {
         let found = {
             let registry = state.registry.read().await;
             registry
@@ -2258,11 +2305,13 @@ pub async fn api_providers_test(
                             "stage_text": crate::i18n::stage_label("key"),
                             "status": crate::i18n::msg_provider_key_missing(),
                             "key_checked": false,
+                            "key_source": "saved",
                             "latency_ms": ms,
                         }));
                     }
                     key = Some(k);
                     key_checked = true;
+                    key_source = "saved";
                 }
                 Err(e) => {
                     // 凭据链彻底取不到 (无面板值/无环境变量/无默认值) —— 与"取到空值"同一处境：
@@ -2276,6 +2325,7 @@ pub async fn api_providers_test(
                         "stage_text": crate::i18n::stage_label("key"),
                         "status": format!("{}\n({e})", crate::i18n::msg_provider_key_missing()),
                         "key_checked": false,
+                        "key_source": "saved",
                         "latency_ms": ms,
                     }));
                 }
@@ -2321,7 +2371,14 @@ pub async fn api_providers_test(
                     if snippet.is_empty() { "" } else { ": " },
                     snippet
                 );
+                // ⚠️ `reachable` 保持 true（上游在正常工作，只是凭据被拒 —— 与熔断隔离的
+                //    "可达≠健康"口径一致，不能因一次 401 就把供应商判成故障）。
+                // 但 **success 必须是 false**：这次测试用了真实密钥却被拒，
+                // 说明"密钥对不对"这个被测项没通过。旧实现这里返回 success=true,
+                // 用户看到"测试成功"就去保存，然后每个请求都 401 —— 正是要消除的返工。
+                // (2026-10-24 修: 无效草稿密钥会走到这里, 却报"测试成功")
                 reachable = true;
+                key_rejected = true;
             } else if code == 403 {
                 // 403 可能来自边缘（已在上面拦下）或应用层策略/额度 —— 此处是应用层。
                 stage = "upstream";
@@ -2332,6 +2389,9 @@ pub async fn api_providers_test(
                     snippet
                 );
                 reachable = true;
+                // 同上: 用了真实密钥拿到 403, 对"这次测试是否达成目的"而言是失败
+                // (权限/额度被拒)。reachable 不变, success 变 false。
+                key_rejected = true;
             } else if code < 500 {
                 // 404 说明 /models 路径不存在，但主机是活的 → 可达。
                 stage = "upstream";
@@ -2353,8 +2413,12 @@ pub async fn api_providers_test(
     let latency_ms = start.elapsed().as_millis() as u64;
     // 「测试并恢复」：用户已看到"通"的证据，由他显式决定关熔断。
     // 只在**测试成功**时做；失败不动状态。走后端手动重置同一条路（写台账）。
+    //
+    // ⚠️ 判据用 `reachable && !key_rejected` 而不是单看 `reachable`：
+    //    密钥被拒 (401/403) 时上游虽可达，但"这次测试"并未证明供应商能正常服务 ——
+    //    此时关熔断会让用户误以为"已经修好"，而真实流量仍会被逐个 401 打回。
     let mut recovered = false;
-    if reachable && payload.recover.unwrap_or(false) {
+    if reachable && !key_rejected && payload.recover.unwrap_or(false) {
         if let Some(n) = payload.name.as_deref().filter(|s| !s.is_empty()) {
             let mut g = state.breakers.lock().unwrap();
             if let Some(cb) = g.get_mut(&n.to_string()) {
@@ -2369,7 +2433,7 @@ pub async fn api_providers_test(
         }
     }
     Json(serde_json::to_value(TestProviderResp {
-        success: reachable,
+        success: reachable && !key_rejected,
         reachable,
         // 环节与它的中文名：面板首要展示这两个字段（用户要求"看得出哪个环节"）
         stage,
@@ -2377,6 +2441,8 @@ pub async fn api_providers_test(
         status: detail,
         // 是否真的用真实密钥校验过（false = 没给 name / 找不到，只做了连通性探活）
         key_checked,
+        // 这次测的是哪个密钥（草稿 / 已保存 / 未使用）—— 面板据此显示，不让用户猜
+        key_source,
         latency_ms,
         // 是否顺手关了熔断（仅 recover=true 且测试成功时）
         recovered,
@@ -6590,6 +6656,7 @@ mod tests {
             stage_text: "上游服务",
             status: "ok".to_string(),
             key_checked: true,
+            key_source: "draft",
             latency_ms: 12,
             recovered: false,
         })
@@ -6597,6 +6664,9 @@ mod tests {
         assert_eq!(v["recovered"], false, "recovered 键必须存在");
         assert_eq!(v["stage"], "upstream");
         assert_eq!(v["stage_text"], "上游服务");
+        // key_source 同属"必须总带"的字段: 前端据此显示"这次测的是哪个密钥",
+        // 缺失会被读成 undefined 而不报错 (本项目反复吃过的静默缺陷)。
+        assert_eq!(v["key_source"], "draft", "key_source 键必须存在");
         assert_eq!(v["key_checked"], true);
     }
 

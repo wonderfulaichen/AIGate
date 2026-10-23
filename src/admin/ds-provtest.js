@@ -48,10 +48,22 @@
        try {
          // 带上 name: 后端据此用**真实密钥**测（这样"密钥对不对"才在被测项里）。
          // 不传 name 时后端退回假密钥探活, 并在结果里标 key_checked=false。
+         //
+         // 带上 api_key (草稿里正在编辑的密钥): 面板的密钥编辑是"改完即存"的, 但端点/
+         // 协议/模型表都停在表单草稿里。用户改完端点再点「测试」时, 若只按已保存的
+         // provider 找凭据, "我眼前改的东西"与"实际被测的东西"就不是同一份 ——
+         // 测试通过、保存后却报错, 而界面毫无提示。草稿优先让"测的"与"看的"对齐。
+         // 空串 = 用户清空了输入框 → 语义是"没有草稿密钥", 后端会回落已保存链。
+         //
          // recover=true（「测试并恢复」）: 测试成功后顺手关熔断 —— 由用户显式触发,
          // 因为"上游通了"这个证据是他自己看到的判断, 不做成自动行为。
          const r=await fetch('/admin/api/providers/test',{method:'POST',headers:authHeaders(),
-           body:JSON.stringify({endpoint:prov.endpoint,name:prov.name,recover:!!recover})});
+           body:JSON.stringify({
+             endpoint:prov.endpoint,
+             name:prov.name,
+             api_key:(prov._keyDraft||'').trim(),
+             recover:!!recover
+           })});
          if(r.ok) prov._testResult = await r.json();
          else prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('request_failed'),latency_ms:0};
        } catch(e){ prov._testResult = {success:false,stage:'local',stage_text:t('stage_local'),status:t('network_error'),latency_ms:0}; }
@@ -67,6 +79,17 @@
        prov._testing = false;
        // 测试完成后刷新健康数据, 确保 circuit 状态与后端 breakers 一致.
        await this.fetchHealth();
+     },
+     // 测试所用密钥的来源说明 (2026-10-24): 把"这次测的是哪个密钥"变成可见事实。
+     // 后端 key_source 三态: draft=表单草稿 / saved=已保存链 / none=未使用(假密钥探活)。
+     // 为什么必须显示: 面板密钥改完即存、其余字段停在草稿, 用户无法从界面看出
+     // "测的与我改的是否同一份" —— 这正是"测试通过、保存后不能用"的困惑来源。
+     testKeySourceText(s){
+       const k = s && s.key_source;
+       if (k === 'draft') return t('test_key_draft');
+       if (k === 'saved') return t('test_key_saved');
+       if (s && s.key_checked === false) return t('test_key_none');
+       return '';
      },
      // 环节前缀: 结果横幅首要展示"哪一环"（用户明确要求报错看得出环节）。
      // 后端给 stage/stage_text; 老接口没这字段时返回空串（不显示前缀）。

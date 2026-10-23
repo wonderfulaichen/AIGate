@@ -52,6 +52,10 @@
               </div>
               <!-- 未用真实密钥校验时如实标注 (不传 name 的老路径 = 只探连通性) -->
               <div x-show="drawerProv._testResult.key_checked===false" class="txs tm" style="margin-top:4px" x-text="t('test_key_unchecked')"></div>
+              <!-- 这次测的是哪个密钥 (草稿/已保存/未使用): 面板密钥改完即存、其余字段停在草稿,
+                   不显示这一行, 用户就无法判断"测的"与"我改的"是否同一份 ——
+                   那正是"测试通过、保存后却报错"的困惑来源。 -->
+              <div x-show="testKeySourceText(drawerProv._testResult)" class="txs tm" style="margin-top:4px" x-text="testKeySourceText(drawerProv._testResult)"></div>
               <template x-if="!drawerProv._testResult.success && drawerProv._errOpen">
                 <div style="margin-top:6px;padding:8px 12px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);font-size:var(--fs-11);color:var(--err-fg);white-space:pre-wrap;word-break:break-all">
                   <div x-text="drawerProv._testResult.status"></div>
