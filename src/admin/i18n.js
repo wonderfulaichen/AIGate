@@ -109,6 +109,13 @@ const I18N = {
     // 模型明细「诊断」合并格 (2026-10-24): 缓存命中/生成速度/TTFT/平均延迟合成一格。
     'model_diag': '诊断',
     'model_diag_hint': '缓存命中率 / 生成速度 / 首字延迟 / 平均延迟。主数字显示缓存命中率（没有则显示生成速度），悬停或点击可看全部四项。',
+    // 余额四态 (2026-10-24): 未配置 / 查询失败 / 手动设置 三种处境处置完全不同。
+    'balance_state_unsupported': '未配置余额查询（该供应商无公开余额接口）',
+    'balance_state_failed': '查询失败，点刷新重试',
+    'balance_state_manual': '手动设置的值（非上游实测）',
+    // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
+    'balance_updated_at': '更新于 {0}',
+    'balance_just_now': '刚刚',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
     'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
@@ -513,6 +520,13 @@ const I18N = {
     // Model detail "diagnostics" merged cell (2026-10-24): cache hit / gen speed / TTFT / latency in one cell.
     'model_diag': 'Diagnostics',
     'model_diag_hint': 'Cache hit rate / generation speed / TTFT / average latency. The main figure shows cache hit rate (or generation speed when absent); hover or click for all four.',
+    // Balance four states (2026-10-24): unsupported / failed / manual need different handling.
+    'balance_state_unsupported': 'No balance endpoint configured (this provider has no public balance API)',
+    'balance_state_failed': 'Query failed — click refresh to retry',
+    'balance_state_manual': 'Manually set value (not measured by the provider)',
+    // Balance fetch time: a stale value must not look live.
+    'balance_updated_at': 'Updated {0}',
+    'balance_just_now': 'just now',
     'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',

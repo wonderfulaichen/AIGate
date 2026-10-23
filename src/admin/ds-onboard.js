@@ -40,6 +40,13 @@
           quota_progress: b.quota_progress,
           account_label: b.account_label, account_count: b.account_count,
           total_balance: b.total_balance, total_consumed: b.total_consumed,
+          // 状态与采集时刻 (2026-10-24): 必须透传 ——
+          //   state 用于分色与文案 (未配置/失败/手动 三种处境处置完全不同);
+          //   last_updated 用于显示"这个数是什么时候取的" (陈旧值不该伪装成实时)。
+          // 旧实现在这里只 merge 了数值字段, 把这两项丢了 —— 前端于是无法区分
+          // "没有余额"的四种不同处境, 也不知道数字有多旧。
+          state: b.state || 'ok',
+          last_updated: b.last_updated,
           hasBalance: b.balance !== null && b.balance !== undefined,
           today_cost: c.today_cost, total_cost: c.total_cost,
           today_opt_saved_tokens: c.today_opt_saved_tokens,

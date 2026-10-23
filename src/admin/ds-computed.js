@@ -57,13 +57,49 @@
     // ── 余额结论区 (P3) ──
     // 回答"余额这个数意味着什么": 按剩余额给三档色 (充足/偏低/告警), 并把今日消耗折算成
     // "还能用几天"的粗略估计. **只用已有字段** (row.balance + row.today_cost), 不新增后端口径.
-    // 无余额配置 (hasBalance=false) 的供应商不参与 —— 不把"没配"混进"没钱".
-    balanceTone(bal) {
-      const v = Number(bal);
+    //
+    // ⚠️ 2026-10-24 起**先看状态, 再看数值** (借鉴 68hub 的失败/空态分离):
+    //   旧实现只看 balance 数值, 于是这几种处境都落到同样的红/灰:
+    //     · 未配置 (Unsupported): 多数供应商本就没有公开余额 API, **不该报警** —— 显示灰;
+    //     · 查询失败 (Failed):    该提示重试 —— 显示红, 文案指向重试;
+    //     · 真的 0 元 (Ok + 0):   该充值 —— 显示红;
+    //     · 手动设置 (Manual):    用户自填, 不是实测 —— 灰, 标注"手动"。
+    //   判据用 `state` 字段, **不靠 error 文案反推** (文案一改判据就失效)。
+    balanceTone(row) {
+      const st = row && row.state;
+      // 未配置 / 手动 → 灰 (不是故障, 也不该催充值)
+      if (st === 'unsupported' || st === 'manual') return 'var(--muted)';
+      // 查询失败 → 红 (该重试), **与"真的 0 元"同色但文案不同** (状态行会说明)
+      if (st === 'failed') return 'var(--err)';
+      // state==='ok' (或旧数据无 state → 按数值, 与既有行为一致)
+      const v = Number(row && row.balance);
+      // 拿不到数值 (非 failed 也非 unsupported, 如旧缓存) → 灰, 不假装有数值
       if (!isFinite(v)) return 'var(--muted)';
       if (v <= 0) return 'var(--err)';
       if (v < 5) return 'var(--warn)';
       return 'var(--ok)';
+    },
+    // 余额采集时刻 (2026-10-24): 说明"这个数是什么时候取的"。
+    // 为什么需要: 余额有 1 小时缓存 (BalanceManager::cache_ttl), 面板上的数字可能是
+    // 一小时前的 —— 不写采集时刻, 用户会把它当成刚查到的真实值, 而它早就变了。
+    // 未采集 → 空串 (不显示), 因为"没采集"和"刚刚采集"是两回事。
+    balanceUpdatedText(row) {
+      const ts = Number(row && row.last_updated || 0);
+      if (!ts) return '';
+      const secs = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+      // 一分钟内说"刚刚"更自然; 更旧则给绝对时间 (相对时长需要额外 i18n 单位键,
+      // 而绝对时间已有 fmtDateTime 且不受语言/时区歧义影响)。
+      if (secs < 60) return t('balance_just_now');
+      return t('balance_updated_at', this.fmtDateTime(ts));
+    },
+    // 余额状态的人话 (2026-10-24): 把"这个数是哪来的/为什么是这个值"说清楚。
+    // 返回空串 = 无需额外说明 (正常数值, 数字自己会说话)。
+    balanceStateText(row) {
+      const st = row && row.state;
+      if (st === 'unsupported') return t('balance_state_unsupported');
+      if (st === 'failed') return t('balance_state_failed');
+      if (st === 'manual') return t('balance_state_manual');
+      return '';
     },
     get balanceTakeaway() {
       // 积分制行不参与: currency='credits' 与今日费用(金额)量纲不同, 混算「还能撑几天」是错的.

@@ -3117,13 +3117,16 @@ pub async fn api_balance(
     // 不能写死 `== Some("buddy")` —— 2026-10-13 用户报障「workbuddy 也没加上费用获取支持」，
     // 根因就是那个字面量：国际版 preset 是 "workbuddy"，不匹配 → 直接掉进
     // “未配置余额查询 API”，面板永远显示 —。
+    // ⚠️ 2026-10-24 修正: 不再 `continue` 跳过"未配置余额查询"的供应商。
+    //
+    // 旧实现把它们整条跳过 → 面板余额卡里**根本没有这一行**, 用户会以为漏了某个供应商,
+    // 或者以为"没显示 = 查不到 = 出问题了"。而实际上多数供应商本来就没有公开余额 API,
+    // 那是**预期内的不支持**, 不是故障。
+    // 现在纳入查询, 由 `BalanceManager` 给出 `state = unsupported`, 面板显示
+    // 「未配置余额查询」并置灰 —— 与"查询失败"(红, 该重试) 区分开 (借鉴 68hub 的
+    // 失败/空态分离, 但补上它没列的"未配置"这一态)。
     let mut provider_configs = std::collections::HashMap::new();
     for config in providers {
-        if config.balance_endpoint.is_none()
-            && !crate::presets::is_codebuddy_family(config.preset.as_deref())
-        {
-            continue;
-        }
         // 获取 API key (面板值 > 环境变量 > 默认值; buddy 账号型由查询器走 accounts.json)
         let api_key = state.key_store.get_for_provider(&config.name).await
             .or_else(|| std::env::var(&config.api_key_env).ok().filter(|s| !s.is_empty()))

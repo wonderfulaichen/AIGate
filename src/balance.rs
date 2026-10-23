@@ -13,6 +13,43 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+/// 余额行的**状态** (2026-10-24 新增, 借鉴 68hub 的失败/空态分离).
+///
+/// # 为什么需要
+/// 旧结构只有 `balance`(数值) + `error`(文案), 于是这几种**完全不同的处境**在前端
+/// 长得一模一样, 只能靠猜:
+///   · 这家供应商**没有配**余额查询能力 (不该报警, 也不是故障);
+///   · 查询**失败**了 (该重试/该处理);
+///   · 真的剩 **0** (该充值);
+///   · 数值是**手动设的** (用户自己填的, 不是上游实测)。
+/// 68hub 把"抓到了但失败"与"压根没数据"拆成两条渲染分支, 正是这个思路 ——
+/// 但它没把"未配置"单列, 而这是本面板最常见的一类 (多数供应商没有公开余额 API)。
+///
+/// # 口径
+/// 前端据此分色与给文案; **不得**再靠 `error` 非空反推状态 (那是把文案当判据,
+/// 文案一改判据就失效 —— 本项目反复吃过这个亏)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BalanceState {
+    /// 上游查询成功, 拿到数值 (可能是 0).
+    Ok,
+    /// 查询失败 (网络/鉴权/解析/上游 5xx). `error` 里有原因.
+    Failed,
+    /// 未配置余额查询能力 (无 `balance_endpoint`, 也非积分制预设).
+    Unsupported,
+    /// 数值来自手动设置 (用户自填, 不是上游实测).
+    Manual,
+}
+
+/// 缺省态 = `Ok`: `#[serde(default)]` 只对**旧记录/旧接口**缺该字段时生效,
+/// 而那些数据本来就是"有数值"的形态 —— 缺省成 `Ok` 保持既有展示不变。
+/// (缺省成 `Unsupported` 会让所有旧数据显示成"未配置", 那是倒退。)
+impl Default for BalanceState {
+    fn default() -> Self {
+        BalanceState::Ok
+    }
+}
+
 /// 余额信息 (统一对外结构).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BalanceInfo {
@@ -28,6 +65,10 @@ pub struct BalanceInfo {
     pub source: String,
     /// 是否配置了余额查询 API.
     pub has_api: bool,
+    /// **状态** (2026-10-24): 前端据此分色与给文案, 不要再靠 `error` 反推。
+    /// 旧记录/旧接口无此字段 → `Ok` (与"有数值"同形, 保持既有展示不变)。
+    #[serde(default)]
+    pub state: BalanceState,
     /// 已消耗量 (积分制供应商的服务端权威统计; 无消耗概念的供应商为 None).
     ///
     /// ⚠️ **口径 = 本窗口已用**（`Σ CycleCapacityUsed`，只算仍有剩余的活包），
@@ -85,7 +126,11 @@ pub struct BalanceInfo {
 
 impl BalanceInfo {
     /// 创建 API 查询结果的余额信息.
+    ///
+    /// `error` 非空即查询失败 → `state = Failed`; 否则 `Ok`。
+    /// 这样"查到了 0 元"与"查失败"在状态上可分 (前端分色/文案的依据)。
     fn from_api(provider: &str, balance: Option<f64>, currency: String, now: u64, error: Option<String>) -> Self {
+        let state = if error.is_some() { BalanceState::Failed } else { BalanceState::Ok };
         Self {
             provider: provider.to_string(),
             balance,
@@ -94,6 +139,7 @@ impl BalanceInfo {
             error,
             source: "api".to_string(),
             has_api: true,
+            state,
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
@@ -106,6 +152,9 @@ impl BalanceInfo {
     }
 
     /// 创建手动设置的余额信息.
+    ///
+    /// `state = Manual`: 数值是用户自填的, **不是上游实测** —— 面板必须能区分,
+    /// 否则用户会以为这是刚查到的真实余额 (陈旧了也不知道)。
     fn from_manual(provider: &str, balance: f64, currency: &str, now: u64) -> Self {
         Self {
             provider: provider.to_string(),
@@ -115,6 +164,7 @@ impl BalanceInfo {
             error: None,
             source: "manual".to_string(),
             has_api: false,
+            state: BalanceState::Manual,
             consumed: None,
             expiring_at: None,
             expiring_amount: None,
@@ -143,6 +193,7 @@ impl BalanceInfo {
             error: None,
             source: "api".to_string(),
             has_api: true,
+            state: BalanceState::Ok,
             consumed: Some(consumed),
             expiring_at: expiring.map(|(t, _)| t),
             expiring_amount: expiring.map(|(_, a)| a),
@@ -500,13 +551,20 @@ impl BalanceManager {
                         api_key: String::new(), // 凭据来自 accounts.json, 不参与去重键
                     })
                 }
-                None => results.push(BalanceInfo::from_api(
-                    provider_name,
-                    None,
-                    "CNY".to_string(),
-                    now,
-                    Some("未配置余额查询 API".to_string()),
-                )),
+                None => {
+                    // 未配置余额查询能力 —— 单列成一态 (`Unsupported`)。
+                    //
+                    // 为什么不再用 `from_api(..., Some("未配置..."))`: 那样它会落到
+                    // `Failed` 态, 前端无法与"查询失败"区分 —— 而这两件事的处置完全相反:
+                    // 未配置**不该报警** (多数供应商本来就没有公开余额 API, 不是故障),
+                    // 查询失败才该提示重试。旧行为把它们混成一态, 用户看到一片红/灰分不清。
+                    //
+                    // 保留 `error` 文案: 面板仍要显示"为什么没有数值", 只是**判据改用 state**。
+                    let mut b = BalanceInfo::from_api(provider_name, None, "CNY".to_string(), now, None);
+                    b.state = BalanceState::Unsupported;
+                    b.error = Some("未配置余额查询 API".to_string());
+                    results.push(b);
+                }
             }
         }
 
@@ -1200,6 +1258,60 @@ fn normalize_currency(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 余额四态必须各自可分 (2026-10-24, 借鉴 68hub 的失败/空态分离).
+    ///
+    /// 这四种处境在前端**处置完全不同**, 旧结构只有 balance+error 时它们长得一样:
+    ///   Ok          → 正常显示数值 (可能是 0)
+    ///   Failed      → 该提示重试
+    ///   Unsupported → 不该报警 (多数供应商本来就没公开余额 API)
+    ///   Manual      → 用户自填, 不是上游实测
+    #[test]
+    fn balance_state_distinguishes_four_situations() {
+        // Ok: 查到了 (含 0 元这种真实值)
+        let ok = BalanceInfo::from_api("p", Some(0.0), "CNY".to_string(), 1, None);
+        assert_eq!(ok.state, BalanceState::Ok);
+        assert!(ok.error.is_none(), "Ok 态不该带 error");
+
+        // Failed: 查询失败
+        let failed = BalanceInfo::from_api("p", None, "CNY".to_string(), 1, Some("timeout".into()));
+        assert_eq!(failed.state, BalanceState::Failed);
+
+        // Unsupported: 未配置能力 —— 与 Failed 是两回事
+        let mut unsup = BalanceInfo::from_api("p", None, "CNY".to_string(), 1, None);
+        unsup.state = BalanceState::Unsupported;
+        assert_ne!(unsup.state, BalanceState::Failed,
+                   "未配置不得落到 Failed (那会让不该报警的场景报警)");
+
+        // Manual: 手动设的
+        let manual = BalanceInfo::from_manual("p", 12.5, "CNY", 1);
+        assert_eq!(manual.state, BalanceState::Manual);
+        assert_eq!(manual.source, "manual");
+
+        // 积分制成功查询 = Ok
+        let credits = BalanceInfo::from_credits("p", 8.0, 100.0, None, None, 1);
+        assert_eq!(credits.state, BalanceState::Ok);
+    }
+
+    /// `state` 缺省值必须是 `Ok`: serde(default) 只对旧记录/旧接口生效,
+    /// 缺省成 `Unsupported` 会让所有旧数据显示成"未配置" (倒退)。
+    #[test]
+    fn balance_state_defaults_to_ok() {
+        assert_eq!(BalanceState::default(), BalanceState::Ok);
+        // 旧 JSON (无 state 字段) 反序列化后应为 Ok
+        let old = r#"{"provider":"p","currency":"CNY","last_updated":1,"error":null,
+                    "source":"api","has_api":true,"balance":5.0}"#;
+        let b: BalanceInfo = serde_json::from_str(old).expect("旧记录应能解析");
+        assert_eq!(b.state, BalanceState::Ok, "旧记录缺 state → Ok (保持既有展示)");
+    }
+
+    /// 序列化形态: snake_case, 前端拿到的是 `"unsupported"` 而不是 `"Unsupported"`.
+    #[test]
+    fn balance_state_serializes_snake_case() {
+        let v = serde_json::to_value(BalanceState::Unsupported).unwrap();
+        assert_eq!(v, serde_json::json!("unsupported"));
+        assert_eq!(serde_json::to_value(BalanceState::Ok).unwrap(), serde_json::json!("ok"));
+    }
 
     /// buddy 积分包聚合: 只认**窗口内仍有剩余**的包的最早重置时刻 (窗口已耗尽的
     /// 包不该占据"最近会重置"位 —— 它不会造成损失). 响应形态取自 2026-10-08 实测.
