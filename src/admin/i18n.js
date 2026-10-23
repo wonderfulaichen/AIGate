@@ -106,6 +106,9 @@ const I18N = {
     'test_key_draft': '测试所用密钥：表单里正在编辑的（尚未保存的那份）',
     'test_key_saved': '测试所用密钥：已保存的凭据（面板/环境变量/默认值）',
     'test_key_none': '未使用密钥（仅连通性探活，未校验密钥是否正确）',
+    // 模型明细「诊断」合并格 (2026-10-24): 缓存命中/生成速度/TTFT/平均延迟合成一格。
+    'model_diag': '诊断',
+    'model_diag_hint': '缓存命中率 / 生成速度 / 首字延迟 / 平均延迟。主数字显示缓存命中率（没有则显示生成速度），悬停或点击可看全部四项。',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
     'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
@@ -507,6 +510,9 @@ const I18N = {
     'test_key_draft': 'Key used for this test: the one being edited in the form (not yet saved)',
     'test_key_saved': 'Key used for this test: the saved credential (panel / env var / default)',
     'test_key_none': 'No key used (reachability probe only; the key was not validated)',
+    // Model detail "diagnostics" merged cell (2026-10-24): cache hit / gen speed / TTFT / latency in one cell.
+    'model_diag': 'Diagnostics',
+    'model_diag_hint': 'Cache hit rate / generation speed / TTFT / average latency. The main figure shows cache hit rate (or generation speed when absent); hover or click for all four.',
     'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',

@@ -78,6 +78,10 @@ function dashboard() {  return {
     analyticsSpan: 'day', // 'hour' | 'day' | 'month' — 统一时间范围与粒度 (24h/30d/12m)
     // 模型明细表的「更多列」开关 + 筛选 (2026-10-16 该表从拓扑里拆回来后需要)。
     modelColsMore: false,
+    // 模型明细「诊断」合并格的展开态 (2026-10-24): 键 = `provider/upstream_model`。
+    // 为什么用对象而不是单个 id: 表格可同时展开多行对比 (诊断值正是要对比着看的),
+    // 且筛选/翻页后状态不丢。空对象 = 全部收起。
+    modelDiagOpen: {},
     modelDetailFilter: '',
     modelProviderFilter: '',
     modelTrendData: {keys:[],dates:[],legend:''},

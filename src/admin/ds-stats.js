@@ -83,17 +83,6 @@
     },
     modelProviderName(model) { return (model&&model.provider)||'—'; },
     modelErrorCount(model) { return Number(model&&model.errors||0); },
-    // 表格里的首字延迟单元格 (模型表 / 供应商表共用): 无样本 → '—'.
-    //
-    // 刻意不复用 ttftAvgText —— 那个走 KPI 补间 (全局唯一值), 表格有几十行,
-    // 每行都建补间槽会把数字动画打成一片; 表格只要静态值。
-    ttftCellText(row) {
-      const v = row && row.ttft_avg_ms;
-      // "无样本" 与 "0 毫秒" 必须分开: avg_ms 为 null 表示从没采到有效样本
-      // (全非流式 / 从未出字), 显示 0ms 会被读成"瞬间响应"。
-      if (v == null || !Number.isFinite(Number(v)) || Number(v) <= 0) return '—';
-      return this.fmtMs(v);
-    },
     get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
     // 统一时间范围与粒度. P3: 由「三档固定组合」升级为「快捷范围 + 自定义区间」——
     // 每个范围**自动推导**合适粒度 (≤1 天→hour, ≤31 天→day, 更长→month), 不再要求用户

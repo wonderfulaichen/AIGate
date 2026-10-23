@@ -141,6 +141,80 @@
       const a = Number((log || {}).req_bytes || 0), o = Number((log || {}).req_bytes_orig || 0);
       return (o && a && o > a) ? (o - a) : 0;
     },
+    // 展开/收起「诊断」合并格的明细 (点击单元格触发)。
+    // 键与模板里的显式拼接保持一致 (`provider/upstream_model`, upstream 缺失回落 model) ——
+    // 两边必须是**同一套键**, 否则点了不展开 (本项目踩过"键名两侧漂移"的坑)。
+    toggleModelDiag(m) {
+      const k = (m && m.provider ? m.provider : '') + '/' + ((m && (m.upstream_model || m.model)) || '');
+      // 重建对象而不是 `this.modelDiagOpen[k] = ...`: Alpine 3 对动态新增的响应式属性
+      // 不自动追踪, 直接赋值会让 UI 不更新 (老坑, 见 ds-records.js 的 logColsShown 处理)。
+      const next = Object.assign({}, this.modelDiagOpen);
+      if (next[k]) delete next[k]; else next[k] = true;
+      this.modelDiagOpen = next;
+    },
+    // ── 模型明细「诊断」合并格 (2026-10-24, 借鉴 68hub 的信息分层) ──
+    // 痛点: 用户说"扁平化列表显示信息密度不够, 明显有些值是可以合并的"。
+    // 原来缓存命中率 / 生成速度 / TTFT / 平均延迟各占一列 (4 列), 而它们都是**诊断值**,
+    // 不是逐行对比的主指标 —— 摊开成列只会把表格拉宽、把主数字挤到屏外。
+    //
+    // 做法 (68hub 的分层思路, 但不用纯 hover):
+    //   · 主数字保留在行上 (省量%), 诊断四个值合成一格;
+    //   · 单元格给 title 悬停提示 (鼠标用户), 同时支持**点击展开** (键盘/触屏用户);
+    //   · 展开态在行内加一行小字, 不弹层、不遮挡。
+    // 为什么不只用 hover: 本项目已踩过"x-show 只是 display:none"的坑, 且悬停对
+    // 键盘用户不可达 —— 故点击与悬停双通道, 且展开内容是真的 DOM (不是 title 假文本)。
+    //
+    // 返回值是**纯数据**, 渲染在模板里做 (判据集中在 Rust/单测可测的函数里)。
+    modelDiagParts(m) {
+      const s = m || {};
+      const hit = Number(s.total_cache_hit_tokens || 0);
+      const pt = Number(s.total_prompt_tokens || 0);
+      // 缓存命中率: 无输入 token 或命中为 0 → null (未采集/不适用), 不显示 0%
+      const cachePct = (pt > 0 && hit > 0) ? (hit / pt * 100) : null;
+      const gen = s.gen_speed ? Number(s.gen_speed) : null;
+      const ttft = s.ttft_avg_ms ? Number(s.ttft_avg_ms) : null;
+      const lat = s.avg_latency_ms ? Number(s.avg_latency_ms) : null;
+      return { cachePct, gen, ttft, lat, cacheHit: hit, promptTokens: pt };
+    },
+    // 合并格的主数字: 优先给缓存命中率 (它最常被问), 没有则给生成速度。
+    modelDiagMain(m) {
+      const d = this.modelDiagParts(m);
+      if (d.cachePct !== null) return this.fmtPct(d.cachePct);
+      if (d.gen !== null) return d.gen.toFixed(1) + ' ' + t('unit_tokps');
+      return '—';
+    },
+    // 合并格的副标签: 说明主数字是什么 (避免"这个 % 是什么的 %")
+    modelDiagMainLabel(m) {
+      const d = this.modelDiagParts(m);
+      if (d.cachePct !== null) return t('tbl.cache_hit');
+      if (d.gen !== null) return t('tbl.gen_speed');
+      return '';
+    },
+    // 悬停提示: 四个诊断值一次给全 (含单位), 未采集的显示 "—" 而不是 0。
+    modelDiagTitle(m) {
+      const d = this.modelDiagParts(m);
+      const fmtMs = v => (v === null ? '—' : this.fmtMs(v));
+      const fmtPct = v => (v === null ? '—' : this.fmtPct(v));
+      return [
+        t('tbl.cache_hit') + ': ' + fmtPct(d.cachePct),
+        t('tbl.gen_speed') + ': ' + (d.gen === null ? '—' : d.gen.toFixed(1) + ' ' + t('unit_tokps')),
+        t('ttft_col_avg') + ': ' + fmtMs(d.ttft),
+        t('tbl.avg_latency') + ': ' + fmtMs(d.lat),
+      ].join('\n');
+    },
+    // 展开行的小字: 与 title 同一份数据, 但是真 DOM (键盘可读、可复制)。
+    modelDiagDetail(m) {
+      const d = this.modelDiagParts(m);
+      const parts = [];
+      if (d.cachePct !== null) {
+        parts.push(t('tbl.cache_hit') + ' ' + this.fmtPct(d.cachePct)
+          + ' (' + this.fmtT(d.cacheHit) + '/' + this.fmtT(d.promptTokens) + ')');
+      }
+      if (d.gen !== null) parts.push(t('tbl.gen_speed') + ' ' + d.gen.toFixed(1) + ' ' + t('unit_tokps'));
+      if (d.ttft !== null) parts.push(t('ttft_col_avg') + ' ' + this.fmtMs(d.ttft));
+      if (d.lat !== null) parts.push(t('tbl.avg_latency') + ' ' + this.fmtMs(d.lat));
+      return parts.join(' · ');
+    },
     // ── 模型明细「处理前 / 实发」列 (2026-10-16) ──
     // 用户原话:「我建议你把我们的处理前的token总数也显示出来，不然我无法知道到底有没有省。」
     // 只给"省了多少"看不出比例 —— 省 1 万在 100 万的请求里是 1%, 在 2 万的是 50%。
