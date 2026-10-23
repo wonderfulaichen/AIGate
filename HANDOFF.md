@@ -89,7 +89,7 @@
 > 对外表述**只谈 token，不谈金额**（用户明确要求：价格会变，token 不会）。
 > 演示稿已按此清理完毕 —— 正文**零**"金额/费用/价格/成本"字样，别再写回去。
 
-版本 **0.7.2**。仓库 `github.com/wonderfulaichen/AIGate`。
+版本 **0.8.0**。仓库 `github.com/wonderfulaichen/AIGate`。
 
 > 👥 **多账号（2026-10-07）**：`data/accounts.json` 的值从「单账号对象」升级为「**账号数组**」，
 > 顺序即优先级；登录=追加，401/403 触发**换号重试 + 30 分钟冷却**（无处可换时不冷却，原样报错）。
@@ -164,7 +164,12 @@
 > 根本不存在的速度（现显示 `—`）。判据已收敛到 `core.js::genSpeedParts`（与后端
 > `gen_speed_of` 同口径），**别再在别处复刻**。见 §8 10-11 轮 ⑤。
 
-> 🔖 **0.7.2 已发布（2026-10-07）**：`Cargo.toml` / `site/index.html` / `README` / CHANGELOG 四处已同步。
+> 🔖 **0.8.0 已发布（2026-10-24）**：`Cargo.toml` / `site/index.html` / `README` / CHANGELOG 四处已同步。
+> 本版 = 对照两个外部项目（WaLiAPI / 68hub）的 7 项借鉴改进 + opencode 端点迁移修复，
+> 全部在 §8 的 ⑨~⑮ 各节。**上一版 0.7.2（多账号等）见其节点**。
+> ⚠️ **改版本号必看**：① 四处同改；② CHANGELOG 必须**重建**才烤入二进制，
+> 否则「更新亮点」弹窗还是旧内容；③ 用 `tools/probe_version_sync.py` 一键核对
+> （六处源码 + 构建产物里的版本接口 + 烤入的 CHANGELOG 首位节点与小节数）。
 > 0.7.0 节点现为**纯前端重做**（54 小节）；0.7.1 收录 09-28 之后的全部工作（7 小节：内置预设 / CodeBuddy 反代 /
 > 剥离协议安全 / Responses 省量记账 / 记录与统计 / 错误可行动化 / 品牌标母版）。
 > ⚠️ 改版本号要**四处同改**（`Cargo.toml` 是 `build.rs` 的 exe 版本资源来源；`site/index.html` 两处徽章；`README` 版本行），
@@ -176,7 +181,7 @@
 
 > 🔎 **接手先看这里（2026-10-15 更新，数字均为当轮实测）**
 >
-> **状态**：版本 **0.7.2**，`cargo test --bin AIGate` **411 绿**，`cargo build --release` 零警告，
+> **状态**：版本 **0.8.0**，`cargo test --bin AIGate` **413 绿**，`cargo build --release` 零警告，
 > `cargo clippy` 77 条**基线债未新增**（我的区域零警告），门禁全过
 > （parts 38 件 / i18n **873 键** / balance / test_brands 47 / fmt_rules / pages / 主题三道 /
 > **verify_logo 五部分**）。
@@ -696,6 +701,12 @@ opencode 特例（剥掉协议段）由真实上游探针 + 单测覆盖。**刻
   `.openbitfun/tmp/vidtools/node_modules`，不在仓库根。
 - **前端改动必须 `cargo build --release` 才生效**（`concat!` 编译期内嵌）——
   只改 `src/admin/*` 而用旧产物跑 UI 探针，会得到"字段全缺"的假失败。
+
+**10-24 新增（版本号同步门禁）**：
+
+| 脚本 | 用途 |
+|---|---|
+| `probe_version_sync.py` | **9 断言**：六处源码版本一致（Cargo.toml / Cargo.lock / README / site 两处徽章 / CHANGELOG 首位节点）+ **构建产物**的 `/admin/api/version` + **构建产物**里烤入的 CHANGELOG 首位节点与小节数。后两条防的是「改了版本但没重建 → 面板「更新亮点」还是旧的」这个老坑 |
 
 **10-24 新增（拉取模型只预览轮，§8 轮 ⑩）**：
 
