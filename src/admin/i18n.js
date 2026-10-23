@@ -128,6 +128,10 @@ const I18N = {
     'ctx_assistant': '助手历史',
     'ctx_tool_result': '工具结果',
     'ctx_chat': '用户消息',
+    // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
+    'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
+    'detail.status_mismatch_label': '状态说明',
+    'detail.status_mismatch_hint': '流式响应的 HTTP 头在收到上游首字节时就已发出，此后流内报错无法回退修改 HTTP 状态，只能以 SSE error 事件呈现。两者不同属预期行为，不是记账错误。',
     // 「时间去哪了」(方案 F): 四段耗时。未采集显示 "—" 而非 0ms。
     'stages_title': '时间去哪了', 'stages_note': '四段首尾相接（等首字 → 思考 → 正文 → 工具调用）。来自流式采集；非流式 / 缓存回放 / 原生直通未采集（显示 —）。各段之和不必恰好等于总耗时 —— 上游可能在段间发空帧。',
     'stage_waiting': '等首字', 'stage_reasoning': '思考', 'stage_output': '正文', 'stage_tool_call': '生成工具调用',
@@ -551,6 +555,10 @@ const I18N = {
     'ctx_assistant': 'Assistant history',
     'ctx_tool_result': 'Tool results',
     'ctx_chat': 'User messages',
+    // Client-observed status vs semantic status (2026-10-24)
+    'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
+    'detail.status_mismatch_label': 'Status note',
+    'detail.status_mismatch_hint': 'For streaming responses the HTTP header is sent as soon as the first upstream byte arrives; an in-stream error afterwards cannot retroactively change the HTTP status and is surfaced as an SSE error event. A difference here is expected behavior, not a logging bug.',
     'stages_title': 'Where the time went', 'stages_note': 'The four segments are contiguous (TTFT → thinking → output → tools). Collected from streaming only; non-streaming / cache replay / native passthrough are not collected (shown as -). Segment sums need not equal total latency - upstream may send empty frames between stages.',
     'stage_waiting': 'First byte', 'stage_reasoning': 'Reasoning', 'stage_output': 'Output', 'stage_tool_call': 'Tool call args',
     'stages_win_desc': 'Average stage timings of streaming requests in this window - see which stage dominates instead of only the total',

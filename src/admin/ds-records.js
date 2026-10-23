@@ -116,6 +116,18 @@
         { k: 'ttfb', label: t('gw_ttfb'), v: num(s.upstream_ttfb_ms), color: 'var(--warn-fg)' },
       ];
     },
+    // ── 客户端实际收到的状态 vs 语义状态 (2026-10-24) ──
+    // 流式请求的 HTTP 头在收到上游首字节时就已发出（200），此后流内报错**无法回退
+    // 修改 HTTP 状态** —— 只能表现为 SSE error 事件。于是日志的 `status`(502, 语义结论)
+    // 与客户端真实感知(200) 不一致。
+    //
+    // 为什么必须显示: 不显示的话，用户拿"日志说 502"去对"客户端说 200"永远对不上，
+    // 会以为是我们记错了 —— 与"软件出的问题不出报告"同一类盲区。
+    statusMismatchText(log) {
+      const s = log && log.status, c = log && log.client_status;
+      if (c == null || Number(c) === Number(s)) return '';
+      return t('detail.status_mismatch', String(s), String(c));
+    },
     // ── 上游尝试明细 (2026-10-21) ──
     // 回答"这条请求到底打了几次上游、每次结果如何"。此前重试只留在 aigate.log 里,
     // 面板永远只显示最终那一次 —— "这次 8 秒是谁的锅"无法回答。

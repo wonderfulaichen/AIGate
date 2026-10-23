@@ -984,6 +984,7 @@ pub async fn chat_completions(
                     trace_id: trace_id.clone(),
                     upstream_request_id: None,
                     attempts: attempt_log.clone(),
+                    client_status: None,
                 },
             ).await;
             return Err(circuit_open_response(&state, &provider_name));
@@ -1114,6 +1115,7 @@ pub async fn chat_completions(
             trace_id: trace_id.clone(),
             upstream_request_id: None,
             attempts: attempt_log,
+            client_status: None,
         };
         tokio::spawn(async move {
             crate::admin::record_request(&lb, &model2, &p2, &ep_clone, up2.as_deref(), 502, s, body_len_val, Some(chain_clone), origin).await;
@@ -1209,6 +1211,7 @@ pub async fn chat_completions(
             trace_id: trace_id.clone(),
             upstream_request_id: upstream_req_id.clone(),
             attempts: attempt_log.clone(),
+            client_status: None,
         };
         tokio::spawn(async move {
             crate::admin::record_request(&lb, &model2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone), origin).await;
@@ -1274,6 +1277,7 @@ pub async fn chat_completions(
                             trace_id: trace_id.clone(),
                             upstream_request_id: upstream_req_id.clone(),
                             attempts: attempt_log.clone(),
+                            client_status: None,
                         },
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
@@ -1341,6 +1345,7 @@ pub async fn chat_completions(
                             trace_id: trace_id.clone(),
                             upstream_request_id: upstream_req_id.clone(),
                             attempts: attempt_log.clone(),
+                            client_status: None,
                         },
                     ).await;
                     // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
@@ -1411,6 +1416,7 @@ pub async fn chat_completions(
             trace_id: trace_id.clone(),
             upstream_request_id: upstream_req_id.clone(),
             attempts: attempt_log,
+            client_status: None,
         },
     );
     Ok(resp)
@@ -2054,6 +2060,7 @@ async fn relay_native_passthrough(
                     trace_id: trace_id.clone(),
                     upstream_request_id: None,
                     attempts: attempt_log.clone(),
+                    client_status: None,
                 },
             ).await;
             return Err(proto.circuit_open_response(&state, &provider_name));
@@ -2166,6 +2173,7 @@ async fn relay_native_passthrough(
             trace_id: trace_id.clone(),
             upstream_request_id: None,
             attempts: attempt_log,
+            client_status: None,
         };
         tokio::spawn(async move {
             crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), 502, start, body_len_val, Some(chain_for_log), origin).await;
@@ -2209,6 +2217,7 @@ async fn relay_native_passthrough(
             trace_id: trace_id.clone(),
             upstream_request_id: upstream_req_id.clone(),
             attempts: attempt_log.clone(),
+            client_status: None,
         };
         tokio::spawn(async move {
             crate::admin::record_request(&lb, &m2, &p2, &ep2, up2.as_deref(), upstream_status, start, body_len_val, Some(err_clone), origin).await;
@@ -2260,6 +2269,7 @@ async fn relay_native_passthrough(
                 trace_id: trace_id.clone(),
                 upstream_request_id: upstream_req_id.clone(),
                 attempts: attempt_log.clone(),
+                client_status: None,
             },
         ).await;
         // 非流式出站前还原隐私护栏占位符 (方案 B): 映射为空时 restore_redactions 立即返回原串.
@@ -2291,6 +2301,7 @@ async fn relay_native_passthrough(
             trace_id: trace_id.clone(),
             upstream_request_id: upstream_req_id.clone(),
             attempts: attempt_log,
+            client_status: None,
         },
     );
     let mut resp = Response::builder()
@@ -4030,7 +4041,17 @@ impl TokenStream {
         let stages = self.stage_timings(ld.start);
         // 会话归属从 ld 里取 (owned) —— 失败的那一跳也要挂在会话链上。
         let sess = ld.session.clone();
-        let origin = ld.origin.clone();
+        let mut origin = ld.origin.clone();
+        // **客户端实际收到的状态** (2026-10-24): 流式请求的 HTTP 头在收到上游首字节时
+        // 就已经发出（200），此后流内报错**无法回退修改 HTTP 状态** —— 网关只能把错误
+        // 表现为 SSE error 事件。故此刻 `status`(语义结论, 记 502 便于统计告警) 与
+        // 客户端真实感知(200) 不一致，必须单独记下来。
+        //
+        // 不记会怎样: 用户拿"日志说 502"去对着"客户端说 200"排查，永远对不上 ——
+        // 与"软件出的问题不出报告"同一类盲区。
+        if status != 200 {
+            origin.client_status = Some(200);
+        }
         tokio::spawn(async move {
             let effort = ld.effort.clone();
             crate::admin::record_request_with_tokens_status(
@@ -4492,7 +4513,14 @@ impl Stream for TokenStream {
                             let stages = this.stage_timings(ld.start);
                             // 会话归属从 ld 取 (owned) —— 正常收尾的那一跳也挂在会话链上。
                             let sess = ld.session.clone();
-                            let origin = ld.origin.clone();
+                            let mut origin = ld.origin.clone();
+                            // **客户端实际收到的状态** (2026-10-24): 这条收尾路径同样可能出现
+                            // "语义状态 ≠ 客户端感知" —— 上游中途断流时, HTTP 200 头早已发出
+                            // (网关还会补发 length 终止帧让客户端正常收尾), 而语义结论记 502。
+                            // 不记 client_status, 用户拿日志的 502 去对客户端的 200 就永远对不上。
+                            if status != 200 {
+                                origin.client_status = Some(200);
+                            }
                             tokio::spawn(async move {
                                 crate::admin::record_request_with_tokens_status(
                                     &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -4660,7 +4688,14 @@ impl Drop for TokenStream {
         let stages = self.stage_timings(ld.start);
         // 会话归属 (方案 F): Drop 也要挂在会话链上 —— 客户端取消的那一跳同样是会话的一部分。
         let sess = ld.session.clone();
-        let origin = ld.origin.clone();
+        let mut origin = ld.origin.clone();
+        // **客户端实际收到的状态** (2026-10-24): 同前两条收尾路径。
+        // 这里 `close_status` 可能是 499（客户端中途取消）—— 但 client_status 仍记 200,
+        // 因为 HTTP 头在流开始时就已经发出且是 200；499 只是我们**事后**对"客户端跑了"
+        // 的语义标注, 不是客户端收到的状态码。
+        if close_status != 200 {
+            origin.client_status = Some(200);
+        }
         tokio::spawn(async move {
             crate::admin::record_request_with_tokens_status(
                 &ld.log_buffer, &ld.model, &ld.provider, &ld.endpoint, ld.upstream_model.as_deref(),
@@ -6274,6 +6309,9 @@ fn origin_pair(
         trace_id: trace_id.to_string(),
         upstream_request_id: None,
         attempts: Vec::new(),
+        // 早期失败路径: 此时 HTTP 错误响应由网关直接构造, 客户端收到的就是 `status`,
+        // 故不填 client_status (None = 无差异)。
+        client_status: None,
     }
 }
 

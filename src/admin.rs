@@ -118,6 +118,25 @@ impl StageTimings {
 
 }
 
+impl RequestLog {
+    /// 客户端感知的状态与语义状态是否不同 —— 即"日志说的"与"客户端看到的"是否对不上。
+    ///
+    /// 目前唯一的成因是流式请求在 HTTP 头发出后才发现流内错误（见
+    /// [`Self::client_status`] 的说明）。面板据此在记录详情里明确标注，
+    /// 避免用户拿 502 的日志去对 200 的客户端而困惑。
+    ///
+    /// ⚠️ Rust 侧暂无调用点：实际消费方是前端（`status_mismatch` 的判断在前端 JS 里
+    /// 按 `client_status != status` 做，见 ds-records.js）。保留此方法是为了
+    /// 让口径在 Rust 侧也有**单一可测的定义**，并被单测钉住 ——
+    /// 与 `StageTimings::is_absent` 同一处置。
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn status_mismatch(&self) -> Option<(u16, u16)> {
+        self.client_status
+            .filter(|c| *c != self.status)
+            .map(|c| (self.status, c))
+    }
+}
+
 /// 一次**上游尝试**的简要记录 (2026-10-21, 借鉴 WaLiAPI 的 attempt 明细).
 ///
 /// # 为什么需要
@@ -364,6 +383,26 @@ pub struct RequestLog {
     /// 前者是模型自己说完了, 后者是上游没交代就收了尾。
     #[serde(default)]
     pub end_reason: Option<String>,
+    /// **客户端实际收到的 HTTP 状态码** (2026-10-24)。
+    ///
+    /// # 为什么它与 `status` 可能不同
+    /// 流式请求的 HTTP 响应头在**收到上游首字节之前**就已经发出（上游回 200 +
+    /// text/event-stream 时）。此后若流内出现错误事件，网关只能把错误表现为
+    /// **SSE error 事件**——HTTP 状态**无法回退修改**。
+    ///
+    /// 于是有两种"状态"：
+    /// · `status` = 本次请求的**语义结论**（流内错误记 502，便于统计与告警）；
+    /// · `client_status` = 客户端**真正收到**的那个状态码（此时是 200）。
+    ///
+    /// # 为什么必须分开记
+    /// 否则会出现「日志说 502、客户端说 200」的对不上的情况，用户拿报错去对账时
+    /// 完全无法理解（这正是"软件出的问题不出报告"那类盲区的变体）。
+    /// `None` = 未采集（旧记录 / 非流式路径 —— 那种情况下两者一定相同）。
+    ///
+    /// ⚠️ 只有当它与 `status` **不同**时才写入（见 [`Self::status_mismatch`]），
+    /// 避免给绝大多数正常记录白占一个字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_status: Option<u16>,
     /// **阶段耗时拆分** (2026-10-13 方案 F「时间去哪了」): 等首字 / 思考 / 正文 / 工具调用 四段。
     ///
     /// 旧记录无此字段 → `Default::default()` (整块 None = 未采集), 面板显示 "—"。
@@ -417,6 +456,13 @@ pub struct RequestOrigin {
     pub upstream_request_id: Option<String>,
     /// 逐次尝试明细; 空 = 没发出过上游请求 (缓存回放/极早失败), 不是"重试 0 次".
     pub attempts: Vec<AttemptBrief>,
+    /// **客户端实际收到的 HTTP 状态码** (2026-10-24)。
+    ///
+    /// 只在它与语义状态 `status` **不同**时才有值 —— 目前只有一种情况:
+    /// 流式请求的 HTTP 头已发出 (200), 之后流内报错 → `status` 记 502 但客户端是 200。
+    /// 放在本结构里而不是再加一个函数参数: 参数已 30 个, 再加会失控;
+    /// 且语义上它就是"这次请求的上下文中、与客户端感知相关的那部分"。
+    pub client_status: Option<u16>,
 }
 
 impl RequestOrigin {
@@ -872,6 +918,7 @@ pub async fn record_request(
         trace_id: origin.trace_id,
         upstream_request_id: origin.upstream_request_id,
         attempts: origin.attempts,
+        client_status: origin.client_status,
         prompt_tokens: 0,
         completion_tokens: 0,
         reasoning_tokens: 0,
@@ -1042,6 +1089,7 @@ pub async fn record_request_with_tokens_status(
         trace_id: origin.trace_id,
         upstream_request_id: origin.upstream_request_id,
         attempts: origin.attempts,
+        client_status: origin.client_status,
         prompt_tokens,
         completion_tokens,
         reasoning_tokens,
@@ -2644,6 +2692,7 @@ pub async fn api_mock(
             trace_id: String::new(),
             upstream_request_id: None,
             attempts: Vec::new(),
+            client_status: None,
             prompt_tokens: rng.gen_range(50, 500) as u32,
             completion_tokens: rng.gen_range(100, 2000) as u32,
             // 演示数据: 让思考占约 1/3, 面板上能看出「吐字速度」已剔除它.
@@ -2698,6 +2747,7 @@ pub async fn api_mock(
             trace_id: String::new(),
             upstream_request_id: None,
             attempts: Vec::new(),
+            client_status: None,
             prompt_tokens: 0,
             completion_tokens: 0,
             reasoning_tokens: 0,
@@ -2965,6 +3015,7 @@ mod changelog_tests {
             status, latency_ms: 0, body_len: 0, error: err.map(|s| s.to_string()),
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(),
+            client_status: None,
             context: None,
             prompt_tokens: 0, completion_tokens: out_tok, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
@@ -6754,6 +6805,7 @@ mod tests {
             error: None,
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(),
+            client_status: None,
             context: None,
             prompt_tokens: 100,
             completion_tokens: 50,
@@ -7744,6 +7796,7 @@ mod tests {
             status: 200, latency_ms: 0, body_len: 0, error: None,
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(), context: None,
+            client_status: None,
             prompt_tokens: 100, completion_tokens: 10, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
@@ -7755,6 +7808,62 @@ mod tests {
             session: crate::traces::SessionRef::default(),
             req_bytes: 0, req_bytes_orig: 0,
         }
+    }
+
+
+    /// 客户端实际收到的状态 vs 语义状态 (2026-10-24).
+    ///
+    /// 背景: 流式请求的 HTTP 头在收到上游首字节时就已发出（200），此后流内报错
+    /// **无法回退修改 HTTP 状态** —— 只能表现为 SSE error 事件。于是日志里的
+    /// `status`(502, 语义结论) 与客户端真实感知(200) 不一致。
+    ///
+    /// 本测试钉三条:
+    /// ① 不记 `client_status` 时 `status_mismatch()` 返回 None (绝大多数正常请求);
+    /// ② 两者不同才报告差异 —— 且**方向明确** (语义状态, 客户端状态);
+    /// ③ 两者相同时不报告 (避免"记了但没差异"的噪声)。
+    #[test]
+    fn status_mismatch_reports_semantic_vs_client_status() {
+        let mut l = ctx_fixture_log();
+
+        // ① 未采集 → 无差异
+        l.status = 502;
+        l.client_status = None;
+        assert_eq!(l.status_mismatch(), None, "未采集时不该报差异");
+
+        // ② 真实场景: 流内报错 → 语义 502, 客户端 200
+        l.client_status = Some(200);
+        assert_eq!(
+            l.status_mismatch(),
+            Some((502, 200)),
+            "应报 (语义状态, 客户端状态)"
+        );
+
+        // ③ 相同 → 不报
+        l.status = 200;
+        l.client_status = Some(200);
+        assert_eq!(l.status_mismatch(), None, "状态相同时不该报差异");
+    }
+
+    /// `client_status` 不写进 JSON 的时机: 只有 None 才省略 (skip_serializing_if),
+    /// 有值时必须落盘 —— 否则面板读不到"客户端到底收到了什么"。
+    #[test]
+    fn client_status_serializes_only_when_present() {
+        let mut l = ctx_fixture_log();
+        l.status = 502;
+
+        l.client_status = None;
+        let v = serde_json::to_value(&l).unwrap();
+        assert!(v.get("client_status").is_none(), "None 应被省略 (不占字节)");
+
+        l.client_status = Some(200);
+        let v = serde_json::to_value(&l).unwrap();
+        assert_eq!(v.get("client_status"), Some(&serde_json::json!(200)),
+                   "有值时必须落盘");
+
+        // 旧记录 (无该字段) 反序列化后为 None (不倒退成 200)
+        let old = serde_json::to_string(&l).unwrap().replace("\"client_status\":200,", "");
+        let back: RequestLog = serde_json::from_str(&old).expect("旧记录应能解析");
+        assert_eq!(back.client_status, None);
     }
 
 }
