@@ -1495,7 +1495,17 @@ pub async fn api_providers_save(
 
     // 4) 原子写盘: 临时文件 + rename, 避免写入中断留下半截文件.
     let tmp = "providers.json.tmp";
-    if let Err(e) = std::fs::write(tmp, json_str) {
+    // 4.1) 落盘前回填「拉取时采集到的上游能力」(档位/上下文/输出上限)。
+    //
+    // 为什么在这一步做: 上游目录的 `supported_efforts` 等字段**只在拉取那一刻读得到**
+    // (通用 `/v1/models` 不声明), 采集进 `FETCHED_META` 后若不在保存时写进 providers.json,
+    // 就永远只活在进程内存里 —— 面板的档位下拉也就永远收窄不了候选。
+    // (旧注释声称"保存时回填", 但链路里并没有这一步, 能力实际全丢了。)
+    //
+    // 口径: **只补空值, 不覆盖用户手改过的声明** (与面板表单语义一致);
+    //      只写模型自己的上游 ID 命中的条目, 不按中转 ID 猜。
+    let json_str = crate::providers::backfill_fetched_meta(&json_str).await;
+    if let Err(e) = std::fs::write(tmp, &json_str) {
         return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
     }
     if let Err(e) = std::fs::rename(tmp, "providers.json") {
@@ -2374,11 +2384,22 @@ pub async fn api_providers_test(
     .unwrap_or_else(|_| serde_json::json!({ "error": "serialize failed" })))
 }
 
-/// POST /admin/api/providers/:name/fetch-models
-/// 从上游 `/v1/models` 拉取模型列表, 合并进 provider 并持久化到 providers.json.
+/// POST /admin/api/providers/:name/fetch-models — 从上游拉取模型**目录**。
 ///
-/// 拉取到的模型 `reasoning_effort` 留空, 由客户端 (opencode / CodeBuddy 等) 自行调节思考档位.
-/// 已存在的模型 ID 不会被覆盖 (保留用户自定义的 upstream_model / reasoning_effort).
+/// ⚠️ **本接口不改变运行时路由表**（2026-10-24 修正的行为）。
+///
+/// 旧实现在这里直接调 `registry.add_models()`，于是"点了一下获取"就把新模型**立即**
+/// 写进内存路由表：客户端立刻能调它，而用户还没在面板里确认、也没点"保存配置"。
+/// 更糟的是前端弹窗的「取消」只撤掉表单里的新增项 —— **界面没接受，运行时却已生效**，
+/// 两边不一致且无法从界面看出来。这正是"改完保存后行为对不上"的一类隐蔽返工。
+///
+/// 现在的顺序与「保存配置」对齐：
+///   ① 本接口只**读**上游目录并返回（+ 协议探测 + 能力采集），不写路由表；
+///   ② 前端把结果合进供应商表单草稿，用户在差异弹窗里勾选；
+///   ③ 用户点「保存配置」→ `api_providers_save` 落盘 + `reload()`，运行时这才生效。
+///
+/// 能力表（`FETCHED_META`）仍在这里采集：它与路由无关，只是档位/上下文等元信息，
+/// 保存时会按 `upstream_model` 回填到模型配置（见 [`crate::providers::fetched_meta_snapshot`]）。
 pub async fn api_providers_fetch_models(
     State(state): State<super::proxy::AppState>,
     Path(name): Path<String>,
@@ -2436,9 +2457,14 @@ pub async fn api_providers_fetch_models(
     //    下架判定必须基于【上游模型ID】(upstream_model, 缺省回落中转ID):
     //    中转ID 是用户自取别名可随时改名, 不能作为与上游清单比对的依据 ——
     //    否则一改中转ID 就会被误标"已下架".
+    //
+    // ⚠️ **只读 registry, 不写** (2026-10-24): 旧实现在这里 `add_models()`,
+    //    等于"点了一下获取"就把新模型塞进运行时路由表, 与前端弹窗的取消不一致。
+    //    现在三态(新增/已有/下架)只是**给用户看的预览**: 真正的生效点是保存配置。
     let (added, skipped, removed) = {
-        let mut registry = state.registry.write().await;
-        let mut existing: Vec<String> = registry
+        let registry = state.registry.read().await;
+        // 已保存的上游模型 ID 集合 (去中转别名)。
+        let existing: Vec<String> = registry
             .providers()
             .iter()
             .find(|p| p.name == name)
@@ -2453,17 +2479,22 @@ pub async fn api_providers_fetch_models(
                 v
             })
             .unwrap_or_default();
-        let removed: Vec<String> = existing.drain(..).filter(|id| !ids.contains(id)).collect();
-        // 能力表 (档位/上下文/输出上限): 拉取时从上游目录采集, 随模型一并写入内存注册表,
-        // 之后随面板「保存配置」持久化, 并可由 /v1/models 下发给客户端。
-        let caps = crate::providers::fetched_meta_snapshot().await;
-        let (added, skipped) = registry.add_models(&name, &ids, &caps);
+        // 三态 (纯计算, 不写 registry):
+        //   removed = 本地有、上游没有 → 面板标"下架";
+        //   added   = 上游有、本地没有 → 面板标"新增"(默认勾选);
+        //   skipped= 两边都有          → 面板标"已有"(不重复加入)。
+        let removed: Vec<String> = existing.iter().filter(|id| !ids.contains(id)).cloned().collect();
+        let added = ids.iter().filter(|id| !existing.contains(id)).count();
+        let skipped = ids.len().saturating_sub(added);
         (added, skipped, removed)
     };
+    // 能力表 (档位/上下文/输出上限): 与路由无关的元信息, 保存时按 upstream_model 回填。
+    // 采集在这里做 (上游目录只有这一刻读得到), 但**不**借道路由表传递。
+    let _caps = crate::providers::fetched_meta_snapshot().await;
 
-    // 注: 不再直接写盘/重载. 拉取的模型仅写入内存注册表 (运行期即时生效),
-    // 并由前端合并进供应商表单, 待用户点 "保存配置" 才持久化.
-    // 这样不会冲掉用户在表单里尚未保存的其它改动 (包含关系: 保存由用户主导).
+    // 注: **不写盘也不改路由表**。拉取结果只作为面板表单的草稿输入,
+    // 生效点只有用户点「保存配置」(api_providers_save → 落盘 + reload)。
+    // 这样"获取"与"取消获取"都不会改动客户端正在使用的路由。
 
     Json(serde_json::json!({
         "success": true,
@@ -2477,6 +2508,9 @@ pub async fn api_providers_fetch_models(
         // 实测该上游支持的协议 (按端点探测). 空数组 = 探测不到 (网络/鉴权问题), 前端据此不发建议.
         // 用途: 拉取后作为新增模型的**建议** api_formats, 用户可直接采纳或改。
         "probed_protocols": probed,
+        // 明确告知前端"本次没有改动运行时" —— 前端据此解释"取消为何真的不生效",
+        // 而不是让用户去猜 (旧实现里取消只撤表单, 运行时其实已经变了)。
+        "applied": false,
     }))
 }
 

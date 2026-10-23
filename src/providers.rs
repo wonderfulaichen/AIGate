@@ -734,6 +734,14 @@ impl ProviderRegistry {
     ///
     /// `capabilities`: 上游模型 ID → 能力（拉取时采集；档位/上下文/输出上限）。
     /// 传入后写入模型配置的 `supported_efforts`，随表单保存持久化；空表则不下发。
+    ///
+    /// ⚠️ **当前无生产调用点**（2026-10-24 起）：`api_providers_fetch_models` 改为"只读目录、
+    /// 不改路由表"，合并改由前端表单 + `api_providers_save` 完成，故本函数退出运行路径。
+    /// 保留原因：下面的单测钉的是「中转 ID 一律加前缀」「按 upstream_model 去重」这两条规则 ——
+    /// 它们对应一个真实的跨供应商覆盖 bug（见 [`crate::providers::transit_model_id`] 与
+    /// CHANGELOG「模型中转 ID 会跨供应商撞车」）。前端 `transitId` 是同一规则的 JS 等价实现，
+    /// 这份 Rust 实现是它的对照基准，删掉就失去"两侧漂移"的检测锚点。
+    #[cfg(test)]
     pub fn add_models(
         &mut self,
         name: &str,
@@ -800,6 +808,11 @@ impl ProviderRegistry {
 /// 在面板上可见可改却永不生效, 且没有任何提示. 加前缀后各家条目拥有独立中转 ID.
 ///
 /// 幂等: 上游 ID 已等于供应商名或已带 `供应商/` 前缀时, 原样返回 (重复拉取/导入不叠加前缀).
+///
+/// ⚠️ **当前无生产调用点**（2026-10-24 起，随 `add_models` 一起退出运行路径）：
+/// 合并改由前端表单完成，前端 `transitId` 是同一规则的 JS 实现。保留 Rust 版是为了
+/// 用单测钉住规则本身（对应真实的跨供应商覆盖 bug），并作为前端实现的对照基准。
+#[cfg(test)]
 pub fn transit_model_id(provider_name: &str, upstream_id: &str) -> String {
     let p = provider_name.trim();
     let u = upstream_id.trim();
@@ -1269,6 +1282,65 @@ pub async fn fetched_meta_snapshot() -> std::collections::HashMap<String, Fetche
     FETCHED_META.lock().await.clone()
 }
 
+/// 把 `FETCHED_META` 里采集到的上游能力回填进待保存的 providers.json 文本.
+///
+/// # 为什么需要
+/// 上游目录的 `supported_efforts`(等能力字段)**只在「拉取模型」那一刻读得到** ——
+/// 通用 `/v1/models` 不声明它们。采集进来后若不写进 providers.json, 能力就只活在进程
+/// 内存里: 重启即失, 且面板的档位下拉永远收窄不了候选。
+///
+/// # 口径 (两条, 都是安全侧)
+/// 1. **只补空值**: 模型已有 `supported_efforts` 就不动 (用户手改过的声明优先)。
+/// 2. **按 upstream_model 匹配**, 不按中转 ID 猜 —— 中转 ID 是用户可改的别名,
+///    拿它当匹配依据会把能力填到错的模型上。
+///
+/// 解析失败 / 表为空时原样返回文本 (回填是增强, 绝不因此让保存失败)。
+pub async fn backfill_fetched_meta(json_str: &str) -> String {
+    let caps = fetched_meta_snapshot().await;
+    if caps.is_empty() {
+        return json_str.to_string();
+    }
+    let Ok(mut doc) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return json_str.to_string();
+    };
+    let Some(providers) = doc.get_mut("providers").and_then(|p| p.as_array_mut()) else {
+        return json_str.to_string();
+    };
+    let mut filled = 0usize;
+    for pv in providers.iter_mut() {
+        let Some(models) = pv.get_mut("models").and_then(|m| m.as_object_mut()) else {
+            continue;
+        };
+        for (transit_id, cfg) in models.iter_mut() {
+            // 该条目的上游模型 ID; 缺省回落中转 ID (与 add_models 的判定同口径).
+            let upstream = cfg
+                .get("upstream_model")
+                .and_then(|v| v.as_str())
+                .unwrap_or(transit_id.as_str())
+                .to_string();
+            let Some(meta) = caps.get(&upstream) else { continue };
+            // 只补空值, 不动用户已声明的.
+            let already = cfg
+                .get("supported_efforts")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty());
+            if already {
+                continue;
+            }
+            if let Some(efforts) = &meta.supported_efforts {
+                if !efforts.is_empty() {
+                    cfg["supported_efforts"] = serde_json::json!(efforts);
+                    filled += 1;
+                }
+            }
+        }
+    }
+    if filled == 0 {
+        return json_str.to_string();
+    }
+    serde_json::to_string_pretty(&doc).unwrap_or_else(|_| json_str.to_string())
+}
+
 /// buddy 目录项 → 能力（字段缺失一律 None，**不猜**）。
 fn buddy_model_meta(m: &serde_json::Value) -> FetchedModelMeta {
     let efforts = m
@@ -1564,8 +1636,7 @@ mod tests {
     }
 
     /// 空 key 不挂鉴权头 (Zen 的 `public` 等无鉴权站点) —— 与各处原有的
-    /// `if !key.is_empty()` 行为一致, 不得因为换成构造器而多挂一个空 Bearer。
-    #[test]
+    /// `if !key.is_empty()` 行为一致, 不得因为换成构造器而多挂一个空 Bearer。    #[test]
     fn with_auth_header_skips_empty_key() {
         let c = reqwest::Client::new();
         let a = AuthConfig { header: Some("x-api-key".into()), prefix: Some(String::new()), ..Default::default() };
@@ -2145,5 +2216,64 @@ mod tests {
         assert_eq!(protocol_for_host(""), None);
         // 不应把无关域名的后缀当命中: 目录里若有 "com" 之外的通用段会误判, 这里确认无此问题
         assert_eq!(protocol_for_host("com"), None);
+    }
+
+    /// 保存时回填上游能力 (`backfill_fetched_meta`) —— 钉三条口径:
+    /// ① 只补空值: 用户已声明的 supported_efforts 不得被覆盖;
+    /// ② 按 upstream_model 匹配, 不按中转 ID 猜;
+    /// ③ 表为空 / 文本非法时原样返回 (回填是增强, 绝不让保存失败)。
+    #[tokio::test]
+    async fn backfill_fetched_meta_fills_only_missing_by_upstream_model() {
+        use crate::providers::{backfill_fetched_meta, FetchedModelMeta};
+        // 准备采集表: 两个上游模型有能力声明
+        {
+            let mut g = crate::providers::FETCHED_META.lock().await;
+            g.insert("buddy-a".to_string(), FetchedModelMeta {
+                supported_efforts: Some(vec!["low".into(), "high".into()]),
+                ..Default::default()
+            });
+            g.insert("buddy-b".to_string(), FetchedModelMeta {
+                supported_efforts: Some(vec!["medium".into()]),
+                ..Default::default()
+            });
+        }
+
+        let src = r#"{
+          "providers": [
+            { "name": "p1", "endpoint": "https://x/v1/chat/completions",
+              "models": {
+                "p1/a": { "upstream_model": "buddy-a" },
+                "p1/b": { "upstream_model": "buddy-b", "supported_efforts": ["low"] },
+                "p1/c": { "upstream_model": "not-in-catalog" }
+              } }
+          ]
+        }"#;
+
+        let out = backfill_fetched_meta(src).await;
+        let doc: serde_json::Value = serde_json::from_str(&out).expect("回填结果应仍为合法 JSON");
+        let models = &doc["providers"][0]["models"];
+
+        // ① 空值被补上
+        assert_eq!(
+            models["p1/a"]["supported_efforts"],
+            serde_json::json!(["low", "high"]),
+            "缺能力的条目应被补上"
+        );
+        // ② 用户已声明的**不被覆盖** (low 仍是 low, 没变成 medium)
+        assert_eq!(
+            models["p1/b"]["supported_efforts"],
+            serde_json::json!(["low"]),
+            "用户手改过的档位声明必须保留"
+        );
+        // ③ 采集表里没有的上游模型 → 不塞空数组
+        assert!(
+            models["p1/c"].get("supported_efforts").is_none(),
+            "无能力声明的模型不得被塞空数组"
+        );
+
+        // 非法文本原样返回 (回填失败不应让保存失败)
+        assert_eq!(backfill_fetched_meta("not json").await, "not json");
+        // 无 providers 数组同样原样
+        assert_eq!(backfill_fetched_meta(r#"{"x":1}"#).await, r#"{"x":1}"#);
     }
 }
