@@ -74,15 +74,25 @@
     },
     get analysisRpm() { return Number(this.stats&&this.stats.total_requests||0)/this.analysisActiveMinutes; },
     get analysisTpm() { return ((Number(this.stats&&this.stats.total_prompt_tokens||0)+Number(this.stats&&this.stats.total_completion_tokens||0))/this.analysisActiveMinutes); },
+    // 模型明细筛选（**唯一实现**，2026-10-24 合并）。
+    // ds-computed.js 曾有一份副本，被拼接顺序覆盖、且丢了 aliases 与"无 provider"行 —— 已删。
+    // `aliases` 是后端下发的字符串数组，但为防脏数据（非字符串项）用 String() 兜一层，
+    // 否则一个 null 元素就抛 TypeError 把整张表打空白（Alpine 会静默吞异常）。
     get filteredModelStats() {
       const q=(this.modelDetailFilter||'').toLowerCase().trim();
       return (this.stats&&this.stats.per_model||[]).filter(m=>{
         if(this.modelProviderFilter && this.modelProviderName(m)!==this.modelProviderFilter) return false;
-        return !q || (m.model||'').toLowerCase().includes(q) || (m.upstream_model||'').toLowerCase().includes(q) || (m.provider||'').toLowerCase().includes(q) || (m.aliases||[]).some(a=>a.toLowerCase().includes(q));
+        if(!q) return true;
+        return (m.model||'').toLowerCase().includes(q)
+          || (m.upstream_model||'').toLowerCase().includes(q)
+          || (m.provider||'').toLowerCase().includes(q)
+          || (Array.isArray(m.aliases)?m.aliases:[]).some(a=>String(a).toLowerCase().includes(q));
       });
     },
     modelProviderName(model) { return (model&&model.provider)||'—'; },
     modelErrorCount(model) { return Number(model&&model.errors||0); },
+    // 下拉里把"无 provider"也保留为 `'—'` 一档（与 modelProviderName 同口径）：
+    // 否则那些行永远筛不出来，与列表显示不一致。
     get modelDetailProviders() { return [...new Set((this.stats&&this.stats.per_model||[]).map(m=>this.modelProviderName(m)))].sort(); },
     // 统一时间范围与粒度. P3: 由「三档固定组合」升级为「快捷范围 + 自定义区间」——
     // 每个范围**自动推导**合适粒度 (≤1 天→hour, ≤31 天→day, 更长→month), 不再要求用户

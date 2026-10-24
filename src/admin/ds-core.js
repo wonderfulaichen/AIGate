@@ -49,11 +49,29 @@
     async init() {
       // localStorage 版本键: 版本变化时清理旧 UI 缓存 —— 结构迁移后旧数据会毒害新逻辑.
       // 白名单保留跨版本稳定的个性化偏好; 其余 aigate* 键一律清除. 隐私模式静默降级.
+      //
+      // ⚠️ 2026-10-24 修：白名单曾漏 `aigate.pageSize` 与 `aigate.logCols` ——
+      // 而这两个是**真实在写**的（core.js 每页条数 / ds-records.js 列显隐），
+      // 于是用户每次版本升级都被静默重置，界面还不会提示"你的偏好被清了"。
+      //
+      // 现在改为**用集合声明"受保护偏好"**，并要求任何新增持久化键在此登记 ——
+      // 判据由 `tools/probe_ui_invariants.py` 守着（它会扫源码里所有
+      // `localStorage.setItem('aigate…')`，凡有写入却不在本集合内即报红）。
+      // 这样"新增一个设置项忘了登记"会立刻被发现，而不是等用户被重置后才发现。
       try {
         const CK = 'aigate.cache-version';
         const VER = (window.AIGATE_VERSION && window.AIGATE_VERSION.version) || '';
         if (VER && localStorage.getItem(CK) !== VER) {
-          const KEEP = { [CK]: 1, 'aigate.analyticsSpan': 1, 'aigate_drawer_adv': 1, 'aigate.chartMode': 1, 'aigate.theme': 1 };
+          // 受跨版本保留的个性化偏好（改这里时同步 probe_ui_invariants.py 的期望集合）。
+          const KEEP = {
+            [CK]: 1,
+            'aigate.analyticsSpan': 1,   // 趋势粒度
+            'aigate_drawer_adv': 1,      // 抽屉高级端点展开态
+            'aigate.chartMode': 1,       // 趋势图模式
+            'aigate.theme': 1,           // 主题
+            'aigate.pageSize': 1,        // 每页条数（此前被误删）
+            'aigate.logCols': 1,         // 记录表列显隐（此前被误删）
+          };
           const drop = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -202,11 +220,23 @@
     },
 
     switchTab(tabId) {
-      if(this.isDirty && tabId!==this.activeTab){
+      // 未保存改动的**统一守卫**（2026-10-24 修）。
+      //
+      // 此前只有 `isDirty`（= providersFormData 的供应商草稿）被守卫，而
+      // `peakDirty`（分时段计费）与 `tooltipDirty`（托盘 Tooltip）**不在**里面 ——
+      // 于是：改了高峰时段 → 切到供应商页 → 本函数 L223 的 `fetchPeakSchedule()`
+      // 用后端值覆盖本地草稿 → 改动**静默丢失**；而 `peakDirty` 只在保存成功时
+      // 才复位（ds-config.js），所以黄色「未保存」还挂在界面上。
+      // 用户既丢了改动，也不知道该不该再点保存 —— 这是本轮审计里最严重的静默数据丢失。
+      //
+      // 现在统一走 `hasUnsavedDrafts()`（见 ds-config.js），它返回"还有哪些草稿没保存"，
+      // 确认弹窗里能点名，用户知道自己在丢什么。
+      const dirtyKinds = (tabId !== this.activeTab) ? this.unsavedDraftKinds() : [];
+      if (dirtyKinds.length) {
         // 统一确认弹窗 (异步): 用户确认后重入本函数继续切换.
-        confirmAsk(t('unsaved_confirm'), { danger: true }).then(ok => {
+        confirmAsk(t('unsaved_confirm_kinds', dirtyKinds.join(' · ')), { danger: true }).then(ok => {
           if (!ok) return;
-          this.isDirty = false;
+          this.clearDirtyFlags();
           this.switchTab(tabId);
         });
         return;
@@ -220,7 +250,19 @@
       if (tabId==='analytics') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchDegradations(); this.fetchHeatmap(); }
       // 记录页的统计来自 logs (不走 stats): 已加载过才重播 —— 首访让骨架→内容自然出现, 不从 0 滚.
       if (tabId==='records') { if (this.logsFetched) this.replayNumTweens(); this.fetchLogs(); }
-      if (tabId==='settings'||tabId==='providers') { if (tabId==='providers' && this.health.length===0) this.fetchHealth(); if(!this.providersFormData || !this.isDirty) this.refreshProviders(); this.fetchKeys(); this.fetchAccounts(); this.fetchPresets(); this.fetchTooltipConfig(); this.fetchProxyConfig(); this.fetchCurrencyConfig(); this.fetchPeakSchedule(); this.fetchStripReasoning(); this.fetchThinkingPurify(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations(); }
+      // ⚠️ 下面这批 fetch* 会**用后端值覆盖本地草稿**。只在对应草稿不脏时才调 ——
+      // 否则即便过了上面的确认（用户选了"丢弃"），也会被这里二次覆盖成难以理解的中间态。
+      // `clearDirtyFlags()` 已在确认分支把它们清掉，故此处只需按 dirty 判断。
+      if (tabId==='settings'||tabId==='providers') {
+        if (tabId==='providers' && this.health.length===0) this.fetchHealth();
+        if(!this.providersFormData || !this.isDirty) this.refreshProviders();
+        this.fetchKeys(); this.fetchAccounts(); this.fetchPresets();
+        if (!this.tooltipDirty) this.fetchTooltipConfig();
+        this.fetchProxyConfig();
+        if (!this.currencyDirty) this.fetchCurrencyConfig();
+        if (!this.peakDirty) this.fetchPeakSchedule();
+        this.fetchStripReasoning(); this.fetchThinkingPurify(); this.fetchStripTcProtocols(); this.fetchMaxHistoryTurns(); this.fetchAutoContinue(); this.fetchConnParams(); this.fetchCache(); this.fetchRecall(); this.fetchToolOutputLimit(); this.fetchDegradations();
+      }
     },
 
     startPoll() {
@@ -269,4 +311,31 @@
       this._flashLogTimer = setTimeout(() => { this._flashLogTs = 0; }, 1200);
     },
     async fetchHealth()  { this.healthLoading=true; try { const r=await fetch('/admin/api/health', {headers:authHeaders()}); if(r.ok) this.health=await r.json(); } catch(e){} this.healthLoading=false; },
-    healthOf(name) { const h=(this.health||[]).find(x=>x.provider===name); return h?(h.status_level||''):''; },
+    // 健康等级的**唯一取值来源**：后端 `i18n::health_level()` 返回 `"ok"` 或 `"error"`
+    // （见 src/i18n.rs:494-508，文档写明"技术性 code, 不随语言变化"）。
+    //
+    // ⚠️ 2026-10-24 修：此前各处**比字面量**，出现了三个值混用 ——
+    //   drawer-provider.html:14 判 'error'  (对)
+    //   drawer-provider.html:38 判 'err'    (永远为假 → 「测试并恢复」按钮永不出现, 熔断后没法解除)
+    //   ds-provtest.js:78      写 'error'  (对, 但另一处又写 'ok'/'error' 混着比)
+    // 现在统一走本函数返回**布尔**, 调用方不再接触字面量 —— 这样"哪个值才对"只在一处定义。
+    //
+    // 返回值语义:
+    //   null  = 还没有健康数据 (没测过 / health 未拉取) → 显示「未连接」
+    //   true  = 正常
+    //   false = 异常 (熔断 OR 不可达 —— 两者都归 "error", 与后端契约一致)
+    healthState(name) {
+      const h = (this.health || []).find((x) => x.provider === name);
+      if (!h) return null;
+      const lv = h.status_level || '';
+      if (lv === '') return null;
+      // 兼容防御: 早期模板曾用 `'err'` 做比较（drawer-provider.html 旧版 L38），
+      // 若将来有代码误写 `'err'` 进 status_level，这里也按异常处理 ——
+      // 免得"改了一处、别处还留着旧值"导致状态显示错。
+      return lv === 'ok';
+    },
+    // 供模板直接用的三态判定（避免模板里写 === true / === false 这种脆弱比较）。
+    healthOf(name) {
+      const s = this.healthState(name);
+      return s === null ? 'na' : (s ? 'ok' : 'err');
+    },

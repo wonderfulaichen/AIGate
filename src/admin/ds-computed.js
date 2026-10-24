@@ -495,20 +495,17 @@
         this.analyticsTab = 'overview';
       }
     },
-    /// 模型明细表的筛选结果 (按模型名/供应商过滤) —— 表从拓扑拆回来后需要。
-    get filteredModelStats() {
-      const q = (this.modelDetailFilter || '').toLowerCase();
-      const pv = this.modelProviderFilter || '';
-      return (this.stats && this.stats.per_model || []).filter(m => {
-        if (pv && m.provider !== pv) return false;
-        if (!q) return true;
-        return String(m.upstream_model || m.model || '').toLowerCase().includes(q)
-          || String(m.model || '').toLowerCase().includes(q);
-      });
-    },
-    get modelDetailProviders() {
-      return Array.from(new Set((this.stats && this.stats.per_model || []).map(m => m.provider).filter(Boolean)));
-    },
+    /// 模型明细表的筛选结果 —— ⚠️ 实现已**合并到 `ds-stats.js` 那一份**（2026-10-24）。
+    ///
+    /// 这里原来还有一份独立实现，而 `concat!` 的拼接顺序是 ds-stats → ds-computed，
+    /// 于是本文件的覆盖了前者，带来两个实际后果：
+    ///  · 搜索**丢了 aliases**（同名模型的中转别名搜不到）；
+    ///  · `modelDetailProviders` 用 `filter(Boolean)` 把"无 provider 字段"的行**排除出下拉**，
+    ///    于是那些行永远筛不出来，与列表显示不一致。
+    ///
+    /// 现在只保留 `ds-stats.js` 的完整版本（它用 `modelProviderName()` 把缺失归一成 `'—'`，
+    /// 下拉里也有这一档）。**不要在这里再定义 `filteredModelStats` / `modelDetailProviders`**
+    /// —— 重复定义会被拼接顺序静默覆盖，`tools/probe_ui_invariants.py` 会报红。
     /// 按 ModelStats 取它的融合行 (含条宽/总耗时/网关去程) —— 供**模型明细表**使用。
     /// 拓扑里已不显示逐模型信息 (那是明细), 故表必须能自己拿到这两项,
     /// 否则丢了"一眼看出谁慢" 的能力。

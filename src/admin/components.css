@@ -675,7 +675,7 @@ tr:hover td.th-sticky{background:var(--card)}
 /* ── 统一空态: 虚线框 + 圆形图标底 + 标题 + 描述 + 主次按钮 ── */
 .empty-state{display:flex;flex-direction:column;align-items:center;text-align:center;padding:52px 20px}
 .empty-ic{width:56px;height:56px;border-radius:var(--rl);display:flex;align-items:center;justify-content:center;background:var(--card-nest);border:1px solid var(--border);color:var(--muted);margin-bottom:16px;box-shadow:var(--elev-1)}
-.empty-t{font-size:var(--fs-16);font-weight:700;color:var(--fg);margin:0 0 8px;letter-spacing:-.01em}
+.empty-t{font-size:var(--fs-18);font-weight:700;color:var(--fg);margin:0 0 8px;letter-spacing:-.01em}
 .empty-d{font-size:var(--fs-13);color:var(--muted);max-width:460px;margin:0 0 18px;line-height:1.65}
 
 /* ══════════════════════════════════════════════════════════════════════════

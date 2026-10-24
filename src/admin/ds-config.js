@@ -152,6 +152,29 @@
       else { this.peakSchedule.weekdays.push(d); this.peakSchedule.weekdays.sort((a,b)=>a-b); }
     },
     addPeakWindow() { this.peakSchedule.windows.push({start:'09:00', end:'12:00'}); },
+    // ── 未保存草稿：统一清点与清除 (2026-10-24) ──
+    //
+    // 为什么需要它：面板里有**三套互不相干的草稿**，此前只有供应商那套（`isDirty`）
+    // 受 `switchTab` 守卫，另外两套不受 —— 切页签时被后端值静默覆盖，而"未保存"
+    // 标记又不复位，用户既丢改动又被骗。现在统一在这两个函数里清点/清除，
+    // `switchTab` 只调它们，不再各处比字面量。
+    //
+    // 返回值是**人话的清单**（如 ["分时段计费","托盘 Tooltip"]），用于确认弹窗点名，
+    // 让用户知道自己在丢什么 —— 只说"有未保存改动"是不够的。
+    unsavedDraftKinds() {
+      const out = [];
+      if (this.isDirty) out.push(t('draft_providers'));
+      if (this.peakDirty) out.push(t('draft_peak'));
+      if (this.tooltipDirty) out.push(t('draft_tooltip'));
+      return out;
+    },
+    // 用户确认"丢弃"后调用：把所有草稿标记归零，避免残留成"未保存"假象。
+    clearDirtyFlags() {
+      this.isDirty = false;
+      this.peakDirty = false;
+      this.tooltipDirty = false;
+    },
+
     removePeakWindow(i) { this.peakSchedule.windows.splice(i, 1); },
     async savePeakSchedule() {
       this.peakMsg='';
