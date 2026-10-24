@@ -116,6 +116,9 @@ const { chromium } = require('playwright');
     const bar = item ? item.querySelector('.ctx-bar') : null;
     const segs = bar ? bar.querySelectorAll('span') : [];
     const badges = item ? Array.from(item.querySelectorAll('.ctx-badge')) : [];
+    // 参数徽章带（2026-10-24 新增）
+    const strip = document.querySelector('.log-param-strip');
+    const tags = strip ? Array.from(strip.querySelectorAll('.lp-tag')) : [];
     return {
       found: true,
       segCount: segs.length,
@@ -123,6 +126,11 @@ const { chromium } = require('playwright');
       firstBadge: badges.length ? (badges[0].textContent||'').trim() : null,
       allHaveApprox: badges.every(b => (b.textContent||'').indexOf('≈') >= 0),
       allHavePct: badges.every(b => /%/.test(b.textContent||'')),
+      stripFound: !!strip,
+      tagCount: tags.length,
+      tagTexts: tags.map(x => (x.textContent||'').trim()).slice(0, 8),
+      // 徽章内数值之间必须有可见分隔（曾粘连成 "×28≈13.4K11.8%"）
+      hasSeparator: badges.every(b => /·/.test(b.textContent||'')),
     };
   });
   await p.screenshot({ path: `%(out)s/detail_ctx.png` });
@@ -218,6 +226,16 @@ def main():
         check(cb.get("allHaveApprox") is True and cb.get("allHavePct") is True,
               "③ 每个徽章都含 ≈tokens 与占比（口径诚实）",
               f"first={cb.get('firstBadge')} approx={cb.get('allHaveApprox')} pct={cb.get('allHavePct')}")
+        check(cb.get("hasSeparator") is True,
+              "③ 徽章内数值有可见分隔（曾粘连成 ×28≈13.4K11.8%）",
+              f"sep={cb.get('hasSeparator')} first={cb.get('firstBadge')}")
+        # 参数徽章带（2026-10-24）
+        check(cb.get("stripFound") is True, "⑦ 详情顶部有参数徽章带",
+              f"stripFound={cb.get('stripFound')}")
+        check(cb.get("tagCount", 0) >= 2, "⑦ 徽章带 ≥2 个胶囊（模型 + 至少一个其它参数）",
+              f"tags={cb.get('tagTexts')}")
+        check(any("model:" in t for t in (cb.get("tagTexts") or [])),
+              "⑦ 徽章带里有 model: 标识", f"{cb.get('tagTexts')}")
         nc = res.get("noCtx") or {}
         check(nc.get("noneAvailable") is True or nc.get("hidden") is True,
               "④ 没有 context 的旧日志**不渲染**该块（不留空块）", f"{nc}")
