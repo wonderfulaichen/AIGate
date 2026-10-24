@@ -4743,15 +4743,33 @@ pub async fn api_stats(
     if granularity != "hour" && range_start.is_some() {
         // rollup() 返回临时引用 &Arc; 必须 clone Arc 才能在 if let 块外安全使用.
         if let Some(book_arc) = state.log_buffer.rollup().cloned() {
-            if let Some(cover_ts) = state.log_buffer.oldest_ts().await {
-                if let Some((merge_end, rstart_day)) =
-                    rollup_merge_bounds(now, range_start.unwrap_or(0), cover_ts)
-                {
-                    merged_days = book_arc.days_between(rstart_day, merge_end);
-                    if !merged_days.is_empty() {
-                        // 边界天内已在 rollup 的天从日志侧剔除, 防重复计数.
-                        log_side.retain(|log| bucket_start(log.timestamp, "day") > merge_end);
-                    }
+            // `oldest_ts()` 来自**内存缓冲区**；为 None 表示缓冲区里一条日志都没有
+            // （刚清空日志、或全部轮转走）。
+            //
+            // ⚠️ 2026-10-24 修：这里原本写的是 `if let Some(cover_ts) = ... {}`，
+            // 缓冲区为空时整个 rollup 合并被**静默跳过** —— 后果是日志清空之后，
+            // 即使 daily_stats.jsonl 里有完整历史，per_provider / per_model 也
+            // 完全看不到历史数据（实测：logs 为空 + rollup 有一天 zen，
+            // `range=29d` 仍返回空列表；往 logs 塞一条无关记录后立刻正常）。
+            //
+            // 空缓冲区该怎么取上界: 没有任何日志需要与 rollup 去重，
+            // 故直接采用**全部可合并的天**。`rollup_merge_bounds` 的语义是
+            // "日志侧从哪一天起还要自己算"，对空日志侧而言上界可以放宽到今天之前
+            // （今天的 rollup 仍在累加、不完整，始终排除）。
+            let cover_ts = match state.log_buffer.oldest_ts().await {
+                Some(ts) => ts,
+                // 空缓冲区: 用一个"为今天"的时间戳当上界 →
+                // merge_end 落到 prev_bucket(today)，即合并到今天之前的所有天。
+                None => now,
+            };
+            if let Some((merge_end, rstart_day)) =
+                rollup_merge_bounds(now, range_start.unwrap_or(0), cover_ts)
+            {
+                merged_days = book_arc.days_between(rstart_day, merge_end);
+                if !merged_days.is_empty() {
+                    // 边界天内已在 rollup 的天从日志侧剔除, 防重复计数.
+                    // 空 log_side 时 retain 是空操作, 安全.
+                    log_side.retain(|log| bucket_start(log.timestamp, "day") > merge_end);
                 }
             }
         }
@@ -7579,6 +7597,39 @@ mod tests {
 
         // 情形 C: 查询起点不早于上界 → 无需合并
         assert!(rollup_merge_bounds(now, now - 60, now - 60).is_none());
+    }
+
+    /// 空日志缓冲区时用的**上界取值口径**（2026-10-24 修的既有缺陷）。
+    ///
+    /// 缺陷原样：`stats` 里写的是
+    /// `if let Some(cover_ts) = state.log_buffer.oldest_ts().await { ...合并... }`，
+    /// 而 `oldest_ts()` 在缓冲区为空时返回 `None` → **整段合并被静默跳过**。
+    /// 后果：日志被清空（或全部轮转走）之后，即使 `daily_stats.jsonl` 里有完整
+    /// 历史，`per_provider` / `per_model` 也完全看不到历史数据。
+    ///
+    /// ⚠️ **本测试没有判别力，必须说明清楚**：它只能证明「若上界取 now，
+    /// 算出来的边界是正确的（覆盖到昨天）」。它**证明不了调用方真的会调用** ——
+    /// 而缺陷恰恰出在调用方（`if let Some` 把 None 吞掉）。纯函数测试对那类
+    /// 缺陷天然无效。
+    ///
+    /// **真正守这条修复的是** `tools/probe_rollup_empty_logs.py`（真实实例、
+    /// logs.jsonl 留空）。已做过改坏验证：把调用方恢复成旧的 `if let Some`
+    /// 写法 → 该探针的 ① 立刻转红（`per_provider 为空`）。
+    ///
+    /// 保留本测试的理由：把"空缓冲区该取什么上界"这个**决策**钉在源码旁边，
+    /// 防止后人把 `None => now` 改成 `None => 0` 之类（那会合并到 1970 年）。
+    #[test]
+    fn rollup_merge_bounds_covers_history_when_buffer_is_empty() {
+        let now = 1_700_000_000u64;
+        let today = bucket_start(now, "day");
+        let range_start = now - 29 * 86400;
+
+        // 修复后的取值：None → now
+        let (merge_end, rstart) = rollup_merge_bounds(now, range_start, now)
+            .expect("空缓冲区也必须给出合并边界（否则历史数据完全不可见）");
+        assert_eq!(merge_end, today - 86400, "上界应是昨天（今天的 rollup 仍在累加，不完整）");
+        assert_eq!(rstart, bucket_start(range_start, "day"));
+        assert!(rstart < merge_end, "必须真的覆盖到历史，不能退化成空区间");
     }
 
     /// rollup 的模型趋势必须能为历史天新建桶 (否则长跨度图表缺历史曲线).

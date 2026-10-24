@@ -74,7 +74,13 @@
     // 找一项设置要滚很久，且顶部胶囊只是滚动锚点、看不出"当前在哪个分区"。
     // 现在一次只显示一个分区的设置，左栏导航常驻并高亮当前分区。
     setSettingsSection(k) {
-      this.settingsSection = k;
+      // ⚠️ 必须校验（2026-10-24 实测修）。面板可见性由枚举值驱动时，
+      // 非法值不是"无操作"而是**全隐藏** —— 设置页会只剩左导航、右侧一片空白。
+      // 触发途径与分析页同源：旧书签、手改地址栏、外部拼接、将来的持久化。
+      // 合法值直接以分区表为准（`settingsSections` 是唯一声明处，
+      // 避免这里再维护第二份 key 列表而漂移）。
+      const valid = this.settingsSections.map(s => s.k);
+      this.settingsSection = valid.includes(k) ? k : valid[0];
       // 哈希深链（2026-10-24）：把分区也写进地址栏 → `#settings/peak` 可直接分享/刷新还原。
       // 只在设置页时才写，避免在别的页签改分区污染 hash。
       try {

@@ -108,7 +108,13 @@
           const sub = raw.split('/')[1];
           if (sub) {
             if (head === 'analytics' && ['overview','cost'].includes(sub)) this.analyticsTab = sub;
-            if (head === 'settings') this.settingsSection = sub;
+            // ⚠️ 设置分区也要校验（2026-10-24 修）：`#settings/garbage` 若不拦，
+            // settingsSection 会被写成非法值 → 所有分区的 x-show 全为假 →
+            // 设置页只剩左导航、右边一片空白（看着像加载失败）。
+            // 校验用分区表本身（唯一声明处），不在这里维护第二份 key 列表。
+            if (head === 'settings' && this.settingsSections.some(s => s.k === sub)) {
+              this.settingsSection = sub;
+            }
           }
         }
       } catch (e) {}

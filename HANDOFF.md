@@ -1,21 +1,34 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉕」**：rollup 落盘失败原因
-> + 失败建议 + 套餐徽章）。方案文档 `docs/plan-rollup-error-and-plans.md`。
-> ① `RollupEntry` 新增 `last_error`/`last_error_status`/`last_error_ts`（全部
-> `#[serde(default)]`），跨日历史失败终于能回溯原因（实测 321 条目里 242 个有此缺口）。
-> ② 失败原因加「可操作建议」查表（借鉴 WALiAPI 的 invalidationText），**上游原文永远保留**。
-> ③ 含免费模型的供应商显示「套餐」徽章，让模型明细的「已省 —」有解释。
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉖」**：修「日志清空后历史
+> 不可见」+ 三处非法页签导致整页空白）。
+> ① **缺陷 A**（既有）：rollup 合并写成 `if let Some(cover_ts) = oldest_ts()`，
+> 缓冲区为空时 `None` → 整段合并被静默跳过 → 日志清空后历史数据完全不可见。
+> 修为空缓冲区用 `now` 当上界（折算成"合并到今天之前"，今天**始终排除**）。
+> ② **缺陷 B**：`setAnalyticsTab('perf')` / `setSettingsSection('garbage')` /
+> `#settings/garbage` 三处都不校验 → 所有面板 `x-show` 全假 → **整页空白**
+> （看着像加载失败）。**规律：面板可见性由枚举值驱动时，非法值不是无操作而是全隐藏。**
+> ③ 参考项目 WALiAPI 的 `SettingsPage.tsx` **同样不校验**（`return hash || "security"`），
+> 我们观感更糟所以做了归一 —— **有意识地不照抄它的漏洞**。
+> 新增探针 `probe_rollup_empty_logs.py`(4) / `probe_tab_guard.py`(8)，
+> 改坏验证 1/1 与 3/3 转红。
+> ⚠️ **判据诚实性**：单测 `rollup_merge_bounds_covers_history_when_buffer_is_empty`
+> **没有判别力**（只测纯函数、证明不了调用方会调）—— 别把它当成"改了调用方就红"的保险，
+> 真正守这条的是那个探针。
+> 全页巡查（真实数据）：7 个页面/页签零 pageerror、零未替换占位符、零 undefined。
+
+> ⏪ **上一轮（㉕）**：rollup 落盘失败原因 + 失败建议 + 套餐徽章。
+> 方案文档 `docs/plan-rollup-error-and-plans.md`。`RollupEntry` 新增
+> `last_error`/`last_error_status`/`last_error_ts`（全部 `#[serde(default)]`），
+> 跨日历史失败终于能回溯原因（实测 321 条目里 242 个有此缺口）。
+> 失败原因加「可操作建议」查表（借鉴 WALiAPI 的 invalidationText），**上游原文永远保留**。
+> 含免费模型的供应商显示「套餐」徽章，让模型明细的「已省 —」有解释。
 > ⚠️ **判据边界**：`Option` 去掉 `#[serde(default)]` 测试**仍通过** —— serde 对 Option
 > 缺失本就返回 None；真正守兼容性的是 u16/u64。**不得宣称测试守住了 Option。**
-> ⚠️ **两次判据口径错误**（探针当场抓出）：套餐判据第一版用 provider 级
-> `billing===false`（口径是"任一计费模型即计费"→ 恒为 True，徽章永不显示）；
-> 探针第一版拿它当预期 → 空集对空集 = 永远通过。已改为模型级 billing。
+> ⚠️ **两次判据口径错误**：套餐判据第一版用 provider 级 `billing===false`
+> （口径是"任一计费模型即计费"→ 恒为 True，徽章永不显示）；探针第一版拿它当预期 →
+> 空集对空集 = 永远通过。已改为模型级 billing。
 > ⚠️ `ds-*.js` 里局部变量**绝不能叫 `t`**（遮蔽翻译函数 → 整页 TypeError）。
-> **新发现待决策的既有缺陷**：`admin.rs:4746` 缓冲区为空时 `oldest_ts()` 返 None →
-> 整个 rollup 合并被跳过 → 日志清空后历史数据完全不可见（实测复现，未修）。
-> 新增/扩展判据：rollup 单测 6 条、`probe_prov_cols.py` 21 条；
-> 改坏验证 rollup 侧 4 项转红。门禁：421 单测、i18n 961 键。
 
 > ⏪ **上一轮（㉔）**：供应商统计定宽对齐 + 失败原因胶囊。
 > **纠正误判**：「没统计的行预留位置导致锯齿」是错的 —— 实测 10 行全有统计、
@@ -1708,6 +1721,107 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-24 轮 ㉖：修「日志清空后历史不可见」+ 三处非法页签导致整页空白
+
+用户要求「你来处理问题，不清楚可以看看参考项目」。先修上一轮的既有缺陷，
+再用真实数据把全部页面 + 子页签巡查一遍找其余问题。
+
+#### 缺陷 A：日志清空后 rollup 历史完全不可见（既有，本轮修）
+
+`stats` 的 rollup 合并原本是
+`if let Some(cover_ts) = state.log_buffer.oldest_ts().await { ...合并... }`，
+而 `oldest_ts()` 在缓冲区**为空**时返回 `None` → 整段合并被静默跳过。
+
+后果：日志被清空（或全部轮转走）后，即使 `daily_stats.jsonl` 里有完整历史，
+`per_provider` / `per_model` 也完全看不到历史数据。
+
+修法：空缓冲区时用 `now` 当上界 —— 经 `rollup_merge_bounds` 折算成
+`prev_bucket(today)`（昨天），即"合并到今天之前的所有天"。
+今天的 rollup 仍在累加、不完整，**始终排除**（这条边界也写进了探针断言）。
+空日志侧没有任何记录需要与 rollup 去重，`retain` 是空操作，不会重复计数。
+
+实测：logs.jsonl 留空 + rollup 里有一天 zen →
+修前 `range=29d` 返回 `per_provider = []`；修后正确返回 zen 及其失败原因。
+
+#### 缺陷 B：非法页签值导致整页空白（同类三处，本轮修）
+
+**规律（值得记住）**：面板可见性由枚举值驱动时（`x-show="tab==='a'"`），
+非法值不是"无操作"而是**全隐藏** —— 页面只剩头部或左导航，用户看到的是
+"加载失败"，而不是"这个页签不存在"。
+
+三处都缺校验：
+
+| 触发 | 后果 |
+|---|---|
+| `setAnalyticsTab('perf')`（perf 页签已删除） | 分析页零面板（实测 `visiblePanelTitles = []`） |
+| `setSettingsSection('garbage')` | 设置页右侧空白，只剩左导航 |
+| 打开 `#settings/garbage` | init 里对 settings 子页**完全不校验**，直接写进状态 |
+
+修法：
+- 两个 setter 内部归一（`ds-computed.js` / `ds-onboard.js`）；
+- init 的 hash 恢复用分区表校验（`ds-core.js`）；
+- 合法值以**声明表**为准（`settingsSections` 是分区唯一声明处），
+  不在这里维护第二份 key 列表 —— 否则删/加分区时会漂移。
+
+⚠️ **顺带修掉一个延伸问题**：`setAnalyticsTab` 原本会把非法值也写进 `location.hash`
+（`#analytics/perf`），刷新后又走一遍坏状态。现在先归一再写 hash。
+
+#### 参考项目怎么看这件事（用户点名要看）
+
+读了 WALiAPI 的 `SettingsPage.tsx`：它在 `useState` 初始化里
+`return hash || "security"`，**同样不校验**；内容用 `{activeTab === "x" && ...}`
+串联判断，非法值表现为"这个 tab 没内容"（因为它内容区是条件渲染，顶部 Tab 栏还在）。
+
+我们的设置页是「左导航 + 右内容」，非法值会让右侧整块空白 —— 观感比它更糟，
+所以做了归一。**这一处是有意识地不照抄它的漏洞**，不是"没参考"。
+
+#### 新增判据
+
+- `tools/probe_rollup_empty_logs.py`（4 条，真实实例）：logs.jsonl 留空，
+  断言 range=29d 仍能看到 rollup 供应商、失败原因随之一并透出、
+  **今天的数据不得被合并**、默认 range 仍不含历史（防止把合并无条件打开）。
+- `tools/probe_tab_guard.py`（8 条，真实实例）：两个 setter 的归一、
+  非法值不写 hash、`#settings/garbage` 被归一、归一后仍有可见面板、
+  **合法值不被归一误伤**（cost / peak 保持不变）。
+- **改坏验证**：探针 1/1、探针 3/3 全部转红，且每次都确认 `build_ok=True`。
+  破坏项分别是：恢复旧 `if let Some` 写法 / analytics 不校验 / settings 不校验 /
+  hash 不校验。
+
+#### ⚠️ 一个判据诚实性说明（不要误信这个单测）
+
+`admin::tests::rollup_merge_bounds_covers_history_when_buffer_is_empty`
+**没有判别力**：它只测纯函数，只能证明"给了 now 就能算出正确边界"，
+**证明不了调用方真的会去调用** —— 而缺陷恰恰出在调用方（`if let Some` 吞掉 None）。
+纯函数测试对这类缺陷天然无效。
+
+真正守这条修复的是 `probe_rollup_empty_logs.py`（已做改坏验证）。
+单测保留的理由是钉住"空缓冲区该取 `now` 而不是 `0`"这个**决策**，
+注释里已写明它不负责验证调用方。**别把它当成改了调用方就会红的保险。**
+
+（过程中我在这个测试里两次猜错了 `cover_ts = 0` 的返回值形态，最后把那段
+反面对照整段删掉了 —— 猜不透的东西不该写成断言。）
+
+#### 全页巡查结果（真实数据，1600×1000）
+
+| 页面 | 高度 | 面板 | 问题 |
+|---|---|---|---|
+| dashboard | 2301 | 9 | — |
+| analytics/overview | 1557 | 8 | — |
+| analytics/cost | 2842 | 8 | — |
+| records | 1210 | 1 | — |
+| providers | 967 | 1 | — |
+| settings | 1203 | 6 | — |
+| about | 702 | 5 | — |
+
+零 `pageerror`、零未替换占位符、零 `undefined/NaN`。
+（巡查脚本报的两个"裸 i18n 键"是正则误报，实际是 `node.js` / `alpine.js` 文件名。）
+
+#### 未实测 / 已知缺口
+
+- `@media(max-width:1180px)` 下各页表现未截图核对。
+- 页签归一后是否应给用户提示（"该页签不存在，已切回概览"）—— 目前静默归一，未做。
+- 部署份 exe 未替换（红线：AI 只构建，不替用户换 exe / 重启实例）。
 
 ### 🆕 10-24 轮 ㉕：rollup 落盘失败原因 + 失败建议 + 套餐徽章（含两次判据设计错误）
 

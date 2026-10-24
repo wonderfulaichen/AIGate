@@ -560,10 +560,20 @@
     // 切分析页子页签 + 同步地址栏（2026-10-24 哈希深链）。
     // 原来模板里直接 `analyticsTab='cost'`，没有函数包装，无法顺手写 hash。
     setAnalyticsTab(k) {
-      this.analyticsTab = k;
+      // ⚠️ 必须**先把非法值归一**再写状态与 hash（2026-10-24 实测修）。
+      //
+      // 不校验的后果不是"无操作"而是**整页空白**：perf 页签已删除，但
+      // `setAnalyticsTab('perf')` 会把 analyticsTab 写成 perf →
+      // 所有面板的 `x-show="analyticsTab==='overview'|'cost'"` 全为假 →
+      // 分析页只剩头部，看着像加载失败（实测：visiblePanelTitles = []）。
+      //
+      // 为什么不能只靠 init 时调 normalizeAnalyticsTab()：
+      // ① 运行中任何调用点（旧书签、外部拼接、控制台、将来的持久化）都能触发；
+      // ② 写进 hash 的非法值本身会污染地址栏，刷新后又走一遍坏状态。
+      this.analyticsTab = (k === 'overview' || k === 'cost') ? k : 'overview';
       try {
         if (this.activeTab === 'analytics') {
-          const h = '#analytics/' + k;
+          const h = '#analytics/' + this.analyticsTab;
           if (location.hash !== h) history.replaceState(null, '', h);
         }
       } catch (e) {}
