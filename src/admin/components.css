@@ -17,14 +17,14 @@
 .st{display:flex;align-items:center;gap:9px;color:var(--fg);padding-left:14px;font-size:var(--fs-12);font-weight:700;letter-spacing:.05em;text-transform:uppercase;position:relative;opacity:.94}
 .st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:var(--rs);background:linear-gradient(180deg,var(--accent),var(--primary))}
 table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:12px 14px;font-weight:650;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
+th{text-align:left;padding:10px 14px;font-weight:650;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
 /* 可排序列: 悬停变主色提示可点; 箭头占固定宽度 (无排序时留白, 避免点排序时列宽跳动) */
 .th-sort{cursor:pointer;transition:color var(--dur-fast);user-select:none}
 .th-sort:hover{color:var(--fg)}
 /* 未排序列的 ⇅ 用 muted 色（常驻但很淡），排序列用主色 —— 一眼分出"能点"与"正在按它排" */
 .th-sort-ico{display:inline-block;min-width:9px;color:var(--muted);font-size:var(--fs-12);opacity:.55}
 .th-sort-ico.on{color:var(--primary);opacity:1}
-td{padding:14px 14px;font-size:var(--fs-13);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
+td{padding:10px 14px;font-size:var(--fs-13);border-bottom:1px solid var(--fill-3);font-variant-numeric:tabular-nums}
 /* ── 供应商表的"窄屏挤压"防护（2026-10-12）──
    给操作列的图标按钮加文字后（⚡测试 / ↓拉取模型），操作列变宽 → 挤压其它列，
    实测 1024 宽下「正常」被**逐字换行**成两行、「未配置」三行，整行高度错乱。
@@ -483,7 +483,14 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .th-sort:hover{color:var(--fg)}/* 横向滚动时固定首列 (时间) —— 记录页列多, 右滑后时间列离开视野就无法定位行 */
 th.th-sticky,td.th-sticky{position:sticky;left:0;z-index:1;background:var(--card)}
 th.th-sticky{z-index:2}
-tr:hover td.th-sticky{background:var(--card)}
+/* sticky 首列必须有不透明背景，否则横向滚动时下面的单元格会透上来。
+   但**悬停时要跟随整行变色** —— 原来写死 `background:var(--card)`，
+   导致鼠标扫过整行时首列（时间）不变色，看着像"这一格不属于这行"。
+   ⚠️ `--row-hover` 是半透明色（rgba(10,132,255,.10)），单独当背景会让内容透出，
+   必须用 linear-gradient 叠在卡片实色之上。 */
+tr:hover td.th-sticky{
+  background:linear-gradient(var(--row-hover),var(--row-hover)),var(--card);
+}
 /* 列显隐下拉: 绝对定位在筛选条内, 不参与其布局 */
 .cols-pop{position:absolute;top:calc(100% + 4px);right:0;z-index:30;min-width:150px;padding:6px;background:var(--elevated);border:1px solid var(--border-s);border-radius:var(--rm);box-shadow:var(--shm)}
 .cols-row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:var(--rs);font-size:var(--fs-12);color:var(--fg);cursor:pointer;white-space:nowrap}
