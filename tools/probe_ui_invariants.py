@@ -201,9 +201,33 @@ def b6():
           f"缺 {len(bad)} 个")
 
 
+def b7():
+    """B7 供应商页不得有「无用的大卡片页头」与「点了没反应的视图切换」。
+
+    用户 2026-10-24 用红圈标出这两个东西并明确要求去掉：
+      · `.phd` 大卡片头在供应商页只是占掉 ~100px 垂直空间（真正要看的行被挤下去）
+      · 「卡片/表格」切换在改成单一紧凑行式列表后就失效了 —— 点它没有任何变化，
+        比没有更糟（用户会以为功能坏了）
+    所以钉住：该页不得再出现 `class="phd"`，也不得再引用失效的视图切换状态/键。
+    """
+    print("\n== B7 供应商页：无大卡片页头 / 无失效的视图切换 ==")
+    src = FILES.get("page-providers.html", "")
+    check('class="phd"' not in src,
+          "供应商页不使用 .phd 大卡片页头（改为紧凑工具条 .phd-bar）")
+    check("phd-bar" in src, "供应商页使用 .phd-bar 紧凑工具条")
+    check("provViewMode" not in src,
+          "模板里不再引用 provViewMode（单一视图后该状态已删）")
+    state = FILES.get("ds-state.js", "")
+    check("provViewMode" not in state,
+          "ds-state.js 里不再保留 provViewMode 死状态")
+    i18n_src = FILES.get("i18n.js", "")
+    check("plaza_view_table" not in src and "plaza_view_card" not in src,
+          "模板不再使用已删的视图切换文案键")
+
+
 def main():
     print("前端不变量回归（静态断言）")
-    b1(); b2(); b3(); b4(); b5(); b6()
+    b1(); b2(); b3(); b4(); b5(); b6(); b7()
     print()
     if _fails:
         print(f"{BAD}  {len(_fails)} 项未通过: {_fails}")

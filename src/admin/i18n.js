@@ -399,7 +399,7 @@ const I18N = {
     'badge.free': '免费', 'tbl.vendor': '品牌', 
     'plaza_search_ph': '搜索供应商、端点或模型名…', 'provider_name': '供应商名称', 'plaza_all': '全部',
     
-    'plaza_clear_filters': '清除筛选', 'plaza_view_card': '卡片', 'plaza_view_table': '表格', 'plaza_showing': '显示',
+    'plaza_clear_filters': '清除筛选', 'plaza_showing': '显示',
     'plaza_no_match': '没有符合筛选条件的供应商', 'plaza_summary': '{0} 个供应商 · {1} 个模型',
     'empty_prov_title': '还没有供应商', 'empty_prov_desc': '添加第一家供应商，填入上游地址与 API Key', 'empty_prov_cta': '+ 添加供应商',
     'empty_records_title': '还没有请求记录', 'empty_records_desc': '发出第一次请求后，这里会显示每次调用的状态、耗时与费用', 'empty_records_cta': '查看接入指引 →',
@@ -890,7 +890,7 @@ const I18N = {
     'badge.free': 'FREE', 'tbl.vendor': 'Brand', 
     'plaza_search_ph': 'Search provider, endpoint or model name…', 'provider_name': 'Provider name', 'plaza_all': 'All',
     
-    'plaza_clear_filters': 'Clear filters', 'plaza_view_card': 'Cards', 'plaza_view_table': 'Table', 'plaza_showing': 'Showing',
+    'plaza_clear_filters': 'Clear filters', 'plaza_showing': 'Showing',
     'plaza_no_match': 'No providers match the filters', 'plaza_summary': '{0} providers · {1} models',
     'empty_prov_title': 'No providers yet', 'empty_prov_desc': 'Add your first provider with its upstream endpoint and API key', 'empty_prov_cta': '+ Add provider',
     'empty_records_title': 'No request logs yet', 'empty_records_desc': 'After your first request, each call’s status, latency and cost appear here', 'empty_records_cta': 'View setup guide →',

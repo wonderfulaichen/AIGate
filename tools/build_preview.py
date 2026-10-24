@@ -352,7 +352,7 @@ for t in TABS:
     # 注意: 不能只把 switchTab 的目标换掉 —— 原 init 里 switchTab('dashboard') 还负责首次
     # fetchStats(); 直接换目标会跳过它, 首载完成逻辑 (_endFirstLoad) 不跑, loading 恒为真,
     # 页面就永远停在骨架 (实测记录页如此)。故保留一次 fetchStats 再切目标。
-    v = html.replace("await this.switchTab('dashboard');",
+    v = html.replace("await this.switchTab(startTab);",
                      "await this.fetchStats();\n      await this.switchTab('%s');" % t, 1)
     if v == html:
         raise SystemExit("未能替换初始 switchTab —— ds-core.js 的 init 改了? 需同步本脚本")
@@ -385,11 +385,11 @@ MOCK_DRAWER = ('{name:"provA", endpoint:"https://api.example.com/v1/chat/complet
                'balance_endpoint:"", prompt_cache:true, openai_cache_control:false, '
                'max_request_body_bytes:0, models:[' + ",".join(MOCK_MODELS) + ']}')
 
-v = html.replace("await this.switchTab('dashboard');",
+v = html.replace("await this.switchTab(startTab);",
                  "await this.fetchStats();\n      await this.switchTab('providers');", 1)
 assert v != html, "抽屉变体: switchTab 替换失败"
-v2 = v.replace("provViewMode: 'card', drawerProv: null,",
-               "provViewMode: 'table', drawerProv: %s," % MOCK_DRAWER, 1)
+v2 = v.replace("provSearch: '', drawerProv: null,",
+               "provSearch: '', drawerProv: %s," % MOCK_DRAWER, 1)
 assert v2 != v, "抽屉变体: drawerProv 初值替换失败 —— ds-state.js 改了? 需同步本脚本"
 p = os.path.join(OUT_DIR, "admin_drawer.html")
 io.open(p, "w", encoding="utf-8").write(v2)
@@ -398,7 +398,7 @@ print("variant:", p)
 # 记录详情变体: 记录页 + 直接打开第一条记录的详情 —— 用于核对「时间去哪了」与
 # 「网关去程」两条瀑布的措辞/配色是否一致 (未采集 → "—", 直通 → "直通")。
 # 同抽屉变体: 必须写进**初始状态**, headless 下运行时改 selectedLog 不会重渲染。
-v = html.replace("await this.switchTab('dashboard');",
+v = html.replace("await this.switchTab(startTab);",
                  "await this.fetchStats();\n      await this.switchTab('records');", 1)
 assert v != html, "记录详情变体: switchTab 替换失败"
 # 日志对象直接内联 (桩里的 LOG 在 IIFE 内, Alpine 的 data 取不到)。

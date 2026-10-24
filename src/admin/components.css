@@ -482,9 +482,10 @@ tr.drag-over > td{background:var(--primary-soft)}
 
 
 /* ── new-api header + sidebar ── */
-/* 顶栏: 玻璃 + 模糊 (原为写死的 rgba(12,12,16,.92) 深色底 —— 浅色主题下整条仍是黑的).
-   顺带修掉自己定的红线: 组件里不得出现 rgba(255,255,255,*) / rgba(0,0,0,*) 字面量. */
-.hdr{height:44px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0;position:relative;z-index:10}
+/* ⚠️ `.hdr` 的**唯一定义**在 base.css（高度 64px，配合卡片式导航项 46px + 上下留白）。
+   这里曾有一份 height:44px 的重复定义，加载顺序在后 → 静默压掉了 base.css 的值，
+   导致导航项（46px）比顶栏（44px）还高、视觉上溢出。重复定义已删除，
+   样式只留一处，改高度请改 base.css。 */
 .hdr-title{font-size:var(--fs-14);font-weight:700;letter-spacing:-.01em;color:var(--fg)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .sidebar-group{padding:14px 12px 4px;font-size:var(--fs-10);font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:.6;white-space:nowrap;overflow:hidden}
@@ -1015,7 +1016,17 @@ tr:hover td.th-sticky{
 .chart-rest-fill{stroke:var(--chart-rest)}
 
 
-/* ── 供应商紧凑行式列表（2026-10-24，按 WaLiAPI 真实渲染 1:1 重做）──
+/* ── 供应商页的**紧凑工具条**（2026-10-24，替代大卡片页头）──
+   用户反馈红圈标出的那张大卡片"显示这个很没意义"：它占掉 ~100px 垂直空间，
+   而真正要看的 10 行供应商被挤到下面。这里改成一行：
+   左侧标题 + 统计，右侧操作按钮。标题降为 20px（不再是 30px 的 hero 尺寸）。 */
+.phd-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  margin-bottom:14px;padding:0 2px}
+.phd-bar-main{display:flex;align-items:baseline;gap:12px;min-width:0;flex-wrap:wrap}
+.phd-bar-title{font-size:var(--fs-15);font-weight:650;letter-spacing:-.02em;color:var(--fg);margin:0;line-height:1.2}
+.phd-bar-sub{font-size:var(--fs-12);color:var(--muted)}
+
+/* 供应商紧凑行式列表（2026-10-24，按 WaLiAPI 真实渲染 1:1 重做）──
    实测目标（measure_wali_rows.py）：行高 73 / 圆角 16 / padding 16 / 1px 描边；
    序号方块 24×24 r8 fs12/700；状态点 8×8 全圆；标签胶囊 59×21 全圆 fs10/600；
    URL 行 fs12 mono；统计 label+value 各 fs12；图标按钮 27×27 r8。

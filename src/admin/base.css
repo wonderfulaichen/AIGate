@@ -192,7 +192,7 @@ body{
 /* ── 顶栏 (品牌 + 导航 + 全局控件) ──
    导航从"左侧栏整列"移到顶栏横排: 面板更缺横向空间, 且这是 cc-switch 的骨架.
    顶栏用玻璃底, 与卡片同一套质感. */
-.hdr{height:56px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0;position:relative;z-index:20}
+.hdr{height:64px;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0;position:relative;z-index:20}
 .hdr-brand{display:flex;align-items:center;gap:8px;flex:none}
 /* 顶栏品牌图标: 用项目**真实图标** (brandLogoSvg, 与 icon.svg 同源), 不再用 "◆" 占位。
    SVG 自带圆角方块底与配色, 故容器去掉 background/color/font-size, 只负责尺寸与圆角
@@ -201,15 +201,23 @@ body{
 .hdr-name{font-size:var(--fs-14);font-weight:700;letter-spacing:-.01em;color:var(--fg)}
 .hdr-ver{font-size:var(--fs-10);color:var(--muted);background:var(--fill-4);padding:2px 6px;border-radius:var(--rm)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
-/* 分段胶囊导航 —— 对照 cc-switch AppSwitcher: 容器 bg-muted rounded-xl p-1,
-   激活项 bg-background + shadow-sm (即"胶囊里浮起一枚"). 分组用细分隔线, 不用分组标题 (横排太占位). */
-.navseg{display:inline-flex;align-items:center;gap:2px;background:var(--fill-4);border:1px solid var(--border-subtle);border-radius:var(--rl);padding:3px;min-width:0;overflow-x:auto;scrollbar-width:none;flex:0 1 auto}
+/* ── 顶部导航 = WaLiAPI 的**卡片式导航项**（2026-10-24 按用户要求参考其侧栏形态）──
+   它的导航项是：左边一个**白色圆角方盒装图标**（border + bg-white），右边名称；
+   选中态整项变成"白色浮起 + 描边 + 轻阴影"。
+   改造前我们是"胶囊内分段"（填充底 + 选中反白），图标裸在外、没有容器盒 ——
+   两种形态读起来差别很大：图标盒让每个入口有"实体感"。
+   ⚠️ 只改**导航项形态**，位置仍在顶部（用户明确要求保留顶部切换栏）。 */
+.navseg{display:inline-flex;align-items:center;gap:4px;background:transparent;border:none;padding:0;min-width:0;overflow-x:auto;scrollbar-width:none;flex:0 1 auto}
 .navseg::-webkit-scrollbar{display:none}
-.navseg-sep{width:1px;height:16px;background:var(--border);margin:0 4px;flex:none}
-.navseg-i{display:inline-flex;align-items:center;gap:7px;padding:0 12px;height:30px;border-radius:var(--r);font-size:var(--fs-12);font-weight:600;color:var(--muted);text-decoration:none;white-space:nowrap;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),box-shadow var(--dur-fast);flex:none}
-.navseg-i:hover{color:var(--fg);background:var(--fill-4)}
-.navseg-i.active{background:var(--card);color:var(--fg);box-shadow:var(--elev-1)}
-.navseg-i svg{width:15px;height:15px;flex:none}
+.navseg-sep{width:1px;height:18px;background:var(--border);margin:0 6px;flex:none}
+.navseg-i{display:inline-flex;align-items:center;gap:9px;padding:4px 11px 4px 5px;height:46px;border-radius:var(--r);font-size:var(--fs-12);font-weight:500;color:var(--muted);text-decoration:none;white-space:nowrap;cursor:pointer;border:1px solid transparent;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast),box-shadow var(--dur-fast);flex:none}
+.navseg-i:hover{color:var(--fg);background:var(--fill-3)}
+.navseg-i.active{background:var(--card);color:var(--fg);border-color:var(--primary-bd-soft);box-shadow:var(--elev-1);font-weight:600}
+/* 图标装进白色方盒 —— 它导航项最鲜明的特征 */
+.navseg-i svg{width:16px;height:16px;flex:none;padding:8px;box-sizing:content-box;
+  background:var(--card);border:1px solid var(--border);border-radius:var(--rm);color:var(--fg)}
+.navseg-i:hover svg{border-color:var(--border-s)}
+.navseg-i.active svg{border-color:var(--primary-bd-soft);color:var(--accent)}
 .sel-mini{font-size:var(--fs-11);padding:4px 24px 4px 8px}
 
 
