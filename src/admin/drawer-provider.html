@@ -141,37 +141,37 @@
               <!-- Brand filter chips -->
               <div class="m-card-bar">
                 <span class="txs tm" style="margin-right:4px" x-text="t('brand')"></span>
-                <span class="m-chip" :class="{'on':!drawerProv._brandFilter}" @click="drawerProv._brandFilter=''" x-text="t('plaza_all')"></span>
+                <button type="button" class="m-chip" :class="{'on':!drawerProv._brandFilter}" @click="drawerProv._brandFilter=''" x-text="t('plaza_all')" :aria-pressed="(!drawerProv._brandFilter)?'true':'false'"></button>
                 <template x-for="b in drawerBrands()" :key="b.label">
-                  <span class="m-chip" :class="{'on':drawerProv._brandFilter===b.label}" @click="drawerProv._brandFilter=b.label">
+                  <button type="button" class="m-chip" :class="{'on':drawerProv._brandFilter===b.label}" @click="drawerProv._brandFilter=b.label" :aria-pressed="(drawerProv._brandFilter===b.label)?'true':'false'">
                     <span :style="'width:6px;height:6px;border-radius:50%;background:'+b.color"></span>
                     <span x-text="b.label"></span>
-                  </span>
+                  </button>
                 </template>
                 <span style="margin-left:auto"></span>
                 <span class="txs tm" style="margin-right:4px" x-text="t('thinking_short')"></span>
-                <span class="m-chip" :class="{'on':!drawerProv._effFilter}" @click="drawerProv._effFilter=''" x-text="t('plaza_all')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._effFilter==='low'}" @click="drawerProv._effFilter='low'" x-text="t('eff.low')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._effFilter==='medium'}" @click="drawerProv._effFilter='medium'" x-text="t('eff.medium')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._effFilter==='high'}" @click="drawerProv._effFilter='high'" x-text="t('eff.high')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')"></span>
+                <button type="button" class="m-chip" :class="{'on':!drawerProv._effFilter}" @click="drawerProv._effFilter=''" x-text="t('plaza_all')" :aria-pressed="(!drawerProv._effFilter)?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._effFilter==='low'}" @click="drawerProv._effFilter='low'" x-text="t('eff.low')" :aria-pressed="(drawerProv._effFilter==='low')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._effFilter==='medium'}" @click="drawerProv._effFilter='medium'" x-text="t('eff.medium')" :aria-pressed="(drawerProv._effFilter==='medium')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._effFilter==='high'}" @click="drawerProv._effFilter='high'" x-text="t('eff.high')" :aria-pressed="(drawerProv._effFilter==='high')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._effFilter==='max'}" @click="drawerProv._effFilter='max'" x-text="t('eff.max')" :aria-pressed="(drawerProv._effFilter==='max')?'true':'false'"></button>
               </div>
               <!-- Price/Status/Origin filter chips -->
               <div class="m-card-bar" style="border-top:1px solid var(--fill-3)">
                 <span class="txs tm" style="margin-right:4px" x-text="t('price')"></span>
-                <span class="m-chip" :class="{'on':!drawerProv._freeFilter}" @click="drawerProv._freeFilter=''" x-text="t('plaza_all')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._freeFilter==='paid'}" @click="drawerProv._freeFilter='paid'" x-text="t('paid')"></span>
+                <button type="button" class="m-chip" :class="{'on':!drawerProv._freeFilter}" @click="drawerProv._freeFilter=''" x-text="t('plaza_all')" :aria-pressed="(!drawerProv._freeFilter)?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._freeFilter==='free'}" @click="drawerProv._freeFilter='free'" x-text="t('badge.free')" :aria-pressed="(drawerProv._freeFilter==='free')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._freeFilter==='paid'}" @click="drawerProv._freeFilter='paid'" x-text="t('paid')" :aria-pressed="(drawerProv._freeFilter==='paid')?'true':'false'"></button>
                 <span style="margin-left:auto"></span>
                 <span class="txs tm" style="margin-right:4px" x-text="t('status_lc')"></span>
-                <span class="m-chip" :class="{'on':!drawerProv._removedFilter}" @click="drawerProv._removedFilter=''" x-text="t('plaza_all')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='active'}" @click="drawerProv._removedFilter='active'" x-text="t('status_active')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._removedFilter==='removed'}" @click="drawerProv._removedFilter='removed'" x-text="t('status_removed')"></span>
+                <button type="button" class="m-chip" :class="{'on':!drawerProv._removedFilter}" @click="drawerProv._removedFilter=''" x-text="t('plaza_all')" :aria-pressed="(!drawerProv._removedFilter)?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._removedFilter==='active'}" @click="drawerProv._removedFilter='active'" x-text="t('status_active')" :aria-pressed="(drawerProv._removedFilter==='active')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._removedFilter==='removed'}" @click="drawerProv._removedFilter='removed'" x-text="t('status_removed')" :aria-pressed="(drawerProv._removedFilter==='removed')?'true':'false'"></button>
                 <span style="margin-left:auto"></span>
                 <span class="txs tm" style="margin-right:4px" x-text="t('origin')"></span>
-                <span class="m-chip" :class="{'on':!drawerProv._originFilter}" @click="drawerProv._originFilter=''" x-text="t('plaza_all')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._originFilter==='manual'}" @click="drawerProv._originFilter='manual'" x-text="t('origin_manual')"></span>
-                <span class="m-chip" :class="{'on':drawerProv._originFilter==='fetched'}" @click="drawerProv._originFilter='fetched'" x-text="t('origin_fetched')"></span>
+                <button type="button" class="m-chip" :class="{'on':!drawerProv._originFilter}" @click="drawerProv._originFilter=''" x-text="t('plaza_all')" :aria-pressed="(!drawerProv._originFilter)?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._originFilter==='manual'}" @click="drawerProv._originFilter='manual'" x-text="t('origin_manual')" :aria-pressed="(drawerProv._originFilter==='manual')?'true':'false'"></button>
+                <button type="button" class="m-chip" :class="{'on':drawerProv._originFilter==='fetched'}" @click="drawerProv._originFilter='fetched'" x-text="t('origin_fetched')" :aria-pressed="(drawerProv._originFilter==='fetched')?'true':'false'"></button>
               </div>
               <!-- Model table -->
               <div class="m-card-table-scroll"><table style="width:100%;min-width:760px;border-collapse:collapse;font-size:var(--fs-12)">

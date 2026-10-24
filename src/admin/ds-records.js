@@ -215,10 +215,15 @@
       else { this.logSortKey = key; this.logSortDir = 'desc'; }
       this.resetLogView();
     },
+    // 排序指示。未排序时也返回一个**淡色 ⇅** 而不是空串 ——
+    // 原来返回 '' 时，表头看起来就是普通文字，"能点"这件事只能靠鼠标悬停才发现
+    // （可点元素四要素第①条：必须有可见的可点指示）。
     logSortIcon(key) {
-      if (this.logSortKey !== key) return '';
+      if (this.logSortKey !== key) return '⇅';
       return this.logSortDir === 'desc' ? '↓' : '↑';
     },
+    // 该列当前是否排序中 —— 用于给未排序列的 ⇅ 上弱化成 muted 色。
+    logSortActive(key) { return this.logSortKey === key; },
     // 列显隐 (P3): 记住偏好, 便于窄屏只留关心的列. 至少保留一列, 避免全隐藏后白屏.
     toggleLogCol(k) {
       const next = !this.logColsShown[k];

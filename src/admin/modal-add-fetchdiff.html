@@ -116,9 +116,9 @@
   <div class="modal-head"><div><div class="modal-title" x-text="t('fd_title')"></div><div class="txs tm" style="margin-top:2px" x-text="fetchDiff?fetchDiff.message:''"></div></div></div>
   <div class="modal-body">
     <div class="seg" style="margin-bottom:10px">
-      <span class="seg-i" :class="{'a':fetchDiffTab==='new'}" @click="fetchDiffTab='new'" x-text="t('fd_tab_new')+' ('+(fetchDiff?fetchDiff.added.length:0)+')'"></span>
-      <span class="seg-i" :class="{'a':fetchDiffTab==='existing'}" @click="fetchDiffTab='existing'" x-text="t('fd_tab_existing')+' ('+(fetchDiff?fetchDiff.existing.length:0)+')'"></span>
-      <span class="seg-i" :class="{'a':fetchDiffTab==='removed'}" @click="fetchDiffTab='removed'" x-text="t('fd_tab_removed')+' ('+(fetchDiff?fetchDiff.removed.length:0)+')'"></span>
+      <button type="button" class="seg-i" :class="{'a':fetchDiffTab==='new'}" @click="fetchDiffTab='new'" x-text="t('fd_tab_new')+' ('+(fetchDiff?fetchDiff.added.length:0)+')'"></button>
+      <button type="button" class="seg-i" :class="{'a':fetchDiffTab==='existing'}" @click="fetchDiffTab='existing'" x-text="t('fd_tab_existing')+' ('+(fetchDiff?fetchDiff.existing.length:0)+')'"></button>
+      <button type="button" class="seg-i" :class="{'a':fetchDiffTab==='removed'}" @click="fetchDiffTab='removed'" x-text="t('fd_tab_removed')+' ('+(fetchDiff?fetchDiff.removed.length:0)+')'"></button>
     </div>
     <div class="txs tm" style="margin-bottom:8px" x-text="t('fd_hint')"></div>
     <template x-if="fetchDiffTab==='new'">

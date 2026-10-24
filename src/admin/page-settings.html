@@ -9,7 +9,7 @@
 <div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('strip_reasoning_label')"></div><div class="row-d" x-text="t('strip_reasoning_desc')"></div></div>
-    <button class="tgl" :class="stripReasoning?'on':'off'" @click="setStripReasoning(!stripReasoning)"></button>
+    <button class="tgl" role="switch" :aria-checked="(stripReasoning)?'true':'false'" :aria-label="t('strip_reasoning_label')" :class="stripReasoning?'on':'off'" @click="setStripReasoning(!stripReasoning)"></button>
   </div>
   <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
     <div style="min-width:0"><div class="row-t" x-text="t('purify_label')"></div><div class="row-d" x-text="t('purify_desc')"></div>
@@ -17,7 +17,7 @@
       <div class="row-d" x-show="thinkingPurify==='rule' && !purifyEffective" style="color:var(--warn);margin-top:4px" x-text="t('purify_need_recall')"></div>
       <div class="row-d" x-show="purifyEffective" style="color:var(--ok);margin-top:4px" x-text="t('purify_active')"></div>
     </div>
-    <button class="tgl" :class="purifyEffective?'on':'off'" @click="setThinkingPurify(thinkingPurify==='rule'?'off':'rule')"></button>
+    <button class="tgl" role="switch" :aria-checked="(purifyEffective)?'true':'false'" :aria-label="t('purify_label')" :class="purifyEffective?'on':'off'" @click="setThinkingPurify(thinkingPurify==='rule'?'off':'rule')"></button>
   </div>
   <div x-show="purifyEffective" style="padding:0 16px 14px">
     <div class="txs tm" x-text="t('purify_note')"></div>
@@ -26,8 +26,8 @@
   <div class="set-row" style="border-top:1px solid var(--border);align-items:flex-start">
     <div style="min-width:0"><div class="row-t" style="display:flex;align-items:center;gap:8px"><span x-text="t('strip_tc_proto_label')"></span><span class="bdg bdg-w" x-text="t('experimental_badge')"></span></div><div class="row-d" x-text="t('strip_tc_proto_desc')"></div></div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px">
-      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_chat_hint')" x-text="t('strip_tc_proto_chat')"></span><button class="tgl" :class="stripTcChat?'on':'off'" @click="setStripTcProtocols({chat:!stripTcChat})"></button></div>
-      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_resp_hint')" x-text="t('strip_tc_proto_resp')"></span><button class="tgl" :class="stripTcResp?'on':'off'" @click="setStripTcProtocols({responses:!stripTcResp})"></button></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_chat_hint')" x-text="t('strip_tc_proto_chat')"></span><button class="tgl" role="switch" :aria-checked="(stripTcChat)?'true':'false'" :aria-label="t('strip_tc_proto_chat')" :class="stripTcChat?'on':'off'" @click="setStripTcProtocols({chat:!stripTcChat})"></button></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="txs tm" style="white-space:nowrap" :title="t('strip_tc_proto_resp_hint')" x-text="t('strip_tc_proto_resp')"></span><button class="tgl" role="switch" :aria-checked="(stripTcResp)?'true':'false'" :aria-label="t('strip_tc_proto_resp')" :class="stripTcResp?'on':'off'" @click="setStripTcProtocols({responses:!stripTcResp})"></button></div>
     </div>
   </div>
   <div style="padding:0 16px 14px">
@@ -36,14 +36,14 @@
   </div>
   <div class="set-row" style="border-top:1px solid var(--border)">
     <div style="min-width:0"><div class="row-t" x-text="t('history_trim_label')"></div><div class="row-d" x-text="t('history_trim_desc')"></div></div>
-    <button class="tgl" :class="maxHistoryTurns>0?'on':'off'" @click="setMaxHistoryTurns(maxHistoryTurns>0?0:20)"></button>
+    <button class="tgl" role="switch" :aria-checked="(maxHistoryTurns>0)?'true':'false'" :aria-label="t('history_trim_label')" :class="maxHistoryTurns>0?'on':'off'" @click="setMaxHistoryTurns(maxHistoryTurns>0?0:20)"></button>
   </div>
   <div x-show="maxHistoryTurns>0" style="padding:0 16px 14px">
     <div class="cg"><span class="txs tm" x-text="t('history_trim_keep')"></span><input type="number" min="1" max="200" :value="maxHistoryTurns" @change="onNumInput($event,1,200,v=>setMaxHistoryTurns(v),maxHistoryTurns)" class="inp" style="width:80px"><span class="txs tm" x-text="t('history_trim_unit')"></span></div>
   </div>
   <div class="set-row" style="border-top:1px solid var(--border)">
     <div style="min-width:0"><div class="row-t" x-text="t('auto_continue_label')"></div><div class="row-d" x-text="t('auto_continue_desc')"></div></div>
-    <button class="tgl" :class="autoContinue>0?'on':'off'" @click="setAutoContinue(autoContinue>0?0:2)"></button>
+    <button class="tgl" role="switch" :aria-checked="(autoContinue>0)?'true':'false'" :aria-label="t('auto_continue_label')" :class="autoContinue>0?'on':'off'" @click="setAutoContinue(autoContinue>0?0:2)"></button>
   </div>
   <div x-show="autoContinue>0" style="padding:0 16px 14px">
     <div class="cg"><span class="txs tm" x-text="t('auto_continue_max')"></span><input type="number" min="1" max="5" :value="autoContinue" @change="onNumInput($event,1,5,v=>setAutoContinue(v),autoContinue)" class="inp" style="width:80px"><span class="txs tm" x-text="t('auto_continue_unit')"></span></div>
@@ -52,7 +52,7 @@
     <div style="min-width:0"><div class="row-t" x-text="t('recall_label')"></div><div class="row-d" x-text="t('recall_desc')"></div></div>
     <div style="display:flex;align-items:center;gap:8px">
       <button class="btn btn-g" style="font-size:var(--fs-11)" @click="openRecallPanel()" x-text="t('recall_view')"></button>
-      <button class="tgl" :class="recall.enabled?'on':'off'" @click="setRecall(!recall.enabled)"></button>
+      <button class="tgl" role="switch" :aria-checked="(recall.enabled)?'true':'false'" :aria-label="t('recall_label')" :class="recall.enabled?'on':'off'" @click="setRecall(!recall.enabled)"></button>
     </div>
   </div>
   <div x-show="recall.enabled" style="padding:0 16px 14px">
@@ -66,7 +66,7 @@
   </div>
   <div class="set-row" style="border-top:1px solid var(--border)">
     <div style="min-width:0"><div class="row-t" x-text="t('tool_trunc_label')"></div><div class="row-d" x-text="t('tool_trunc_desc')"></div></div>
-    <button class="tgl" :class="toolOutputLimit>0?'on':'off'" @click="setToolOutputLimit(toolOutputLimit>0?0:32768)"></button>
+    <button class="tgl" role="switch" :aria-checked="(toolOutputLimit>0)?'true':'false'" :aria-label="t('tool_trunc_label')" :class="toolOutputLimit>0?'on':'off'" @click="setToolOutputLimit(toolOutputLimit>0?0:32768)"></button>
   </div>
   <div x-show="toolOutputLimit>0" style="padding:0 16px 14px">
     <div class="cg"><span class="txs tm" x-text="t('tool_trunc_keep')"></span><input type="number" min="1024" max="4194304" step="1024" :value="toolOutputLimit" @change="onNumInput($event,1024,4194304,v=>setToolOutputLimit(v),toolOutputLimit)" class="inp" style="width:110px"><span class="txs tm" x-text="t('tool_trunc_unit')"></span></div>
@@ -88,7 +88,7 @@
       <div style="display:flex;align-items:center;gap:8px">
         <button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchCache()" x-text="t('refresh')"></button>
         <button class="btn btn-g" style="font-size:var(--fs-11);color:var(--err)" @click="clearCache()" x-text="t('clear')"></button>
-        <button class="tgl" :class="cache.enabled?'on':'off'" @click="setCacheEnabled(!cache.enabled)"></button>
+        <button class="tgl" role="switch" :aria-checked="(cache.enabled)?'true':'false'" :aria-label="t('cache_enable_label')" :class="cache.enabled?'on':'off'" @click="setCacheEnabled(!cache.enabled)"></button>
       </div>
     </div>
     <div x-show="cache.enabled" style="padding:0 16px 14px;display:flex;gap:24px;flex-wrap:wrap">
@@ -127,7 +127,7 @@
 <div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('peak_enable')"></div><div class="row-d" x-text="t('peak_enable_desc')"></div></div>
-    <button class="tgl" :class="peakSchedule.enabled?'on':'off'" @click="peakSchedule.enabled=!peakSchedule.enabled;peakDirty=true"></button>
+    <button class="tgl" role="switch" :aria-checked="(peakSchedule.enabled)?'true':'false'" :aria-label="t('peak_enable')" :class="peakSchedule.enabled?'on':'off'" @click="peakSchedule.enabled=!peakSchedule.enabled;peakDirty=true"></button>
   </div>
   <div x-show="peakSchedule.enabled" style="padding:0 16px 14px;display:flex;flex-direction:column;gap:14px">
     <div class="cg" style="align-self:flex-start">
@@ -138,7 +138,7 @@
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span class="txs tm" x-text="t('peak_weekdays')"></span>
       <template x-for="d in [1,2,3,4,5,6,7]" :key="d">
-        <span class="m-chip" :class="{'on':peakSchedule.weekdays.includes(d)}" @click="togglePeakWeekday(d)" x-text="t('wd.'+d)"></span>
+        <button type="button" class="m-chip" :class="{'on':peakSchedule.weekdays.includes(d)}" @click="togglePeakWeekday(d)" x-text="t('wd.'+d)" :aria-pressed="(peakSchedule.weekdays.includes(d))?'true':'false'"></button>
       </template>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
@@ -185,7 +185,7 @@
   <template x-if="tooltipConfig!==null"><div>
     <div class="set-row">
       <div><div class="row-t" x-text="t('tooltip_enabled')"></div><div class="row-d" x-text="t('tooltip_config')"></div></div>
-      <button class="tgl" :class="tooltipConfig.enabled?'on':'off'" @click="tooltipConfig.enabled=!tooltipConfig.enabled;tooltipDirty=true"></button>
+      <button class="tgl" role="switch" :aria-checked="(tooltipConfig.enabled)?'true':'false'" :aria-label="t('tooltip_enabled')" :class="tooltipConfig.enabled?'on':'off'" @click="tooltipConfig.enabled=!tooltipConfig.enabled;tooltipDirty=true"></button>
     </div>
     <div x-show="tooltipConfig.enabled" style="padding:0 16px 14px">
       <div class="row-d mb2" x-text="t('tooltip_metrics')"></div>

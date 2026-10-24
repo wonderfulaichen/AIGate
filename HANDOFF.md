@@ -1,17 +1,18 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ⑯」**：前端五个**静默** bug
-> —— 页面不报错但行为不对。最严重的一个：抽屉判 `status_level === 'err'`，而后端契约是
-> `ok`/`error`（`'err'` 这个值从来不存在）→ **熔断后「测试并恢复」按钮永不出现**。
-> 现在跨前后端的枚举统一收口到 `healthOf()`，模板禁止字面量比较。
-> 其余四项：计价/Tooltip 草稿被静默覆盖、localStorage 白名单漏 2 键（每次升级重置偏好）、
-> 两个 getter 重复定义、引用了不存在的 `--fs-16` / `--line`。
-> 新增 `tools/probe_ui_invariants.py`（17 条静态判据）+ `tools/probe_health_state.py`（8 条浏览器判据），
-> 改坏验证 5/5 转红（其中一次是假通过，已记录）。
-> 这一轮同时是 **UI 重设计期 0**（先修 bug，不改观感），方案见 `docs/ui-redesign.md`。
-> 上一轮 ⑮：修「日志说 502、客户端说 200」对不上账。
-> **待用户决定**：仓库 `providers.json` / `main.rs` 默认配置里 opencode 端点仍是旧 `/zen/*` 形态
-> （实测仍 200，不构成故障；部署实例已改新端点）。
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ⑰」**：键盘与屏幕阅读器可用性
+> —— UI 重设计**期 1 · 规范层**。分段页签/筛选胶囊 → 真 `<button>`、面板标题 → `<h2>`、
+> 11 个开关补 `role="switch"`/`aria-checked`/`aria-label`、7 个可排序表头补 tabindex+Enter
+> 且箭头常驻、诊断格补 `▸`。核心纪律：`aria-checked` **复用 `:class` 的那个布尔**（语义与
+> 视觉同源），`<h2>` 必须同步 `display:inline;margin:0`（否则撑成整行）。
+> 新增 `tools/probe_a11y.py`（27 条判据，真实键盘 Tab，不是静态数 tabindex），
+> 改坏验证 8/8 转红。**两次假通过值得记**：① 判焦点环不能只看 `outlineStyle!=='none'`
+> —— 浏览器会回落到 `outline:auto`；② `[].every()` 恒真，空数据时探针假绿。
+> 上一轮 ⑯：修 5 个前端静默 bug（最严重的是「测试并恢复」按钮永不出现）。
+> 期 0 与期 1 均已完成，方案全文见 `docs/ui-redesign.md`；**下一期 2（概览/设置重排）
+> 需用户拍板信息架构**（尤其"设置页全部即时生效"会改变操作习惯）。
+> **待用户决定**：① 仓库 `providers.json` / `main.rs` 默认配置里 opencode 端点仍是旧 `/zen/*`
+> 形态（实测仍 200，不构成故障；部署实例已改新端点）；② `require_system_first` 仍无面板开关。
 >
 > 最后更新 **2026-10-15**（三轮连做，细节都在 §8：
 > ① **10-15 网关去程阶段计时 + 链路拓扑**（方案 F 第三阶段）—— 回答"慢是网关照成的还是上游造成的"：
@@ -531,7 +532,7 @@ git push origin main
 | 单元测试 | **413 通过 / 0 失败**（`cargo test --bin AIGate`，2026-10-24 实测；⚠️ crate 是**纯 bin 无 `[lib]`**，用 `--lib` 会报 "no library targets found" 并伪装成测试失败） |
 | release 构建 | **0 警告**（2026-10-24 实测 `cargo build --release`） |
 | CHANGELOG 首节点 | `## [0.8.0] - 2026-10-24`（**会随写入增长**，引用前先数） |
-| 前端门禁 | 见 §4.1（i18n 键数 / 切片清单 / 标签配平 / 品牌标 / 格式规则 / 输入法 等），本轮全过；新增 `probe_ui_invariants.py` |
+| 前端门禁 | 见 §4.1（i18n 键数 / 切片清单 / 标签配平 / 品牌标 / 格式规则 / 输入法 / 静态不变量 / 可访问性 等），本轮全过 |
 | i18n 键数 | **880 中英对称**（2026-10-24 实测，`check_i18n.cjs`） |
 | 切片数 | **38**（`split_manifest.json`；`admin.rs` include 顺序需与清单一致，有门禁） |
 | 工作区 | 见 §2（提交前以 `git status` 实测为准） |
@@ -606,13 +607,19 @@ python tools/theme_complete.py   # 浅色 token 覆盖完整
 python tools/theme_dark_diff.py  # 暗色零变化（比对生效颜色集合）
 python tools/theme_contrast.py   # 浅色 WCAG 对比度
 python tools/probe_ui_invariants.py  # 静态不变量：枚举值域收口/getter 不重复/白名单覆盖/无悬空 token
+python tools/probe_a11y.py       # 可访问性：可及名/键盘可达/焦点可见/语义标签（真实键盘 Tab，需 playwright）
 ```
 
-**`probe_ui_invariants.py` 的定位**（2026-10-24 新增）：它钉的是**结构/契约**类约束，
-不是渲染行为 —— 例如"模板里不得出现 `status_level === '错误值'` 这种字面量比较"
-"每一处 `setItem('aigate…')` 的键都必须进白名单" "`var(--fs-*)` 必须已定义"。
-这类问题用浏览器看不出来（页面不报错），但静态断言能精确抓住，且能进 CI。
-**新增跨前后端枚举时请扩展它的对应组**，否则同类 bug 会再次静默复发。
+**两个探针的分工**（2026-10-24 新增）：
+
+- `probe_ui_invariants.py` 钉**结构/契约**类约束（静态、秒级）：例如"模板里不得出现
+  `status_level === '错误值'` 这种字面量比较""每一处 `setItem('aigate…')` 的键都必须进白名单"
+  "`var(--fs-*)` 必须已定义"。这类问题用浏览器看不出来（页面不报错），静态断言更精确。
+- `probe_a11y.py` 钉**运行时交互**（浏览器、约 15 秒）：会真的 `keyboard.press('Tab')` 走一遍、
+  真的派发 Enter、真的断言状态变了。**不能**用"数 tabindex"代替 —— 那样测不出
+  "Tab 到了但按 Enter 没反应"。
+
+**新增跨前后端枚举 / 可点元素时请扩展对应组**，否则同类 bug 会再次静默复发。
 
 ### 4.2 截图工作流（headless Edge）
 
@@ -1659,6 +1666,59 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-24 轮 ⑰：键盘与屏幕阅读器可用性（UI 重设计期 1 · 规范层）
+
+**背景**：期 0 修完 5 个静默 bug 后进入「规范层」—— 不改布局，只把所有**可点元素**
+提到统一规范上。审计基线：65 处可点元素里 **60 处键盘不可达**。
+
+**改了什么**
+
+| 元素 | 改造前 | 改造后 |
+|---|---|---|
+| 分段页签 `.seg-i` ×18 | `<span @click>`，键盘完全到不了 | 真 `<button type="button">` |
+| 筛选胶囊 `.m-chip` ×17 | `<span @click>` | `<button>` + `:aria-pressed` |
+| 面板标题 `.pnl-ht` ×16 | `<span>`（跳标题会跳过全部面板） | `<h2>` |
+| 设置页开关 `.tgl` ×11 | 裸 `<button>`，只读"按钮" | `role="switch"` + `:aria-checked` + `:aria-label` |
+| 可排序表头 `.th-sort` ×7 | `<th>`，键盘到不了；未排序列箭头是**空串** | `tabindex="0" role="button"` + Enter/Space；箭头常驻淡色 `⇅` |
+| 诊断格（模型明细） | `<td @click>`，纯文本无可点指示 | + 常驻 `▸`（展开旋转 90°）+ tabindex + Enter/Space |
+
+**关键取舍（为什么不是无脑换标签）**
+
+- `<th>` **不能**换成 `<button>` —— 屏幕阅读器靠 `th` 播报"第几列"，换掉就丢表格语义。
+  所以保留 `th`，只补 `tabindex`/`role`/键盘处理。
+- `aria-checked` **复用 `:class` 里的那个布尔表达式**，不另写一份判断。语义态与视觉态
+  必须同源，否则屏幕阅读器读的与眼睛看到的会不一致（这类漂移极难发现）。
+- `<h2>` 必须同步 `display:inline;margin:0`，否则默认块级 + margin 会把标题**撑成整行**、
+  把下方说明挤开。实测验收：79×24、`display:inline`、`margin-top:0`、未撑满整行。
+- 换 `<button>` 必须压掉浏览器默认样式（`appearance:none`/`background:transparent`/
+  `border:none`/`font-family:inherit`），否则会多出边框与 system-ui 字体。
+
+**删掉一处自己加的冗余代码**：我先在 `components.css` 加了
+`.seg-i:focus-visible{outline:2px solid var(--accent)}`，实测发现 `base.css:153`
+已有全局 `:focus-visible{outline:2px solid var(--primary)}` —— 我那条只是把颜色
+从 `#0b6fe0` 换成 `#0a84ff`（肉眼几乎无差别），属装饰性重复，已删除并留注释说明。
+
+**验证：`tools/probe_a11y.py` 27 条判据（真实浏览器 + 真实键盘 Tab）**
+
+不是静态数 `tabindex` —— 那样测不出"Tab 到了但按 Enter 没反应"。探针会真的
+`keyboard.press('Tab')` 走一遍、真的派发 Enter、真的断言状态变了。
+
+**改坏验证 8/8 转红。其中两次是假通过，都已修掉：**
+
+1. **焦点环判据**最初写 `outlineStyle !== 'none'`。删掉项目 `:focus-visible` 后浏览器会
+   回落到默认 `outline: auto 1px` → 判据照样为真 → 实现改坏也全绿。
+   改为只认**自定义**环（`outlineStyle !== 'auto'`）或 box-shadow 光晕后才转红。
+2. **诊断格判据**在空实例里 `total = 0`，而 `[].every(...)` 恒为 `true` → 假绿。
+   改为先注入一行模型统计再断言。
+
+> **规律（新增，值得记）**：浏览器有**兜底默认样式**，所以"属性存在"类判据很容易假绿 ——
+> 焦点环会被 `outline: auto` 兜住、`every()` 对空数组恒真、`display` 会被 UA 样式表补上。
+> 写可访问性判据时要问一句：**"如果项目自己的规则被删掉，这个判据还成立吗？"**
+> 成立就说明它测的不是项目行为。
+
+**验收**：亮/暗两套 × 5 个页面共 10 张截图人工核对；`theme_dark_diff.py` 暗色颜色集合
+零变化；12 道门禁全过；413 单测绿。
 
 ### 🆕 10-24 轮 ⑯：前端五个静默 bug（值域不一致 / 草稿被覆盖 / 白名单漏键 / 重复定义 / 悬空 token）
 
