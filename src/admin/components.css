@@ -1063,6 +1063,9 @@ tr:hover td.th-sticky{
 .tag-proto{background:var(--primary-soft);border:1px solid var(--primary-bd-soft);color:var(--accent)}
 .tag-iface{background:var(--secondary-soft);border:1px solid rgba(191,90,242,.28);color:var(--secondary)}
 .tag-off{background:var(--fill-3);border:1px solid var(--border);color:var(--muted)}
+/* 套餐/免费徽章（2026-10-24）：让模型明细里的「已省 —」有解释。
+   用中性色而非警示色 —— 套餐型不是错误，只是计费方式不同。 */
+.tag-flat{background:var(--fill-4);border:1px solid var(--border-s);color:var(--muted)}
 .prov-url{font-size:var(--fs-11);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* 统计区（WaLiAPI 的 hidden lg:flex：窄屏隐藏） */

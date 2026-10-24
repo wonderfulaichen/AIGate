@@ -78,6 +78,27 @@
       };
     },
 
+    // 该供应商是否**含不按量计费（套餐/免费）的模型**（2026-10-24）。
+    //
+    // ⚠️ 设计修正：第一版用 `ProviderStats.billing === false`（整家全免费）判断，
+    // 实测**永远不会成立** —— billing 的口径是「组内**任一**中转 ID 不在免费名单
+    // 即视为计费」，而真实的 10 家里每家都至少有一个计费模型，
+    // 故 provider 级 billing 恒为 True。徽章因此永远不显示（探针当场抓到）。
+    //
+    // 正确的判据是「这家**有没有**不按量计费的模型」：只要有一个，模型明细里
+    // 那个模型的「已省」就会是 "—"，徽章正是为了解释它。
+    // 数据源用 per_model 的 billing（模型级，才是真正决定 "—" 的粒度）。
+    provIsFlatRate(name) {
+      const rows = (this.stats && this.stats.per_model) || [];
+      return rows.some(m => m.provider === name && m.billing === false);
+    },
+
+    // 该供应商下不按量计费的模型数（徽章 title 里说清"几个"，避免以偏概全）。
+    provFlatRateCount(name) {
+      const rows = (this.stats && this.stats.per_model) || [];
+      return rows.filter(m => m.provider === name && m.billing === false).length;
+    },
+
     // 最近一次失败的**原因**（供供应商行显示"为什么全红"）。
     //
     // 返回 null 的条件有两个，分别对应两种不同处境，都不能显示成"有错误"：
@@ -86,8 +107,8 @@
     //      "没有错误"既可能是真健康，也可能只是窗口内样本太少 —— 该判断属于
     //      供应商明细表的成功率列，行上只回答"有没有已知的失败原因"。
     //
-    // 后端只在 logs 窗口内取最新一条错误；跨日的 rollup 不含错误正文，
-    // 所以历史失败但窗口内全成功时这里会返回 null（未采集 ≤ 无错误）。
+    // 数据来源有两处（2026-10-24）：logs 窗口内的最新错误，以及 rollup 落盘的
+    // 「该日最近一次错误」。后者让「记录已滚出窗口」的供应商（如 zen）也能显示原因。
     provLastError(name) {
       const rows = (this.stats && this.stats.per_provider) || [];
       const p = rows.find(x => x.provider === name);
@@ -96,6 +117,47 @@
       if (msg == null) return null;
       const s = String(msg).trim();
       return s ? s : null;
+    },
+
+    // 失败原因的**可操作建议**（2026-10-24，对照参考项目的 invalidationText 思路）。
+    //
+    // 为什么需要: 只给原文「429 [quota_exceeded]: 该免费模型今…」，用户看完
+    // 仍然不知道该做什么。参考项目把 reason 映射成「去哪、做什么」。
+    //
+    // 纪律：**永远保留原文**。这里只额外给一句建议，不替换证据 ——
+    // 映射不上时返回 ''（模板据此不渲染建议行），绝不编一句通用话术，
+    // 否则用户会把我们的猜测当成上游的结论。
+    provErrAdvice(name) {
+      const full = this.provLastError(name);
+      if (!full) return '';
+      const rows = (this.stats && this.stats.per_provider) || [];
+      const p = rows.find(x => x.provider === name);
+      const code = Number(p && p.last_error_status) || 0;
+      const raw = String(full);
+      const low = raw.toLowerCase();
+
+      // ⚠️ 局部变量绝不能叫 `t` —— 会遮蔽全局的翻译函数 `t()`，
+      // 表现为整个页面 `TypeError: t is not a function`（探针抓到过）。
+
+      // 顺序要紧：先判"额度"，再判"限流" —— 两者都是 429，
+      // 但"额度耗尽"必须换号/充值，"频率超限"只需等一会儿，处置完全不同。
+      if (code === 402 || /quota_exceeded|insufficient|余额不足|额度已用尽|额度不足/i.test(raw)) {
+        return t('prov_advice_quota');
+      }
+      if (code === 429) {
+        if (/rate|频率|稍后|too many|rpm|tpm/i.test(raw)) return t('prov_advice_rate');
+        return t('prov_advice_quota');
+      }
+      if (code === 401 || code === 403) return t('prov_advice_auth');
+      // 渠道校验（WorkBuddy 国际版实测 400 + code 11-128）：必须重新登录。
+      if (/11-128|request illegal|渠道校验/i.test(raw)) return t('prov_advice_relogin');
+      // 404 + HTML 页面：端点路径变了（我们踩过 opencode 把 /zen/go 改成 /go）。
+      if (code === 404) {
+        return /<html|<!doctype|text\/html/i.test(low) ? t('prov_advice_endpoint') : t('prov_advice_notfound');
+      }
+      if (/tls|handshake|unexpected eof|certificate/i.test(low)) return t('prov_advice_network');
+      if (code >= 500) return t('prov_advice_upstream');
+      return '';
     },
 
     // 行上只放**能分辨问题类型**的那一小段：状态码优先 + 正文开头。
@@ -112,6 +174,15 @@
       const flat = full.replace(/\s+/g, ' ').trim();
       const cut = flat.length > 28 ? flat.slice(0, 28) + '…' : flat;
       return code ? code + ' ' + cut : cut;
+    },
+
+    // 失败原因悬停提示 = **建议在前、原文在后**。
+    // 原文必须完整保留（截断只在行上做），否则排障时无证据可查。
+    provErrTitle(name) {
+      const full = this.provLastError(name);
+      if (!full) return '';
+      const advice = this.provErrAdvice(name);
+      return advice ? advice + '\n\n原文：' + full : full;
     },
 
     // 某供应商下的模型（取自 per_model 的同 provider 行，按请求数降序）。

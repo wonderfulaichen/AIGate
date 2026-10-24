@@ -100,6 +100,9 @@ const { chromium } = require('playwright');
         pillText: pill ? (pill.textContent || '').replace(/\s+/g, ' ').trim() : null,
         pillTitle: pill ? pill.getAttribute('title') : null,
         pillAria: pill ? pill.getAttribute('aria-label') : null,
+        // 套餐/免费徽章
+        flatBadge: !!row.querySelector('.tag-flat'),
+        flatTitle: row.querySelector('.tag-flat') ? row.querySelector('.tag-flat').getAttribute('title') : null,
         colW: { u: calls ? Math.round(calls.getBoundingClientRect().width) : null,
                 r: rate ? Math.round(rate.getBoundingClientRect().width) : null,
                 t: lat ? Math.round(lat.getBoundingClientRect().width) : null },
@@ -109,8 +112,15 @@ const { chromium } = require('playwright');
     const d = document.querySelector('[x-data]')._x_dataStack[0];
     const pp = (d.stats && d.stats.per_provider) || [];
     const backend = pp.map(x => ({ provider: x.provider, last_error: x.last_error || null,
-                                   status: x.last_error_status || 0 }));
-    return { rows: detail, backend, rowCount: rows.length };
+                                   status: x.last_error_status || 0,
+                                   billing: x.billing,
+                                   requests: x.requests || 0 }));
+    return { rows: detail, backend, rowCount: rows.length,
+             // 数据里是否存在免费模型（per_model 里 billing=false）
+             hasFreeModel: ((d.stats && d.stats.per_model) || []).some(m => m.billing === false),
+             freeModels: ((d.stats && d.stats.per_model) || [])
+                 .filter(m => m.billing === false)
+                 .map(m => ({ provider: m.provider, model: m.model })) };
   });
   out.errs = errs;
   console.log('JSON_RESULT ' + JSON.stringify(out));
@@ -219,10 +229,17 @@ def main():
             check(head[:6] in got_title or head[:6] in got_txt,
                   f"② 「{r['name']}」胶囊内容来自后端真实错误（不是编的）",
                   f"期望含 {head[:6]!r}, 实际 title={got_title[:40]!r}")
-            # title 必须是完整正文（行上截断，悬停可取全文）
-            check(got_title.strip() == want.strip(),
-                  f"② 「{r['name']}」title 是**完整**错误正文（行上才有截断）",
-                  f"title 长 {len(got_title)} vs 后端长 {len(want)}")
+            # title 必须**完整包含**原文（行上截断，悬停可取全文）。
+            # 2026-10-24 起 title = 「可操作建议 + 原文」，故判"包含"而非"相等"：
+            # 要求相等会把"多给了一句建议"误判成失败，而建议正是本次要加的东西。
+            check(want.strip() in got_title,
+                  f"② 「{r['name']}」title **完整包含**上游原文（行上才有截断）",
+                  f"title={got_title[:60]!r} 后端原文={want[:40]!r}")
+            # 建议是可选的（映射不上时为空），但只要 title 里有建议，就应排在原文之前
+            if got_title.strip() != want.strip():
+                check(got_title.strip().startswith(("额度", "触发", "凭据", "渠道", "端点", "接口", "网络", "上游")),
+                      f"② 「{r['name']}」title 里建议排在原文之前（便于先看该做什么）",
+                      f"title 开头={got_title[:24]!r}")
             check(bool(r["pillAria"]) and len(r["pillAria"]) > 0,
                   f"② 「{r['name']}」胶囊有 aria-label（读屏可读）")
 
@@ -257,6 +274,43 @@ def main():
         print("  （本次数据里没有失败供应商，② 的内容判据跳过）")
 
     check(len(d["errs"]) == 0, "③ 零 pageerror", str(d["errs"][:2]))
+
+    # ── ④ 套餐/免费徽章 ────────────────────────────────────────
+    #
+    # ⚠️ 判据设计修正（2026-10-24 实测）：第一版拿 `per_provider.billing === false`
+    # 当预期集合，实测**恒为空集** —— 因为 billing 的口径是"组内任一中转 ID 不在
+    # 免费名单即视为计费"，而真实的 10 家里每家都至少有一个计费模型，故
+    # provider 级 billing 永远为 True。空集对空集 = 判据永远"通过"，是假通过。
+    #
+    # 改为断言**徽章机制本身可用**：只要数据里存在免费模型（per_model 里有
+    # billing=false 的模型），就说明这条链路有真实样本；此时若页面一个徽章都没有，
+    # 说明徽章没接上。若整个数据里确实没有任何免费模型，则显式报告"本次无样本"，
+    # 而不是默默通过。
+    flat = [r for r in rows if r.get("flatBadge")]
+    has_free_model = d.get("hasFreeModel") is True
+    print(f"  [现场] 数据里是否有免费模型: {has_free_model}；"
+          f"页面有套餐徽章的: {[r['name'] for r in flat]}")
+    if has_free_model:
+        # 有免费模型 → 至少应有一家供应商显示徽章（否则说明徽章根本没接上）。
+        # 这是真正能抓住"判据用错口径导致永远不显示"的那一条 —— 第一版就栽在这里。
+        check(len(flat) > 0,
+              "④ 数据里有免费模型 → 至少一家应显示套餐徽章（徽章真的接上了）",
+              "有免费模型但页面零徽章 —— 判据口径可能用错了（如用 provider 级 billing）")
+        # 有徽章的供应商必须真的含免费模型（不能凭空多出来）
+        free_providers = {m["provider"] for m in d.get("freeModels", [])}
+        check({r["name"] for r in flat} <= free_providers,
+              "④ 有徽章的供应商必须真的含免费模型（不凭空出现）",
+              f"徽章行={sorted(r['name'] for r in flat)} 含免费模型的={sorted(free_providers)}")
+    else:
+        print("  （数据里没有免费模型 → ④ 的'应有徽章'部分无样本，只做负例断言）")
+    # 负例恒可验：没有任何统计的行不得凭空长出徽章
+    no_stats = [r for r in rows if not r["hasStats"]]
+    check(not any(r.get("flatBadge") for r in no_stats),
+          "④ 无统计数据的行不得凭空显示套餐徽章（未采集 ≠ 套餐型）",
+          f"越界行={[r['name'] for r in no_stats if r.get('flatBadge')]}")
+    for r in flat:
+        check(bool(r.get("flatTitle")),
+              f"④ 「{r['name']}」套餐徽章有 title（解释「已省 —」的原因）")
 
     print()
     if _fails:

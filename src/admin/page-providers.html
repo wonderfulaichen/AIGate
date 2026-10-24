@@ -57,6 +57,16 @@
               <template x-if="prov.probed_protocols && prov.probed_protocols.length"><span class="prov-tag tag-iface" :title="t('prov_proto_probed_hint')" x-text="'['+t('prov_proto_probed_short')+']'"></span></template>
               <template x-if="prov.preset"><span class="prov-tag tag-iface" :title="t('preset_badge_hint')" x-text="'['+t('preset_badge')+']'"></span></template>
               <template x-if="prov.disabled"><span class="prov-tag tag-off" x-text="'['+t('prov_disabled_badge')+']'"></span></template>
+              <!-- 套餐/免费徽章（2026-10-24）：套餐型供应商（opencode Go / WorkBuddy /
+                   Buddy 月套餐）不按量计费，模型明细里它们的「已省」只能显示 "—"。
+                   加这个徽章是为了让那个 "—" **有解释** —— 否则用户会以为算错了。
+                   判据用统计层的 billing（组内任一中转 ID 不在免费名单即视为计费），
+                   与「已省」列的判定同源，不另立一套口径。 -->
+              <template x-if="provIsFlatRate(prov.name)">
+                <span class="prov-tag tag-flat"
+                      :title="t('flat_rate_hint')+' ('+provFlatRateCount(prov.name)+')'"
+                      x-text="'['+t('flat_rate_badge')+']'"></span>
+              </template>
             </div>
             <div class="prov-url mono" :title="prov.endpoint" x-text="prov.endpoint"></div>
           </div>
@@ -73,8 +83,8 @@
                左边缘也固定，比较成功率/延迟变成真正的一列一列比。 -->
           <div class="prov-extra">
             <template x-if="provLastError(prov.name)">
-              <span class="prov-errpill" :title="provLastError(prov.name)" tabindex="0"
-                    :aria-label="t('prov_last_error')+': '+provLastError(prov.name)">
+              <span class="prov-errpill" :title="provErrTitle(prov.name)" tabindex="0"
+                    :aria-label="t('prov_last_error')+': '+(provErrAdvice(prov.name)||provLastError(prov.name))">
                 <span aria-hidden="true">!</span><span x-text="provErrShort(prov.name)"></span>
               </span>
             </template>

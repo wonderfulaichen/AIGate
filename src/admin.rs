@@ -4155,6 +4155,13 @@ pub struct ProviderStats {
     /// 最近一次失败请求的 HTTP 状态码。无失败时为 0。
     #[serde(default)]
     pub last_error_status: u16,
+    /// 最近一次失败的时间戳（秒）。无失败时为 0。
+    ///
+    /// 除了展示"多久之前"，它还有一个不可替代的作用：**合并 rollup 时必须靠它
+    /// 判断哪条更新**。按天序取「最后一天」是错的 —— 滚动窗口边界处的错误时间
+    /// 与所属天并不严格同向。没有这个字段就无法正确合并。
+    #[serde(default)]
+    pub last_error_ts: u64,
 }
 
 /// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
@@ -5519,6 +5526,7 @@ fn compute_stats(
                 .filter(|e| !e.trim().is_empty())
                 .map(truncate_err);
             let last_error_status = last_err_log.map(|l| l.status).unwrap_or(0);
+            let last_error_ts = last_err_log.map(|l| l.timestamp).unwrap_or(0);
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -5549,6 +5557,7 @@ fn compute_stats(
                 gateway_stages: p_gw,
                 last_error,
                 last_error_status,
+                last_error_ts,
             }
         })
         .collect();
@@ -6059,6 +6068,14 @@ fn merge_rollup_days(
                     / new_reqs.max(1) as f64;
                 pv.requests = new_reqs;
                 pv.errors += e.errors as usize;
+                // 失败原因按**时间戳**取更新那条（2026-10-24）。
+                // 不能按天序取最后一天: 滚动窗口边界处的错误时间与所属天不同向。
+                // 也不能只看 `last_error.is_some()` —— 更早的错误会覆盖更新的。
+                if e.last_error_ts > pv.last_error_ts {
+                    pv.last_error_ts = e.last_error_ts;
+                    pv.last_error_status = e.last_error_status;
+                    pv.last_error = e.last_error.clone();
+                }
                 pv.total_body_bytes += e.body_bytes as usize;
                 pv.total_prompt_tokens += e.prompt_tokens;
                 pv.total_completion_tokens += e.completion_tokens;
@@ -6125,11 +6142,11 @@ fn merge_rollup_days(
                     // 同模型侧: rollup 无逐条阶段样本 → default (未采集), 不编造。
                     stage_summary: StageSummary::default(),
                     gateway_stages: GatewayStageSummary::default(),
-                    // rollup 逐日只存 errors 计数, 不存错误正文与状态码 → 跨日部分
-                    // 无法回溯"最近一次为什么失败". 记 None/0 而非编造 (未采集 ≠ 无错误)。
-                    // 若日志窗口内还有该家的记录, 上面 existing 分支会带上真实值。
-                    last_error: None,
-                    last_error_status: 0,
+                    // rollup 现在会落盘失败原因（2026-10-24），直接用；
+                    // 旧数据没有这三个字段 → None/0（未采集 ≠ 无错误，前端据此不显示胶囊）。
+                    last_error: e.last_error.clone(),
+                    last_error_status: e.last_error_status,
+                    last_error_ts: e.last_error_ts,
                 });
             }
         }

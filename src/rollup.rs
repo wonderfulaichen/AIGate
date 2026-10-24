@@ -145,6 +145,25 @@ pub struct RollupEntry {
     pub bill_hit_offpeak: u64,
     #[serde(default)]
     pub bill_creation_offpeak: u64,
+    // ── 失败原因 (2026-10-24) ──
+    /// 该条目在该日内**最近一次失败**的错误摘要（按 timestamp 取最大）。
+    ///
+    /// 为什么需要落盘: `ProviderStats.last_error` 只覆盖 `logs.jsonl` 的滚动窗口。
+    /// 实测 `logs.jsonl` 5000 条里 zen 一条都没有 —— 它的 43 次调用全来自 rollup，
+    /// 于是面板显示「43 次 / 0.0%」却没有原因。落盘这一条才能回答"这家为什么红"。
+    ///
+    /// 只存**最近一次**而不是分类计数: 面板要回答的是"现在出了什么问题"，
+    /// 历史分布属于分析页职责；且分类计数需要 `BTreeMap`，体积与合并复杂度都更高。
+    /// 正文截断到 160 字符（同 `admin::truncate_err` 口径）。
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// 该错误对应的 HTTP 状态码。`0` = 没有错误记录（未采集，不是"成功"）。
+    #[serde(default)]
+    pub last_error_status: u16,
+    /// 该错误的时间戳（秒）。跨天合并时**按它取最大**，不能按天序 ——
+    /// 天序与条目内错误发生的先后不完全一致（滚动窗口边界处会跨天）。
+    #[serde(default)]
+    pub last_error_ts: u64,
 }
 
 impl RollupEntry {
@@ -155,6 +174,13 @@ impl RollupEntry {
         // 被工具的正常取消行为污染).
         if crate::admin::is_log_error(log) {
             self.errors += 1;
+            // 同口径也记录"最近一次失败的原因"（2026-10-24）。
+            // 用 `>=` 而非 `>`: 同一秒内的后一条错误应覆盖前一条（最终取到该秒最新那条）。
+            if log.timestamp >= self.last_error_ts {
+                self.last_error_ts = log.timestamp;
+                self.last_error_status = log.status;
+                self.last_error = log.error.as_deref().map(crate::admin::truncate_err);
+            }
         }
         self.latency_sum_ms += log.latency_ms;
         self.body_bytes += log.body_len as u64;
@@ -886,5 +912,121 @@ mod tests {
         let prices2: Vec<f64> = days2[0].entries.iter().filter_map(|e| e.price.map(|p| p.input_per_m)).collect();
         assert!(prices2.contains(&1.0) && prices2.contains(&10.0), "重载后价格快照应保持, 实得 {prices2:?}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ── 失败原因落盘 (2026-10-24) ──
+    //
+    // 这组测试守的是**最大风险**: 新增字段若没有 `#[serde(default)]`,
+    // 落盘的旧行会整行反序列化失败 → 该天所有历史统计静默消失
+    // (rollup.rs 顶部注释记的 `d:0` 化石行那次就是这么炸的)。
+
+    /// **旧数据必须能读**: 用真实的旧格式 JSON（完全没有三个新字段）反序列化，
+    /// 不允许报错，且旧字段的值必须原样保留。
+    ///
+    /// ⚠️ 本测试对 `Option<String>` 这一字段**没有判别力**：serde 对 `Option` 的
+    /// 默认行为本就是"缺失 → None"，去掉 `#[serde(default)]` 也不会失败
+    /// （已实测确认：只去掉 `last_error_status: u16` 的 default 才会报
+    /// `missing field`）。`#[serde(default)]` 对 Option **仍然要写** ——
+    /// 统一风格，且防止将来把类型从 `Option<T>` 改成裸 `String` 时踩坑；
+    /// 但不要误以为这条测试在守它。
+    #[test]
+    fn old_rollup_json_without_error_fields_still_parses() {
+        // 刻意只写旧字段，模拟升级前落盘的行。
+        let old = r#"{"provider":"zen","upstream":"mimo-v2.6-flash-free",
+            "aliases":["zen/mimo"],"requests":25,"errors":25,
+            "latency_sum_ms":12475,"body_bytes":1024,
+            "prompt_tokens":5000,"completion_tokens":100,
+            "cache_hit_tokens":0,"cache_miss_tokens":5000}"#;
+        let e: RollupEntry = serde_json::from_str(old).expect("旧行必须能反序列化（否则历史统计整片消失）");
+        assert_eq!(e.provider, "zen");
+        assert_eq!(e.requests, 25);
+        assert_eq!(e.errors, 25, "旧字段值不得丢失");
+        // 缺失的新字段走 default：语义是「未采集」，不是「没有错误」。
+        assert!(e.last_error.is_none(), "旧数据没有错误正文 → None");
+        assert_eq!(e.last_error_status, 0, "旧数据没有状态码 → 0（未采集）");
+        assert_eq!(e.last_error_ts, 0);
+    }
+
+    /// **新数据往返**: 三个字段写进去再读出来必须一致（含中文正文）。
+    #[test]
+    fn error_fields_roundtrip() {
+        let e = RollupEntry {
+            provider: "buddy".into(),
+            last_error: Some("429 请求频率超限（请稍后重试）".into()),
+            last_error_status: 429,
+            last_error_ts: 1_791_000_000,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&e).expect("序列化");
+        let back: RollupEntry = serde_json::from_str(&s).expect("反序列化");
+        assert_eq!(back.last_error.as_deref(), Some("429 请求频率超限（请稍后重试）"));
+        assert_eq!(back.last_error_status, 429);
+        assert_eq!(back.last_error_ts, 1_791_000_000);
+    }
+
+    /// **旧版本读新数据不能炸**: 新版写出的 JSON 里多出三个字段，
+    /// 旧二进制（其结构体没有这些字段）必须能忽略未知字段照常读取。
+    /// 这里用"多塞一个结构体也不认识的字段"来模拟同一件事。
+    #[test]
+    fn unknown_fields_are_ignored_not_fatal() {
+        let with_extra = r#"{"provider":"p","requests":1,"errors":0,
+            "last_error":null,"last_error_status":0,"last_error_ts":0,
+            "some_future_field_from_a_newer_build":123}"#;
+        let e: RollupEntry = serde_json::from_str(with_extra)
+            .expect("未知字段必须被忽略（serde 默认行为），不能让整行失败");
+        assert_eq!(e.provider, "p");
+        assert_eq!(e.requests, 1);
+    }
+
+    /// `add_log` 必须按 **timestamp** 取最新错误，而不是按调用顺序。
+    ///
+    /// 日志文件里并发请求的**完成顺序**与**发起顺序**不同，若实现写成
+    /// "无条件覆盖"，后写入的旧请求会盖掉真实的最新错误。
+    #[test]
+    fn add_log_keeps_error_with_largest_timestamp() {
+        let mut e = RollupEntry::default();
+        // 先来一条**更晚**的错误
+        let mut newer = mk_log(2000, "p", "m");
+        newer.status = 429;
+        newer.error = Some("新错误".into());
+        e.add_log(&newer);
+        // 再来一条更早的（模拟并发导致完成顺序颠倒）
+        let mut older = mk_log(1000, "p", "m");
+        older.status = 404;
+        older.error = Some("旧错误".into());
+        e.add_log(&older);
+
+        assert_eq!(e.errors, 2, "计数仍要如实累计");
+        assert_eq!(e.last_error_status, 429, "必须保留时间戳更新的那条");
+        assert_eq!(e.last_error.as_deref(), Some("新错误"));
+        assert_eq!(e.last_error_ts, 2000);
+    }
+
+    /// 成功请求不得污染 `last_error`；且 499（客户端取消）也不算错误。
+    #[test]
+    fn successful_and_cancelled_logs_do_not_set_error() {
+        let mut e = RollupEntry::default();
+        let ok = mk_log(100, "p", "m"); // status=200, error=None
+        e.add_log(&ok);
+        assert!(e.last_error.is_none(), "成功请求不得设置失败原因");
+        assert_eq!(e.errors, 0);
+
+        let mut cancelled = mk_log(200, "p", "m");
+        cancelled.status = 499;
+        e.add_log(&cancelled);
+        assert!(e.last_error.is_none(), "499 客户端取消不算错误（项目既有口径）");
+        assert_eq!(e.errors, 0);
+    }
+
+    /// 错误正文必须被截断（上游会返回整页 HTML，不截断会让落盘体积失控）。
+    #[test]
+    fn long_error_is_truncated_on_rollup() {
+        let mut e = RollupEntry::default();
+        let mut l = mk_log(1, "p", "m");
+        l.status = 502;
+        l.error = Some("x".repeat(5000));
+        e.add_log(&l);
+        let n = e.last_error.as_deref().unwrap().chars().count();
+        assert_eq!(n, 161, "应截断为 160 字符 + 省略号，实测 {n}");
     }
 }

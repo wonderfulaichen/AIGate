@@ -1,23 +1,33 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉔」**：供应商统计定宽对齐 +
-> 失败原因胶囊）。
-> 两部分：① **纠正上一轮的误判** —— 「没统计的行预留位置导致锯齿」是错的，实测 10 行全有
-> 统计、`gap` 全 12px、右边缘全 1297；上一张图里 zen 行看着空是**截图时 stats 未返回**
-> 的时序假象。② 真正问题是**每项起点**随数字位数在 1088~1108 游走 → 三项各自定宽后
-> 左边缘统一 1045。③ `ProviderStats` 新增 `last_error`/`last_error_status`，成功率全红时
-> 直接显示「为什么」（404/429/401 处置方式完全不同）；取**时间戳最大**的那条而非数组
-> 最后一条（日志顺序不随并发时间单调），按字符截断 160（上游会返回整页 HTML）。
-> ⚠️ **flex 坑**：胶囊挂在行尾 `flex:none` 会抢名称区宽度、把统计列从 1045 推到 753/770；
-> 必须给它 `flex:1 1 0` 的容器吃空白。**规律：行内新增可伸缩元素必须显式给容器，
-> 否则它抢相邻列的宽度。**
-> ⚠️ **改坏验证自身踩了三个坑**（假破坏未还原 flex / 漏 `<template x-if>` 导致失败项跑偏 /
-> finally 只复原源文件没 rebuild，探针用的还是破坏版二进制）。
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉕」**：rollup 落盘失败原因
+> + 失败建议 + 套餐徽章）。方案文档 `docs/plan-rollup-error-and-plans.md`。
+> ① `RollupEntry` 新增 `last_error`/`last_error_status`/`last_error_ts`（全部
+> `#[serde(default)]`），跨日历史失败终于能回溯原因（实测 321 条目里 242 个有此缺口）。
+> ② 失败原因加「可操作建议」查表（借鉴 WALiAPI 的 invalidationText），**上游原文永远保留**。
+> ③ 含免费模型的供应商显示「套餐」徽章，让模型明细的「已省 —」有解释。
+> ⚠️ **判据边界**：`Option` 去掉 `#[serde(default)]` 测试**仍通过** —— serde 对 Option
+> 缺失本就返回 None；真正守兼容性的是 u16/u64。**不得宣称测试守住了 Option。**
+> ⚠️ **两次判据口径错误**（探针当场抓出）：套餐判据第一版用 provider 级
+> `billing===false`（口径是"任一计费模型即计费"→ 恒为 True，徽章永不显示）；
+> 探针第一版拿它当预期 → 空集对空集 = 永远通过。已改为模型级 billing。
+> ⚠️ `ds-*.js` 里局部变量**绝不能叫 `t`**（遮蔽翻译函数 → 整页 TypeError）。
+> **新发现待决策的既有缺陷**：`admin.rs:4746` 缓冲区为空时 `oldest_ts()` 返 None →
+> 整个 rollup 合并被跳过 → 日志清空后历史数据完全不可见（实测复现，未修）。
+> 新增/扩展判据：rollup 单测 6 条、`probe_prov_cols.py` 21 条；
+> 改坏验证 rollup 侧 4 项转红。门禁：421 单测、i18n 961 键。
+
+> ⏪ **上一轮（㉔）**：供应商统计定宽对齐 + 失败原因胶囊。
+> **纠正误判**：「没统计的行预留位置导致锯齿」是错的 —— 实测 10 行全有统计、
+> `gap` 全 12px、右边缘全 1297；上一张图里 zen 行看着空是**截图时 stats 未返回**。
+> 真正问题是**每项起点**随数字位数游走（1088~1108）→ 三项各自定宽后统一 1045。
+> `ProviderStats` 新增 `last_error`/`last_error_status`，取**时间戳最大**那条
+> （日志顺序不随并发时间单调），按字符截断 160（上游会返回整页 HTML）。
+> ⚠️ **flex 坑**：胶囊挂在行尾 `flex:none` 会抢名称区宽度、把统计列从 1045 推到
+> 753/770；必须给它 `flex:1 1 0` 的容器吃空白。
+> ⚠️ **改坏验证自身踩三个坑**：假破坏未还原 flex / 漏 `<template x-if>` 使失败项跑偏 /
+> finally 只复原源文件没 rebuild（探针用的还是破坏版二进制）。
 > **探针量已编译二进制，复原后必须 rebuild。**
-> **已知缺口**：跨日历史失败（如 zen 43 次全败）看不到原因 —— 记录全在 rollup 里，
-> 而 rollup 只存 `errors` 计数不存正文。修它要动 `RollupEntry` 格式（新字段必须
-> `#[serde(default)]`，否则旧行反序列化失败 → 该天历史整片消失），**需先定方案**，未做。
-> 新增探针 `tools/probe_prov_cols.py`（16 条）+ 2 个单测，改坏验证各 3/3 转红。
 
 > ⏪ **上一轮（㉓）**：供应商页去大卡片页头 + 顶部导航改图标盒。
 > 起因是用户圈图指出「这个显示这个很没意义」与「参考下他顶部的这种显示方式」，并报
@@ -1698,6 +1708,105 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-24 轮 ㉕：rollup 落盘失败原因 + 失败建议 + 套餐徽章（含两次判据设计错误）
+
+用户认可修「跨日历史失败看不到原因」的缺口，并要求参考项目（WALiAPI）对套餐型
+供应商的处理方式。完整方案见 **`docs/plan-rollup-error-and-plans.md`**（含取舍与不做的项）。
+
+#### rollup 落盘失败原因（方案 A，已实施）
+
+`RollupEntry` 新增 `last_error` / `last_error_status` / `last_error_ts`，
+`ProviderStats` 新增 `last_error_ts`（合并时必须靠它判断谁更新）。
+
+- **缺口实证**：`logs.jsonl` 5000 条里 zen **一条都没有**，它的调用全在 rollup；
+  实测数据 **44 天 / 321 条目中 242 个有错误但无法回溯原因**。
+- **取最大时间戳，不是"最后一条"**：日志顺序不随并发完成时间单调
+  （并发请求完成顺序 ≠ 发起顺序）。跨天合并同理按 `last_error_ts` 取。
+- **端到端验收**（方案里写明的唯一标准）：构造「只有 rollup、logs 无 zen」的隔离实例，
+  `range=29d` 下 `per_provider` 出现 zen 且三字段值完整正确。
+
+#### ⚠️ 判据边界：`Option` 的 `#[serde(default)]` **不是**兼容性的保障
+
+改坏验证时发现：把 `last_error: Option<String>` 的 `#[serde(default)]` 去掉，
+**测试仍然通过** —— serde 对 `Option` 的缺失本就返回 `None`。
+只去掉 `last_error_status: u16` 或 `last_error_ts: u64` 的 default 才会报
+`missing field` 并转红。
+
+结论：**真正守兼容性的是 u16/u64 那两个字段**。Option 的 default 仍保留
+（风格统一 + 防将来改成裸 `String`），但**不得宣称测试守住了它**。
+这条已写进 `rollup.rs` 的测试注释，避免下一个人误判。
+
+#### 参考项目借鉴的落地（WALiAPI，MIT）
+
+读了 `QuotaBlock.tsx` / `AccountCard.tsx` / `quotaDisplay.ts` / `ResetCreditDialog.tsx`。
+**结构差异必须先认清**：它是「一个账号一条」+ 上游返回结构化 quota（含
+`window_minutes` 5H/周/月）+ `quota.exceeded` 参与路由；我们是「一个供应商一条」、
+无多候选 failover、无账号级订阅模型。所以：
+
+- **落地**：`invalidationText()` 的「reason → 一句怎么办」思路 → 我们的
+  `provErrAdvice()`；`quotaDisplayState()` 的三档阈值思路我们已有 `QUOTA_LOW_PCT=80`，不重造。
+- **不落地**：`plan_type` 枚举体系（我们没有账号级订阅模型）、quota 参与路由
+  （无多候选）、额度窗口 5H/周/月（需先确认某个上游真的返回 `window_minutes`，
+  在确认前做就是编造）。
+
+#### 两次判据设计错误（都由探针当场抓出）
+
+① **套餐判据口径用错**：第一版用 `ProviderStats.billing === false`（整家全免费）。
+   实测**永远不会成立** —— `billing` 的口径是「组内**任一**中转 ID 不在免费名单
+   即视为计费」，真实 10 家里每家都至少有一个计费模型，故 provider 级恒为 `True`，
+   徽章永远不显示。改为按 `per_model` 的**模型级** billing 判断「这家有没有
+   不按量计费的模型」—— 那才是决定「已省 —」的真实粒度。
+② **探针 ④ 假通过**：拿 `billing=false` 的供应商集合当预期，实测恒为空集，
+   **空集对空集 = 永远通过**。改为三条：「有免费模型 → 至少一家必须有徽章」
+   ＋「有徽章者必须真的含免费模型」＋「无统计的行不得凭空长徽章」。
+
+#### 一个变量遮蔽 bug
+
+`provErrAdvice` 里写了 `const t = String(full);` → 遮蔽全局翻译函数 `t()` →
+整页 `TypeError: t is not a function`（探针 ③ 零 pageerror 抓到）。改名 `raw`。
+**纪律：`ds-*.js` 是 `dashboard()` 的对象体片段，里面随时会调 `t()`，
+局部变量绝不能叫 `t`。**
+
+#### 顺带发现一个**既有缺陷**（非本次引入，未修，待决策）
+
+`admin.rs:4746` 是 `if let Some(cover_ts) = state.log_buffer.oldest_ts().await`，
+而 `oldest_ts()` 在**缓冲区为空时返回 `None`** → 整个 rollup 合并被跳过。
+
+后果：日志被清空（或全部轮转走）后，即使 `daily_stats.jsonl` 里有完整历史，
+`per_provider` / `per_model` 也**完全看不到历史数据**。
+
+实测复现：logs.jsonl 为空 + rollup 里有一天 zen → `range=29d` 返回 `per_provider = []`；
+往 logs 塞一条无关记录后立刻正常。
+
+修法（未做）：`oldest_ts()` 为 `None` 时应视为「日志侧无数据可防重复」→
+直接合并整个查询区间（空集 `retain` 是空操作，安全）。
+
+#### 新增判据
+
+- 单测 6 条（rollup）：旧 JSON 兼容、往返、忽略未知字段、取最大时间戳、
+  成功/499 不污染、超长截断。
+- 探针 `probe_prov_cols.py` 扩到 21 条：胶囊与后端 `last_error` 完全一致、
+  title 完整包含原文且建议在前、aria-label、**有胶囊行与无胶囊行统计仍对齐**、
+  套餐徽章三条。
+- 改坏验证：rollup 侧 **4 项转红**（u16 default / u64 default / 无条件覆盖 / 不截断，
+  Option 那条如实记为无判别力）；前端侧 3 项转红（见 ㉔）。
+
+#### 实测效果
+
+zen、Joule 出现「套餐」徽章（都确实含免费模型）；buddy / Joule 有失败原因胶囊；
+建议映射用 5 条**真实**错误正文验证全部命中（ginka 的 `429 [rate_limit_exceeded]`
+→「触发限流」、Joule 的 `429 [quota_exceeded]` →「额度已用尽」）。
+门禁：421 单测绿、i18n 961 键对称、切片 40 项一致；
+`probe_ui_invariants` / `probe_prov_stats` / `probe_reorder` / `probe_prov_cols` 全过。
+
+#### 未实测 / 已知缺口
+
+- **现有部署数据里的 zen 仍无胶囊**：那 43 次是**旧 rollup**（落盘时还没有新字段），
+  新产生的数据才会带上原因。这是兼容性的正常表现，不是 bug。
+- rollup 的「最近一次错误」只保留最后一条，看不到错误类型分布（方案 B 未采纳）。
+- `@media(max-width:1180px)` 下统计/胶囊/徽章的表现未截图核对。
+- 部署份 exe 未替换（红线：AI 只构建，不替用户换 exe / 重启实例）。
 
 ### 🆕 10-24 轮 ㉔：供应商统计定宽对齐 + 失败原因胶囊（含一次自我纠正）
 
