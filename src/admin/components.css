@@ -1014,3 +1014,69 @@ tr:hover td.th-sticky{
 /* 汇总扇区 ("其他"): 底色随主题走 */
 .chart-rest-fill{stroke:var(--chart-rest)}
 
+
+/* ── 供应商紧凑行式列表（2026-10-24，按 WaLiAPI 真实渲染 1:1 重做）──
+   实测目标（measure_wali_rows.py）：行高 73 / 圆角 16 / padding 16 / 1px 描边；
+   序号方块 24×24 r8 fs12/700；状态点 8×8 全圆；标签胶囊 59×21 全圆 fs10/600；
+   URL 行 fs12 mono；统计 label+value 各 fs12；图标按钮 27×27 r8。
+   改造前是 190px 竖版卡片 —— 形态不同，不是加字段能解决的。 */
+.prov-list{display:flex;flex-direction:column;gap:10px}
+.prov-row{background:var(--card);border:1px solid var(--surface-border);border-radius:16px;
+  padding:16px;transition:border-color var(--dur-fast),box-shadow var(--dur-fast),transform var(--dur-fast)}
+.prov-row:hover{border-color:var(--border-s);box-shadow:var(--elev-1)}
+.prov-row.is-drag{outline:2px solid var(--accent);outline-offset:-2px}
+.prov-row-main{display:flex;align-items:center;gap:12px;cursor:pointer;min-width:0}
+
+/* 拖拽手柄：极淡，不抢内容 */
+.prov-grip{width:18px;flex:none;color:var(--muted);opacity:.32;font-size:var(--fs-10);
+  letter-spacing:-3px;cursor:grab;user-select:none;line-height:1}
+.prov-grip:active{cursor:grabbing}
+
+/* 序号方块（24×24 / r8 / fs12 / 700） */
+.prov-idx{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;
+  border-radius:8px;background:var(--fill-4);color:var(--muted);
+  font-size:var(--fs-10);font-weight:700;font-variant-numeric:tabular-nums}
+
+/* 状态点（8×8 全圆，正常时发光） */
+.prov-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--neutral-fg);opacity:.4}
+.prov-dot.ok{background:var(--ok);opacity:1;box-shadow:0 0 8px var(--ok-bd)}
+.prov-dot.bad{background:var(--err);opacity:1;box-shadow:0 0 8px var(--err-bd)}
+
+/* 名称 + 双标签 + URL */
+.prov-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.prov-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.prov-name{font-size:var(--fs-13);font-weight:600;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+.prov-tag{display:inline-flex;align-items:center;height:21px;padding:0 9px;border-radius:var(--pill);
+  font-size:var(--fs-9);font-weight:600;white-space:nowrap;flex:none}
+.tag-proto{background:var(--primary-soft);border:1px solid var(--primary-bd-soft);color:var(--accent)}
+.tag-iface{background:var(--secondary-soft);border:1px solid rgba(191,90,242,.28);color:var(--secondary)}
+.tag-off{background:var(--fill-3);border:1px solid var(--border);color:var(--muted)}
+.prov-url{font-size:var(--fs-11);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 统计区（WaLiAPI 的 hidden lg:flex：窄屏隐藏） */
+.prov-stats{display:flex;align-items:center;gap:12px;flex:none}
+@media(max-width:1180px){.prov-stats{display:none}}
+.prov-stat{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-11);color:var(--muted);white-space:nowrap}
+.prov-stat-l{font-size:var(--fs-11);color:var(--muted)}
+.prov-stat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+
+/* 顺序位次（替代 P/W：我们没有权重调度） */
+.prov-order{flex:none;padding:2px 7px;border-radius:6px;background:var(--fill-3);
+  font-size:var(--fs-10);color:var(--muted);font-variant-numeric:tabular-nums}
+@media(max-width:1180px){.prov-order{display:none}}
+
+/* 图标按钮组（每个 27×27 / r8） */
+.prov-acts{display:flex;align-items:center;gap:2px;flex:none}
+.prov-ib{appearance:none;-webkit-appearance:none;font-family:inherit;
+  width:27px;height:27px;flex:none;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:8px;background:transparent;border:none;color:var(--muted);
+  font-size:var(--fs-12);cursor:pointer;
+  transition:background var(--dur-fast),color var(--dur-fast)}
+.prov-ib:hover{background:var(--fill-5);color:var(--fg)}
+.prov-ib:disabled{opacity:.4;cursor:not-allowed}
+.prov-ib-del:hover{background:var(--err-bg-soft);color:var(--err)}
+
+/* 行内展开区：紧贴主行下方，左侧与内容对齐 */
+.prov-expand{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:10px}

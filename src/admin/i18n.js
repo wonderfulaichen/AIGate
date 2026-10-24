@@ -212,6 +212,11 @@ const I18N = {
     'max_body_label': '请求体上限（字节）',
     'max_body_ph': '留空 = 不限制',
     'max_body_hint': '超过则网关直接返回中文 413，不再盲目打到上游被裸拒（如 opencode zen 限约 1MB）。参考值 1048576。',
+    // 紧凑行式列表（2026-10-24）
+    'copy_curl': '复制 curl',
+    'curl_copied': '已复制 curl（密钥用 $AIGATE_KEY 占位，粘到终端前先 export）',
+    'order_is_priority': '位置即优先级（同一模型优先用靠前的供应商）',
+    'collapse': '收起',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -706,6 +711,10 @@ const I18N = {
     'max_body_label': 'Request body limit (bytes)',
     'max_body_ph': 'empty = unlimited',
     'max_body_hint': 'Beyond this the gateway returns a Chinese 413 instead of blindly forwarding (e.g. opencode zen caps ~1MB). Example: 1048576.',
+    'copy_curl': 'Copy curl',
+    'curl_copied': 'curl copied (key is the $AIGATE_KEY placeholder — export it before running)',
+    'order_is_priority': 'Position = priority (earlier providers are preferred for the same model)',
+    'collapse': 'Collapse',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',

@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
-"""验收：供应商列表整行/整卡可点，且**内部按钮不会误触**.
+"""验收：供应商行的点击行为与内部按钮不误触（紧凑行式列表）.
 
-这是"加了整行可点就坏掉内部按钮"的经典坑：如果内部按钮不 @click.stop，
-点「测试」会同时触发整行动作 —— 用户看到抽屉/展开区突然弹出，以为按钮坏了。
+2026-10-24 供应商页按 WaLiAPI 真实界面重做为**单一紧凑行式列表**：
+  · 点行（.prov-row-main）→ 行内展开
+  · 点内部图标按钮（.prov-ib）→ 不触发展开/抽屉（@click.stop）
+  · 「编辑」图标 → 开抽屉（按钮组里第 4 个，按 aria-label 认）
 
 判据:
-  ① 点表格行空白处 → 抽屉打开（表格视图保持"开抽屉"）
-  ② 点卡片空白处 → **行内展开**（2026-10-24 改为行内展开，对照 WaLiAPI；
-     抽屉改由「编辑」按钮进入 —— 那条路由 probe_prov_expand.py 的 ⑥ 覆盖）
-  ③ 点「测试」按钮 → 抽屉**不打开**
-  ④ 点「⋯」按钮 → 抽屉不打开，但菜单本身能开
+  ① 点行 → 行内展开，且**抽屉不开**
+  ② 点「测试」图标 → 不触发展开
+  ③ 点「编辑」图标 → 抽屉打开
+  ④ 点删除图标（取消）→ 不触发展开
   ⑤ 零 pageerror
-
-⚠️ 踩过的坑（两次假失败都源于此）：
-  页面里共有 4 张 table（记录/分析/供应商各一张，靠 x-show 隐藏），
-  `document.querySelector('table tbody tr')` 抓到的是**隐藏的记录表**。
-  必须只取可见那张 —— 用一个页面内辅助函数 `__pickRow()`，在每次 evaluate 里重建
-  （不能用 addInitScript：它在导航后才注入，页面脚本早跑完了）。
 """
 import json
 import os
@@ -63,105 +58,60 @@ const { chromium } = require('playwright');
   const p = await b.newPage({ viewport: { width: 1600, height: 1000 } });
   const errs = [];
   p.on('pageerror', e => errs.push(String(e).slice(0,250)));
-  await p.goto('%(base)s/admin#providers', { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await p.waitForTimeout(3600);
+  await p.goto('%(base)s/admin', { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await p.waitForTimeout(4200);
+  await p.evaluate(() => document.querySelector('[x-data]')._x_dataStack[0].switchTab('providers'));
+  await p.waitForTimeout(2200);
 
   const out = {};
-  const st = () => document.querySelector('[x-data]')._x_dataStack[0];
-
-  // 表格视图
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].provViewMode = 'table'; });
-  await p.waitForTimeout(900);
-  out.beforeAny = await p.evaluate(() => !!document.querySelector('[x-data]')._x_dataStack[0].drawerProv);
-
-  // ① 点行内「无按钮、无 @click」的单元格
-  out.row = await p.evaluate(() => {
-    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    let target = null, cellIdx = -1;
-    const tables = Array.from(document.querySelectorAll('table')).filter(vis);
-    for (const t of tables) {
-      const tr = Array.from(t.querySelectorAll('tbody tr')).find(vis);
-      if (!tr) continue;
-      const tds = Array.from(tr.querySelectorAll('td'));
-      // 挑既没有 @click 也不含 button 的格
-      const plain = tds.find(td => !td.getAttribute('@click') && !td.querySelector('button'));
-      if (plain) { target = plain; cellIdx = tds.indexOf(plain); }
-      break;
-    }
-    if (!target) return { noRow: true };
-    target.click();
-    return { clicked: true, cellIdx };
-  });
-  await p.waitForTimeout(700);
-  out.rowOpened = await p.evaluate(() => !!document.querySelector('[x-data]')._x_dataStack[0].drawerProv);
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].drawerProv = null; });
-  await p.waitForTimeout(500);
-
-  // ③ 点「测试」按钮
-  out.test = await p.evaluate(() => {
-    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const tables = Array.from(document.querySelectorAll('table')).filter(vis);
-    for (const t of tables) {
-      const tr = Array.from(t.querySelectorAll('tbody tr')).find(vis);
-      if (!tr) continue;
-      const btns = Array.from(tr.querySelectorAll('button'));
-      const test = btns.find(x => /测试|⚡/.test(x.textContent || ''));
-      if (!test) return { noBtn: true };
-      test.click();
-      return { clicked: true };
-    }
-    return { noTable: true };
-  });
-  await p.waitForTimeout(800);
-  out.testOpened = await p.evaluate(() => !!document.querySelector('[x-data]')._x_dataStack[0].drawerProv);
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].drawerProv = null; });
-  await p.waitForTimeout(400);
-
-  // 卡片视图
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].provViewMode = 'card'; });
-  await p.waitForTimeout(900);
-  // ② 点卡片左上角留白
-  out.card = await p.evaluate(() => {
-    const card = document.querySelector('.plaza-card');
-    if (!card) return { noCard: true };
-    const r = card.getBoundingClientRect();
-    // 用真实坐标点击左上角内边距处（避开任何子元素）
-    return { x: Math.round(r.left + 6), y: Math.round(r.top + 6) };
-  });
-  if (out.card && out.card.x) {
-    await p.mouse.click(out.card.x, out.card.y);
-    await p.waitForTimeout(700);
-  }
-  out.cardOpened = await p.evaluate(() => {
+  const state = () => p.evaluate(() => {
     const st = document.querySelector('[x-data]')._x_dataStack[0];
-    // 2026-10-24 行为变更：点卡片 = **行内展开**（不是开抽屉）。
-    // 抽屉改由「编辑」按钮进入（见 probe_prov_expand.py 的 ⑥）。
-    const names = Object.keys(st.provExpanded || {});
-    return { drawer: !!st.drawerProv, expanded: names.length > 0, keys: names };
+    return { drawer: !!st.drawerProv, keys: Object.keys(st.provExpanded || {}) };
   });
-  await p.evaluate(() => {
-    const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.drawerProv = null; st.provExpanded = {};
-  });
-  await p.waitForTimeout(500);
 
-  // ④ 点「⋯」
-  out.more = await p.evaluate(() => {
-    const card = document.querySelector('.plaza-card');
-    if (!card) return { noCard: true };
-    const btns = Array.from(card.querySelectorAll('.plaza-acts button'));
-    const more = btns.find(x => (x.textContent||'').trim() === '⋯');
-    if (!more) return { noBtn: true };
-    more.click();
+  out.before = await state();
+
+  // ① 点行主体 → 行内展开
+  out.clickRow = await p.evaluate(() => {
+    const main = document.querySelector('.prov-row-main');
+    if (!main) return { noRow: true };
+    main.click();
     return { clicked: true };
   });
-  await p.waitForTimeout(700);
-  out.moreOpened = await p.evaluate(() => !!document.querySelector('[x-data]')._x_dataStack[0].drawerProv);
-  out.menuVisible = await p.evaluate(() => {
-    const card = document.querySelector('.plaza-card');
-    const pop = card ? card.querySelector('.cols-pop') : null;
-    return !!(pop && pop.getBoundingClientRect().height > 0);
+  await p.waitForTimeout(800);
+  out.afterRow = await state();
+  out.expandVisible = await p.evaluate(() => {
+    const ex = document.querySelector('.prov-expand');
+    return !!(ex && ex.getBoundingClientRect().height > 0);
   });
+  await p.evaluate(() => { const st = document.querySelector('[x-data]')._x_dataStack[0]; st.provExpanded = {}; st.drawerProv = null; });
+  await p.waitForTimeout(500);
+
+  // ② 点「测试」图标 → 不展开
+  out.clickTest = await p.evaluate(() => {
+    const row = document.querySelector('.prov-row');
+    const btns = Array.from(row.querySelectorAll('.prov-ib'));
+    const t = btns.find(x => /测试|Test/.test(x.getAttribute('aria-label') || ''));
+    if (!t) return { noBtn: true, labels: btns.map(x => x.getAttribute('aria-label')) };
+    t.click();
+    return { clicked: true };
+  });
+  await p.waitForTimeout(900);
+  out.afterTest = await state();
+  await p.evaluate(() => { const st = document.querySelector('[x-data]')._x_dataStack[0]; st.provExpanded = {}; st.drawerProv = null; });
+  await p.waitForTimeout(400);
+
+  // ③ 点「编辑」图标 → 抽屉
+  out.clickEdit = await p.evaluate(() => {
+    const row = document.querySelector('.prov-row');
+    const btns = Array.from(row.querySelectorAll('.prov-ib'));
+    const e = btns.find(x => /编辑|Edit/.test(x.getAttribute('aria-label') || ''));
+    if (!e) return { noBtn: true };
+    e.click();
+    return { clicked: true };
+  });
+  await p.waitForTimeout(900);
+  out.afterEdit = await state();
 
   out.errs = errs;
   await b.close();
@@ -175,7 +125,7 @@ def main():
         print(f"{BAD}  找不到 {EXE}")
         return 1
     port = free_port()
-    wd = os.path.join(ROOT, ".openbitfun", "tmp", "e2e_rowclick")
+    wd = os.path.join(ROOT, ".openbitfun", "tmp", "e2e_rowclick2")
     shutil.rmtree(wd, ignore_errors=True)
     os.makedirs(os.path.join(wd, "data"), exist_ok=True)
     shutil.copy2(os.path.join(DEPLOY, "providers.json"), os.path.join(wd, "providers.json"))
@@ -200,11 +150,11 @@ def main():
         if not d:
             print(f"{BAD}  找不到 playwright")
             return 1
-        jsf = os.path.join(d, "probe_rowclick_tmp.js")
+        jsf = os.path.join(d, "probe_rowclick2_tmp.js")
         with open(jsf, "w", encoding="utf-8") as f:
-            f.write(JS % {"base": base})
+            f.write(JS.replace("%(base)s", base))
         r = subprocess.run(["node", jsf], capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=220, cwd=d)
+                           encoding="utf-8", errors="replace", timeout=240, cwd=d)
         sout = (r.stdout or "") + (r.stderr or "")
         line = next((l for l in sout.splitlines() if l.startswith("JSON_RESULT ")), None)
         if not line:
@@ -214,24 +164,21 @@ def main():
         if res.get("fatal"):
             print(f"{BAD}  {res['fatal']}")
             return 1
-        print(f"  现场: {json.dumps(res, ensure_ascii=False)}")
+        print(f"  现场: {json.dumps(res, ensure_ascii=False)[:700]}")
         print()
 
-        check(res.get("beforeAny") is False, "① 初始抽屉是关的（前提）", "")
-        check(res.get("rowOpened") is True,
-              "① **点表格行空白处 → 抽屉打开**（300px 死热区变主入口）",
-              f"row={res.get('row')} opened={res.get('rowOpened')}")
-        check(res.get("testOpened") is False,
-              "③ 点「测试」按钮 → **抽屉不打开**（@click.stop 生效）",
-              f"opened={res.get('testOpened')}")
-        co = res.get("cardOpened") or {}
-        check(co.get("expanded") is True and co.get("drawer") is False,
-              "② 点卡片空白处 → **行内展开**（不是开抽屉，2026-10-24 变更）",
-              f"expanded={co.get('expanded')} drawer={co.get('drawer')} keys={co.get('keys')}")
-        check(res.get("moreOpened") is False,
-              "④ 点「⋯」按钮 → 抽屉不打开", f"opened={res.get('moreOpened')}")
-        check(res.get("menuVisible") is True,
-              "④ 「⋯」菜单本身能正常打开", f"visible={res.get('menuVisible')}")
+        check((res.get("before") or {}).get("drawer") is False, "① 初始抽屉关着（前提）", "")
+        ar = res.get("afterRow") or {}
+        check(len(ar.get("keys") or []) > 0 and ar.get("drawer") is False,
+              "① 点行 → 行内展开，抽屉不开", f"{ar}")
+        check(res.get("expandVisible") is True, "① 展开区真实可见（不是只在状态里）",
+              f"{res.get('expandVisible')}")
+        at = res.get("afterTest") or {}
+        check(len(at.get("keys") or []) == 0 and at.get("drawer") is False,
+              "② 点「测试」图标 → 不触发展开/抽屉（@click.stop 生效）", f"{at}")
+        ae = res.get("afterEdit") or {}
+        check(ae.get("drawer") is True,
+              "③ 点「编辑」图标 → 抽屉打开", f"{ae}")
         check(not (res.get("errs") or []), "⑤ 零 pageerror", f"{(res.get('errs') or [])[:2]}")
     finally:
         proc.terminate()

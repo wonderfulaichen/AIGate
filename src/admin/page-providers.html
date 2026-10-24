@@ -21,212 +21,91 @@
 </div></div>
 <template x-if="visibleProviders.length===0 && providersFormData!==null && (providersFormData||[]).length===0"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_prov_title')"></h2><p class="empty-d" x-text="t('empty_prov_desc')"></p><button class="btn btn-p" @click.stop="showAddProvider=true" x-text="t('empty_prov_cta')"></button></div></div></template>
 <template x-if="visibleProviders.length===0 && (providersFormData||[]).length>0"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('plaza_no_match')"></span> <button class="btn btn-g" style="font-size:var(--fs-11)" @click.stop="provSearch=''" x-text="t('plaza_clear_filters')"></button></div></div></template>
-<template x-if="provViewMode==='table' && visibleProviders.length>0"><div class="pnl"><div style="overflow-x:auto">
-<table class="prov-table"><thead><tr>
-<th style="width:5%"></th>
-<th x-text="t('provider_name')"></th>
-<th x-text="t('provider_status')"></th>
-<th x-text="t('latency')"></th>
-<th x-text="t('circuit')"></th>
-<th x-text="t('key_label')"></th>
-<th x-text="t('unit_models')"></th>
-<th style="text-align:right" x-text="t('actions')"></th>
-</tr></thead>
-<tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr @click="openProviderDrawer(providersFormData.indexOf(prov))" style="cursor:pointer" :aria-label="t('edit')+' '+prov.name"
-    :draggable="true" @dragstart="provDragStart($event,prov.name)" @dragover="provDragOver($event,prov.name)" @dragend="provDragEnd()" @drop="provDrop($event,prov.name)"
-    :class="{'drag-over':provOverName===prov.name}">
-  <!-- 拖拽手柄 + 上下移（键盘可达）。供应商在配置里是数组，顺序 = 优先级，
-       但此前面板上没有任何排序手段 —— 这条信息看得见却改不了。
-       上下移按钮是给键盘/触屏用户的替代：拖拽本身对键盘不可达。 -->
-  <td style="width:1%;white-space:nowrap">
-    <div class="pv-grip" :title="t('drag_reorder')" aria-hidden="true">⋮⋮</div>
-    <div class="pv-move"><button type="button" class="pv-mv" :title="t('move_up')" :aria-label="t('move_up')+' '+prov.name" @click.stop="provMove(prov.name,-1)">↑</button><button type="button" class="pv-mv" :title="t('move_down')" :aria-label="t('move_down')+' '+prov.name" @click.stop="provMove(prov.name,1)">↓</button></div>
-  </td>
-  <td><div style="width:28px;height:28px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
-  <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><!-- 「内置」此前是这一行里**唯一没有 title 的徽章**, 而它的词义有歧义:
-     非开发者容易读成"软件自带的、应该自动就能用", 实际含义是"此条目由内置模板生成
-     (因此受保护、不可删除)"。加 title 说清来源 (2026-10-12 审计)。 -->
-<template x-if="prov.preset"><span class="bdg bdg-p" style="font-size:var(--fs-9)" :title="t('preset_badge_hint')" x-text="t('preset_badge')"></span></template><template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" style="font-size:var(--fs-9)" :title="t('preset_modified_hint')" x-text="t('preset_modified')"></span></template><template x-if="prov.disabled"><span class="bdg bdg-w" style="font-size:var(--fs-9)" x-text="t('prov_disabled_badge')"></span></template><div class="txs mono tm" style="max-width:220px;overflow:hidden;text-overflow:ellipsis" :title="prov.endpoint" x-text="prov.endpoint"></div></td>
-  <td>
-    <!-- P2: 状态色统一走 bcls(tone) 语义表 (原为各处手写三元链, 同一状态在不同页取不同色) -->
-    <template x-if="healthOf(prov.name)==='ok'||healthOf(prov.name)==='err'"><span class="bdg" :class="bcls(healthOf(prov.name)==='ok'?'ok':'err')" x-text="healthOf(prov.name)==='ok'?t('health_ok'):t('health_err')"></span></template>
-    <template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span class="bdg" :class="bcls(prov._testResult.success?'ok':'err')" x-text="prov._testResult.success?t('health_ok'):t('health_err')"></span></template>
-    <template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span class="txs tm" x-text="t('health_na')"></span></template>
-    <template x-if="prov._testResult && !prov._testResult.success">
-      <div style="margin-top:4px;max-width:210px">
-        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click.stop="prov._errOpen=!prov._errOpen"><span x-show="testStage(prov._testResult)" style="font-weight:600" x-text="testStage(prov._testResult)"></span><span x-text="testErrFirst(prov._testResult.status)"></span></div>
-        <template x-if="prov._errOpen">
-          <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);max-width:280px;white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
-            <div x-text="prov._testResult.status"></div>
-            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
+<!-- ── 供应商列表 = **紧凑行式**（2026-10-24 按 WaLiAPI 真实界面 1:1 重做）──
+     实测目标尺寸：行高 73px / 圆角 16 / padding 16 / 1px 描边；
+     内部：序号方块 24×24 → 状态点 8×8 → 名称+双标签 → URL 行 → 统计 → 图标按钮。
+     改造前是 190px 高的竖版卡片（图标在上、徽章整行、带文字按钮），
+     与参考项目形态完全不同 —— 所以这次整块重写，不再往旧卡片里加东西。
+     只保留这一种列表：WaLiAPI 也只有一种（我们原有表格+卡片两套，各自都不像它）。 -->
+<template x-if="visibleProviders.length>0">
+  <div class="prov-list">
+    <template x-for="(prov,pi) in visibleProviders" :key="prov.name">
+      <div class="prov-row" :class="{'is-drag':provOverName===prov.name}"
+           :draggable="!isProvExpanded(prov.name)"
+           @dragstart="provDragStart($event,prov.name)" @dragover="provDragOver($event,prov.name)"
+           @dragend="provDragEnd()" @drop="provDrop($event,prov.name)">
+        <!-- 主行：点它展开（不进抽屉；抽屉由「编辑」图标进） -->
+        <div class="prov-row-main" @click="toggleProvExpand(prov.name)" :aria-expanded="isProvExpanded(prov.name)?'true':'false'">
+          <!-- 拖拽手柄 -->
+          <div class="prov-grip" :title="t('drag_reorder')" aria-hidden="true">⋮⋮</div>
+          <!-- 序号方块 -->
+          <div class="prov-idx" x-text="pi+1"></div>
+          <!-- 状态点 -->
+          <span class="prov-dot" :class="healthOf(prov.name)==='ok'?'ok':(healthOf(prov.name)==='err'?'bad':'')"
+                :title="healthOf(prov.name)==='ok'?t('health_ok'):(healthOf(prov.name)==='err'?t('health_err'):t('health_na'))" aria-hidden="true"></span>
+          <!-- 名称 + 双标签 + URL -->
+          <div class="prov-main">
+            <div class="prov-title">
+              <span class="prov-name" x-text="prov.name"></span>
+              <span class="prov-tag tag-proto" x-text="'['+(availableApiFormats((prov.models||[])[0]||{},prov)[0]?t('fmt.'+availableApiFormats((prov.models||[])[0]||{},prov)[0]):'OpenAI')+']'"></span>
+              <template x-if="prov.probed_protocols && prov.probed_protocols.length"><span class="prov-tag tag-iface" :title="t('prov_proto_probed_hint')" x-text="'['+t('prov_proto_probed_short')+']'"></span></template>
+              <template x-if="prov.preset"><span class="prov-tag tag-iface" :title="t('preset_badge_hint')" x-text="'['+t('preset_badge')+']'"></span></template>
+              <template x-if="prov.disabled"><span class="prov-tag tag-off" x-text="'['+t('prov_disabled_badge')+']'"></span></template>
+            </div>
+            <div class="prov-url mono" :title="prov.endpoint" x-text="prov.endpoint"></div>
           </div>
-        </template>
-      </div>
-    </template>
-  </td>
-  <td class="txs tm mono"><template x-if="health.find(h => h.provider === prov.name)"><span x-text="fmtMs(health.find(h => h.provider === prov.name).latency_ms)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && prov._testResult"><span x-text="fmtMs(prov._testResult.latency_ms||0)"></span></template><template x-if="!health.find(h => h.provider === prov.name) && !prov._testResult"><span x-text="t('health_na')"></span></template></td>
-  <td><template x-if="health.find(h => h.provider === prov.name)"><span class="bdg" :class="bcls(health.find(h=>h.provider===prov.name).circuit==='closed'?'ok':health.find(h=>h.provider===prov.name).circuit==='half-open'?'warn':'err')" x-text="health.find(h=>h.provider===prov.name).circuit==='closed'?t('circuit_closed'):health.find(h=>h.provider===prov.name).circuit==='half-open'?t('circuit_half_open'):t('circuit_open')"></span></template><template x-if="!health.find(h => h.provider === prov.name)"><span class="txs tm" x-text="t('health_na')"></span></template></td>
-  <td><span class="bdg" :class="bcls(hasCred(prov.name)?'ok':'warn')" x-text="keyStatusText(prov.name)"></span></td>
-  <td>
-    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-      <span class="mono txsm" x-text="(prov.models||[]).length"></span>
-      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="plaza-tag tag-proto" :title="t('prov_proto_inuse_hint')" x-text="fmt"></span></template>
-      <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
-      <template x-if="(prov.probed_protocols||[]).length"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span></template>
-      <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppt'+fmt"><span class="plaza-tag tag-prov" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
-    </div>
-  </td>
-  <td style="text-align:right;white-space:nowrap"><div style="display:inline-flex;gap:4px">
-    <!-- ⚡/↓ 原本是**无文字图标**, 含义只能靠 hover 才知道 —— 而「拉取模型」是每次新增
-         供应商后都要做的高频操作（HANDOFF 原文: 部署后点拉取 + 保存即得新模型）。
-         2026-10-12 审计后给这两个加文字（图标保留在前面, 仍一眼可扫）。 -->
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click.stop="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" @click.stop="resetCircuit(prov.name)" x-text="t('reset_circuit')"></button>
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click.stop="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓ <span x-text="t('fetch_models')"></span></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
-    <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click.stop="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-    <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click.stop="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
-    <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click.stop="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>
-    <template x-if="prov.preset && presetDirty(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" :title="t('preset_reset')" @click.stop="presetReset(prov)">⟲</button></template>
-    <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err)" :disabled="!!prov.preset" @click.stop="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
-  </div></td>
-</tr>
-</template></tbody></table>
-</div></div></template>
-<template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
-  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable"
-    :class="{'is-expanded':isProvExpanded(prov.name),'drag-over':provOverName===prov.name}"
-    @click="toggleProvExpand(prov.name)" style="cursor:pointer"
-    :draggable="!isProvExpanded(prov.name)" @dragstart="provDragStart($event,prov.name)" @dragover="provDragOver($event,prov.name)" @dragend="provDragEnd()" @drop="provDrop($event,prov.name)">
-    <!-- 标题行: 图标方块 + 名称(可点复制) + 徽章组. 对齐 cc-switch ProviderCard 的
-         「drag/图标 + 名称 + 状态徽章 + (URL 行独立成第二行)」结构 -->
-    <div class="plaza-ch">
-      <!-- 序号方块：WaLiAPI 的 h-6 w-6 rounded-lg bg-slate-100 小方块。
-           它不只是编号 —— 卡片视图的排序就是"优先级顺序"，给数字比让用户数行更直观。 -->
-      <div class="plaza-idx" x-text="visibleProviders.indexOf(prov)+1"></div>
-      <!-- 状态点：WaLiAPI 用 h-2 w-2 圆点 + 发光（正常时），比文字徽章省空间。
-           我们仍保留右侧的文字徽章（它有更细的三态语义），圆点只做"一眼扫"的锚。 -->
-      <span class="plaza-dot" :class="healthOf(prov.name)==='ok'?'on':(healthOf(prov.name)==='err'?'bad':'')" :title="healthOf(prov.name)==='ok'?t('health_ok'):(healthOf(prov.name)==='err'?t('health_err'):t('health_na'))" aria-hidden="true"></span>
-      <div class="plaza-ic ibox" x-html="providerLogo(prov.name)"></div>
-      <div style="min-width:0;flex:1">
-        <div class="plaza-nm bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></div>
-        <div class="plaza-ep" :title="prov.endpoint" x-text="prov.endpoint"></div>
-      </div>
-      <!-- 快速统计（2026-10-24）：对照 WaLiAPI 的 ChannelsPage.tsx:459-478。
-           数据源 stats.per_provider —— 进供应商页时已补 fetchStats。
-           provQuickStats 返回 null（该供应商还没有请求）时**整块不渲染**，
-           不显示 0/0%/0ms：未采集 ≠ 零。
-           ⚠️ 标签用图标不用"成功率"三个字 —— 实测 300px 卡宽下文字标签
-           把 openAI-gpt 的名字挤成两行；图标 + title 既有语义又不占宽度。 -->
-      <template x-if="provQuickStats(prov.name)">
-        <div class="plaza-stats">
-          <span class="plaza-stat" :title="t('quick_calls_hint')"><span aria-hidden="true">⚡</span><b x-text="fmtT(provQuickStats(prov.name).calls)"></b></span>
-          <span class="plaza-stat" :title="t('success_rate')+' '+provQuickStats(prov.name).okText"><span aria-hidden="true">✓</span><b :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></b></span>
-          <span class="plaza-stat" :title="t('avg_latency')"><span aria-hidden="true">◷</span><b x-text="fmtMs(provQuickStats(prov.name).latency)"></b></span>
+          <!-- 统计（窄屏隐藏，与 WaLiAPI 的 hidden lg:flex 一致） -->
+          <template x-if="provQuickStats(prov.name)">
+            <div class="prov-stats">
+              <span class="prov-stat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><b x-text="fmtT(provQuickStats(prov.name).calls)"></b></span>
+              <span class="prov-stat"><span class="prov-stat-l" x-text="t('success_rate')"></span><b :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></b></span>
+              <span class="prov-stat"><span aria-hidden="true" style="display:inline-flex;color:var(--muted)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span><b x-text="fmtMs(provQuickStats(prov.name).latency)"></b></span>
+            </div>
+          </template>
+          <!-- 顺序位次（替代 WaLiAPI 的 P/W：我们没有权重调度，用"第几位 = 优先级"表达） -->
+          <span class="prov-order" :title="t('order_is_priority')" x-text="'#'+(pi+1)"></span>
+          <!-- 图标按钮组（纯图标 + title，73px 行里放不下文字按钮） -->
+          <div class="prov-acts" @click.stop>
+            <button type="button" class="prov-ib" :title="t('test_connection')" :aria-label="t('test_connection')+' '+prov.name" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><span x-show="!prov._testing" aria-hidden="true" style="display:inline-flex"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span><span x-show="prov._testing" class="spin"></span></button>
+            <button type="button" class="prov-ib" :title="t('fetch_models')" :aria-label="t('fetch_models')+' '+prov.name" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><span x-show="!prov._fetching" aria-hidden="true" style="display:inline-flex"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span><span x-show="prov._fetching" class="spin"></span></button>
+            <button type="button" class="prov-ib" :title="t('copy_curl')" :aria-label="t('copy_curl')+' '+prov.name" @click="copyProviderCurl(prov)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></button>
+            <button type="button" class="prov-ib" :title="t('edit')" :aria-label="t('edit')+' '+prov.name" @click="openProviderDrawer(providersFormData.indexOf(prov))"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>
+            <button type="button" class="prov-ib" :title="(prov.disabled?t('prov_enable'):t('prov_disable'))" :aria-label="(prov.disabled?t('prov_enable'):t('prov_disable'))+' '+prov.name" @click="toggleProvDisabled(prov)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+            <button type="button" class="prov-ib prov-ib-del" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')+' '+prov.name" :disabled="!!prov.preset" @click="deleteProvider(providersFormData.indexOf(prov))"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+            <button type="button" class="prov-ib" :title="isProvExpanded(prov.name)?t('collapse'):t('expand_details')" :aria-label="isProvExpanded(prov.name)?t('collapse'):t('expand_details')" :aria-expanded="isProvExpanded(prov.name)?'true':'false'" @click="toggleProvExpand(prov.name)"><span aria-hidden="true" :style="'display:inline-flex;transition:transform .2s;transform:rotate('+(isProvExpanded(prov.name)?180:0)+'deg)'"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></span></button>
+          </div>
         </div>
-      </template>
-
-    </div>
-    <!-- 状态徽章独立一行（2026-10-24 从标题行下移）。
-         原来它们和名称同排，5~6 个文字徽章把名称挤成两行、"正常"自己也被折行。
-         WaLiAPI 的做法是标题行只放**标签**（协议/提供商），状态靠一个圆点表达；
-         我们仍需这些细语义，就单独给一行，不占名称宽度。 -->
-    <div class="plaza-badges">
-
-      <template x-if="healthOf(prov.name)==='ok'||healthOf(prov.name)==='err'"><span class="bdg" :class="healthOf(prov.name)==='ok'?'bdg-s':'bdg-e'" x-text="healthOf(prov.name)==='ok'?t('health_ok'):t('health_err')"></span></template>
-      <span class="bdg" :class="hasCred(prov.name)?'bdg-s':'bdg-w'" x-text="keyStatusText(prov.name)"></span>
-      <template x-if="prov.preset"><span class="bdg bdg-p" :title="t('preset_badge_hint')" x-text="t('preset_badge')"></span></template>
-      <template x-if="prov.preset && presetDirty(prov)"><span class="bdg bdg-w" :title="t('preset_modified_hint')" x-text="t('preset_modified')"></span></template>
-      <template x-if="prov.disabled"><span class="bdg bdg-w" x-text="t('prov_disabled_badge')"></span></template>
-    </div>
-    <div class="plaza-ft">
-      <span class="txs tm mono" x-text="health.find(h=>h.provider===prov.name)?fmtMs(health.find(h=>h.provider===prov.name).latency_ms):(prov._testResult?fmtMs(prov._testResult.latency_ms||0):t('health_na'))"></span>
-      <span class="txs tm" x-text="(prov.models||[]).length+' '+t('unit_models')"></span>
-      <template x-if="prov._newModels>0"><span class="bdg bdg-s" style="font-size:var(--fs-9)" x-text="t('new_models_badge', prov._newModels)"></span></template>
-      <template x-for="fmt in badgeList(provProtocols(prov),2).shown" :key="fmt"><span class="plaza-tag tag-proto" :title="t('prov_proto_inuse_hint')" x-text="fmt"></span></template>
-      <template x-if="badgeList(provProtocols(prov),2).more>0"><span class="bdg-more" :title="badgeList(provProtocols(prov),2).title" x-text="'+'+badgeList(provProtocols(prov),2).more"></span></template>
-      <template x-if="(prov.probed_protocols||[]).length"><span class="bdg bdg-p" :title="t('prov_proto_probed_hint')" x-text="t('prov_proto_probed_short')"></span></template>
-      <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppc'+fmt"><span class="plaza-tag tag-prov" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
-    </div>
-    <!-- 操作条: 次级按钮靠左, 主操作(编辑)与删除靠右 —— 原为 5 个平铺按钮挤一行 -->
-    <!-- 行内展开区（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:519-600）。
-         改造前点整卡只能开抽屉 —— 只想看一眼"这家有哪些模型"也要跳到另一个界面。
-         WaLiAPI 的做法是就地展开：模型胶囊（点一下即复制）、最近测试结果、
-         调用统计都在卡里看完；只有"改配置"才进表单。 -->
-    <template x-if="isProvExpanded(prov.name)">
-      <div class="plaza-expand" @click.stop>
-        <!-- 可用模型：WaLiAPI 每个模型都是**可点胶囊**，点一下复制 -->
-        <div class="pe-sec">
-          <div class="pe-hd"><span x-text="t('available_models_n',(prov.models||[]).length)"></span><span class="txs tm" x-text="t('click_to_copy')"></span></div>
-          <div class="pe-chips">
-            <template x-for="m in (prov.models||[])" :key="'pm'+m.model_id">
-              <button type="button" class="pe-chip" :class="{'copied':copiedField==='model:'+m.model_id}" :title="(m.upstream_model||m.model_id)+' · '+t('click_to_copy')" @click.stop="copyModelId(m.model_id)"><span x-text="m.model_id"></span><span aria-hidden="true" x-show="copiedField==='model:'+m.model_id"> ✓</span></button>
+        <!-- 行内展开（保留我们已有、WaLiAPI 没有的能力：模型胶囊点一下复制） -->
+        <template x-if="isProvExpanded(prov.name)">
+          <div class="prov-expand" @click.stop>
+            <div class="pe-sec">
+              <div class="pe-hd"><span x-text="t('available_models_n',(prov.models||[]).length)"></span><span class="txs tm" x-text="t('click_to_copy')"></span></div>
+              <div class="pe-chips">
+                <template x-for="m in (prov.models||[])" :key="'pm'+m.model_id">
+                  <button type="button" class="pe-chip" :class="{'copied':copiedField==='model:'+m.model_id}" :title="(m.upstream_model||m.model_id)+' · '+t('click_to_copy')" @click.stop="copyModelId(m.model_id)"><span x-text="m.model_id"></span><span aria-hidden="true" x-show="copiedField==='model:'+m.model_id"> ✓</span></button>
+                </template>
+                <span class="txs tm" x-show="!(prov.models||[]).length" x-text="t('no_models_yet')"></span>
+              </div>
+            </div>
+            <template x-if="prov._testResult">
+              <div class="pe-test" :class="prov._testResult.success?'ok':'bad'">
+                <span aria-hidden="true" x-text="prov._testResult.success?'✓':'✗'"></span>
+                <span x-text="prov._testResult.success?t('test_ok'):(testErrFirst(prov._testResult.status)||t('test_failed'))"></span>
+                <span class="mono" x-show="prov._testResult.latency_ms" x-text="fmtMs(prov._testResult.latency_ms||0)"></span>
+              </div>
             </template>
-            <span class="txs tm" x-show="!(prov.models||[]).length" x-text="t('no_models_yet')"></span>
-          </div>
-        </div>
-        <!-- 最近测试结果：就地显示、不自动消失（WaLiAPI 的 result 绿/红条） -->
-        <template x-if="prov._testResult">
-          <div class="pe-test" :class="prov._testResult.success?'ok':'bad'">
-            <span aria-hidden="true" x-text="prov._testResult.success?'✓':'✗'"></span>
-            <span x-text="prov._testResult.success?t('test_ok'):(testErrFirst(prov._testResult.status)||t('test_failed'))"></span>
-            <span class="mono" x-show="prov._testResult.latency_ms" x-text="fmtMs(prov._testResult.latency_ms||0)"></span>
-          </div>
-        </template>
-        <!-- 统计明细：调用 / 成功 / 失败（WaLiAPI 的调用统计区） -->
-        <template x-if="provQuickStats(prov.name)">
-          <div class="pe-stats">
-            <div><div class="pe-k" x-text="t('quick_calls')"></div><div class="pe-v" x-text="fmtT(provQuickStats(prov.name).calls)"></div></div>
-            <div><div class="pe-k" x-text="t('success_rate')"></div><div class="pe-v" :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></div></div>
-            <div><div class="pe-k" x-text="t('avg_latency')"></div><div class="pe-v" x-text="fmtMs(provQuickStats(prov.name).latency)"></div></div>
-            <div><div class="pe-k" x-text="t('detail.endpoint_short')"></div><div class="pe-v txs mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="prov.endpoint" x-text="prov.endpoint"></div></div>
+            <template x-if="provQuickStats(prov.name)">
+              <div class="pe-stats">
+                <div><div class="pe-k" x-text="t('quick_calls')"></div><div class="pe-v" x-text="fmtT(provQuickStats(prov.name).calls)"></div></div>
+                <div><div class="pe-k" x-text="t('success_rate')"></div><div class="pe-v" :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></div></div>
+                <div><div class="pe-k" x-text="t('avg_latency')"></div><div class="pe-v" x-text="fmtMs(provQuickStats(prov.name).latency)"></div></div>
+                <div><div class="pe-k" x-text="t('detail.endpoint_short')"></div><div class="pe-v txs mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="prov.endpoint" x-text="prov.endpoint"></div></div>
+              </div>
+            </template>
           </div>
         </template>
       </div>
     </template>
-    <div class="plaza-acts">
-      <!-- 主操作：测试 / 拉取模型 / 编辑（改完端点要验证的核心闭环）-->
-      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click.stop="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
-      <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click.stop="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓ <span x-text="t('fetch_models')"></span></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
-      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;margin-left:auto" @click.stop="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
-      <!-- 低频操作收进「⋯」菜单：重置熔断 / 登录 / 停用 / 预设重置。
-           这些都不是日常操作，平铺在卡面上只会挤压主操作（曾把「测试」压成竖排两字）。 -->
-      <div style="position:relative" @click.outside="prov._menuOpen=false">
-        <button class="btn btn-g icon-btn" :title="t('more_actions')" :aria-label="t('more_actions')"
-                :aria-expanded="prov._menuOpen?'true':'false'" @click.stop="prov._menuOpen=!prov._menuOpen">⋯</button>
-        <div class="cols-pop" x-show="prov._menuOpen" x-cloak style="min-width:170px">
-          <button class="cols-row" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'"
-                  @click.stop="resetCircuit(prov.name);prov._menuOpen=false" style="width:100%;border:none;background:transparent;color:var(--warn);text-align:left"
-                  x-text="t('reset_circuit')"></button>
-          <template x-if="isAccountProv(prov)">
-            <button class="cols-row" @click.stop="openLogin(prov.name);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
-                    x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button>
-          </template>
-          <template x-if="prov.preset">
-            <button class="cols-row" @click.stop="toggleProvDisabled(prov);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
-                    x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button>
-          </template>
-          <template x-if="prov.preset && presetDirty(prov)">
-            <button class="cols-row" @click.stop="presetReset(prov);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
-                    x-text="t('preset_reset')"></button>
-          </template>
-        </div>
-      </div>
-      <button class="btn btn-g icon-btn" style="color:var(--err)" :disabled="!!prov.preset" @click.stop="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
-    </div>
-    <template x-if="prov._testResult && !prov._testResult.success">
-      <div style="margin-top:6px">
-        <div class="txs" style="color:var(--err);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="t('err_view_full')" @click.stop="prov._errOpen=!prov._errOpen"><span x-show="testStage(prov._testResult)" style="font-weight:600" x-text="testStage(prov._testResult)"></span><span x-text="testErrFirst(prov._testResult.status)"></span></div>
-        <!-- 这次测的是哪个密钥: 失败时尤其要知道 (草稿/已保存), 否则无法判断该改哪一份 -->
-        <div class="txs tm" x-show="testKeySourceText(prov._testResult)" x-text="testKeySourceText(prov._testResult)"></div>
-        <template x-if="prov._errOpen">
-          <div style="margin-top:4px;padding:6px 8px;border-radius:var(--rm);background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);white-space:pre-wrap;word-break:break-all;font-size:var(--fs-10);color:var(--err-fg)">
-            <div x-text="prov._testResult.status"></div>
-            <button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 6px;margin-top:5px" @click.stop="copyTestErr(prov)" x-text="copiedField==='terr'?t('copied'):t('copy')"></button>
-          </div>
-        </template>
-      </div>
-    </template>
-  </div></template>
-  </div></template>
+  </div>
+</template>
 </div>

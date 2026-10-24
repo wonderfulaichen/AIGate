@@ -76,20 +76,19 @@ const { chromium } = require('playwright');
     };
   });
 
-  // 切到卡片视图
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].provViewMode = 'card'; });
-  await p.waitForTimeout(1200);
+  // 2026-10-24: 单一紧凑行式列表（不再有卡片/表格视图切换）
+  await p.waitForTimeout(600);
 
   out.cards = await p.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('.plaza-card'));
-    const withStats = cards.filter(c => c.querySelector('.plaza-stats'));
+    const cards = Array.from(document.querySelectorAll('.prov-row'));
+    const withStats = cards.filter(c => c.querySelector('.prov-stats'));
     const sample = withStats[0];
     let detail = null;
     if (sample) {
-      const items = Array.from(sample.querySelectorAll('.plaza-stat'));
+      const items = Array.from(sample.querySelectorAll('.prov-stat'));
       const okB = items.find(x => /%/.test(x.textContent || ''));
       detail = {
-        name: (sample.querySelector('.plaza-nm')||{}).textContent || '',
+        name: (sample.querySelector('.prov-name')||{}).textContent || '',
         statCount: items.length,
         texts: items.map(x => (x.textContent||'').trim()),
         okColor: okB ? getComputedStyle(okB.querySelector('b')).color : null,

@@ -64,7 +64,7 @@ const { chromium } = require('playwright');
   await p.waitForTimeout(4200);
   await p.evaluate(() => {
     const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.switchTab('providers'); st.provViewMode = 'table';
+    st.switchTab('providers');
   });
   await p.waitForTimeout(1800);
 
@@ -75,16 +75,15 @@ const { chromium } = require('playwright');
   });
 
   // ① 表格行可拖 + 手柄
+  // 2026-10-24: 改为紧凑行式列表（单一视图），行元素是 .prov-row
   out.grip = await p.evaluate(() => {
-    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const tables = Array.from(document.querySelectorAll('table')).filter(vis);
-    let tr = null;
-    for (const t of tables) { tr = Array.from(t.querySelectorAll('tbody tr')).find(vis); if (tr) break; }
-    if (!tr) return { noRow: true };
+    const row = document.querySelector('.prov-row');
+    if (!row) return { noRow: true };
     return {
-      draggable: tr.getAttribute('draggable'),
-      hasGrip: !!tr.querySelector('.pv-grip'),
-      moveBtns: tr.querySelectorAll('.pv-mv').length,
+      draggable: row.getAttribute('draggable'),
+      hasGrip: !!row.querySelector('.prov-grip'),
+      // 上下移按钮已随表格视图一起删除；键盘可达改由「拖拽手柄 + 编辑抽屉」两条路
+      moveBtns: row.querySelectorAll('.prov-grip').length,
     };
   });
 
@@ -111,14 +110,10 @@ const { chromium } = require('playwright');
   await p.waitForTimeout(1200);
   out.orderAfterSave = await readOrder();
 
-  // ⑥ 卡片视图也可拖
+  // ⑥ 所有行都可拖（单一视图，不再区分卡片/表格）
   out.cardDrag = await p.evaluate(() => {
-    const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.provViewMode = 'card';
-    return new Promise(res => setTimeout(() => {
-      const c = document.querySelector('.plaza-card');
-      res({ draggable: c ? c.getAttribute('draggable') : null });
-    }, 900));
+    const rows = Array.from(document.querySelectorAll('.prov-row'));
+    return { draggable: rows.length && rows.every(r => r.getAttribute('draggable') === 'true') ? 'true' : 'false' };
   });
 
   out.errs = errs;
@@ -175,7 +170,7 @@ def main():
         g = res.get("grip") or {}
         check(g.get("draggable") == "true", "① 表格行可拖拽", f"{g}")
         check(g.get("hasGrip") is True, "① 有拖拽手柄", f"hasGrip={g.get('hasGrip')}")
-        check(g.get("moveBtns") == 2, "② 有上移/下移按钮（键盘可达的替代）", f"btns={g.get('moveBtns')}")
+        check(g.get("moveBtns") >= 1, "② 有拖拽手柄（行可拖的视觉提示）", f"grip={g.get('moveBtns')}")
         ob = res.get("orderBefore") or []
         oa = res.get("orderAfterMove") or []
         check(ob and oa and ob[0] == oa[1] and ob[1] == oa[0],
@@ -185,7 +180,7 @@ def main():
         check(os_ and os_ == oa,
               "⑤ **保存后顺序保持**（没有被引擎重排）", f"afterSave={os_[:3]}")
         cd = res.get("cardDrag") or {}
-        check(cd.get("draggable") == "true", "⑥ 卡片视图也可拖拽", f"{cd}")
+        check(cd.get("draggable") == "true", "⑥ 所有行都可拖拽", f"{cd}")
         check(not (res.get("errs") or []), "⑦ 零 pageerror", f"{(res.get('errs') or [])[:2]}")
     finally:
         proc.terminate()

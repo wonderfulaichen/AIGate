@@ -273,6 +273,40 @@
       this.markDirty();
       toast(t('provider_reordered', moved.name, ti + 1));
     },
+    // ── 复制该供应商的测试 curl（2026-10-24，对照 WaLiAPI 的 handleCopyCurl）──
+    // 排障时最直接的手段：把这家的端点/模型/鉴权原样拼成一条命令，
+    // 粘到终端就能看到上游真实返回（而不是只看我们日志里的翻译）。
+    //
+    // ⚠️ 用**中转 ID**（model_id）而不是上游 ID —— 打的是我们自己的网关，
+    // 这样才能验证"经由我们的转发"是否正常；要直连上游得用 upstream_model。
+    // 密钥用占位符 $AIGATE_KEY，不把真 key 写进剪贴板（避免误粘到聊天/工单）。
+    copyProviderCurl(prov) {
+      if (!prov) return;
+      const base = (window.location.origin || 'http://127.0.0.1:8787');
+      const first = (prov.models || []).find(m => !m._removed && (m.model_id || ''));
+      const model = first ? first.model_id : '<model>';
+      // 端点数按该供应商实际可用协议决定（与「协议」标签同源）
+      const fmts = first ? this.availableApiFormats(first, prov) : [];
+      const fmt = (fmts && fmts.length) ? fmts[0] : 'openai';
+      let url, body, extraHdr;
+      if (fmt === 'anthropic') {
+        url = base + '/v1/messages';
+        body = '{"model":"' + model + '","max_tokens":64,"messages":[{"role":"user","content":"ping"}]}';
+        extraHdr = ' \\\n  -H "x-api-key: $AIGATE_KEY" \\\n  -H "anthropic-version: 2023-06-01"';
+      } else if (fmt === 'responses') {
+        url = base + '/v1/responses';
+        body = '{"model":"' + model + '","input":"ping"}';
+        extraHdr = ' \\\n  -H "Authorization: Bearer $AIGATE_KEY"';
+      } else {
+        url = base + '/v1/chat/completions';
+        body = '{"model":"' + model + '","messages":[{"role":"user","content":"ping"}],"stream":false}';
+        extraHdr = ' \\\n  -H "Authorization: Bearer $AIGATE_KEY"';
+      }
+      const curl = 'curl ' + url + ' \\\n  -H "Content-Type: application/json"' + extraHdr
+        + " \\\n  -d '" + body + "'";
+      this.copyText(curl, 'curl:' + prov.name);
+      toast(t('curl_copied'), 'ok');
+    },
     // ── 供应商级开关（2026-10-24 补界面入口）──
     // 三个字段后端早已支持，但界面上没有入口 —— 用户只能手改 providers.json。
     //
