@@ -28,6 +28,29 @@
         .sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0));
     },
 
+    // ── 模型明细表"首屏 10 行 + 展开更多" (2026-10-24) ──
+    // 实测: per_model 有 **50 条**(含历史 rollup 聚合项), 全渲染 = 3432px / 3.3 屏,
+    // 占掉 cost 页签(5286px)的三分之二。用户扫这张表是看"谁慢/谁贵",
+    // 前 10 条已覆盖绝大部分请求量, 其余按需展开。
+    //
+    // ⚠️ 实现要点(踩过坑): 不要写成 `get modelRowsShown() { return this.filteredModelStats.slice(...) }`
+    // 这种**嵌套 getter** —— filteredModelStats 本身要遍历整个 per_model 做匹配,
+    // 而 Alpine 每次重渲染都会重新求值, 50 行 × 每行多次引用 = 卡死页面(实测浏览器直接挂住)。
+    // 这里改成**普通方法 + 由模板显式调用一次**。
+    // ⚠️ 也不能在文件顶部写 `const MODEL_ROWS_INITIAL` —— 本文件是 dashboard() 的
+    // **对象体片段**（被 concat! 拼进对象内部），在对象里写 const 会直接抛 ReferenceError。
+    // 首屏行数就是下面这个方法里的字面量 10，改它只改一处。
+    modelRowsShown() {
+      const all = this.filteredModelStats || [];
+      const limit = this.modelRowsAll ? all.length : 10;
+      return all.length > limit ? all.slice(0, limit) : all;
+    },
+    // 还有多少行没显示（0 = 不用给展开按钮）
+    modelRowsHiddenCount() {
+      const n = (this.filteredModelStats || []).length;
+      return this.modelRowsAll ? 0 : Math.max(0, n - 10);
+    },
+
     // 这张表的展开态**不复用** topoOpenProviders —— 那个默认值是 true（拓扑要一眼看全），
     // 而复用会让首次进入分析页时 12 家供应商的模型全部展开，表格撑到 2270px / 3.6 屏
     // （实测过）。这里单独维护，**默认折叠**：先看清有哪几家，再按需下钻。
