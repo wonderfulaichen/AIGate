@@ -336,6 +336,29 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .chart-legend-dot{width:7px;height:7px;border-radius:50%}
 .rec-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
 @media(max-width:700px){.rec-stats{grid-template-columns:repeat(2,1fr)}}
+/* ── 表格单元格内的"胶囊 + 两行"语言（2026-10-24 按 WaLiAPI 的 LogRow 重做）──
+   WaLiAPI 的日志表每个单元格都不是裸文字：状态码是 rounded-full 彩色胶囊、
+   思考档是紫底胶囊、Token 与延迟是「主值 + 下方小字」两行。
+   我们原来是方形 .bdg 标签 + 单行 `7.1s / 6.5s` 平铺 —— 读的人不知道
+   "第二个数是 TTFT 还是另一个模型的延迟"。
+   ⚠️ 为什么单独一组类而不是复用 .bdg：.bdg 是**方形**（--rs 小圆角），
+   用在徽章行里合适；表格单元格里要的是**全圆角胶囊**（一眼区分"这是度量值"）。 */
+.log-pill{display:inline-flex;align-items:center;justify-content:center;min-width:38px;
+  padding:2px 9px;border-radius:var(--pill);font-size:var(--fs-11);font-weight:600;
+  font-variant-numeric:tabular-nums}
+/* 状态色沿用既有的 bdg-ok/warn/err 语义（bcls() 返回的就是这三个），
+   这里只把底色改成"更淡的 12% 透明底"（WaLiAPI 用 bg-emerald-500/12）。 */
+.log-pill.bdg-ok{background:var(--ok-bg-soft);color:var(--ok);border:1px solid var(--ok-bd-soft)}
+.log-pill.bdg-warn{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-bd)}
+.log-pill.bdg-err{background:var(--err-bg-soft);color:var(--err);border:1px solid var(--err-bd-soft)}
+/* 思考档：紫色胶囊（WaLiAPI 用 bg-violet-500/10 text-violet-500） */
+.log-pill-effort{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--pill);
+  background:rgba(191,90,242,.12);border:1px solid rgba(191,90,242,.28);
+  color:var(--secondary);font-size:var(--fs-10);font-weight:600}
+/* 两行单元格：主值在上、辅值（TTFT/上游模型）在下 */
+.cell-stack{display:flex;flex-direction:column;line-height:1.25}
+.cell-sub{font-size:var(--fs-10);color:var(--muted);font-weight:400}
+
 /* 指标卡 = WaLiAPI 的 data-card 形状（DashboardPage.tsx:175-183）：
    大数字在上、小标签在下、padding 20px、圆角 18px。
    改造前 padding 12px、数字 26px/700 —— 读起来像"表格表头加数字"，
@@ -610,10 +633,32 @@ tr:hover td.th-sticky{
    「⚡测试 / ↓拉取模型 / 编辑 / ✕」四个按钮，`flex-wrap` 触发后「编辑」被逐字竖排
    （截图可见 deepseek/buddy/workbuddy 三张卡的按钮区被压成三行）。
    300px 下四按钮能单行排下，且仍支持窄屏自动减列。 */
-.plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+/* 卡片网格：WaLiAPI 用 auto-fill 且卡片自然等高。
+   我们原来卡片高度参差（截图可见第 1 行四张高低不一）—— 因为 flex-direction:column
+   里内容行数不同。加 `align-items:stretch` 让同排等高（grid 默认就是 stretch，
+   真正的原因是卡片内 .plaza-badges 行数不同；等高由 min-height 兜底）。 */
+.plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:stretch}
+/* 状态徽章独立行：不参与标题布局，所以名称能拿满宽度不再折行 */
+.plaza-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
 .plaza-card{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
 .plaza-card:hover{border-color:var(--border-s);box-shadow:var(--elev-2);transform:translateY(-1px)}
 .plaza-ch{display:flex;align-items:center;gap:10px}
+/* 序号方块：WaLiAPI 的 h-6 w-6 rounded-lg bg-slate-100 text-xs font-bold。
+   卡片视图的排序就是优先级顺序，给数字比让用户数行更直观。 */
+.plaza-idx{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;
+  border-radius:var(--rs);background:var(--fill-4);color:var(--muted);
+  font-size:var(--fs-10);font-weight:700;font-variant-numeric:tabular-nums}
+/* 状态点：WaLiAPI 用 h-2 w-2 圆点，正常时带一圈发光（shadow）。
+   比文字徽章省空间 —— 右侧的文字徽章仍保留（三态语义更细），圆点只做"一眼扫"的锚。 */
+.plaza-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--neutral-fg);opacity:.45}
+.plaza-dot.on{background:var(--ok);opacity:1;box-shadow:0 0 8px var(--ok-bd)}
+.plaza-dot.bad{background:var(--err);opacity:1;box-shadow:0 0 8px var(--err-bd)}
+/* 卡片里的彩色胶囊标签：WaLiAPI 的 `[协议]` 用蓝、`[提供商]` 用紫，都是全圆角。
+   我们原来用 .bdg（方形小标签），在卡片里读起来更像"表格徽章"而非"实体标签"。 */
+.plaza-tag{display:inline-flex;align-items:center;padding:1px 8px;border-radius:var(--pill);
+  font-size:var(--fs-9);font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.tag-proto{background:var(--primary-soft);border:1px solid var(--primary-bd-soft);color:var(--accent)}
+.tag-prov{background:var(--secondary-soft);border:1px solid rgba(191,90,242,.28);color:var(--secondary)}
 .plaza-ic{width:38px;height:38px;border-radius:var(--r);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--fill-3);border:1px solid var(--border);transition:transform var(--dur) var(--ease-out)}
 .plaza-ic svg{width:26px;height:26px}
 .plaza-card:hover .plaza-ic{transform:scale(1.06)}
