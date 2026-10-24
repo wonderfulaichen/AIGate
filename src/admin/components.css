@@ -675,6 +675,42 @@ tr:hover td.th-sticky{
 .plaza-card{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;min-height:188px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
 .plaza-card:hover{border-color:var(--border-s);box-shadow:var(--elev-2);transform:translateY(-1px)}
 .plaza-ch{display:flex;align-items:center;gap:10px}
+/* ── 供应商卡的行内展开区（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:519-600）──
+   改造前点整卡只能开抽屉：只想看一眼"这家有哪些模型"也要跳到另一个界面。
+   WaLiAPI 把可用模型、Key 状态、测试结果、统计都放在行内展开里，
+   只有"改配置"才进表单。 */
+.plaza-expand{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px;animation:fadeInUp var(--dur) var(--ease-out)}
+.pe-sec{display:flex;flex-direction:column;gap:6px}
+.pe-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-10);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+/* 模型胶囊容器：WaLiAPI 是**自然生长**（`flex flex-wrap gap-1.5`，无 max-height）。
+   我第一版加了 `max-height:104px; overflow-y:auto`，把 37 个模型压进一个滚动小窗 ——
+   用户还得在小窗里再滚一次，比开抽屉更麻烦。改为自然生长。 */
+.pe-chips{display:flex;flex-wrap:wrap;gap:5px}
+/* 展开时该卡**跨整行**（`grid-column:1/-1`）。
+   为什么不是 `align-self:start`：实测无效 —— 卡片仍被拉到整行高度、
+   下方留一大片空白、按钮被推到很远（截图确认）。
+   根因是 grid 的 stretch 会让同排所有项等高，`align-self` 只改自己的对齐
+   不改"同行高度由谁决定"。跨整行后它独占一行，高度只由自己内容决定，
+   同排其它卡不再被牵连。 */
+.plaza-card.is-expanded{grid-column:1/-1;align-self:start}
+/* 模型胶囊：WaLiAPI 是 `rounded-full bg-slate-100 hover:bg-slate-200 active:scale-95`，
+   点一下即复制（active 缩放给"按下去了"的触觉反馈）。 */
+.pe-chip{appearance:none;-webkit-appearance:none;font-family:var(--font-mono);
+  display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:var(--pill);
+  background:var(--fill-4);border:1px solid transparent;color:var(--fg);
+  font-size:var(--fs-10);cursor:pointer;white-space:nowrap;max-width:100%;
+  transition:background var(--dur-fast),color var(--dur-fast),transform var(--dur-quick)}
+.pe-chip:hover{background:var(--fill-5)}
+.pe-chip:active{transform:scale(.95)}
+.pe-chip.copied{background:var(--ok-bg-soft);border-color:var(--ok-bd-soft);color:var(--ok)}
+/* 测试结果条：就地显示、不自动消失（WaLiAPI 的 result 绿/红条） */
+.pe-test{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:var(--rm);font-size:var(--fs-11)}
+.pe-test.ok{background:var(--ok-bg-soft);border:1px solid var(--ok-bd-soft);color:var(--ok)}
+.pe-test.bad{background:var(--err-bg-soft);border:1px solid var(--err-bd-soft);color:var(--err)}
+.pe-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.pe-k{font-size:var(--fs-9);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.pe-v{font-size:var(--fs-13);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;margin-top:1px}
+
 /* 卡片右侧快速统计：WaLiAPI 的 `hidden items-center gap-3 lg:flex`
    （小屏隐藏、大屏显示，避免卡片过窄时挤爆标题）。
    ⚠️ 「成功率」三个字太长 —— 实测把 openAI-gpt 的名字挤成两行。

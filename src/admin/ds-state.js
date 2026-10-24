@@ -97,6 +97,9 @@ function dashboard() {  return {
     // 供应商明细表的逐行展开态（2026-10-24）。**默认折叠**，与拓扑图的
     // topoOpenProviders（默认展开）刻意分开 —— 复用会让分析页首屏撑到 3.6 屏。
     provTableExpanded: {},
+    // 供应商卡/行的**行内展开**态（2026-10-24，对照 WaLiAPI 的 ChannelsPage）。
+    // 与 provTableExpanded（分析页的供应商明细表）是两回事，不要复用。
+    provExpanded: {},
     // 模型明细表：是否展开全部行（默认只看前 10 条）。
     // 真实数据下 per_model 有 50 条，全渲染 = 3432px / 3.3 屏。
     modelRowsAll: false,

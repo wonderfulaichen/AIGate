@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""验收：供应商列表整行/整卡可点开抽屉，且**内部按钮不会误触**.
+"""验收：供应商列表整行/整卡可点，且**内部按钮不会误触**.
 
 这是"加了整行可点就坏掉内部按钮"的经典坑：如果内部按钮不 @click.stop，
-点「测试」会同时打开抽屉 —— 用户看到抽屉突然弹出，以为是按钮坏了。
+点「测试」会同时触发整行动作 —— 用户看到抽屉/展开区突然弹出，以为按钮坏了。
 
 判据:
-  ① 点表格行空白处 → 抽屉打开
-  ② 点卡片空白处 → 抽屉打开
+  ① 点表格行空白处 → 抽屉打开（表格视图保持"开抽屉"）
+  ② 点卡片空白处 → **行内展开**（2026-10-24 改为行内展开，对照 WaLiAPI；
+     抽屉改由「编辑」按钮进入 —— 那条路由 probe_prov_expand.py 的 ⑥ 覆盖）
   ③ 点「测试」按钮 → 抽屉**不打开**
   ④ 点「⋯」按钮 → 抽屉不打开，但菜单本身能开
   ⑤ 零 pageerror
@@ -131,8 +132,17 @@ const { chromium } = require('playwright');
     await p.mouse.click(out.card.x, out.card.y);
     await p.waitForTimeout(700);
   }
-  out.cardOpened = await p.evaluate(() => !!document.querySelector('[x-data]')._x_dataStack[0].drawerProv);
-  await p.evaluate(() => { document.querySelector('[x-data]')._x_dataStack[0].drawerProv = null; });
+  out.cardOpened = await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    // 2026-10-24 行为变更：点卡片 = **行内展开**（不是开抽屉）。
+    // 抽屉改由「编辑」按钮进入（见 probe_prov_expand.py 的 ⑥）。
+    const names = Object.keys(st.provExpanded || {});
+    return { drawer: !!st.drawerProv, expanded: names.length > 0, keys: names };
+  });
+  await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    st.drawerProv = null; st.provExpanded = {};
+  });
   await p.waitForTimeout(500);
 
   // ④ 点「⋯」
@@ -214,8 +224,10 @@ def main():
         check(res.get("testOpened") is False,
               "③ 点「测试」按钮 → **抽屉不打开**（@click.stop 生效）",
               f"opened={res.get('testOpened')}")
-        check(res.get("cardOpened") is True,
-              "② 点卡片空白处 → 抽屉打开", f"opened={res.get('cardOpened')}")
+        co = res.get("cardOpened") or {}
+        check(co.get("expanded") is True and co.get("drawer") is False,
+              "② 点卡片空白处 → **行内展开**（不是开抽屉，2026-10-24 变更）",
+              f"expanded={co.get('expanded')} drawer={co.get('drawer')} keys={co.get('keys')}")
         check(res.get("moreOpened") is False,
               "④ 点「⋯」按钮 → 抽屉不打开", f"opened={res.get('moreOpened')}")
         check(res.get("menuVisible") is True,

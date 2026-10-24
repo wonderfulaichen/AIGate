@@ -223,6 +223,23 @@
       if(!key || !key.configured) return t('key_unconfigured');
       return key.suffix ? t('key_configured_masked',key.suffix) : t('key_configured');
     },
+    // ── 行内展开（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:519-600）──
+    // 之前点整行/整卡只能**开抽屉**，看一眼模型列表也要跳到另一个界面。
+    // WaLiAPI 的做法是就地展开：可用模型（点胶囊复制）、Key 状态、测试结果、统计
+    // 全在卡里看到 —— 只有"改配置"才进表单。
+    // 现在点行/卡 = 展开/收起；「编辑」按钮仍然直接开抽屉（两条路都保留）。
+    toggleProvExpand(name){
+      // ⚠️ 重建对象再赋值：Alpine 3 不追踪动态新增属性（本项目多处踩过）
+      const cur = this.provExpanded || {};
+      const next = Object.assign({}, cur);
+      if (next[name]) delete next[name]; else next[name] = true;
+      this.provExpanded = next;
+    },
+    isProvExpanded(name){ return !!(this.provExpanded && this.provExpanded[name]); },
+    // 复制单个模型 ID（WaLiAPI 的 handleCopyModel：点胶囊即复制）
+    copyModelId(id){
+      this.copyText(String(id || ''), 'model:' + id);
+    },
     openProviderDrawer(pi){
       const prov=this.providersFormData[pi];
       if(!prov) return;

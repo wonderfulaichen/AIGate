@@ -164,6 +164,14 @@ const I18N = {
     'tag_usage_estimated': '用量为估算',
     // 供应商卡快速统计（2026-10-24）
     'quick_calls_hint': '本窗口内的调用次数（点击整行进详情）',
+    // 供应商卡行内展开（2026-10-24）
+    'available_models_n': '可用模型（{0}）',
+    'click_to_copy': '点击复制',
+    'no_models_yet': '还没有模型 — 点「↓ 拉取模型」或「编辑」添加',
+    'quick_calls': '调用',
+    'test_ok': '连接成功',
+    'test_failed': '连接失败',
+    'detail.endpoint_short': '端点',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -615,6 +623,13 @@ const I18N = {
     'ctx_has_images': 'This request contains images: priced by pixels, not in the text estimate',
     'tag_usage_estimated': 'Usage estimated',
     'quick_calls_hint': 'Calls in the current window (click the row for details)',
+    'available_models_n': 'Available models ({0})',
+    'click_to_copy': 'Click to copy',
+    'no_models_yet': 'No models yet — use "↓ Fetch models" or "Edit" to add',
+    'quick_calls': 'Calls',
+    'test_ok': 'Connected',
+    'test_failed': 'Connection failed',
+    'detail.endpoint_short': 'Endpoint',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',

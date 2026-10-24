@@ -84,7 +84,7 @@
 </tr></template></tbody></table>
 </div></div></template>
 <template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
-  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable" @click="openProviderDrawer(providersFormData.indexOf(prov))" style="cursor:pointer">
+  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable" :class="{'is-expanded':isProvExpanded(prov.name)}" @click="toggleProvExpand(prov.name)" style="cursor:pointer">
     <!-- 标题行: 图标方块 + 名称(可点复制) + 徽章组. 对齐 cc-switch ProviderCard 的
          「drag/图标 + 名称 + 状态徽章 + (URL 行独立成第二行)」结构 -->
     <div class="plaza-ch">
@@ -136,6 +136,41 @@
       <template x-for="fmt in (prov.probed_protocols||[])" :key="'ppc'+fmt"><span class="plaza-tag tag-prov" :title="t('prov_proto_probed_hint')" x-text="fmt"></span></template>
     </div>
     <!-- 操作条: 次级按钮靠左, 主操作(编辑)与删除靠右 —— 原为 5 个平铺按钮挤一行 -->
+    <!-- 行内展开区（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:519-600）。
+         改造前点整卡只能开抽屉 —— 只想看一眼"这家有哪些模型"也要跳到另一个界面。
+         WaLiAPI 的做法是就地展开：模型胶囊（点一下即复制）、最近测试结果、
+         调用统计都在卡里看完；只有"改配置"才进表单。 -->
+    <template x-if="isProvExpanded(prov.name)">
+      <div class="plaza-expand" @click.stop>
+        <!-- 可用模型：WaLiAPI 每个模型都是**可点胶囊**，点一下复制 -->
+        <div class="pe-sec">
+          <div class="pe-hd"><span x-text="t('available_models_n',(prov.models||[]).length)"></span><span class="txs tm" x-text="t('click_to_copy')"></span></div>
+          <div class="pe-chips">
+            <template x-for="m in (prov.models||[])" :key="'pm'+m.model_id">
+              <button type="button" class="pe-chip" :class="{'copied':copiedField==='model:'+m.model_id}" :title="(m.upstream_model||m.model_id)+' · '+t('click_to_copy')" @click.stop="copyModelId(m.model_id)"><span x-text="m.model_id"></span><span aria-hidden="true" x-show="copiedField==='model:'+m.model_id"> ✓</span></button>
+            </template>
+            <span class="txs tm" x-show="!(prov.models||[]).length" x-text="t('no_models_yet')"></span>
+          </div>
+        </div>
+        <!-- 最近测试结果：就地显示、不自动消失（WaLiAPI 的 result 绿/红条） -->
+        <template x-if="prov._testResult">
+          <div class="pe-test" :class="prov._testResult.success?'ok':'bad'">
+            <span aria-hidden="true" x-text="prov._testResult.success?'✓':'✗'"></span>
+            <span x-text="prov._testResult.success?t('test_ok'):(testErrFirst(prov._testResult.status)||t('test_failed'))"></span>
+            <span class="mono" x-show="prov._testResult.latency_ms" x-text="fmtMs(prov._testResult.latency_ms||0)"></span>
+          </div>
+        </template>
+        <!-- 统计明细：调用 / 成功 / 失败（WaLiAPI 的调用统计区） -->
+        <template x-if="provQuickStats(prov.name)">
+          <div class="pe-stats">
+            <div><div class="pe-k" x-text="t('quick_calls')"></div><div class="pe-v" x-text="fmtT(provQuickStats(prov.name).calls)"></div></div>
+            <div><div class="pe-k" x-text="t('success_rate')"></div><div class="pe-v" :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></div></div>
+            <div><div class="pe-k" x-text="t('avg_latency')"></div><div class="pe-v" x-text="fmtMs(provQuickStats(prov.name).latency)"></div></div>
+            <div><div class="pe-k" x-text="t('detail.endpoint_short')"></div><div class="pe-v txs mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="prov.endpoint" x-text="prov.endpoint"></div></div>
+          </div>
+        </template>
+      </div>
+    </template>
     <div class="plaza-acts">
       <!-- 主操作：测试 / 拉取模型 / 编辑（改完端点要验证的核心闭环）-->
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click.stop="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
