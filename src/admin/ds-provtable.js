@@ -28,12 +28,17 @@
         .sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0));
     },
 
-    // 展开/收起某个供应商。**复用** topoOpenProviders —— 拓扑图与这张表说的是
-    // 同一件事（哪个供应商在拖后腿），两套状态各记一份必然漂移。
-    // ⚠️ 必须重建对象再赋值：Alpine 3 不追踪动态新增属性（改属性点不更新）。
+    // 这张表的展开态**不复用** topoOpenProviders —— 那个默认值是 true（拓扑要一眼看全），
+    // 而复用会让首次进入分析页时 12 家供应商的模型全部展开，表格撑到 2270px / 3.6 屏
+    // （实测过）。这里单独维护，**默认折叠**：先看清有哪几家，再按需下钻。
+    provTableOpen(provider) {
+      const v = this.provTableExpanded && this.provTableExpanded[provider];
+      return v === true;   // 未设置 = 折叠
+    },
     toggleProvTable(provider) {
-      const cur = this.topoOpenProviders || {};
-      this.topoOpenProviders = Object.assign({}, cur, { [provider]: !cur[provider] });
+      const cur = this.provTableExpanded || {};
+      // ⚠️ 必须重建对象再赋值：Alpine 3 不追踪动态新增属性（改属性点不刷新）
+      this.provTableExpanded = Object.assign({}, cur, { [provider]: !this.provTableOpen(provider) });
     },
 
     // 成功率: 见文件头口径纪律。null = 无请求，显示 '—' 而不是 0%（未采集 ≠ 0）

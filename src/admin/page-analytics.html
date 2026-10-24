@@ -218,7 +218,7 @@
             <!-- 主行: 每家一行（单根 <tr>，Alpine 3 的 x-for 要求单根） -->
             <template x-for="p in filteredProviderStats" :key="'pp'+p.provider">
               <tr @click="toggleProvTable(p.provider)" style="cursor:pointer">
-                <td><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;color:var(--muted);font-size:var(--fs-10);transform:rotate('+(topoProvOpen(p.provider)?90:0)+'deg)'">▸</span></td>
+                <td><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;color:var(--muted);font-size:var(--fs-10);transform:rotate('+(provTableOpen(p.provider)?90:0)+'deg)'">▸</span></td>
                 <td><span class="fw6" x-text="p.provider"></span><span class="txs tm" style="margin-left:6px" x-text="t('prov_model_n',provModelsOf(p.provider).length)"></span></td>
                 <td class="num mono" x-text="p.requests"></td>
                 <td class="num mono" :style="'color:'+provSuccessTone(p)" x-text="provSuccessText(p)"></td>
@@ -230,7 +230,7 @@
             <!-- 展开区: 独立 x-for + x-show。为什么不用 x-if: x-if 的模板只能有一个
                  根元素，而展开区的多行要靠内层 x-for 生成，嵌套后不渲染。 -->
             <template x-for="p in filteredProviderStats" :key="'px'+p.provider">
-              <tr x-show="topoProvOpen(p.provider)"><td colspan="7" style="padding:0;background:var(--fill-1)">
+              <tr x-show="provTableOpen(p.provider)"><td colspan="7" style="padding:0;background:var(--fill-1)">
                 <div style="padding:8px 12px 10px 34px">
                   <template x-for="m in provModelsOf(p.provider)" :key="'pm'+m.model">
                     <div class="prov-model-row">

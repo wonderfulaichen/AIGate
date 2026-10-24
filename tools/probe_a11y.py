@@ -187,46 +187,54 @@ const { chromium } = require('playwright');
 
   // ③c 诊断格：可聚焦 + 有 ▸ 展开指示。
   // ⚠️ 诊断格来自 stats.per_model —— 空实例里表格无行，total 会是 0（第一版就这样假失败）。
-  // 先注入一行模型统计再断言，否则测的是"空表"而不是"这一格"。
-  out.diag = await p.evaluate(async () => {
+  //
+  // 这里踩到两个坑，都记下来：
+  //  (a) Alpine 3 不追踪既有对象的深层属性新增 → 必须**整体重建 stats 对象**再赋值
+  //      （st.stats.per_model = [...] 不触发重渲染；本项目 modelDiagOpen 踩过同款）。
+  //  (b) 后台会周期性拉 stats 把注入值覆盖回去，所以**不能在单次 evaluate 里
+  //      sleep 等**——那样注入值可能已被冲掉，判据时绿时红（实测连跑 3 次全红、
+  //      偶发一次全绿）。正确做法：**在 Playwright 侧轮询**，每次单独 evaluate
+  //      重新注入并立即读 DOM，直到拿到行或超时。
+  await p.evaluate(() => {
     const st = document.querySelector('[x-data]')._x_dataStack[0];
-    // 顺序很重要: 先定页签再切页, 且给 Alpine 足够时间重渲染整张表
-    // （实测 800ms 在"设置页分区被反复切换过"之后不够，会读到还没生成行的空表）
     st.analyticsTab = 'cost';
     st.switchTab('analytics');
-    await new Promise(r => setTimeout(r, 1200));
-    st.analyticsTab = 'cost';
-    // 注入一行模型统计，让「模型明细」表有行可断言。
-    // ⚠️ 必须**整体重建 stats 对象**再赋值：Alpine 3 不追踪既有对象的深层属性新增，
-    // 直接 `st.stats.per_model = [...]` 不会触发重渲染（本项目 modelDiagOpen 踩过同款坑）。
-    // 又因为后台会周期性拉取 stats 覆盖回来，所以注入后要**立刻**在同一帧里取 DOM。
-    const base = st.stats || {};
-    st.stats = Object.assign({}, base, {
-      per_model: [{
-        provider: 'mockprov', model: 'mockprov/m1', upstream_model: 'm1',
-        requests: 10, total_prompt_tokens: 2000, total_completion_tokens: 500,
-        total_cache_hit_tokens: 1500, total_cache_miss_tokens: 500,
-        total_cost: 0.1, avg_latency_ms: 900, avg_ttft_ms: 300, gen_speed: 40,
-        optimization_saved_tokens: 800,
-      }],
-    });
-    await new Promise(r => setTimeout(r, 250));
-    const cells = Array.from(document.querySelectorAll('td[role="button"]'));
-    return {
-      total: cells.length,
-      allTab: cells.every(c => c.tabIndex >= 0),
-      allCaret: cells.every(c => (c.textContent || '').indexOf('▸') >= 0),
-      // 现场诊断（判据失败时能直接看到原因，而不是只知道 total=0）
-      dbg: {
-        tab: st.analyticsTab,
-        activeTab: st.activeTab,
-        perModelLen: ((st.stats && st.stats.per_model) || []).length,
-        filteredLen: (st.filteredModelStats || []).length,
-        modelColsMore: st.modelColsMore,
-        tables: Array.from(document.querySelectorAll('table')).map(t => t.querySelectorAll('tbody tr').length),
-      },
-    };
   });
+  await p.waitForTimeout(1200);
+  out.diag = { total: 0 };
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const r = await p.evaluate(() => {
+      const st = document.querySelector('[x-data]')._x_dataStack[0];
+      st.analyticsTab = 'cost';
+      // 每轮都重新注入（整体重建对象），抵消后台 fetch 的覆盖
+      st.stats = Object.assign({}, st.stats || {}, {
+        per_model: [{
+          provider: 'mockprov', model: 'mockprov/m1', upstream_model: 'm1',
+          requests: 10, total_prompt_tokens: 2000, total_completion_tokens: 500,
+          total_cache_hit_tokens: 1500, total_cache_miss_tokens: 500,
+          total_cost: 0.1, avg_latency_ms: 900, avg_ttft_ms: 300, gen_speed: 40,
+          optimization_saved_tokens: 800,
+        }],
+      });
+      const cells = Array.from(document.querySelectorAll('td[role="button"]'));
+      return {
+        total: cells.length,
+        allTab: cells.every(c => c.tabIndex >= 0),
+        allCaret: cells.every(c => (c.textContent || '').indexOf('▸') >= 0),
+        dbg: {
+          tab: st.analyticsTab,
+          activeTab: st.activeTab,
+          perModelLen: ((st.stats && st.stats.per_model) || []).length,
+          filteredLen: (st.filteredModelStats || []).length,
+          modelColsMore: st.modelColsMore,
+          tables: Array.from(document.querySelectorAll('table')).map(t => t.querySelectorAll('tbody tr').length),
+        },
+      };
+    });
+    if (r.total > 0) { out.diag = r; break; }
+    out.diag = r;                       // 留最后一次现场供失败时打印
+    await p.waitForTimeout(180);
+  }
   console.log('  ③c 现场: ' + JSON.stringify((out.diag || {}).dbg));
 
   // ④ 焦点可见: **必须用真实键盘 Tab**。

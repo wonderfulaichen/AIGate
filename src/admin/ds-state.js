@@ -87,6 +87,9 @@ function dashboard() {  return {
     // 供应商汇总表的搜索框 (2026-10-24)。与模型明细的筛选**分开** ——
     // 两张表说的不是同一件事（一张按供应商、一张按模型），共用一个框会互相干扰。
     provTableFilter: '',
+    // 供应商明细表的逐行展开态（2026-10-24）。**默认折叠**，与拓扑图的
+    // topoOpenProviders（默认展开）刻意分开 —— 复用会让分析页首屏撑到 3.6 屏。
+    provTableExpanded: {},
     // 设置页当前分区（2026-10-24 双栏布局）。一次只显示一个分区，左栏导航高亮。
     // 默认 perf = 性能与优化（第一个分区的 k 值，与 settingsSections 顺序一致）
     settingsSection: 'perf',
