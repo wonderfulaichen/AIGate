@@ -515,6 +515,44 @@
           color: colors[p[0]] || 'var(--muted)',
         }));
     },
+    // 单条日志的上下文构成（2026-10-24）。与分析页的 auditContextSegs 同口径，
+    // 但数据源是 `selectedLog.context`（RequestLog.context，逐条存下来的）。
+    // 为什么现在才做：详情弹窗一直只有 21 个字段网格，看不到"这条请求的输入
+    // 都花在哪"；而分析页只有汇总，看不出某一条的构成。
+    logContextSegs(log) {
+      const c = (log && log.context) || null;
+      if (!c || !Array.isArray(c.kinds) || !c.kinds.length) return [];
+      const colors = {
+        system: CHART_SEMANTIC.ctxSystem,
+        tools: CHART_SEMANTIC.ctxTools,
+        injected: CHART_SEMANTIC.ctxInjected,
+        assistant: CHART_SEMANTIC.ctxAssistant,
+        tool_result: CHART_SEMANTIC.ctxToolResult,
+        chat: CHART_SEMANTIC.ctxChat,
+      };
+      // ⚠️ 后端的 kinds 是**元组数组**（serde 序列化 `Vec<(String, KindStat)>`），
+      // 实际形状是 `[["system",{items:1,tokens:6519}], ["tools",{...}], ...]`，
+      // **不是** `[{kind:'system', tokens:...}]`。
+      // 第一版按对象取 `k.kind / k.tokens` → 全是 undefined → 整块渲染成空
+      // （探针报「找不到输入构成块」，实测打印 sampleCtxRaw 才看清结构）。
+      const norm = c.kinds.map(k => Array.isArray(k)
+        ? { kind: k[0], tokens: Number((k[1] || {}).tokens) || 0, items: Number((k[1] || {}).items) || 0 }
+        : { kind: k.kind, tokens: Number(k.tokens) || 0, items: Number(k.items) || 0 });
+      const total = norm.reduce((n, k) => n + k.tokens, 0) || Number(c.total_estimated) || 0;
+      if (!total) return [];
+      return norm
+        .filter(k => k.tokens > 0)
+        .map(k => ({
+          k: k.kind,
+          label: t('ctx_' + k.kind),
+          tokens: k.tokens,
+          items: k.items,
+          pct: k.tokens / total * 100,
+          color: colors[k.kind] || 'var(--muted)',
+        }));
+    },
+    // 该条是否有上下文构成数据（旧记录没有 → 不渲染空块）
+    logHasContext(log) { return this.logContextSegs(log).length > 0; },
     // 构成区块的注脚: 采样率 + 估算声明。采样少时明说"比例可信、绝对量低估"。
     auditContextNote() {
       const a = (this.stats && this.stats.audit) || {};

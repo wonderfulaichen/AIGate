@@ -157,6 +157,9 @@ const I18N = {
     'ctx_assistant': '助手历史',
     'ctx_tool_result': '工具结果',
     'ctx_chat': '用户消息',
+    // 单条日志详情的上下文构成（2026-10-24）
+    'ctx_composition': '输入构成（按类估算）',
+    'ctx_has_images': '该请求含图片：图片按像素折算 token，不在文本估算内',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -604,6 +607,8 @@ const I18N = {
     'ctx_assistant': 'Assistant history',
     'ctx_tool_result': 'Tool results',
     'ctx_chat': 'User messages',
+    'ctx_composition': 'Input composition (estimated)',
+    'ctx_has_images': 'This request contains images: priced by pixels, not in the text estimate',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',
