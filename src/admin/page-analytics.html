@@ -193,7 +193,10 @@
          回答"哪个供应商在拖后腿 / 它下面的模型各是什么表现"。
          `per_provider` 的全套字段此前只在拓扑图里露了个"数量"，是前端没呈现而非数据缺失。
          两级下钻: 供应商行 → 展开该供应商下的模型（数据取自 per_model 的同 provider 行）。 -->
-    <div class="pnl mb4" x-show="analyticsTab==='cost' || analyticsTab==='overview'">
+    <!-- 只放在「省量与性能」页签（2026-10-24）。此前两个页签都显示，
+         导致 overview 页签无端多出 704px —— 而这张表回答的是"哪个供应商在拖后腿"，
+         属于诊断信息，不属于「用了多少」的用量概览。 -->
+    <div class="pnl mb4" x-show="analyticsTab==='cost'">
       <div class="pnl-h">
         <div><h2 class="pnl-ht" x-text="t('prov_summary_title')"></h2>
           <div class="txs tm" style="margin-top:3px" x-text="t('prov_summary_desc')"></div></div>
