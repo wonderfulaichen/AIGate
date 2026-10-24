@@ -117,6 +117,14 @@ const I18N = {
     'balance_unsupported_summary': '另有 {0} 家不支持余额查询：{1}',
     // 事件台账: 例行记录（服务启动/配置重载）折叠后的计数说明
     'events_routine_folded': '另有 {0} 条例行记录（服务启动、配置重载）已折叠',
+    // 供应商汇总表 (2026-10-24)：按供应商下钻到模型
+    'prov_summary_title': '供应商明细',
+    'prov_summary_desc': '按供应商聚合；点行展开该供应商下的模型',
+    'prov_summary_n': '共 {0} 家',
+    'prov_search': '搜索供应商…',
+    'prov_model_n': '{0} 个模型',
+    'prov_no_model_detail': '该供应商暂无逐模型明细（可能只有汇总行）',
+    'tbl_requests_n': '{0} 次',
     'balance_state_failed': '查询失败，点刷新重试',
     'balance_state_manual': '手动设置的值（非上游实测）',
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
@@ -546,6 +554,13 @@ const I18N = {
     'balance_state_unsupported': 'No balance endpoint configured (this provider has no public balance API)',
     'balance_unsupported_summary': '{0} more provider(s) do not support balance queries: {1}',
     'events_routine_folded': '{0} routine entries (service starts, config reloads) folded',
+    'prov_summary_title': 'Provider breakdown',
+    'prov_summary_desc': 'Aggregated per provider; click a row to expand its models',
+    'prov_summary_n': '{0} provider(s)',
+    'prov_search': 'Search providers…',
+    'prov_model_n': '{0} model(s)',
+    'prov_no_model_detail': 'No per-model detail for this provider (summary row only)',
+    'tbl_requests_n': '{0} reqs',
     'balance_state_failed': 'Query failed — click refresh to retry',
     'balance_state_manual': 'Manually set value (not measured by the provider)',
     // Balance fetch time: a stale value must not look live.

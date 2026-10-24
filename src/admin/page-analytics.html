@@ -1,4 +1,4 @@
-<div x-show="activeTab==='analytics'" class="page-enter ov-page" x-init="normalizeAnalyticsTab()">
+﻿<div x-show="activeTab==='analytics'" class="page-enter ov-page" x-init="normalizeAnalyticsTab()">
   <div class="phd"><div><h1 class="pt" x-text="t('analytics_title')"></h1><p class="ps" x-text="t('analytics_subtitle')"></p></div><div class="ov-actions"><span class="bdg bdg-g" x-text="t('stats_range',stats?(stats.source_window||t('current_log_window')):t('current_log_window'))"></span><span class="txs tm" x-text="t('stats_context',trendGranularityLabel,tzLabel)"></span><button class="btn btn-g" @click="fetchStats(null,true)" :disabled="_refreshing"><span x-show="!_refreshing" x-text="t('refresh')"></span><span x-show="_refreshing" class="spin"></span></button></div></div>
   <!-- P1 骨架 (loading 态): 与页根同级; 页头不闪. 手动刷新 (_refreshing) 覆盖内容显示同一骨架. -->
   <div x-show="!statsError && ((loading&&skelReady)||(_refreshing))" x-cloak aria-hidden="true" style="display:flex;flex-direction:column;gap:16px">
@@ -35,7 +35,7 @@
       <button type="button" class="seg-i" role="tab" :aria-selected="analyticsTab==='overview'" :class="{'a':analyticsTab==='overview'}" @click="analyticsTab='overview'" x-text="t('an_tab_overview')"></button>
       <button type="button" class="seg-i" role="tab" :aria-selected="analyticsTab==='cost'" :class="{'a':analyticsTab==='cost'}" @click="analyticsTab='cost'" x-text="t('an_tab_cost')"></button>
     </div><span class="txs tm" style="margin-left:auto" x-text="anTabHint"></span></div></div>
-    <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><button type="button" class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></button><button type="button" class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></button><button type="button" class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></button></div><!-- P3: 自定义区间 —— 粒度按跨度自动推导; 非快捷档时快捷按钮都不高亮 (反向识别) --><span class="cg" style="gap:6px"><span class="txs tm" x-text="t('span_custom')"></span><input type="number" min="1" max="3650" class="inp" style="width:64px" :value="customDays" @change="setRangeDays($event.target.value)" :placeholder="t('span_custom_ph')"></span><span class="txs tm" style="color:var(--muted)" x-text="granularityLabel"></span><span class="txs tm" style="margin-left:auto" x-text="t('stats_range', stats?stats.source_window:t('current_log_window'))"></span></div></div>
+    <div class="pnl"><div class="an-filter"><span class="txs tm" x-text="t('time_range')"></span><div class="seg"><button type="button" class="seg-i" :class="{'a':analyticsSpan==='hour'}" @click="setSpan('hour')" x-text="t('span_hour')"></button><button type="button" class="seg-i" :class="{'a':analyticsSpan==='day'}" @click="setSpan('day')" x-text="t('span_day')"></button><button type="button" class="seg-i" :class="{'a':analyticsSpan==='month'}" @click="setSpan('month')" x-text="t('span_month')"></button></div><!-- P3: 自定义区间 —— 粒度按跨度自动推导; 非快捷档时快捷按钮都不高亮 (反向识别) --><span class="cg" style="gap:6px"><span class="txs tm" x-text="t('span_custom')"></span><input type="number" min="1" max="3650" class="inp" style="width:64px" :value="customDays" @change="setRangeDays($event.target.value)" :placeholder="t('span_custom_ph')"></span><span class="txs tm" style="color:var(--muted)" x-text="granularityLabel"></span></div></div>
     <div class="pnl mb4" x-show="analyticsTab==='overview'"><div class="pnl-h pnl-h-plot"><div><h2 class="pnl-ht" x-text="t('token_trend_title')"></h2><!-- P3: 图头合计 (与图例逐项可对) --><span class="txs tm" style="margin-left:8px" x-show="trendHeadTotal" x-text="trendHeadTotal"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-show="trendContextLabel" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><button type="button" class="seg-i" :class="{'a':chartMode==='line'}" @click="setChartMode('line')" x-text="t('line_chart')"></button><button type="button" class="seg-i" :class="{'a':chartMode==='bar'}" @click="setChartMode('bar')" x-text="t('bar_chart')"></button></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div class="trend-fade" :class="{fading:trendFading}" x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="trend-empty"><div class="empty-ic" x-html="EMPTY_ICO"></div><div class="empty-t" x-text="t('no_trend')"></div><div class="empty-d" x-text="t('token_trend_note')"></div></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
     <!-- ── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ──
          补的缺口: 原先只有折线趋势, 看不出"哪几天烧得多 / 有没有断档"。
@@ -189,6 +189,68 @@
       </div>
       <div class="txs tm" style="color:var(--muted)" x-text="t('fuse_note')"></div>
     </div></div>
+    <!-- ── 供应商汇总表 (2026-10-24 新增) ──
+         回答"哪个供应商在拖后腿 / 它下面的模型各是什么表现"。
+         `per_provider` 的全套字段此前只在拓扑图里露了个"数量"，是前端没呈现而非数据缺失。
+         两级下钻: 供应商行 → 展开该供应商下的模型（数据取自 per_model 的同 provider 行）。 -->
+    <div class="pnl mb4" x-show="analyticsTab==='cost' || analyticsTab==='overview'">
+      <div class="pnl-h">
+        <div><h2 class="pnl-ht" x-text="t('prov_summary_title')"></h2>
+          <div class="txs tm" style="margin-top:3px" x-text="t('prov_summary_desc')"></div></div>
+        <span class="txs tm" x-text="t('prov_summary_n',(stats.per_provider||[]).length)"></span>
+      </div>
+      <div class="an-filter">
+        <input class="inp" style="width:240px" :placeholder="t('prov_search')" x-model="provTableFilter">
+        <span class="txs tm" x-text="t('instant_filter',filteredProviderStats.length)"></span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:28px" aria-hidden="true"></th>
+            <th x-text="t('detail.provider')"></th>
+            <th class="num" x-text="t('tbl.requests')"></th>
+            <th class="num" x-text="t('success_rate')"></th>
+            <th class="num" x-text="t('tbl.avg_latency')"></th>
+            <th class="num" x-text="t('unit_tokens')"></th>
+            <th class="num" x-text="t('total_cost')"></th>
+          </tr></thead>
+          <tbody>
+            <!-- 主行: 每家一行（单根 <tr>，Alpine 3 的 x-for 要求单根） -->
+            <template x-for="p in filteredProviderStats" :key="'pp'+p.provider">
+              <tr @click="toggleProvTable(p.provider)" style="cursor:pointer">
+                <td><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;color:var(--muted);font-size:var(--fs-10);transform:rotate('+(topoProvOpen(p.provider)?90:0)+'deg)'">▸</span></td>
+                <td><span class="fw6" x-text="p.provider"></span><span class="txs tm" style="margin-left:6px" x-text="t('prov_model_n',provModelsOf(p.provider).length)"></span></td>
+                <td class="num mono" x-text="p.requests"></td>
+                <td class="num mono" :style="'color:'+provSuccessTone(p)" x-text="provSuccessText(p)"></td>
+                <td class="num mono" x-text="fmtMs(p.avg_latency_ms)"></td>
+                <td class="num mono" x-text="fmtT((p.total_prompt_tokens||0)+(p.total_completion_tokens||0))"></td>
+                <td class="num mono" x-text="p.billing?fmtMoney(p.total_cost||0):'—'"></td>
+              </tr>
+            </template>
+            <!-- 展开区: 独立 x-for + x-show。为什么不用 x-if: x-if 的模板只能有一个
+                 根元素，而展开区的多行要靠内层 x-for 生成，嵌套后不渲染。 -->
+            <template x-for="p in filteredProviderStats" :key="'px'+p.provider">
+              <tr x-show="topoProvOpen(p.provider)"><td colspan="7" style="padding:0;background:var(--fill-1)">
+                <div style="padding:8px 12px 10px 34px">
+                  <template x-for="m in provModelsOf(p.provider)" :key="'pm'+m.model">
+                    <div class="prov-model-row">
+                      <span class="mono txs" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="m.model"></span>
+                      <span class="txs tm mono" style="flex:none" x-text="t('tbl_requests_n',m.requests)"></span>
+                      <span class="txs tm mono" style="flex:none" x-text="fmtT(m.total_prompt_tokens||0)+' → '+fmtT(m.total_completion_tokens||0)"></span>
+                      <span class="txs tm mono" style="flex:none" x-text="(m.total_cost>0?fmtMoney(m.total_cost):'—')"></span>
+                    </div>
+                  </template>
+                  <div class="txs tm" x-show="!provModelsOf(p.provider).length" x-text="t('prov_no_model_detail')"></div>
+                </div>
+              </td></tr>
+            </template>
+            <template x-if="!filteredProviderStats.length">
+              <tr><td colspan="7" style="text-align:center;padding:28px" class="tm" x-text="t('no_data')"></td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <!-- ── 模型明细表 (2026-10-16 从拓扑里拆回来) ──
          拓扑回答"链路哪一跳慢"(图), 这张表回答"逐模型多列对比"(表) —— 两种读法, 分开。
          上一轮把明细列塞进拓扑节点是错的: 用户要按列扫、要横向比较, 而节点行做不了这件事。 -->
@@ -202,7 +264,7 @@
         </template>
         <span class="txs tm" style="margin-left:auto" x-text="t('fuse_scale')"></span>
       </div>
-<div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th :title="t('model_span_hint')" x-text="t('model_span')"></th><th x-text="t('balance_provider')"></th><th x-show="modelColsMore" x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-show="modelColsMore" x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th :title="t('tbl.tokens_in_out_hint')" x-text="t('tbl.tokens_in_out')"></th><th x-text="t('tbl.output_tokens')"></th><th :title="t('model_diag_hint')" x-text="t('model_diag')"></th><th x-text="t('tbl.cost')"></th><th :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_tokens')"></th><th x-show="modelColsMore" :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_fee')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td><div style="display:flex;align-items:center;gap:8px;min-width:210px"><div style="flex:1;min-width:90px"><div class="prop-bar" :style="'max-width:'+(flowRowOf(m)||{}).widthPct+'%'" x-html="flowBarHtml(flowRowOf(m))"></div></div><span class="mono txs" style="min-width:56px;text-align:right" :style="isSlowestRow(m)?'color:var(--warn)':''" x-text="msText((flowRowOf(m)||{}).total)"></span><span class="txs" x-show="isSlowestRow(m)" style="color:var(--warn);min-width:36px" x-text="t('fuse_slowest')"></span></div><div class="txs tm" style="margin-top:3px" x-show="gwLegText(m)" x-text="gwLegText(m)"></div></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" x-show="modelColsMore" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-show="modelColsMore" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs"><span x-text="modelTokensBeforeText(m)"></span><span class="tm"> → </span><span x-text="modelTokensAfterText(m)" style="color:var(--fg)"></span><span class="txs tm" x-show="modelSavedPct(m)" style="margin-left:6px;color:var(--ok)" x-text="t('tokens_saved_pct',modelSavedPct(m))"></span></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><!-- 诊断合并格 (2026-10-24): 缓存命中/生成速度/TTFT/平均延迟合成一格。
+<div style="overflow-x:auto"><table><thead><tr><th x-text="t('tbl.upstream_model')"></th><th :title="t('model_span_hint')" x-text="t('model_span')"></th><th x-text="t('balance_provider')"></th><th x-show="modelColsMore" x-text="t('tbl.alias')"></th><th x-text="t('tbl.requests')"></th><th x-show="modelColsMore" x-text="t('tbl.success')"></th><th x-text="t('tbl.errors')"></th><th :title="t('tbl.tokens_in_out_hint')" x-text="t('tbl.tokens_in_out')"></th><th x-text="t('tbl.output_tokens')"></th><th :title="t('model_diag_hint')" x-text="t('model_diag')"></th><th x-text="t('total_cost')"></th><th :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_tokens')"></th><th x-show="modelColsMore" :title="t('optimization_saved_model_hint')" x-text="t('optimization_saved_fee')"></th></tr></thead><tbody><template x-for="m in filteredModelStats" :key="m.provider+'/'+m.upstream_model"><tr><td class="mono fw6"><span x-text="m.upstream_model||m.model"></span><template x-if="m.free"><span class="bdg bdg-s" style="margin-left:6px;font-size:var(--fs-9)" x-text="t('badge.free')"></span></template></td><td><div style="display:flex;align-items:center;gap:8px;min-width:210px"><div style="flex:1;min-width:90px"><div class="prop-bar" :style="'max-width:'+(flowRowOf(m)||{}).widthPct+'%'" x-html="flowBarHtml(flowRowOf(m))"></div></div><span class="mono txs" style="min-width:56px;text-align:right" :style="isSlowestRow(m)?'color:var(--warn)':''" x-text="msText((flowRowOf(m)||{}).total)"></span><span class="txs" x-show="isSlowestRow(m)" style="color:var(--warn);min-width:36px" x-text="t('fuse_slowest')"></span></div><div class="txs tm" style="margin-top:3px" x-show="gwLegText(m)" x-text="gwLegText(m)"></div></td><td class="txs" x-text="m.provider||'—'"></td><td class="txs tm" x-show="modelColsMore" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="(m.aliases||[]).join(', ')"></td><td class="mono" x-text="m.requests"></td><td class="mono" x-show="modelColsMore" x-text="Math.max(0,(m.requests||0)-modelErrorCount(m))"></td><td class="mono" :style="modelErrorCount(m)?'color:var(--err)':''" x-text="modelErrorCount(m)"></td><td class="mono txs"><span x-text="modelTokensBeforeText(m)"></span><span class="tm"> → </span><span x-text="modelTokensAfterText(m)" style="color:var(--fg)"></span><span class="txs tm" x-show="modelSavedPct(m)" style="margin-left:6px;color:var(--ok)" x-text="t('tokens_saved_pct',modelSavedPct(m))"></span></td><td class="mono txs" x-text="fmtT(m.total_completion_tokens)"></td><!-- 诊断合并格 (2026-10-24): 缓存命中/生成速度/TTFT/平均延迟合成一格。
          主数字给最常被问的缓存命中率 (无则给生成速度), 四值全在 title 悬停与点击展开里。
          为什么合并: 这四个都是诊断值而非逐行对比主指标, 各占一列只会把表格拉宽、
          把主数字挤到屏外 (用户原话"扁平化列表信息密度不够, 有些值可以合并")。 -->

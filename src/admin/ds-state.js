@@ -84,6 +84,9 @@ function dashboard() {  return {
     modelDiagOpen: {},
     modelDetailFilter: '',
     modelProviderFilter: '',
+    // 供应商汇总表的搜索框 (2026-10-24)。与模型明细的筛选**分开** ——
+    // 两张表说的不是同一件事（一张按供应商、一张按模型），共用一个框会互相干扰。
+    provTableFilter: '',
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     trendHover: null,

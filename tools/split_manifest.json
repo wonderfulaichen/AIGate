@@ -1,192 +1,197 @@
 [
- {
-  "file": "head.html",
-  "mode": "raw",
-  "bytes": 840
- },
- {
-  "file": "font.css",
-  "mode": "raw",
-  "bytes": 65068
- },
- {
-  "file": "base.css",
-  "mode": "raw",
-  "bytes": 10118
- },
- {
-  "file": "components.css",
-  "mode": "raw",
-  "bytes": 27368
- },
- {
-  "file": "pages.css",
-  "mode": "raw",
-  "bytes": 5129
- },
- {
-  "file": "body-shell.html",
-  "mode": "raw",
-  "bytes": 5319
- },
- {
-  "file": "page-overview.html",
-  "mode": "raw",
-  "bytes": 14198
- },
- {
-  "file": "page-analytics.html",
-  "mode": "raw",
-  "bytes": 19495
- },
- {
-  "file": "page-records.html",
-  "mode": "raw",
-  "bytes": 11947
- },
- {
-  "file": "page-settings.html",
-  "mode": "raw",
-  "bytes": 17282
- },
- {
-  "file": "page-providers.html",
-  "mode": "raw",
-  "bytes": 11715
- },
- {
-  "file": "page-about.html",
-  "mode": "raw",
-  "bytes": 4236
- },
- {
-  "file": "footer.html",
-  "mode": "raw",
-  "bytes": 536
- },
- {
-  "file": "modal-whatsnew-recall.html",
-  "mode": "raw",
-  "bytes": 4890
- },
- {
-  "file": "modal-add-fetchdiff.html",
-  "mode": "raw",
-  "bytes": 5126
- },
- {
-  "file": "drawer-provider.html",
-  "mode": "raw",
-  "bytes": 20713
- },
- {
-  "file": "panel-price.html",
-  "mode": "raw",
-  "bytes": 5352
- },
- {
-  "file": "i18n.js",
-  "mode": "standalone",
-  "bytes": 60146
- },
- {
-  "file": "stores.js",
-  "mode": "standalone",
-  "bytes": 2158
- },
- {
-  "file": "core.js",
-  "mode": "standalone",
-  "bytes": 37083
- },
- {
-  "file": "ds-state.js",
-  "mode": "fn-head",
-  "bytes": 5935
- },
- {
-  "file": "ds-onboard.js",
-  "mode": "obj-body",
-  "bytes": 5243
- },
- {
-  "file": "ds-core.js",
-  "mode": "obj-body",
-  "bytes": 5789
- },
- {
-  "file": "ds-brands.js",
-  "mode": "obj-body",
-  "bytes": 6385
- },
- {
-  "file": "ds-settings-api.js",
-  "mode": "obj-body",
-  "bytes": 10984
- },
- {
-  "file": "ds-meta.js",
-  "mode": "obj-body",
-  "bytes": 5474
- },
- {
-  "file": "ds-stats.js",
-  "mode": "obj-body",
-  "bytes": 4649
- },
- {
-  "file": "ds-trend.js",
-  "mode": "obj-body",
-  "bytes": 8928
- },
- {
-  "file": "ds-config.js",
-  "mode": "obj-body",
-  "bytes": 6803
- },
- {
-  "file": "ds-providers.js",
-  "mode": "obj-body",
-  "bytes": 6889
- },
- {
-  "file": "ds-price.js",
-  "mode": "obj-body",
-  "bytes": 5389
- },
- {
-  "file": "ds-provform.js",
-  "mode": "obj-body",
-  "bytes": 5852
- },
- {
-  "file": "ds-provtest.js",
-  "mode": "obj-body",
-  "bytes": 6070
- },
- {
-  "file": "ds-provsave.js",
-  "mode": "obj-body",
-  "bytes": 11240
- },
- {
-  "file": "ds-computed.js",
-  "mode": "obj-body",
-  "bytes": 6658
- },
- {
-  "file": "ds-records.js",
-  "mode": "obj-body",
-  "bytes": 3044
- },
- {
-  "file": "ds-fmt.js",
-  "mode": "fn-tail",
-  "bytes": 11584
- },
- {
-  "file": "tail.html",
-  "mode": "raw",
-  "bytes": 1588
- }
+  {
+    "file": "head.html",
+    "mode": "raw",
+    "bytes": 840
+  },
+  {
+    "file": "font.css",
+    "mode": "raw",
+    "bytes": 65068
+  },
+  {
+    "file": "base.css",
+    "mode": "raw",
+    "bytes": 10118
+  },
+  {
+    "file": "components.css",
+    "mode": "raw",
+    "bytes": 27368
+  },
+  {
+    "file": "pages.css",
+    "mode": "raw",
+    "bytes": 5129
+  },
+  {
+    "file": "body-shell.html",
+    "mode": "raw",
+    "bytes": 5319
+  },
+  {
+    "file": "page-overview.html",
+    "mode": "raw",
+    "bytes": 14198
+  },
+  {
+    "file": "page-analytics.html",
+    "mode": "raw",
+    "bytes": 19495
+  },
+  {
+    "file": "page-records.html",
+    "mode": "raw",
+    "bytes": 11947
+  },
+  {
+    "file": "page-settings.html",
+    "mode": "raw",
+    "bytes": 17282
+  },
+  {
+    "file": "page-providers.html",
+    "mode": "raw",
+    "bytes": 11715
+  },
+  {
+    "file": "page-about.html",
+    "mode": "raw",
+    "bytes": 4236
+  },
+  {
+    "file": "footer.html",
+    "mode": "raw",
+    "bytes": 536
+  },
+  {
+    "file": "modal-whatsnew-recall.html",
+    "mode": "raw",
+    "bytes": 4890
+  },
+  {
+    "file": "modal-add-fetchdiff.html",
+    "mode": "raw",
+    "bytes": 5126
+  },
+  {
+    "file": "drawer-provider.html",
+    "mode": "raw",
+    "bytes": 20713
+  },
+  {
+    "file": "panel-price.html",
+    "mode": "raw",
+    "bytes": 5352
+  },
+  {
+    "file": "i18n.js",
+    "mode": "standalone",
+    "bytes": 60146
+  },
+  {
+    "file": "stores.js",
+    "mode": "standalone",
+    "bytes": 2158
+  },
+  {
+    "file": "core.js",
+    "mode": "standalone",
+    "bytes": 37083
+  },
+  {
+    "file": "ds-state.js",
+    "mode": "fn-head",
+    "bytes": 5935
+  },
+  {
+    "file": "ds-onboard.js",
+    "mode": "obj-body",
+    "bytes": 5243
+  },
+  {
+    "file": "ds-core.js",
+    "mode": "obj-body",
+    "bytes": 5789
+  },
+  {
+    "file": "ds-brands.js",
+    "mode": "obj-body",
+    "bytes": 6385
+  },
+  {
+    "file": "ds-settings-api.js",
+    "mode": "obj-body",
+    "bytes": 10984
+  },
+  {
+    "file": "ds-meta.js",
+    "mode": "obj-body",
+    "bytes": 5474
+  },
+  {
+    "file": "ds-stats.js",
+    "mode": "obj-body",
+    "bytes": 4649
+  },
+  {
+    "file": "ds-trend.js",
+    "mode": "obj-body",
+    "bytes": 8928
+  },
+  {
+    "file": "ds-config.js",
+    "mode": "obj-body",
+    "bytes": 6803
+  },
+  {
+    "file": "ds-providers.js",
+    "mode": "obj-body",
+    "bytes": 6889
+  },
+  {
+    "file": "ds-price.js",
+    "mode": "obj-body",
+    "bytes": 5389
+  },
+  {
+    "file": "ds-provform.js",
+    "mode": "obj-body",
+    "bytes": 5852
+  },
+  {
+    "file": "ds-provtest.js",
+    "mode": "obj-body",
+    "bytes": 6070
+  },
+  {
+    "file": "ds-provsave.js",
+    "mode": "obj-body",
+    "bytes": 11240
+  },
+  {
+    "file": "ds-computed.js",
+    "mode": "obj-body",
+    "bytes": 6658
+  },
+  {
+    "file": "ds-provtable.js",
+    "mode": "raw",
+    "bytes": 2862
+  },
+  {
+    "file": "ds-records.js",
+    "mode": "obj-body",
+    "bytes": 3044
+  },
+  {
+    "file": "ds-fmt.js",
+    "mode": "fn-tail",
+    "bytes": 11584
+  },
+  {
+    "file": "tail.html",
+    "mode": "raw",
+    "bytes": 1588
+  }
 ]

@@ -1221,6 +1221,7 @@ const ADMIN_HTML: &str = concat!(
     include_str!("admin/ds-provtest.js"),
     include_str!("admin/ds-provsave.js"),
     include_str!("admin/ds-computed.js"),
+    include_str!("admin/ds-provtable.js"),
     include_str!("admin/ds-records.js"),
     include_str!("admin/ds-fmt.js"),
     include_str!("admin/tail.html"),
