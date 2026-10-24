@@ -78,6 +78,42 @@
       };
     },
 
+    // 最近一次失败的**原因**（供供应商行显示"为什么全红"）。
+    //
+    // 返回 null 的条件有两个，分别对应两种不同处境，都不能显示成"有错误"：
+    //   ① 该家没有统计数据 / 压根没有请求 → 未采集；
+    //   ② 有数据但一条错都没有 → 健康。此时也不能显示绿色"正常"，因为
+    //      "没有错误"既可能是真健康，也可能只是窗口内样本太少 —— 该判断属于
+    //      供应商明细表的成功率列，行上只回答"有没有已知的失败原因"。
+    //
+    // 后端只在 logs 窗口内取最新一条错误；跨日的 rollup 不含错误正文，
+    // 所以历史失败但窗口内全成功时这里会返回 null（未采集 ≤ 无错误）。
+    provLastError(name) {
+      const rows = (this.stats && this.stats.per_provider) || [];
+      const p = rows.find(x => x.provider === name);
+      if (!p) return null;
+      const msg = p.last_error;
+      if (msg == null) return null;
+      const s = String(msg).trim();
+      return s ? s : null;
+    },
+
+    // 行上只放**能分辨问题类型**的那一小段：状态码优先 + 正文开头。
+    // 为什么不直接显示全文: 上游错误常是一整页 HTML/JSON（实测 opencode 404
+    // 返回 HTML 页面），行高会被撑到几十像素以上，把 10 行列表变成 5 行。
+    // 全文仍在 title / aria-label 里，悬停或读屏可拿到。
+    provErrShort(name) {
+      const full = this.provLastError(name);
+      if (!full) return '';
+      const rows = (this.stats && this.stats.per_provider) || [];
+      const p = rows.find(x => x.provider === name);
+      const code = p && p.last_error_status ? String(p.last_error_status) : '';
+      // 正文压成单行、去掉空白折行，再截到 28 字符（含状态码约 34）
+      const flat = full.replace(/\s+/g, ' ').trim();
+      const cut = flat.length > 28 ? flat.slice(0, 28) + '…' : flat;
+      return code ? code + ' ' + cut : cut;
+    },
+
     // 某供应商下的模型（取自 per_model 的同 provider 行，按请求数降序）。
     // 为什么不另建聚合: per_model 本来就带 provider 字段，重算一遍会得到两份口径。
     provModelsOf(provider) {

@@ -423,6 +423,8 @@ const I18N = {
     'kv_cache_hit': 'KV Cache 命中', 'health_interrupt': '转发中断', 'health_see_records': '见记录页', 'health_breakdown': '上游中途断流 {0} 次 · 循环掐断 {1} 次 · 客户端主动取消 {2} 次（后者属正常，不计入）', 'performance_health': '性能健康', 'performance_health_desc': '最近 24 小时的服务质量摘要',
     'view_analytics': '查看分析', 'success_rate': '成功率', 'avg_latency': '平均延迟', 'generation_speed': '生成速度',
     'sample_count': '{0} 个样本', 'top_models_traffic': '流量最高的模型', 'api_information': 'API 信息',
+    // 供应商行上的失败原因胶囊（2026-10-24）：成功率全红时让人一眼知道"为什么"
+    'prov_last_error': '最近一次失败', 'unit_calls': '调用次数',
     'api_information_desc': '用于客户端接入的地址', 'view_providers': '查看供应商', 'api_base_url_desc': '兼容 OpenAI 的 API 基地址',
     'available_models': '可用模型', 'chat_completions': 'Chat Completions', 'balance_cost': '余额与费用', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': '快速开始', 'quick_start_desc': '将以下地址填入 Cursor、Trae 或其他客户端的 API Base URL。',
@@ -912,6 +914,7 @@ const I18N = {
     'kv_cache_hit': 'KV Cache hit', 'health_interrupt': 'Interrupted', 'health_see_records': 'see Records', 'health_breakdown': 'Upstream cut mid-stream: {0} · loop truncated: {1} · client-cancelled: {2} (normal, not counted)', 'performance_health': 'Performance health', 'performance_health_desc': 'Service quality summary for the last 24 hours',
     'view_analytics': 'View analytics', 'success_rate': 'Success rate', 'avg_latency': 'Average latency', 'generation_speed': 'Generation speed',
     'sample_count': '{0} samples', 'top_models_traffic': 'Top models by traffic', 'api_information': 'API information',
+    'prov_last_error': 'Last failure', 'unit_calls': 'Calls',
     'api_information_desc': 'Endpoints for client access', 'view_providers': 'View providers', 'api_base_url_desc': 'OpenAI-compatible API base URL',
     'available_models': 'Available models', 'chat_completions': 'Chat Completions', 'balance_cost': 'Balance & cost', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': 'Quick start', 'quick_start_desc': 'Paste the following address into Cursor, Trae, or another client as the API Base URL.',

@@ -1071,6 +1071,27 @@ tr:hover td.th-sticky{
 .prov-stat{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-11);color:var(--muted);white-space:nowrap}
 .prov-stat-l{font-size:var(--fs-11);color:var(--muted)}
 .prov-stat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+/* 三项定宽（2026-10-24）：右边缘本来就对齐，但**每项起点**随数字位数游走
+   （实测左边缘在 1088~1108 之间变动），竖着扫一列比不出高低。
+   定宽 + 数字右对齐后，三列的左右边缘都固定，三个指标变成真正可纵向比较的三列。
+   宽度按实测最长值留余量：调用数 54px→68、成功率 82px→96、延迟 57px→64。 */
+.prov-stat-u{width:68px;justify-content:flex-end}
+.prov-stat-r{width:96px;justify-content:flex-end}
+.prov-stat-t{width:64px;justify-content:flex-end}
+
+/* 失败原因胶囊（2026-10-24）。
+   只在后端给出 last_error 时渲染 —— 成功率全是红字时，"为什么"比"红多少"要紧。
+   做成胶囊而不是纯文本：它会出现在任意一家供应商行上，需要一眼看出这是**异常提示**
+   而不是普通统计数字。 */
+/* 容器负责"吃掉可伸缩的空白"：胶囊必须能收缩，否则会把右侧统计列往左推。
+   flex:1 1 0 + min-width:0 = 有空间就伸长、没空间就压缩，且允许省略号生效。 */
+.prov-extra{flex:1 1 0;min-width:0;display:flex;justify-content:flex-end;align-items:center}
+.prov-errpill{display:inline-flex;align-items:center;gap:5px;max-width:100%;min-width:0;
+  padding:2px 8px;border-radius:999px;background:var(--err-bg);border:1px solid var(--err-bd);
+  color:var(--err);font-size:var(--fs-10);font-weight:600;line-height:1.5;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help}
+.prov-errpill > span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media(max-width:1180px){.prov-extra{display:none}}
 
 /* 顺序位次（替代 P/W：我们没有权重调度） */
 .prov-order{flex:none;padding:2px 7px;border-radius:6px;background:var(--fill-3);

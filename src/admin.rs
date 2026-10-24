@@ -487,6 +487,22 @@ pub(crate) fn is_log_error(log: &RequestLog) -> bool {
     log.status != 499 && (log.status >= 400 || log.error.is_some())
 }
 
+/// 截断错误摘要到 160 字符 (按**字符**而非字节, 中文错误信息不能被切成半个字)。
+///
+/// 为什么必须要: 上游错误体常回显整段请求或 HTML 页面 (实测 opencode 404 时返回
+/// 一整页 HTML), 原样塞进面板会让供应商行高度失控, 也可能带出用户内容。
+/// 面板只用来回答"这家现在是什么问题", 160 字符足够分辨 404/429/401/TLS。
+const ERR_SUMMARY_MAX_CHARS: usize = 160;
+
+pub(crate) fn truncate_err(e: &str) -> String {
+    let t = e.trim();
+    if t.chars().count() <= ERR_SUMMARY_MAX_CHARS {
+        return t.to_string();
+    }
+    let head: String = t.chars().take(ERR_SUMMARY_MAX_CHARS).collect();
+    format!("{head}…")
+}
+
 /// 内存日志缓冲区 — 内存仅保留最近 `LOG_CAPACITY` 条用于面板实时展示;
 /// 文件 `logs.jsonl` 为全量权威数据源 (受 `store::MAX_LINES` 上限约束).
 /// 统计/聚合一律基于 [`LogBuffer::drain_all`] 从文件加载的全量数据, 避免跨天/跨月数据被内存容量截断.
@@ -4126,6 +4142,19 @@ pub struct ProviderStats {
     /// 网关侧五段汇总 (含 p50/p95)。
     #[serde(default)]
     pub gateway_stages: GatewayStageSummary,
+    /// 最近一次失败请求的错误摘要 (供面板"为什么全红"用)。
+    ///
+    /// 为什么需要它: 供应商行上只有一个红色的 `成功率 0.0%`, 用户看不出**为什么** ——
+    /// 是端点失效(404)、额度耗尽(429)、还是凭据过期(401), 这些处置方式完全不同。
+    /// 取**最新一条**错误而非分类计数: 用户真正要知道的是"现在这家出了什么问题",
+    /// 历史分布属于分析页的职责。
+    ///
+    /// 只存**截断后的摘要**(≤160 字符), 原始错误体可能很大且可能回显用户内容。
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// 最近一次失败请求的 HTTP 状态码。无失败时为 0。
+    #[serde(default)]
+    pub last_error_status: u16,
 }
 
 /// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
@@ -5478,6 +5507,18 @@ fn compute_stats(
             // 阶段耗时 (逐供应商), 口径同逐模型。
             let p_stage = stage_summary(logs.iter().copied());
             let p_gw = gateway_stage_summary(logs.iter().copied());
+            // 最近一次失败: 取错误记录里时间戳最大的那条.
+            // 用 max_by_key 而不是过滤后再 last() —— 日志顺序不保证按时间单调
+            // (并发请求完成顺序与发起顺序不同), 取"最后一条"会拿到较早的错误.
+            let last_err_log = logs
+                .iter()
+                .filter(|l| is_log_error(l))
+                .max_by_key(|l| l.timestamp);
+            let last_error = last_err_log
+                .and_then(|l| l.error.as_deref())
+                .filter(|e| !e.trim().is_empty())
+                .map(truncate_err);
+            let last_error_status = last_err_log.map(|l| l.status).unwrap_or(0);
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -5506,6 +5547,8 @@ fn compute_stats(
                 today_resp_cache_saved_tokens,
                 stage_summary: p_stage,
                 gateway_stages: p_gw,
+                last_error,
+                last_error_status,
             }
         })
         .collect();
@@ -6082,6 +6125,11 @@ fn merge_rollup_days(
                     // 同模型侧: rollup 无逐条阶段样本 → default (未采集), 不编造。
                     stage_summary: StageSummary::default(),
                     gateway_stages: GatewayStageSummary::default(),
+                    // rollup 逐日只存 errors 计数, 不存错误正文与状态码 → 跨日部分
+                    // 无法回溯"最近一次为什么失败". 记 None/0 而非编造 (未采集 ≠ 无错误)。
+                    // 若日志窗口内还有该家的记录, 上面 existing 分支会带上真实值。
+                    last_error: None,
+                    last_error_status: 0,
                 });
             }
         }
@@ -6665,6 +6713,83 @@ mod tests {
         assert_ne!(g2("pslow").gateway_stages.upstream_ttfb.avg_ms,
                    g2("pfast").gateway_stages.upstream_ttfb.avg_ms,
                    "两个模型的网关耗时必须不同 —— 相同说明共用了一份样本");
+    }
+
+    /// **「失败原因」必须逐供应商、只取最新、且截断**（2026-10-24）。
+    ///
+    /// 起因（用户看到 zen 行「43 次 / 成功率 0.0%」）：「这样不就说我们软件并没有省
+    /// token 吗」—— 一个红色的 0.0% 说不清是端点失效(404)、额度耗尽(429) 还是
+    /// 凭据过期(401)，而这三者的处置方式完全不同。供应商行上必须能直接看到原因。
+    ///
+    /// 盯四件事：
+    /// ① 只取**最新**一条错误（按 timestamp 取最大，不能取数组里的最后一条 ——
+    ///    日志顺序不是时间单调的，并发完成顺序与发起顺序不同）；
+    /// ② 成功记录不得污染（status=200 的那条不能被当成"最近错误"）；
+    /// ③ 各供应商**各算各的**（不能共用一份）；
+    /// ④ 超长错误必须截断（上游会返回整页 HTML，不截断会把行撑爆）。
+    #[test]
+    fn last_error_is_latest_per_provider_and_truncated() {
+        let mut e_old = mk("m", "pv", 0, 0);
+        e_old.timestamp = 100;
+        e_old.status = 404;
+        e_old.error = Some("旧错误: 端点不存在".to_string());
+
+        let mut e_new = mk("m", "pv", 0, 0);
+        e_new.timestamp = 900; // 最新
+        e_new.status = 429;
+        e_new.error = Some("新错误: 本月额度已用尽".to_string());
+
+        // ⚠️ 故意把**新的**放在数组前面: 若实现用"遍历时最后一条"就会拿到旧的。
+        let mut ok = mk("m", "pv", 0, 0);
+        ok.timestamp = 999; // 时间更晚但成功 → 不得影响最近错误
+        ok.status = 200;
+        ok.error = None;
+
+        // 另一家: 超长错误 (模拟上游返回整页 HTML)
+        let mut huge = mk("m", "pother", 0, 0);
+        huge.timestamp = 500;
+        huge.status = 502;
+        huge.error = Some("x".repeat(5000));
+
+        let st = compute_stats(
+            &[e_new, e_old, ok, huge],
+            &PriceTable::default(),
+            &std::collections::HashSet::new(),
+        );
+        let pv = |n: &str| st.per_provider.iter().find(|x| x.provider == n).unwrap();
+
+        // ① 最新的是 429 而不是数组里位置靠后的 404
+        let v = pv("pv");
+        assert_eq!(v.last_error_status, 429, "必须取 timestamp 最大的那条错误");
+        assert!(v.last_error.as_deref().unwrap().contains("额度已用尽"),
+                "错误正文应是 429 那条, 实际: {:?}", v.last_error);
+        assert_eq!(v.errors, 2, "错误计数不受影响");
+
+        // ② 成功记录没被当成错误
+        assert_ne!(v.last_error_status, 200, "成功的记录不得成为最近错误");
+
+        // ③ 各供应商各算各的
+        let o = pv("pother");
+        assert_eq!(o.last_error_status, 502);
+        assert!(!o.last_error.as_deref().unwrap().contains("额度"),
+                "另一家不能拿到 pv 的错误正文");
+
+        // ④ 截断: 5000 字符 → 160 + 省略号
+        let txt = o.last_error.as_deref().unwrap();
+        assert_eq!(txt.chars().count(), 161, "应截断为 160 字符 + 省略号");
+        assert!(txt.ends_with('…'), "截断后要有省略号标示未完");
+    }
+
+    /// 没有任何失败时，`last_error` 必须是 `None` —— 不能编造一句 "未知错误"。
+    #[test]
+    fn last_error_absent_when_all_succeeded() {
+        let a = mk("m", "pok", 0, 0);
+        let b = mk("m", "pok", 0, 0);
+        let st = compute_stats(&[a, b], &PriceTable::default(),
+                               &std::collections::HashSet::new());
+        let v = st.per_provider.iter().find(|x| x.provider == "pok").unwrap();
+        assert!(v.last_error.is_none(), "无失败 → None (未采集 ≠ 无错误)");
+        assert_eq!(v.last_error_status, 0);
     }
 
     #[test]

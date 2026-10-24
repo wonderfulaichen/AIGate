@@ -60,12 +60,30 @@
             </div>
             <div class="prov-url mono" :title="prov.endpoint" x-text="prov.endpoint"></div>
           </div>
-          <!-- 统计（窄屏隐藏，与 WaLiAPI 的 hidden lg:flex 一致） -->
+          <!-- 失败原因：成功率全红时"为什么"比"红多少"更要紧。
+               有 last_error 才渲染；悬停看完整正文（可能很长，后端已截到 160 字符）。
+               ⚠️ 位置很关键：放在**名称区内部**（.prov-main 里），不是行的末尾。
+               放行尾时它会挤动右边距、把统计区往左推（实测 buddy/Joule 的
+               统计左边缘从 1045 掉到 753/770，全页定宽对齐被它破坏）。
+               放进名称区后，它占用的是可伸缩的空白，右侧统计与图标列岿然不动。 -->
+          <!-- 统计（窄屏隐藏，与 WaLiAPI 的 hidden lg:flex 一致）。
+               2026-10-24: 三项各自定宽（.prov-stat-u / -r / -t）——
+               实测改造前右边缘已经对齐（都在 1297），但**每项的起点**随数字位数
+               在 1088~1108 之间游走，竖着扫一列时看不出谁高谁低。定宽后三列的
+               左边缘也固定，比较成功率/延迟变成真正的一列一列比。 -->
+          <div class="prov-extra">
+            <template x-if="provLastError(prov.name)">
+              <span class="prov-errpill" :title="provLastError(prov.name)" tabindex="0"
+                    :aria-label="t('prov_last_error')+': '+provLastError(prov.name)">
+                <span aria-hidden="true">!</span><span x-text="provErrShort(prov.name)"></span>
+              </span>
+            </template>
+          </div>
           <template x-if="provQuickStats(prov.name)">
             <div class="prov-stats">
-              <span class="prov-stat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><b x-text="fmtT(provQuickStats(prov.name).calls)"></b></span>
-              <span class="prov-stat"><span class="prov-stat-l" x-text="t('success_rate')"></span><b :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></b></span>
-              <span class="prov-stat"><span aria-hidden="true" style="display:inline-flex;color:var(--muted)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span><b x-text="fmtMs(provQuickStats(prov.name).latency)"></b></span>
+              <span class="prov-stat prov-stat-u" :title="t('unit_calls')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><b x-text="fmtT(provQuickStats(prov.name).calls)"></b></span>
+              <span class="prov-stat prov-stat-r"><span class="prov-stat-l" x-text="t('success_rate')"></span><b :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></b></span>
+              <span class="prov-stat prov-stat-t"><span aria-hidden="true" style="display:inline-flex;color:var(--muted)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span><b x-text="fmtMs(provQuickStats(prov.name).latency)"></b></span>
             </div>
           </template>
           <!-- 顺序位次（替代 WaLiAPI 的 P/W：我们没有权重调度，用"第几位 = 优先级"表达） -->
