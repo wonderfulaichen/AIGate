@@ -175,6 +175,11 @@
     "bytes": 6658
   },
   {
+    "file": "ds-guard.js",
+    "mode": "raw",
+    "bytes": 2581
+  },
+  {
     "file": "ds-provtable.js",
     "mode": "raw",
     "bytes": 2862

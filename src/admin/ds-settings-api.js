@@ -87,20 +87,20 @@
     // 数据源是日级 rollup（持久化、跨日志滚动窗口），故能覆盖 17 周 ——
     // 前端趋势图那边最大只到 logs.jsonl 的窗口，两者不是一回事。
     async fetchHeatmap() {
-      try {
-        const r = await fetch('/admin/api/heatmap?weeks=17', { headers: authHeaders() });
-        if (r.ok) this.heatmap = await r.json();
-      } catch (e) {}
+      // 3s 轮询里的接口 —— 必须带竞态守卫（见 ds-guard.js）：
+      // 慢响应与下一拍交错回来会让热力图偶尔往回跳一下。
+      const d = await this.guardedFetch('heatmap', '/admin/api/heatmap?weeks=17', { headers: authHeaders() });
+      if (d) this.heatmap = d;
     },
     // ── 事件台账 (2026-10-11): 关键事件的时间线 ──
     // 用户原话:「熔断、报错等等连工作报告、异常通知都没做。出问题得用户自己去一点点找。」
     // 这里就是那份"工作报告": 熔断开合、上游连续失败、额度将尽、账号作废等按时间列出,
     // 每条带**原因** —— 不必再去日志里猜关键词。
     async fetchEvents() {
-      try {
-        const r = await fetch('/admin/api/events?limit=100', { headers: authHeaders() });
-        if (r.ok) {
-          const d = await r.json();
+      // 同样带竞态守卫：事件台账是「按时间列出」的，旧响应后到会让列表**倒退**，
+      // 看起来像"刚发生的事件又消失了"。用 guardedFetch 只认最后一次。
+      const d = await this.guardedFetch('events', '/admin/api/events?limit=100', { headers: authHeaders() });
+      if (d) {
           this.events = d.events || [];
           // 未读告警数 (托盘红点的同一数据源)。
           //
@@ -110,8 +110,7 @@
           // 一旦隐藏后仍报 visible, 红点会在用户没看的情况下被清掉, 正是要解决的「挂后台不知道」。
           // 原生侧用 `window.is_visible()` 是权威值, 不依赖任何 WebView 行为。
           this.eventsUnread = d.unread || 0;
-        }
-      } catch (e) {}
+      }
     },
     async clearEvents() {
       await confirmAsk(t('events_clear_confirm'), { danger: true, onOk: async () => {
@@ -178,7 +177,9 @@
     // 静默降级计数: 解析失败导致优化/翻译未生效的次数. 用于区分
     // "这次确实没什么可省" 与 "我们根本没解析成功".
     async fetchDegradations() {
-      try { const r=await fetch('/admin/api/degradations',{headers:authHeaders()}); if(r.ok) this.degradations=await r.json(); } catch(e){}
+      // 同样在 3s 轮询里，补竞态守卫。
+      const d = await this.guardedFetch('degradations', '/admin/api/degradations', { headers: authHeaders() });
+      if (d) this.degradations = d;
     },
     get degradationTotal() {
       const d = this.degradations||{};

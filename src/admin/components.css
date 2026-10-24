@@ -18,6 +18,28 @@
 .st::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:var(--rs);background:linear-gradient(180deg,var(--accent),var(--primary))}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:10px 14px;font-weight:650;font-size:var(--fs-11);color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);white-space:nowrap}
+/* ── 纵向 sticky 表头（2026-10-24）──
+   记录表高 1406px、视口约 1050px —— 往下滚十几行后表头就没了，
+   这时看某一列根本不知道是哪一列（"830ms 这列是延迟还是 TTFT？"）。
+
+   ⚠️⚠️ 关键陷阱（实测踩到两次，thTop 从 430 变 -170 = 完全没生效）：
+   sticky 的参照物是**最近的滚动祖先**。这条链上有两道 overflow 会把它抢走：
+     ① 表格外层的 `overflow-x:auto`（原写法，用来横向滚动）
+     ② `.pnl` 的 `overflow:hidden`（面板圆角裁剪）
+   而这两个容器高度都跟着表格走、自己从不滚动 → 表头相对它们 sticky 等于没做。
+   且 `overflow-x:auto` + `overflow-y:visible` 在 CSS 规范里会被强制算成 auto/auto，
+   所以"只让 x 滚动、y 可见"这条路走不通。
+
+   解法：**给表格容器自己一个高度上限并让它纵向可滚**，表头相对它 sticky。
+   这样表格区域独立滚动、表头常驻顶部，也不再依赖 main 的滚动位置。
+   高度用 `max-height:min(70vh, 760px)` —— 70vh 保证在小窗口里也留出上下文，
+   760px 是实测"表头 + 约 12 行"的舒适高度。 */
+.rec-scroll{overflow:auto;max-height:min(70vh,760px)}
+.rec-table th{position:sticky;top:0;z-index:3;background:var(--card)}
+/* 表头下沿要有实线分界，否则滚动时行会"贴"在表头文字上 */
+.rec-table thead th{border-bottom:1px solid var(--border);box-shadow:0 1px 0 var(--surface-border)}
+/* 首列（时间）同时是横向 sticky 与纵向 sticky：它要盖住其它表头单元格 */
+.rec-table th.th-sticky{z-index:4}
 /* 可排序列: 悬停变主色提示可点; 箭头占固定宽度 (无排序时留白, 避免点排序时列宽跳动) */
 .th-sort{cursor:pointer;transition:color var(--dur-fast);user-select:none}
 .th-sort:hover{color:var(--fg)}

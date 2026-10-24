@@ -247,3 +247,6 @@ function dashboard() {  return {
     _visBound: false,
     // hashchange 监听是否已绑定（同理，只绑一次）
     _hashBound: false,
+    // 各接口的"在途请求"槽（2026-10-24，见 ds-guard.js 的 guardedFetch）。
+    // key → AbortController。新请求发出前 abort 同 key 的旧请求，只认最后一次。
+    _reqCtl: {},
