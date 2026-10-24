@@ -69,6 +69,18 @@
         { k: 'monitor', label: t('section.monitor') },
       ];
     },
+    // 设置页分区切换（2026-10-24 改为左导航 + 右内容的双栏，对齐 WaLiAPI）。
+    // 原来是"一页滚到底 + 顶部胶囊跳到锚点"：5 个分区 2623px / 2.5 屏，
+    // 找一项设置要滚很久，且顶部胶囊只是滚动锚点、看不出"当前在哪个分区"。
+    // 现在一次只显示一个分区的设置，左栏导航常驻并高亮当前分区。
+    setSettingsSection(k) {
+      this.settingsSection = k;
+      // 切分区后回到内容顶部 —— 否则从长分区切到短分区会停在空白处
+      try {
+        const m = document.querySelector('main');
+        if (m) m.scrollTop = 0;
+      } catch (e) {}
+    },
     scrollSettingsSec(k) {
       const el = document.getElementById('setsec-' + k);
       if (!el) return;

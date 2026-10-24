@@ -1,12 +1,21 @@
 <div x-show="activeTab==='settings'" class="page-enter page-wide">
 <div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
-<!-- P3: 分区导航 —— 设置页纵向很长 (5 个分区), 原先只能滚动找; 点章节直达.
-     各分区为即时保存 (点开关即生效), 故没有"保存按钮/dirty 态" —— 不引入倒退的批量提交. -->
-<div class="st-nav" x-show="settingsSections.length">
-  <template x-for="s in settingsSections" :key="s.k"><button type="button" class="st-chip" @click="scrollSettingsSec(s.k)" x-text="s.label"></button></template>
-</div>
-<div class="st mb3" id="setsec-perf" x-text="t('section.perf_opt')"></div>
-<div class="pnl mb4">
+<!-- 设置页 = 左分区导航 + 右内容（2026-10-24 按 WaLiAPI 重做）。
+     改造前是"一页滚到底 + 顶部胶囊跳锚点"：5 个分区 2623px / 2.5 屏，找一项设置要滚很久，
+     而且胶囊只负责滚动、看不出当前在哪个分区。
+     现在一次只渲染一个分区，左栏常驻并高亮当前项 —— 与 WaLiAPI 的侧栏分区同一思路，
+     但位置保留在页面内（顶部胶囊导航仍保留，未改成左侧边栏）。 -->
+<div class="set-layout">
+  <nav class="set-nav" x-show="settingsSections.length" :aria-label="t('settings_title')">
+    <template x-for="s in settingsSections" :key="s.k">
+      <button type="button" class="set-nav-i"
+              :class="{a:settingsSection===s.k}"
+              :aria-current="settingsSection===s.k?'true':'false'"
+              @click="setSettingsSection(s.k)" x-text="s.label"></button>
+    </template>
+  </nav>
+  <div class="set-content">
+<div x-show="settingsSection==='perf'" x-cloak><div class="st mb3" id="setsec-perf" x-text="t('section.perf_opt')"></div><div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('strip_reasoning_label')"></div><div class="row-d"  :title="t('strip_reasoning_desc')" x-text="t('strip_reasoning_desc')"></div></div>
     <button class="tgl" role="switch" :aria-checked="(stripReasoning)?'true':'false'" :aria-label="t('strip_reasoning_label')" :class="stripReasoning?'on':'off'" @click="setStripReasoning(!stripReasoning)"></button>
@@ -102,9 +111,8 @@
       <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1"><span class="txs tm" x-text="t('cache.saved_enabled_label')"></span><span class="txsm mono fw6" x-text="'≈ '+fmtT(cache.enabled_saved_tokens||0)+' tok'"></span></div>
     </div>
   </div></template>
-</div>
-<div class="st mb3" id="setsec-personal" x-text="t('section.personal')"></div>
-<div class="pnl mb4">
+</div></div>
+<div x-show="settingsSection==='personal'" x-cloak><div class="st mb3" id="setsec-personal" x-text="t('section.personal')"></div><div class="pnl mb4">
   <div class="set-row">
     <div class="row-t" x-text="t('ui_language')"></div>
     <select class="sel" @change="setLang($event.target.value)" x-effect="$el.value=(Alpine.store('i18n')||{}).lang||'zh-CN'"><option value="zh-CN" x-text="t('lang_zh')"></option><option value="en-US" x-text="t('lang_en')"></option></select>
@@ -122,9 +130,8 @@
       <span class="txs tm" x-text="t('rate_suffix')"></span>
     </div>
   </div>
-</div>
-<div class="st mb3" id="setsec-peak" x-text="t('section.peak')"></div>
-<div class="pnl mb4">
+</div></div>
+<div x-show="settingsSection==='peak'" x-cloak><div class="st mb3" id="setsec-peak" x-text="t('section.peak')"></div><div class="pnl mb4">
   <div class="set-row">
     <div style="min-width:0"><div class="row-t" x-text="t('peak_enable')"></div><div class="row-d"  :title="t('peak_enable_desc')" x-text="t('peak_enable_desc')"></div></div>
     <button class="tgl" role="switch" :aria-checked="(peakSchedule.enabled)?'true':'false'" :aria-label="t('peak_enable')" :class="peakSchedule.enabled?'on':'off'" @click="peakSchedule.enabled=!peakSchedule.enabled;peakDirty=true"></button>
@@ -163,9 +170,8 @@
       <span class="txs" x-show="peakMsg" :style="peakMsgOk?'color:var(--ok)':'color:var(--err)'" x-text="peakMsg"></span>
     </div>
   </div>
-</div>
-<div class="st mb3" id="setsec-conn" x-text="t('section.conn')"></div>
-<div class="pnl mb4">
+</div></div>
+<div x-show="settingsSection==='conn'" x-cloak><div class="st mb3" id="setsec-conn" x-text="t('section.conn')"></div><div class="pnl mb4">
   <div class="set-row">
     <div><div class="row-t" x-text="t('listen_addr')"></div><div class="row-d"><span class="bdg bdg-s" x-text="t('running')"></span></div></div>
     <span class="mono txsm" x-text="listenAddr()"></span>
@@ -178,9 +184,8 @@
     <div class="row-t" x-text="t('base_url')"></div>
     <div style="display:flex;gap:8px;align-items:center"><span class="mono txsm" x-text="baseUrl"></span><button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div>
   </div>
-</div>
-<div class="st mb3" id="setsec-monitor" x-text="t('section.monitor')"></div>
-<div class="pnl mb4">
+</div></div>
+<div x-show="settingsSection==='monitor'" x-cloak><div class="st mb3" id="setsec-monitor" x-text="t('section.monitor')"></div><div class="pnl mb4">
   <template x-if="tooltipConfig===null"><div class="pnl-b"><span class="txs tm" x-text="t('loading')"></span></div></template>
   <template x-if="tooltipConfig!==null"><div>
     <div class="set-row">
@@ -206,11 +211,13 @@
       </div>
     </div>
   </div></template>
-</div>
+</div></div>
 <div class="pnl mb4" style="border-color:rgba(239,68,68,.3)">
   <div class="set-row">
     <div><div class="row-t" x-text="t('data_mgmt')"></div></div>
     <button class="btn btn-g" style="font-size:var(--fs-12);color:var(--err)" :disabled="clearingLogs" @click="clearAllLogs()" x-text="clearingLogs?t('saving'):t('clear_all_records')"></button>
   </div>
 </div>
+  </div><!-- /.set-content -->
+</div><!-- /.set-layout -->
 </div>

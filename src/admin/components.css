@@ -451,6 +451,25 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 /* 分节导航 (sticky): 底色必须用**半透明材质**, 不能铺实心 var(--bg) ——
    页面底是 body 的 radial-gradient 氛围渐变, 实心底会把它切断成一条横贯的硬边暗带 (实测报障). */
 .st-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;position:sticky;top:0;z-index:5;padding:8px 0;background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
+/* ── 设置页双栏（2026-10-24 按 WaLiAPI 重做）──
+   左：分区导航（sticky，卡片式导航项）；右：当前分区的设置内容。
+   为什么左栏用 sticky 而不是整页滚动：设置页原来 2623px/2.5 屏，滚到下方时
+   导航早已滚出视野，用户不知道自己在哪个分区。sticky 让"当前在哪儿"始终可见。 */
+.set-layout{display:grid;grid-template-columns:196px minmax(0,1fr);gap:20px;align-items:start;width:100%}
+@media(max-width:900px){.set-layout{grid-template-columns:minmax(0,1fr)}}
+.set-nav{display:flex;flex-direction:column;gap:4px;position:sticky;top:12px}
+.set-nav-i{appearance:none;-webkit-appearance:none;font-family:inherit;text-align:left;
+  display:flex;align-items:center;padding:9px 12px;border-radius:var(--rm);border:1px solid transparent;
+  background:transparent;color:var(--muted);font-size:var(--fs-12);font-weight:500;
+  cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
+.set-nav-i:hover{background:var(--fill-3);color:var(--fg)}
+/* 选中态与 WaLiAPI 的侧栏一致：白色浮起面 + 描边，而不是只换个文字颜色 */
+.set-nav-i.a{background:var(--card);color:var(--fg);font-weight:600;border-color:var(--surface-border);box-shadow:var(--elev-1)}
+.set-content{min-width:0}
+/* 双栏里分区标题已由左导航承担，右侧不再重复印一遍（避免同一信息说两遍）。
+   ⚠️ 必须用后代选择器而不是 `>`：`.st` 包在 `x-show` 那层 div 里，不是直接子元素。
+   （第一版写成 `.set-content>.st` 没命中，实测右栏顶部仍多一条「｜性能与优化」。） */
+.set-content .st{display:none}
 .st-chip{padding:5px 11px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:var(--fs-11);font-weight:600;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast),border-color var(--dur-fast)}
 .st-chip:hover{background:var(--fill-5);color:var(--fg);border-color:var(--border-s)}
 /* 设置表单: :has() 让 textarea / 开关行自动占满整行 —— 无需在两个文件里同步"哪些控件要全宽".

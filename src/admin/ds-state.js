@@ -87,6 +87,9 @@ function dashboard() {  return {
     // 供应商汇总表的搜索框 (2026-10-24)。与模型明细的筛选**分开** ——
     // 两张表说的不是同一件事（一张按供应商、一张按模型），共用一个框会互相干扰。
     provTableFilter: '',
+    // 设置页当前分区（2026-10-24 双栏布局）。一次只显示一个分区，左栏导航高亮。
+    // 默认 perf = 性能与优化（第一个分区的 k 值，与 settingsSections 顺序一致）
+    settingsSection: 'perf',
     modelTrendData: {keys:[],dates:[],legend:''},
     modelTrendSvgHtml: '',
     trendHover: null,

@@ -73,20 +73,37 @@ const { chromium } = require('playwright');
   await p.waitForTimeout(900);
 
   // ① 开关: role/aria-checked/可及名 + 点击后翻转
-  out.switches = await p.evaluate(() => {
-    const list = Array.from(document.querySelectorAll('button.tgl'));
-    return list.map((el) => {
-      const r = el.getBoundingClientRect();
-      const cs = getComputedStyle(el);
-      const visible = r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
-      return {
-        role: el.getAttribute('role'),
-        checked: el.getAttribute('aria-checked'),
-        label: (el.getAttribute('aria-label') || '').trim(),
-        visible,
-        tabIndex: el.tabIndex,
-      };
-    });
+  // ⚠️ 设置页 2026-10-24 改成"左分区导航 + 右内容"后，**一次只显示一个分区**，
+  // 其余分区的开关仍在 DOM 里但被 x-show 隐藏。所以这里必须逐分区切换后收集，
+  // 不能只量当前可见的那一批（否则会误判为"开关丢了"）。
+  out.switches = await p.evaluate(async () => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    const seen = [];
+    for (const sec of ['perf', 'personal', 'peak', 'conn', 'monitor']) {
+      st.settingsSection = sec;
+      await new Promise(r => setTimeout(r, 220));
+      const list = Array.from(document.querySelectorAll('button.tgl'));
+      for (const el of list) {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        const visible = r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden';
+        if (!visible) continue;                       // 别的分区里的，跳过
+        const label = (el.getAttribute('aria-label') || '').trim();
+        // 用 label 去重（同一分区里各开关名称唯一）
+        if (seen.some(x => x.label === label && x.label)) continue;
+        seen.push({
+          role: el.getAttribute('role'),
+          checked: el.getAttribute('aria-checked'),
+          label,
+          visible,
+          tabIndex: el.tabIndex,
+          section: sec,
+        });
+      }
+    }
+    st.settingsSection = 'perf';
+    await new Promise(r => setTimeout(r, 200));
+    return seen;
   });
 
   // 点第一个开关, 断言 aria-checked 真的翻转（不是静态写着 true）
@@ -173,26 +190,44 @@ const { chromium } = require('playwright');
   // 先注入一行模型统计再断言，否则测的是"空表"而不是"这一格"。
   out.diag = await p.evaluate(async () => {
     const st = document.querySelector('[x-data]')._x_dataStack[0];
-    st.switchTab('analytics');
-    await new Promise(r => setTimeout(r, 800));
+    // 顺序很重要: 先定页签再切页, 且给 Alpine 足够时间重渲染整张表
+    // （实测 800ms 在"设置页分区被反复切换过"之后不够，会读到还没生成行的空表）
     st.analyticsTab = 'cost';
-    // 注入最小可用的一行（形状对齐后端 per_model 的字段）
-    st.stats = st.stats || {};
-    st.stats.per_model = [{
-      provider: 'mockprov', model: 'mockprov/m1', upstream_model: 'm1',
-      requests: 10, prompt_tokens: 2000, completion_tokens: 500,
-      prompt_cache_hit_tokens: 1500, total_cost: 0.1,
-      avg_latency_ms: 900, avg_ttft_ms: 300, gen_speed: 40,
-      optimization_saved_tokens: 800,
-    }];
+    st.switchTab('analytics');
     await new Promise(r => setTimeout(r, 1200));
+    st.analyticsTab = 'cost';
+    // 注入一行模型统计，让「模型明细」表有行可断言。
+    // ⚠️ 必须**整体重建 stats 对象**再赋值：Alpine 3 不追踪既有对象的深层属性新增，
+    // 直接 `st.stats.per_model = [...]` 不会触发重渲染（本项目 modelDiagOpen 踩过同款坑）。
+    // 又因为后台会周期性拉取 stats 覆盖回来，所以注入后要**立刻**在同一帧里取 DOM。
+    const base = st.stats || {};
+    st.stats = Object.assign({}, base, {
+      per_model: [{
+        provider: 'mockprov', model: 'mockprov/m1', upstream_model: 'm1',
+        requests: 10, total_prompt_tokens: 2000, total_completion_tokens: 500,
+        total_cache_hit_tokens: 1500, total_cache_miss_tokens: 500,
+        total_cost: 0.1, avg_latency_ms: 900, avg_ttft_ms: 300, gen_speed: 40,
+        optimization_saved_tokens: 800,
+      }],
+    });
+    await new Promise(r => setTimeout(r, 250));
     const cells = Array.from(document.querySelectorAll('td[role="button"]'));
     return {
       total: cells.length,
       allTab: cells.every(c => c.tabIndex >= 0),
       allCaret: cells.every(c => (c.textContent || '').indexOf('▸') >= 0),
+      // 现场诊断（判据失败时能直接看到原因，而不是只知道 total=0）
+      dbg: {
+        tab: st.analyticsTab,
+        activeTab: st.activeTab,
+        perModelLen: ((st.stats && st.stats.per_model) || []).length,
+        filteredLen: (st.filteredModelStats || []).length,
+        modelColsMore: st.modelColsMore,
+        tables: Array.from(document.querySelectorAll('table')).map(t => t.querySelectorAll('tbody tr').length),
+      },
     };
   });
+  console.log('  ③c 现场: ' + JSON.stringify((out.diag || {}).dbg));
 
   // ④ 焦点可见: **必须用真实键盘 Tab**。
   // 为什么不能用 el.focus(): 程序化聚焦不满足 :focus-visible 的启发式
