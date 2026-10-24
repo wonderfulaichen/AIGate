@@ -273,6 +273,22 @@
       this.markDirty();
       toast(t('provider_reordered', moved.name, ti + 1));
     },
+    // ── 供应商级开关（2026-10-24 补界面入口）──
+    // 三个字段后端早已支持，但界面上没有入口 —— 用户只能手改 providers.json。
+    //
+    // ⚠️ 这里要处理**三态**，不能简单地取反：
+    //   · `prompt_cache` 后端默认 **true**（providers.rs:510 注释："默认 true"），
+    //     所以"关"必须显式写 false；而"未设置"= 让后端用默认值 true。
+    //     若一律取反，未设置(falsey)会被当成"关"→ 写死 false，与后端默认值相反。
+    //   · `require_system_first` / `openai_cache_control` 默认 false/unset，取反即可。
+    // 故传入 '__unset__' 表示"恢复未设置"，由后端走默认。
+    setProvFlag(field, val) {
+      const p = this.drawerProv;
+      if (!p) return;
+      if (val === '__unset__') delete p[field];
+      else p[field] = val;
+      this.markDirty();
+    },
     // 键盘可达的替代：上移/下移（拖拽对键盘用户不可达，必须有替代路径）
     provMove(name, dir) {
       const list = this.providersFormData || [];

@@ -80,6 +80,39 @@
                 <div class="f-row"><label x-text="t('auth_prefix_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv._authPrefix" :placeholder="t('auth_prefix_ph')" @input="setAuthPrefix(drawerProv._authPrefix);markDirty()"></div>
                 <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('auth_header_hint')"></div>
               </div>
+
+              <!-- ── 上游协议适配开关（2026-10-24 补界面入口）──
+                   这 3 个字段后端早已实现（providers.rs:481 / 510 / 519），但抽屉里
+                   **完全没有输入项 —— 只在保存逻辑里存在（ds-provsave.js:170-179）。
+                   用户要改只能手改 providers.json。上游报 400/413 时这恰恰是排障要用的开关。 -->
+              <div class="adv-switches">
+                <div class="adv-sw">
+                  <div class="adv-sw-tx"><div class="adv-sw-t" x-text="t('rsf_label')"></div><div class="adv-sw-d" x-text="t('rsf_desc')"></div></div>
+                  <button type="button" class="tgl" role="switch" :aria-checked="(!!drawerProv.require_system_first)?'true':'false'" :aria-label="t('rsf_label')" :class="drawerProv.require_system_first?'on':'off'" @click="setProvFlag('require_system_first',!drawerProv.require_system_first)"></button>
+                </div>
+                <div class="adv-sw">
+                  <div class="adv-sw-tx"><div class="adv-sw-t" x-text="t('pc_label')"></div><div class="adv-sw-d" x-text="t('pc_desc')"></div></div>
+                  <button type="button" class="tgl" role="switch" :aria-checked="(drawerProv.prompt_cache!==false)?'true':'false'" :aria-label="t('pc_label')" :class="drawerProv.prompt_cache!==false?'on':'off'" @click="setProvFlag('prompt_cache',drawerProv.prompt_cache===false?'__unset__':false)"></button>
+                </div>
+                <div class="adv-sw">
+                  <div class="adv-sw-tx"><div class="adv-sw-t" x-text="t('occ_label')"></div><div class="adv-sw-d" x-text="t('occ_desc')"></div></div>
+                  <button type="button" class="tgl" role="switch" :aria-checked="(!!drawerProv.openai_cache_control)?'true':'false'" :aria-label="t('occ_label')" :class="drawerProv.openai_cache_control?'on':'off'" @click="setProvFlag('openai_cache_control',!drawerProv.openai_cache_control)"></button>
+                </div>
+              </div>
+
+              <!-- ── 协议覆盖 + 请求体上限（同样补入口）── -->
+              <div class="f-grid" style="margin-top:6px">
+                <div class="f-row"><label x-text="t('api_format_label')"></label>
+                  <select class="sel" style="width:100%" x-model="drawerProv.api_format" :aria-label="t('api_format_label')" @change="markDirty()">
+                    <option value="" x-text="t('fmt.auto')"></option>
+                    <option value="openai" x-text="t('fmt.openai')"></option>
+                    <option value="anthropic" x-text="t('fmt.anthropic')"></option>
+                    <option value="responses" x-text="t('fmt.responses')"></option>
+                  </select>
+                </div>
+                <div class="f-row"><label x-text="t('max_body_label')"></label><input type="number" min="0" step="1024" class="inp mono" style="width:100%" x-model.number="drawerProv.max_request_body_bytes" :placeholder="t('max_body_ph')" :aria-label="t('max_body_label')" @input="markDirty()"></div>
+                <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('max_body_hint')"></div>
+              </div>
             </div>
           </div>
         </div>
