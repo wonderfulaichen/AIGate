@@ -81,7 +81,8 @@
     <template x-if="prov.preset && presetDirty(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--warn)" :title="t('preset_reset')" @click.stop="presetReset(prov)">⟲</button></template>
     <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px;color:var(--err)" :disabled="!!prov.preset" @click.stop="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
   </div></td>
-</tr></template></tbody></table>
+</tr>
+</template></tbody></table>
 </div></div></template>
 <template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
   <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable" :class="{'is-expanded':isProvExpanded(prov.name)}" @click="toggleProvExpand(prov.name)" style="cursor:pointer">

@@ -145,6 +145,33 @@ const { chromium } = require('playwright');
   await p.waitForTimeout(900);
   out.afterEdit = await readState();
 
+  // ⑧ 表格视图：**点行开抽屉**（不是行内展开）—— 这是刻意设计，不是缺陷。
+  // 试过两次在 tbody 里加展开行（`<template x-if>` 包 tr、`<tr x-show>`），
+  // 实测 DOM 里 .prov-expand-row 数量恒为 0：`<tbody>` 的直接子元素被浏览器
+  // 严格解析，Alpine 动态插入的第二个 tr 会被丢弃。
+  // 结论：两个视图各有用途 —— 表格=密集扫读（一行一供应商）、卡片=查看与操作。
+  await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    st.drawerProv = null; st.provExpanded = {};
+    st.provViewMode = 'table';
+  });
+  await p.waitForTimeout(1200);
+  out.table = await p.evaluate(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const tables = Array.from(document.querySelectorAll('table')).filter(vis);
+    let tr = null;
+    for (const t of tables) { tr = Array.from(t.querySelectorAll('tbody tr')).find(vis); if (tr) break; }
+    if (!tr) return { noRow: true };
+    const td = tr.querySelector('td');
+    td.click();
+    return { clicked: true };
+  });
+  await p.waitForTimeout(900);
+  out.tableAfterClick = await p.evaluate(() => {
+    const st = document.querySelector('[x-data]')._x_dataStack[0];
+    return { drawerOpen: !!st.drawerProv, expandedKeys: Object.keys(st.provExpanded || {}) };
+  });
+
   out.errs = errs;
   await b.close();
   console.log('JSON_RESULT ' + JSON.stringify(out));
@@ -217,6 +244,14 @@ def main():
         ae = res.get("afterEdit") or {}
         check(ae.get("drawerOpen") is True,
               "⑥ 「编辑」按钮仍能直接开抽屉（两条路都保留）", f"drawer={ae.get('drawerOpen')}")
+        # ⑧ 表格视图：刻意保持"点行开抽屉"
+        tt = res.get("tableAfterClick") or {}
+        check(tt.get("drawerOpen") is True,
+              "⑧ 表格视图点行 → 开抽屉（表格=密集扫读，卡片=查看与操作）",
+              f"drawer={tt.get('drawerOpen')}")
+        check(not (tt.get("expandedKeys") or []),
+              "⑧ 表格视图不做行内展开（tbody 里插第二个 tr 会被浏览器丢弃）",
+              f"expanded={tt.get('expandedKeys')}")
         check(not (res.get("errs") or []), "⑦ 零 pageerror", f"{(res.get('errs') or [])[:2]}")
     finally:
         proc.terminate()

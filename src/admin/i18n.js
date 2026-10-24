@@ -172,6 +172,7 @@ const I18N = {
     'test_ok': '连接成功',
     'test_failed': '连接失败',
     'detail.endpoint_short': '端点',
+    'expand_details': '展开详情',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -630,6 +631,7 @@ const I18N = {
     'test_ok': 'Connected',
     'test_failed': 'Connection failed',
     'detail.endpoint_short': 'Endpoint',
+    'expand_details': 'Expand details',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',
