@@ -95,7 +95,38 @@
       this.applyStatsSnapshot();
       await this.fetchCurrencyConfig();
       await this.fetchPeakSchedule();
-      await this.switchTab('dashboard');
+      // 哈希深链（2026-10-24）：优先按地址栏的 #tab 恢复，否则回概览。
+      // 只在**合法页签名**时才用 —— 随便什么 hash 都当页签会让页面变成空白。
+      const TAB_IDS = ['dashboard','analytics','records','providers','settings','about'];
+      let startTab = 'dashboard';
+      try {
+        const raw = String(location.hash || '').replace(/^#/, '').trim();
+        // 支持 `#analytics/cost`、`#settings/perf`（页签/子页）两种两段式
+        const head = raw.split('/')[0];
+        if (TAB_IDS.includes(head)) {
+          startTab = head;
+          const sub = raw.split('/')[1];
+          if (sub) {
+            if (head === 'analytics' && ['overview','cost'].includes(sub)) this.analyticsTab = sub;
+            if (head === 'settings') this.settingsSection = sub;
+          }
+        }
+      } catch (e) {}
+      // 注：不需要另写"非法 hash 归一"—— 下面的 switchTab 会把当前页签写回地址栏，
+      // 非法 hash 自然被覆盖成 #dashboard。曾加过一段显式归一，改坏验证时发现
+      // 删掉它判据照样通过（说明它是冗余保险），故删除。
+      await this.switchTab(startTab);
+      // 监听浏览器前进/后退（含手动改地址栏）：切到对应页签。
+      // 只绑一次，且用 replaceState 的写入不会再次触发 hashchange（同值不触发）。
+      if (!this._hashBound) {
+        this._hashBound = true;
+        window.addEventListener('hashchange', () => {
+          try {
+            const head = String(location.hash || '').replace(/^#/, '').split('/')[0];
+            if (head && TAB_IDS.includes(head) && head !== this.activeTab) this.switchTab(head);
+          } catch (e) {}
+        });
+      }
       await this.fetchChangelog();
       await this.fetchSeenVersion();
       // 版本升级后首次打开（或首次运行）自动弹出更新亮点。
@@ -243,6 +274,21 @@
       }
       this.activeTab = tabId;
       this.logPage = 0;
+      // 哈希深链（2026-10-24）：把当前页签写进地址栏，刷新/分享能回到同一页。
+      // 用 replaceState 而不是 pushState —— 面板是工具而非站点，用户点页签
+      // 不该在浏览器历史里堆一堆记录（否则"后退"要点五六次才能退出）。
+      //
+      // ⚠️ 写 hash 时**必须带上子页**，否则会把子页信息冲掉：
+      //   init 时先按 `#settings/peak` 设好 settingsSection，再调 switchTab('settings')，
+      //   若这里只写 `#settings`，刚读到的 peak 就丢了（实测过）。
+      //   同理 analytics 要带 analyticsTab。
+      // 静默失败：某些 WebView 环境不允许改 URL，不能因此打断切页签。
+      try {
+        let h = '#' + tabId;
+        if (tabId === 'analytics' && this.analyticsTab) h += '/' + this.analyticsTab;
+        else if (tabId === 'settings' && this.settingsSection) h += '/' + this.settingsSection;
+        if (location.hash !== h) history.replaceState(null, '', h);
+      } catch (e) {}
       // 切回概览重播 KPI 数字补间: 补间槽是持久对象, 目标值没变时 numTween 会直接返回旧值,
       // 故必须显式打 replay 标 (否则只有"手动刷新"能重播, 切页签毫无数字反馈).
       // 首次加载传 false (守 numTween 的"初值即真值"约束, 避免首屏像加载动画).
@@ -265,16 +311,36 @@
       }
     },
 
+    // 主轮询 (3s)。2026-10-24 加上**页面可见性守卫**：
+    // 改造前不管窗口是否被隐藏、标签是否切到后台，都照常拉 1000 条日志 + stats + 热力图，
+    // 纯粹浪费带宽与 CPU（软件常驻托盘，用户可能几小时不看面板）。
+    // 隐藏时**跳过整轮**；重新可见时立刻补一次，避免"打开就看到几分钟前的旧数"。
+    //
+    // ⚠️ 为什么用 document.hidden 而不是 visibilityState：这里判的是"浏览器标签页是否
+    // 可见"，与 ds-settings-api.js:107 那处"红点 ack 不能用 visibilityState"是两件事
+    //（那个说的是 WebView 最小化到托盘仍报 visible，所以要靠原生侧 is_visible()）。
+    // 对轮询来说，document.hidden 已经能挡掉"窗口被最小化/切到别的标签"这类最常见场景。
     startPoll() {
       clearInterval(this.pollTimer);
-      this.pollTimer = setInterval(() => {
+      const tick = () => {
+        // 隐藏时跳过 —— 但**不停止定时器**：定时器继续跑，恢复可见时下一拍就能继续，
+        // 不必重新注册（重注册容易漏掉 clearInterval 而叠出多个定时器）。
+        if (typeof document !== 'undefined' && document.hidden) return;
         this.fetchLogs();
         if (['dashboard','tokens','daily'].includes(this.activeTab) && this.stats) this.fetchStats();
         // 事件台账也要跟着轮询: 熔断/恢复是**异步发生**的, 只在切页签时拉一次
         // 就会"打开面板看到的是十分钟前的状态" —— 那等于没有通知。
         if (this.activeTab==='dashboard') this.fetchEvents();
         if (this.activeTab==='analytics') { this.fetchStats(); this.fetchDegradations(); this.fetchHeatmap(); } // 后端 15s 缓存, 倒计时随之跳动 (流式更新)
-      }, 3000);
+      };
+      this.pollTimer = setInterval(tick, 3000);
+      // 重新可见时补一次（用户切回来的第一眼就要是新的）
+      if (!this._visBound && typeof document !== 'undefined') {
+        this._visBound = true;
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) tick();
+        });
+      }
     },
 
     async fetchChangelog() { try { const r=await fetch('/admin/api/changelog', {headers:authHeaders()}); if(r.ok) { const data=await r.json(); this.changelog=data.versions||[]; } } catch(e){} },

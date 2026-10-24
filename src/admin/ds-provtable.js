@@ -10,6 +10,42 @@
 //   · requests = 0 → 显示 '—'，不是 0% —— "没请求过"与"全都失败"是两件事。
 //   · 缓存命中率 = hit/(hit+miss)，分母 0 → '—'（未采集 ≠ 0）。
 
+    // ── 搜索框防抖（2026-10-24）──
+    // 记录页搜索早就做了 200ms 防抖 + IME 组合输入安全（ds-records.js:270-293），
+    // 但另外 3 个搜索框都是 `x-model` 直连 computed getter，每敲一个键就全量重算：
+    //   · modelDetailFilter → filteredModelStats（遍历 per_model 全部 50 条 + aliases 匹配）
+    //   · provTableFilter   → filteredProviderStats
+    //   · provSearch        → visibleProviders（含 models.some 逐模型匹配，模板里被引用 7 处）
+    // 中文输入法下每敲一个拼音字母都会触发一次，输入明显发滞。
+    //
+    // 实现：草稿(_Draft)实时跟手，提交值(真正的过滤条件)延迟 200ms 才更新。
+    // 与记录页同一口径（行数少时 200ms 比 300ms 更跟手，且已有实现就是 200ms，
+    // 不为了对齐文档的 300ms 而制造两套手感）。IME 期间挂起，上屏立即提交。
+    _debounceSearch(field, value, draftKey) {
+      this[draftKey] = value;                       // 草稿：输入框立即回显
+      if (this._searchComposing) return;            // 拼音未上屏：不过滤
+      const timerKey = '_t_' + field;
+      clearTimeout(this[timerKey]);
+      this[timerKey] = setTimeout(() => { this[field] = value; }, 200);
+    },
+    onProvTableSearchInput(e, draftKey) {
+      this._debounceSearch('provTableFilter', (e && e.target) ? e.target.value : '', draftKey);
+    },
+    onModelDetailSearchInput(e) {
+      this._debounceSearch('modelDetailFilter', (e && e.target) ? e.target.value : '', 'modelDetailFilterDraft');
+    },
+    onProvSearchInput(e) {
+      this._debounceSearch('provSearch', (e && e.target) ? e.target.value : '', 'provSearchDraft');
+    },
+    // IME 组合输入：期间只更新草稿（由 x-model 负责），不提交过滤
+    onSearchCompositionStart() { this._searchComposing = true; },
+    // 上屏：立即提交（组合已定稿，不必再等 200ms）
+    onSearchCompositionEnd(field, draftKey) {
+      this._searchComposing = false;
+      clearTimeout(this['_t_' + field]);
+      this[field] = this[draftKey] || '';
+    },
+
     // 供应商汇总表的搜索过滤（按名字，大小写不敏感）
     get filteredProviderStats() {
       const all = (this.stats && this.stats.per_provider) || [];

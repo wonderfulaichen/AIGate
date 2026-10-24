@@ -505,6 +505,17 @@
     /// 触发场景: 代码里删掉一个页签后, 别处仍引用旧值 (本轮删 `perf` 就差点如此);
     /// 或将来某处持久化了页签选择。规律: "面板可见性由枚举值驱动"时, 非法值不是无操作,
     /// 而是**全隐藏** —— 界面看着像加载失败。
+    // 切分析页子页签 + 同步地址栏（2026-10-24 哈希深链）。
+    // 原来模板里直接 `analyticsTab='cost'`，没有函数包装，无法顺手写 hash。
+    setAnalyticsTab(k) {
+      this.analyticsTab = k;
+      try {
+        if (this.activeTab === 'analytics') {
+          const h = '#analytics/' + k;
+          if (location.hash !== h) history.replaceState(null, '', h);
+        }
+      } catch (e) {}
+    },
     normalizeAnalyticsTab() {
       if (this.analyticsTab !== 'overview' && this.analyticsTab !== 'cost') {
         this.analyticsTab = 'overview';

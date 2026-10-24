@@ -87,6 +87,13 @@ function dashboard() {  return {
     // 供应商汇总表的搜索框 (2026-10-24)。与模型明细的筛选**分开** ——
     // 两张表说的不是同一件事（一张按供应商、一张按模型），共用一个框会互相干扰。
     provTableFilter: '',
+    // 搜索防抖的草稿值（2026-10-24）。输入框绑草稿、过滤用提交值，两者延迟 200ms 同步。
+    // 记录页早已这么做（logSearchDraft/logSearch），这里把其余 3 个搜索框补齐。
+    modelDetailFilterDraft: '',
+    provSearchDraft: '',
+    provTableFilterDraft: '',
+    // IME 拼音未上屏时为 true —— 期间不提交过滤，避免"每敲一个拼音字母过滤一次"
+    _searchComposing: false,
     // 供应商明细表的逐行展开态（2026-10-24）。**默认折叠**，与拓扑图的
     // topoOpenProviders（默认展开）刻意分开 —— 复用会让分析页首屏撑到 3.6 屏。
     provTableExpanded: {},
@@ -236,3 +243,7 @@ function dashboard() {  return {
 
     // Polling
     pollTimer: null,
+    // visibilitychange 监听是否已绑定（只绑一次，避免 startPoll 重复调用叠出多个监听）
+    _visBound: false,
+    // hashchange 监听是否已绑定（同理，只绑一次）
+    _hashBound: false,

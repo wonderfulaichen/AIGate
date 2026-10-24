@@ -75,6 +75,14 @@
     // 现在一次只显示一个分区的设置，左栏导航常驻并高亮当前分区。
     setSettingsSection(k) {
       this.settingsSection = k;
+      // 哈希深链（2026-10-24）：把分区也写进地址栏 → `#settings/peak` 可直接分享/刷新还原。
+      // 只在设置页时才写，避免在别的页签改分区污染 hash。
+      try {
+        if (this.activeTab === 'settings') {
+          const h = '#settings/' + k;
+          if (location.hash !== h) history.replaceState(null, '', h);
+        }
+      } catch (e) {}
       // 切分区后回到内容顶部 —— 否则从长分区切到短分区会停在空白处
       try {
         const m = document.querySelector('main');
