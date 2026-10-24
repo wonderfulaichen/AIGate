@@ -107,6 +107,22 @@
              此前熔断开合**一行日志都没有** (circuit_breaker.rs 零 tracing), 面板只有当前快照 ——
              刷新一下, 断过的痕迹就没了。这块按时间列出"发生了什么 + 为什么"。
              放在健康度右边紧邻: "是不是出事了"与"出了什么事"是同一个问题。 -->
+        <!-- 运维建议（2026-10-24，对照 WaLiAPI 的 DashboardPage.tsx:229-286）。
+             这不是又一个数字面板 —— 它把指标转成**判断 + 处置动作**：
+             "部分上游不可用，建议检查" + 「去处理 →」。
+             与下面「最近发生的事」的分工：建议回答"我该做什么"，事件回答"刚才发生了什么"。 -->
+        <div class="pnl" x-show="opAdvice().length">
+          <div class="pnl-h"><div><h2 class="pnl-ht" x-text="t('advice_title')"></h2><div class="txs tm" style="margin-top:3px" x-text="t('advice_desc')"></div></div></div>
+          <div class="pnl-b" style="padding:14px 18px"><div class="adv-grid">
+            <template x-for="a in opAdvice()" :key="a.k">
+              <div class="adv-card" :class="'adv-'+a.tone">
+                <div class="adv-hd"><span class="adv-dot" aria-hidden="true"></span><span x-text="t('advice_' + a.k)"></span></div>
+                <div class="adv-tx" x-text="a.text"></div>
+                <template x-if="a.action"><button class="adv-act" @click="switchTab(a.action)" x-text="t('advice_act')+' →'"></button></template>
+              </div>
+            </template>
+          </div></div>
+        </div>
         <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht" x-text="t('events_title')"></h2><div class="txs tm" style="margin-top:3px" x-text="t('events_desc')"></div></div><div class="fb"><span class="bdg" :class="eventsHasProblem?'bdg-e':'bdg-n'" x-show="events.length" x-text="t('events_count',events.length)"></span><button class="btn btn-g" style="font-size:var(--fs-11)" x-show="events.length" @click="clearEvents()" x-text="t('events_clear')"></button></div></div><div class="pnl-b">
           <template x-if="!events.length"><div class="txs tm" style="padding:6px 0" x-text="t('events_empty')"></div></template>
           <div class="evt-list">

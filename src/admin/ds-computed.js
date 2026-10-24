@@ -49,6 +49,58 @@
       const name = top.model || '—';
       return t('takeaway_rank_top', name, top.requests || 0, this.fmtPct((top.requests || 0) / total * 100));
     },
+    // ── 运维建议（2026-10-24，对照 WaLiAPI 的 DashboardPage.tsx:229-286）──
+    // 把散落的指标转成**条件化判断 + 可点动作**。与 healthTakeaway 的分工：
+    //   healthTakeaway = 一句陈述（"成功率 99.7%，错误 4 次"）—— 是什么
+    //   opAdvice       = 分条建议（"部分上游不可用，建议……"）—— 该怎么办
+    // 每条都带 `action`（'providers' / 'analytics' / 'records' / ''），
+    // 模板据此渲染「去处理 →」按钮。action 为空表示"无需处置"。
+    opAdvice() {
+      const out = [];
+      const st = this.stats || {};
+      const reqs = Number(st.total_requests) || 0;
+      if (!reqs) return out;   // 没有请求时不给建议（没数据就没有判断依据）
+
+      // ① 渠道健康：按 per_provider 里成功率低于 95% 的家数判断
+      const provs = st.per_provider || [];
+      const bad = provs.filter(p => {
+        const n = Number(p.requests) || 0;
+        if (!n) return false;
+        return (n - (Number(p.errors) || 0)) / n < 0.95;
+      });
+      if (bad.length === 0) {
+        out.push({ k: 'ch', tone: 'ok', text: t('advice_ch_ok', provs.length) });
+      } else if (bad.length <= 2) {
+        out.push({ k: 'ch', tone: 'warn', text: t('advice_ch_warn', bad.map(x => x.provider).join('、')), action: 'providers' });
+      } else {
+        out.push({ k: 'ch', tone: 'err', text: t('advice_ch_err', bad.length), action: 'providers' });
+      }
+
+      // ② 延迟：阈值 2s（与 WaLiAPI 一致）。但要看样本量 —— 1 条慢请求不代表整体慢。
+      const lat = Number(st.avg_latency_ms) || 0;
+      if (lat > 0) {
+        if (lat < 2000) out.push({ k: 'lat', tone: 'ok', text: t('advice_lat_ok', this.fmtMs(lat)) });
+        else out.push({ k: 'lat', tone: 'warn', text: t('advice_lat_slow', this.fmtMs(lat)), action: 'analytics' });
+      }
+
+      // ③ 省量：有没有在省、省了多少
+      const saved = Number(st.total_opt_saved_tokens) || 0;
+      if (saved > 0) {
+        out.push({ k: 'save', tone: 'ok', text: t('advice_saved', this.fmtT(saved)) });
+      } else {
+        out.push({ k: 'save', tone: 'mute', text: t('advice_saved_none'), action: 'analytics' });
+      }
+
+      // ④ 余额：只在**真有告警**时才建议（未配置余额不报警 —— 多数供应商本就没有余额 API）
+      const lowRows = (this.providerRows || []).filter(r => r.state === 'ok' && r.hasBalance && Number(r.balance) > 0 && Number(r.balance) < 5);
+      const deadRows = (this.providerRows || []).filter(r => r.state === 'ok' && r.hasBalance && Number(r.balance) === 0);
+      if (deadRows.length) {
+        out.push({ k: 'bal', tone: 'err', text: t('advice_bal_dead', deadRows.map(x => x.provider).join('、')), action: 'providers' });
+      } else if (lowRows.length) {
+        out.push({ k: 'bal', tone: 'warn', text: t('advice_bal_low', lowRows.map(x => x.provider).join('、')), action: 'providers' });
+      }
+      return out;
+    },
     get healthTakeaway() {
       if (!this.stats || !this.stats.total_requests) return '';
       // 结论句用**原始**成功率, 不走补间 —— 否则整句会跟着数字滚动, 读起来乱.
