@@ -2,7 +2,7 @@
   {
     "file": "head.html",
     "mode": "raw",
-    "bytes": 840
+    "bytes": 1533
   },
   {
     "file": "font.css",
@@ -12,82 +12,82 @@
   {
     "file": "base.css",
     "mode": "raw",
-    "bytes": 10118
+    "bytes": 29703
   },
   {
     "file": "components.css",
     "mode": "raw",
-    "bytes": 27368
+    "bytes": 97048
   },
   {
     "file": "pages.css",
     "mode": "raw",
-    "bytes": 5129
+    "bytes": 5909
   },
   {
     "file": "body-shell.html",
     "mode": "raw",
-    "bytes": 5319
+    "bytes": 6204
   },
   {
     "file": "page-overview.html",
     "mode": "raw",
-    "bytes": 14198
+    "bytes": 30155
   },
   {
     "file": "page-analytics.html",
     "mode": "raw",
-    "bytes": 19495
+    "bytes": 40264
   },
   {
     "file": "page-records.html",
     "mode": "raw",
-    "bytes": 11947
+    "bytes": 28020
   },
   {
     "file": "page-settings.html",
     "mode": "raw",
-    "bytes": 17282
+    "bytes": 22703
   },
   {
     "file": "page-providers.html",
     "mode": "raw",
-    "bytes": 11715
+    "bytes": 19265
   },
   {
     "file": "page-about.html",
     "mode": "raw",
-    "bytes": 4236
+    "bytes": 4481
   },
   {
     "file": "footer.html",
     "mode": "raw",
-    "bytes": 536
+    "bytes": 511
   },
   {
     "file": "modal-whatsnew-recall.html",
     "mode": "raw",
-    "bytes": 4890
+    "bytes": 4849
   },
   {
     "file": "modal-add-fetchdiff.html",
     "mode": "raw",
-    "bytes": 5126
+    "bytes": 15076
   },
   {
     "file": "drawer-provider.html",
     "mode": "raw",
-    "bytes": 20713
+    "bytes": 33683
   },
   {
     "file": "panel-price.html",
     "mode": "raw",
-    "bytes": 5352
+    "bytes": 6983
   },
   {
     "file": "i18n.js",
     "mode": "standalone",
-    "bytes": 60146
+    "bytes": 126560
   },
   {
     "file": "stores.js",
@@ -97,82 +97,82 @@
   {
     "file": "core.js",
     "mode": "standalone",
-    "bytes": 37083
+    "bytes": 49712
   },
   {
     "file": "ds-state.js",
     "mode": "fn-head",
-    "bytes": 5935
+    "bytes": 16459
   },
   {
     "file": "ds-onboard.js",
     "mode": "obj-body",
-    "bytes": 5243
+    "bytes": 12396
   },
   {
     "file": "ds-core.js",
     "mode": "obj-body",
-    "bytes": 5789
+    "bytes": 26063
   },
   {
     "file": "ds-brands.js",
     "mode": "obj-body",
-    "bytes": 6385
+    "bytes": 14709
   },
   {
     "file": "ds-settings-api.js",
     "mode": "obj-body",
-    "bytes": 10984
+    "bytes": 21007
   },
   {
     "file": "ds-meta.js",
     "mode": "obj-body",
-    "bytes": 5474
+    "bytes": 6292
   },
   {
     "file": "ds-stats.js",
     "mode": "obj-body",
-    "bytes": 4649
+    "bytes": 9953
   },
   {
     "file": "ds-trend.js",
     "mode": "obj-body",
-    "bytes": 8928
+    "bytes": 13514
   },
   {
     "file": "ds-config.js",
     "mode": "obj-body",
-    "bytes": 6803
+    "bytes": 9207
   },
   {
     "file": "ds-providers.js",
     "mode": "obj-body",
-    "bytes": 6889
+    "bytes": 21900
   },
   {
     "file": "ds-price.js",
     "mode": "obj-body",
-    "bytes": 5389
+    "bytes": 6162
   },
   {
     "file": "ds-provform.js",
     "mode": "obj-body",
-    "bytes": 5852
+    "bytes": 10217
   },
   {
     "file": "ds-provtest.js",
     "mode": "obj-body",
-    "bytes": 6070
+    "bytes": 8953
   },
   {
     "file": "ds-provsave.js",
     "mode": "obj-body",
-    "bytes": 11240
+    "bytes": 31886
   },
   {
     "file": "ds-computed.js",
     "mode": "obj-body",
-    "bytes": 6658
+    "bytes": 50976
   },
   {
     "file": "ds-guard.js",
@@ -182,21 +182,26 @@
   {
     "file": "ds-provtable.js",
     "mode": "raw",
-    "bytes": 2862
+    "bytes": 14171
+  },
+  {
+    "file": "ds-quota.js",
+    "mode": "obj-body",
+    "bytes": 4541
   },
   {
     "file": "ds-records.js",
     "mode": "obj-body",
-    "bytes": 3044
+    "bytes": 18751
   },
   {
     "file": "ds-fmt.js",
     "mode": "fn-tail",
-    "bytes": 11584
+    "bytes": 35302
   },
   {
     "file": "tail.html",
     "mode": "raw",
-    "bytes": 1588
+    "bytes": 27
   }
 ]

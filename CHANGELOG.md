@@ -12,6 +12,51 @@
 **可观测性与交互改进**：这一批把「证据链」补齐了 —— 记录详情能回答**「谁发的」「是不是同一次请求」「输入大在哪里」「客户端到底收到了什么」**；
 配置改动**先预览再生效**，测试**测的是你眼前那份草稿**；余额与模型明细**不再把不同的处境显示成同一个样子**。另含 opencode 端点迁移的修复。
 
+### opencode 套餐额度：从响应 allowance 累加，按官方三档算剩余
+
+用户问「opencode 套餐等这些主流编程套餐为什么不增加查看额度功能？明明参考项目有」。
+先取证，结论改变了我原先的判断。
+
+**参考项目到底有没有**：读 `auth_provider/spec.rs` 发现 `supports_quota` 是**逐 provider
+声明**的 —— 6 家里只有 Codex 与 Gemini 为 `true`，**WorkBuddy / Kimi / Grok / Qoder
+全是 `false`**。即「参考项目有额度查看」只对 Codex/Gemini 成立（它们有
+`GET /backend-api/wham/usage` 这类专用端点），不能推广到 WorkBuddy。
+
+**opencode 的真实机制**（查官方文档确认）：
+- **没有额度查询接口**；
+- 每条响应在 `usage.opencode.allowance` 里报告「本请求计了多少额度（美元）」；
+- **限额内 `cost` 报 0**（官方原文：`cost` … `0` for Go usage within its limits）；
+- 三档是滚动窗口：5 小时 = 月额度 20%、周 = 50%、月 = 100%；
+- 每个模型有**独立**月额度（GLM-5.3 $15、GLM-5.3-Flash $60、DeepSeek V4.1 Flash $80）。
+
+实测印证：**872 条 go 请求的 `cost` 全为 0** —— 所以用 `cost` 算套餐剩余根本不成立。
+
+实现：
+- `RequestLog` 新增 `allowance_usd` / `billing_source`（从 `usage.opencode.*` 提取，
+  随 `TokenAudit` 一路传到日志与 rollup）。`None` = 上游没给，与「消耗 0」严格区分。
+- 新模块 `src/opencode_quota.rs`：内置官方额度表（带 `TABLE_DATE` 与来源 URL，
+  面板显示日期供用户判断时效）+ 三档窗口比例。表里没有的模型返回 `None`（**不猜**），
+  不限量模型用 `Some(None)` 与「查不到」严格区分。
+- `ProviderStats.opencode_quota`：按模型聚合三个窗口的消耗（**各自独立累加**，
+  因为 5h 会滚动过期而月不会，用一个总数推算 5h 是错的）。
+- 前端 `ds-quota.js` + 供应商行展开区：每模型一行三条细进度条（5h / 本周 / 本月）。
+
+**两个只有实测才会发现的口径问题**：
+① `fmtPct()` 第 294 行 `if (v >= 100) return '100%'` 是给缓存命中率设计的，
+   用在额度上会把 **112.5% 压成 "100%"** —— 用户会以为"刚好用完"，实际已超支。
+   额度改用专用格式化：**超额如实显示真实值**，只有进度条宽度封顶 100%。
+② `billing_source` 必须过滤：`balance`（花余额）不该混进「套餐额度」，
+   否则会得出「花了钱又扣额度」的双重计数。
+
+**新增判据**：`opencode_quota` 单测 4 条（额度表抽查 / 未知模型不猜 / 不限量 vs 查不到 /
+三档比例）+ `usage_allowance` 单测 1 条（官方样例 / 非 opencode / byok / 整数型）+
+`tools/probe_quota_panel.py`（10 条，真实实例，构造 allowance 样本）。
+**改坏验证 3/3 转红**：5h 比例改错 / 超额 clamp / 不过滤 balance。
+
+**未做（有依据，不是遗漏）**：workbuddy / buddy / Joule 的额度查看 ——
+参考项目同样不做（`supports_quota: false`），且实测我们拿账号 token 试探
+常见额度端点全部 404 或返回 HTML 页面。
+
 ### 修两个真缺陷：日志清空后历史不可见、非法页签导致整页空白
 
 用户要求「你来处理问题」后，先修上一轮发现的既有缺陷，再用真实数据全页巡查找其余问题。

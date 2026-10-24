@@ -1115,3 +1115,21 @@ tr:hover td.th-sticky{
 /* 行内展开区：紧贴主行下方，左侧与内容对齐 */
 .prov-expand{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);
   display:flex;flex-direction:column;gap:10px}
+
+/* ── opencode 套餐额度（2026-10-24）──
+   每行一个模型，行内三条细进度条（5h / 周 / 月）。
+   为什么用三条而不是一条总进度：官方三档是**滚动窗口**，5h 会过期而月不会，
+   所以"5h 用了 90% 但月才用 30%"是正常状态，合成一条就看不出来了。 */
+.quota-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.quota-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:8px 10px;border-radius:var(--rm);background:var(--fill-3)}
+.quota-model{font-size:var(--fs-11);color:var(--fg);flex:none;
+  max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.quota-w{display:inline-flex;align-items:center;gap:5px;flex:none}
+.quota-w-l{font-size:var(--fs-10);color:var(--muted);white-space:nowrap}
+/* 进度条定宽 54px：各档视觉等重（不给某一档更多空间，避免暗示它更重要） */
+.quota-bar{display:inline-block;width:54px;height:5px;border-radius:999px;
+  background:var(--fill-5);overflow:hidden;flex:none}
+.quota-bar > i{display:block;height:100%;border-radius:999px;transition:width .3s}
+.quota-w-v{font-size:var(--fs-10);font-weight:600;font-variant-numeric:tabular-nums;
+  min-width:38px;text-align:right}

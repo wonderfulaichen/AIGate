@@ -1,21 +1,33 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉖」**：修「日志清空后历史
-> 不可见」+ 三处非法页签导致整页空白）。
-> ① **缺陷 A**（既有）：rollup 合并写成 `if let Some(cover_ts) = oldest_ts()`，
-> 缓冲区为空时 `None` → 整段合并被静默跳过 → 日志清空后历史数据完全不可见。
-> 修为空缓冲区用 `now` 当上界（折算成"合并到今天之前"，今天**始终排除**）。
-> ② **缺陷 B**：`setAnalyticsTab('perf')` / `setSettingsSection('garbage')` /
-> `#settings/garbage` 三处都不校验 → 所有面板 `x-show` 全假 → **整页空白**
-> （看着像加载失败）。**规律：面板可见性由枚举值驱动时，非法值不是无操作而是全隐藏。**
-> ③ 参考项目 WALiAPI 的 `SettingsPage.tsx` **同样不校验**（`return hash || "security"`），
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉗」**：opencode 套餐额度）。
+> 用户问「opencode 套餐怎么不增加查看额度？参考项目有」。取证后结论：
+> ① 参考项目的 `supports_quota` 是**逐 provider** 的，6 家里只有 Codex/Gemini 为 true，
+> **WorkBuddy 明确 false** —— 「参考项目有」不成立，别凭印象推广。
+> ② opencode **没有额度查询接口**；每条响应给 `usage.opencode.allowance`（美元），
+> 且**限额内 `cost` 报 0**（实测 872 条 go 请求 cost 全 0）→ 只能用 allowance 累加。
+> ③ 三档滚动窗口 5h=20% / 周=50% / 月=100%，每模型独立月额度。
+> 实现：`RequestLog.allowance_usd`/`billing_source` + 新模块 `opencode_quota.rs`
+> （官方额度表带 `TABLE_DATE`）+ `ProviderStats.opencode_quota` + 前端三条进度条。
+> ⚠️ **两个实测才会发现的口径坑**：`fmtPct()` 会把 112.5% 压成 "100%"（给命中率设计的），
+> 额度必须专用格式化、只让**进度条宽度**封顶；`billing_source=balance` 必须过滤，
+> 否则"花了钱又扣额度"双重计数。
+> **明确不做**：workbuddy/buddy/Joule 额度（参考项目也是 false；实测端点全 404 或返 HTML）。
+> 新增单测 5 条 + `probe_quota_panel.py`(10)，改坏验证 3/3 转红。
+> **未实测**：真实 opencode 请求未产生过 allowance，字段形状按文档但未经我方实测。
+
+> ⏪ **上一轮（㉖）**：修「日志清空后历史不可见」+ 三处非法页签导致整页空白。
+> ① rollup 合并原写 `if let Some(cover_ts) = oldest_ts()`，缓冲区为空时 None →
+> 整段合并静默跳过 → 日志清空后历史完全不可见。修为空缓冲区用 `now` 当上界
+> （折算成"合并到今天之前"，今天**始终排除**）。
+> ② `setAnalyticsTab('perf')` / `setSettingsSection('garbage')` / `#settings/garbage`
+> 三处不校验 → 所有面板 `x-show` 全假 → **整页空白**。
+> **规律：面板可见性由枚举值驱动时，非法值不是无操作而是全隐藏。**
+> ③ 参考项目 `SettingsPage.tsx` **同样不校验**（`return hash || "security"`），
 > 我们观感更糟所以做了归一 —— **有意识地不照抄它的漏洞**。
-> 新增探针 `probe_rollup_empty_logs.py`(4) / `probe_tab_guard.py`(8)，
-> 改坏验证 1/1 与 3/3 转红。
 > ⚠️ **判据诚实性**：单测 `rollup_merge_bounds_covers_history_when_buffer_is_empty`
-> **没有判别力**（只测纯函数、证明不了调用方会调）—— 别把它当成"改了调用方就红"的保险，
-> 真正守这条的是那个探针。
-> 全页巡查（真实数据）：7 个页面/页签零 pageerror、零未替换占位符、零 undefined。
+> **没有判别力**（只测纯函数、证明不了调用方会调）。真正守这条的是探针。
+> 新增探针 `probe_rollup_empty_logs.py`(4) / `probe_tab_guard.py`(8)，改坏验证 1/1 与 3/3 转红。
 
 > ⏪ **上一轮（㉕）**：rollup 落盘失败原因 + 失败建议 + 套餐徽章。
 > 方案文档 `docs/plan-rollup-error-and-plans.md`。`RollupEntry` 新增
@@ -1721,6 +1733,89 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-24 轮 ㉗：opencode 套餐额度（从响应 allowance 累加，不是查接口）
+
+用户问「opencode 套餐等这些主流编程套餐为什么不增加查看额度功能？明明参考项目有」。
+**先取证，结论改变了原先判断**。
+
+#### 参考项目到底做了什么（别凭印象）
+
+读 `auth_provider/spec.rs` → `supports_quota` 是**逐 provider 声明**的：
+6 家里只有 **Codex / Gemini** 为 `true`（有专��端点 `GET /backend-api/wham/usage`），
+**WorkBuddy / Kimi / Grok / Qoder 全是 `false`**。
+所以「参考项目有额度查看」只对 Codex/Gemini 成立，**不能推广到 WorkBuddy** ——
+这正是我之前说"要先确认上游是否提供"的原因，现在有了明确的对照答案。
+
+#### opencode 的真实机制（官方文档 + 实测）
+
+| 事实 | 来源 |
+|---|---|
+| **没有额度查询接口** | 文档只有 Console 页面，无 usage/quota 端点 |
+| 每条响应给 `usage.opencode.allowance`（美元） | `docs/console/api/inference#cost` |
+| **限额内 `cost` 报 0** | 同上，「`0` for Go usage within its limits」 |
+| 三档滚动窗口：5h=月额度 20%、周=50%、月=100% | `docs/console/go#usage-limits` |
+| 每模型独立月额度（$15/$20/$30/$60/$80） | 同上表格 |
+
+**实测印证**：日志里 **872 条 go 请求的 `cost` 全为 0** ——
+所以「用 cost 算套餐剩余」这条路根本不成立，必须抓 `allowance`。
+
+#### 实现
+
+- `RequestLog` 新增 `allowance_usd: Option<f64>` + `billing_source: Option<String>`，
+  在 `usage_allowance()` 里从 `usage.opencode.*` 提取，经 `TokenAudit` 一路传到
+  日志与 rollup（三条收尾路径：正常结束 / 失败 / 客户端取消都要写）。
+- 新模块 **`src/opencode_quota.rs`**：官方额度表（带 `TABLE_DATE` + 来源 URL）
+  + 三档比例。**表里没有的模型返回 `None`（不猜）**；官方标 Unlimited 的用
+  `Some(None)`，与「查不到」严格区分 —— 混用会让新模型被误标成不限量。
+- `ProviderStats.opencode_quota`：**按模型**聚合三个窗口（供应商级一个总数没有意义，
+  因为额度是每模型独立的；三个窗口也必须**各自独立累加**，
+  5h 会滚动过期而月不会，用一个总数推算 5h 是错的）。
+- 前端 `ds-quota.js`（新切片，manifest 第 41 项）+ 供应商行展开区：
+  每模型一行三条细进度条。**没有"刷新"按钮** —— 数据只随我们自己发请求增长，
+  加刷新按钮只会骗人。
+
+#### 两个只有实测才会发现的口径问题
+
+① **`fmtPct()` 会把超额压成 100%**：第 294 行 `if (v >= 100) return '100%'`
+   是给缓存命中率设计的。用在额度上，112.5% 会显示成 "100%" ——
+   用户以为"刚好用完"，实际已超支、可能已被限流。
+   修法：额度用专用格式化，**文案如实给真实值**，只有**进度条宽度**封顶 100%
+   （否则溢出容器）。这条是探针 ④ 抓出来的。
+② **`billing_source` 必须过滤**：`balance`（花余额按量付）不该混进「套餐额度」，
+   否则双重计数 —— 得出"花了钱又扣额度"的矛盾结论。
+   实测：把过滤去掉后 glm-5.3 的 5h 从 90% 跳到 256.7%（改坏验证 ③ 转红证实）。
+
+#### 新增判据
+
+- `opencode_quota` 单测 4 条：额度表抽查（$15/$20/$60/$80 四档）、
+  未知模型不猜、不限量 vs 查不到必须能区分、三档比例 20/50/100。
+- `usage_allowance` 单测 1 条：官方样例 / 非 opencode → None / byok 有 source 无 allowance /
+  整数型 allowance。
+- `tools/probe_quota_panel.py`（10 条，真实实例）：构造 allowance 样本，
+  断言额度块渲染、三档独立且顺序正确、换算正确（$2.7/($15×20%)=90%）、
+  **超额如实显示 112.5% 而进度条封顶 100%**、额度表日期可见、零 pageerror。
+- **改坏验证 3/3 转红**：5h 比例改成 50% / 超额 clamp 到 100% / 不过滤 balance。
+
+#### 明确不做（有依据，不是遗漏）
+
+**workbuddy / buddy / Joule 的额度查看**：
+- 参考项目对 workbuddy 也是 `supports_quota: false`；
+- 实测：拿账号 token 试探常见额度端点（`/user/balance`、`/usage`、`/quota`、
+  `/dashboard/billing/*` 等 13 个 × 2 种 base）全部 404，或返回**一整页 HTML**
+  （SPA 路由兜底，不是 API 响应）。
+
+**给用户的建议**：这三家的额度只能去各自控制台看。面板上与其画一条查不到的进度条，
+不如不画 —— 这与本项目「未采集不伪装成 0」的一贯口径一致。
+
+#### 未实测 / 已知缺口
+
+- **真实 opencode 请求未验证**：本次用构造的 `allowance` 样本验证全链路，
+  没有真实 go 请求产生 allowance（需要实际发一次带套餐额度的请求）。
+  字段名与结构严格按官方文档，但**上游真发什么形状未经我方实测**。
+- 额度表会过期：官方明说额度会调整，`TABLE_DATE` 显示在面板上，过期后需手动更新。
+- `@media(max-width:1180px)` 下额度块未截图核对。
+- 部署份 exe 未替换（红线）。
 
 ### 🆕 10-24 轮 ㉖：修「日志清空后历史不可见」+ 三处非法页签导致整页空白
 

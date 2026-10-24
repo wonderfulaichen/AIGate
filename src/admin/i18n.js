@@ -437,6 +437,11 @@ const I18N = {
     'prov_advice_upstream': '上游服务异常：通常稍后重试即可，持续则联系该供应商。',
     // 套餐/免费徽章：解释模型明细里「已省」为何是 "—"
     'flat_rate_badge': '套餐', 'flat_rate_hint': '这家含按套餐/免费计费的模型（不按量计费）—— 那些模型的「已省」金额显示为 —（无单价基数），数量：',
+    // opencode 套餐额度（2026-10-24）：数据来自本地累加 allowance，不是查接口
+    'quota_title': '套餐额度',
+    'quota_source_note': '本地累加 · 额度表 {0}',
+    'quota_source_hint': 'opencode 不提供额度查询接口，这里的用量由我们累加每条响应的 allowance 得出；月额度是官方公布值，抄录日期见标签。官方可能调整额度，过期后百分比会与控制台不一致。',
+    'quota_5h': '5 小时', 'quota_week': '本周', 'quota_month': '本月',
     'api_information_desc': '用于客户端接入的地址', 'view_providers': '查看供应商', 'api_base_url_desc': '兼容 OpenAI 的 API 基地址',
     'available_models': '可用模型', 'chat_completions': 'Chat Completions', 'balance_cost': '余额与费用', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': '快速开始', 'quick_start_desc': '将以下地址填入 Cursor、Trae 或其他客户端的 API Base URL。',
@@ -936,6 +941,10 @@ const I18N = {
     'prov_advice_network': 'Network failure: check whether the proxy is listening and the upstream is reachable.',
     'prov_advice_upstream': 'Upstream service error: usually retry later; contact the provider if it persists.',
     'flat_rate_badge': 'Flat rate', 'flat_rate_hint': 'This provider has flat-rate/free models (not billed per token) — their "saved" amount shows — (no price basis). Count:',
+    'quota_title': 'Plan quota',
+    'quota_source_note': 'Summed locally · quota table {0}',
+    'quota_source_hint': 'opencode does not expose a quota query API; usage here is summed from each response\'s allowance. Monthly limits are official published values — see the table date on the label. The provider may change limits, after which percentages will differ from the console.',
+    'quota_5h': '5 hours', 'quota_week': 'This week', 'quota_month': 'This month',
     'api_information_desc': 'Endpoints for client access', 'view_providers': 'View providers', 'api_base_url_desc': 'OpenAI-compatible API base URL',
     'available_models': 'Available models', 'chat_completions': 'Chat Completions', 'balance_cost': 'Balance & cost', 'anthropic_messages': 'Anthropic Messages', 'responses_api': 'Responses API',
     'quick_start': 'Quick start', 'quick_start_desc': 'Paste the following address into Cursor, Trae, or another client as the API Base URL.',

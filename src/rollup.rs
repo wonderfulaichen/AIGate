@@ -525,6 +525,7 @@ mod tests {
             attempts: Vec::new(),
             client_status: None,
             context: None,
+            allowance_usd: None, billing_source: None,
             prompt_tokens: 100,
             completion_tokens: 10,
             reasoning_tokens: 0,

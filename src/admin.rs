@@ -276,6 +276,30 @@ pub struct RequestLog {
     /// 无独立 creation 口径, 记 0, 此时 creation 计入未命中按 input 价计.
     #[serde(default)]
     pub prompt_cache_creation_tokens: u32,
+    /// 本次请求**消耗掉多少套餐额度**（美元），来自 `usage.opencode.allowance`。
+    ///
+    /// 为什么单独存一个字段而不是复用 `cost`：
+    /// opencode Go 在**限额内把 `cost` 报成 0**（官方文档明写「`cost` ... `0` for Go
+    /// usage within its limits」），真正的消耗在 `opencode.allowance`。
+    /// 实测印证：872 条 go 请求的 `cost` 全为 0。
+    /// 所以「用 cost 算套餐剩余」这条路从根本上不可行 —— 必须单独抓这个字段。
+    ///
+    /// 官方额度机制（docs/console/go#usage-limits）：额度以**美元**计，
+    /// 每个模型有独立月额度；三档为 5 小时 = 月额度的 20%、周 = 50%、月 = 100%。
+    /// 因此按月/周/5h 三个窗口累加 `allowance` 即可算出各档剩余。
+    ///
+    /// 单位是**美元**（不是元）。`None` = 上游没给（非 opencode 供应商 / 旧日志），
+    /// 与「消耗 0」是两回事，统计时不得混为一谈。
+    #[serde(default)]
+    pub allowance_usd: Option<f64>,
+    /// 本条请求的计费来源，来自 `usage.opencode.billing_source`：
+    /// `free` / `balance` / `go` / `go-plus` / `byok`。
+    ///
+    /// 为什么需要：同样是 opencode，`balance`（按量付）与 `go`（套餐内）的
+    /// 「花了多少」语义完全不同 —— 前者花钱、后者扣额度。混在一起算会得出
+    /// 「这个月花了 $0 但额度用掉一半」这种自相矛盾的结论。
+    #[serde(default)]
+    pub billing_source: Option<String>,
     /// 首 token 延迟 (ms): 从请求开始到上游吐出第一个增量内容的耗时.
     /// 用于计算"纯生成吐字速度" = 输出 token / (总耗时 - 首 token 延迟), 排除排队与 TTFT.
     /// 非流式/命中本地缓存的请求此项为 None.
@@ -951,6 +975,9 @@ pub async fn record_request(
         audit_dup_block_count: 0,
         audit_observed: false,
         context: None,
+        // 失败路径没有可解析的响应 usage → 未采集（None，不是 0）。
+        allowance_usd: None,
+        billing_source: None,
         price: None,
         first_token_ms: None,
         upstream_model: upstream_model.map(|s| s.to_string()),
@@ -1123,6 +1150,10 @@ pub async fn record_request_with_tokens_status(
         audit_observed: audit_is_observed,
         // 上下文构成: 随审计一起落到这一条 (未采集时 None, 前端不画假 0)。
         context: audit.context,
+        // opencode 套餐额度消耗（响应侧 usage.opencode.*，2026-10-24）。
+        // 随 audit 一路传下来：None = 上游没给（非 opencode / 旧日志）。
+        allowance_usd: audit.allowance_usd,
+        billing_source: audit.billing_source,
         price: None,
         first_token_ms,
         upstream_model: upstream_model.map(|s| s.to_string()),
@@ -1239,6 +1270,7 @@ const ADMIN_HTML: &str = concat!(
     include_str!("admin/ds-computed.js"),
     include_str!("admin/ds-guard.js"),
     include_str!("admin/ds-provtable.js"),
+    include_str!("admin/ds-quota.js"),
     include_str!("admin/ds-records.js"),
     include_str!("admin/ds-fmt.js"),
     include_str!("admin/tail.html"),
@@ -2728,6 +2760,8 @@ pub async fn api_mock(
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             context: None,
+            allowance_usd: None,
+            billing_source: None,
             price: None,
             usage_estimated: false,
             seq: 0,
@@ -2782,6 +2816,8 @@ pub async fn api_mock(
             strip_toolcall_saved_tokens: 0,
             audit_observed: false,
             context: None,
+            allowance_usd: None,
+            billing_source: None,
             price: None,
             usage_estimated: false,
             seq: 0,
@@ -3035,6 +3071,7 @@ mod changelog_tests {
             attempts: Vec::new(),
             client_status: None,
             context: None,
+            allowance_usd: None, billing_source: None,
             prompt_tokens: 0, completion_tokens: out_tok, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,
             prompt_cache_creation_tokens: 0, first_token_ms: None, upstream_model: None,
@@ -4162,6 +4199,99 @@ pub struct ProviderStats {
     /// 与所属天并不严格同向。没有这个字段就无法正确合并。
     #[serde(default)]
     pub last_error_ts: u64,
+    /// **opencode 套餐额度消耗**（2026-10-24）：按官方三档窗口聚合的 `allowance` 之和（美元）。
+    ///
+    /// 为什么是**逐模型**而不是供应商级一个总数：opencode 的额度是**每模型独立**的
+    /// （GLM-5.3 是 $15，GLM-5.3-Flash 是 $60），一个总数没有意义。
+    /// 前端拿这份数据对照额度表算各档剩余百分比。
+    #[serde(default)]
+    pub opencode_quota: Vec<OpencodeQuotaUsage>,
+}
+
+/// 某模型在 opencode 套餐三个窗口内的消耗（美元）。
+///
+/// 三档对应官方口径：5 小时 = 月额度 20%、周 = 50%、月 = 100%
+/// （见 [`crate::opencode_quota`]）。三个窗口**各自独立**累加 ——
+/// 不能用一个总数推算，因为 5h 窗口会滚动过期而月窗口不会。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OpencodeQuotaUsage {
+    /// 上游模型 ID（与额度表的 `model` 对应）。
+    pub model: String,
+    /// 最近 5 小时消耗（美元）。
+    pub used_5h_usd: f64,
+    /// 最近 7 天消耗（美元）。
+    pub used_weekly_usd: f64,
+    /// 最近 30 天消耗（美元）。
+    pub used_monthly_usd: f64,
+    /// 参与统计的请求数（只有带 `allowance` 的请求才计入）。
+    pub samples: usize,
+    /// 该模型的**月额度**（美元），来自 [`crate::opencode_quota`] 的官方额度表。
+    ///
+    /// `None` = 额度表里没有这个模型 → 前端**算不出百分比**，显示 "—" 而不是 0%。
+    /// 由后端算好下发（而不是让前端再维护一份额度表）：额度表只有一处声明，
+    /// 前端只负责画。
+    pub monthly_usd: Option<f64>,
+}
+
+/// 按模型聚合 opencode 套餐三档窗口的额度消耗（2026-10-24）。
+///
+/// # 为什么按窗口分别累加，而不是只给一个月总数
+///
+/// 官方三档是**滚动窗口**：5 小时、周、月各算各的。一个月总数无法推算 5h 窗口
+/// （5h 会过期而月不会）。所以三个窗口都从原始日志的 `timestamp` 现场判断。
+///
+/// # 只统计带 `allowance` 的请求
+///
+/// 非 opencode 供应商、旧日志、`byok` 请求都没有这个字段。
+/// 它们**不参与**累加（`samples` 也不加），否则会把「未采集」算成「消耗 0」，
+/// 让进度条永远显示满额。
+fn opencode_quota_usage(logs: &[&RequestLog], now: u64) -> Vec<OpencodeQuotaUsage> {
+    // 窗口边界（秒）。与官方对齐：5h / 7d / 30d。
+    let w5h = now.saturating_sub(5 * 3600);
+    let wweek = now.saturating_sub(7 * 86400);
+    let wmonth = now.saturating_sub(30 * 86400);
+
+    // 用 BTreeMap 保证输出顺序稳定（否则面板每次刷新行序会跳）。
+    let mut acc: std::collections::BTreeMap<&str, OpencodeQuotaUsage> =
+        std::collections::BTreeMap::new();
+    for l in logs {
+        let Some(allow) = l.allowance_usd else {
+            continue; // 未采集（非 opencode / 旧日志 / byok）→ 不计入
+        };
+        // 只认套餐计费来源。`balance` 是花余额（按量付），不该混进"套餐额度"。
+        // 实测 `billing_source` 缺失时（旧日志）也按套餐算 —— 那是唯一会带
+        // allowance 的场景，保守起见仍计入，但 samples 会如实反映样本量。
+        let is_plan = match l.billing_source.as_deref() {
+            Some("go") | Some("go-plus") => true,
+            Some("balance") | Some("free") | Some("byok") => false,
+            _ => true,
+        };
+        if !is_plan || allow <= 0.0 {
+            continue;
+        }
+        // 模型名用 upstream_model（额度表按上游 ID 索引），缺失时回退中转 ID。
+        let m = l.upstream_model.as_deref().unwrap_or(&l.model);
+        let e = acc.entry(m).or_insert_with(|| OpencodeQuotaUsage {
+            model: m.to_string(),
+            // 额度表查一次即可（不在热循环里反复查）。表里没有 → None（不猜）。
+            monthly_usd: crate::opencode_quota::monthly_limit(m).flatten(),
+            ..Default::default()
+        });
+        e.samples += 1;
+        if l.timestamp >= w5h {
+            e.used_5h_usd += allow;
+        }
+        if l.timestamp >= wweek {
+            e.used_weekly_usd += allow;
+        }
+        if l.timestamp >= wmonth {
+            e.used_monthly_usd += allow;
+        }
+    }
+    let mut v: Vec<OpencodeQuotaUsage> = acc.into_values().collect();
+    // 消耗多的排前面 —— 用户最关心"哪个模型快用完了"。
+    v.sort_by(|a, b| b.used_monthly_usd.partial_cmp(&a.used_monthly_usd).unwrap_or(std::cmp::Ordering::Equal));
+    v
 }
 
 /// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
@@ -4526,6 +4656,13 @@ pub struct UsageStats {
     pub window_minutes: f64,
     /// 当前统计窗口的可读来源说明.
     pub source_window: String,
+    /// opencode 额度表的抄录日期（2026-10-24）。
+    ///
+    /// 为什么随统计下发：官方明说额度会调整，面板必须显示这份数据"抄自哪天"，
+    /// 用户才能判断百分比是否可信。硬编码在前端会导致前后端不同步，
+    /// 故由唯一的声明处（[`crate::opencode_quota::TABLE_DATE`]）透出。
+    #[serde(default)]
+    pub opencode_quota_table_date: String,
     /// **阶段耗时汇总** (2026-10-13 方案 F「时间去哪了」): 把每次流式请求的四段耗时
     /// 聚合成可读的「时间花在哪」。未采集的样本不计入 (面板显示 "—" 而非 0)。
     #[serde(default)]
@@ -4804,6 +4941,8 @@ pub async fn api_stats(
         "365d" => "最近 12 个月".to_string(),
         _ => "当前运行日志窗口".to_string(),
     };
+    // 额度表抄录日期（唯一声明处透出，避免前后端各写一份而漂移）。
+    stats.opencode_quota_table_date = crate::opencode_quota::TABLE_DATE.to_string();
     stats.session = state.log_buffer.session_stats();
 
     *state.stats_cache.lock().await = Some((seq, query_key, prov_mtime, stats.clone()));
@@ -5545,6 +5684,9 @@ fn compute_stats(
                 .map(truncate_err);
             let last_error_status = last_err_log.map(|l| l.status).unwrap_or(0);
             let last_error_ts = last_err_log.map(|l| l.timestamp).unwrap_or(0);
+            // opencode 套餐额度消耗（三档窗口）。只有 opencode 系请求会带 allowance，
+            // 其它供应商得到空列表 —— 前端据此不渲染额度块（未采集 ≠ 消耗 0）。
+            let quota_usage = opencode_quota_usage(&logs, now_ts());
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -5576,6 +5718,7 @@ fn compute_stats(
                 last_error,
                 last_error_status,
                 last_error_ts,
+                opencode_quota: quota_usage,
             }
         })
         .collect();
@@ -5662,6 +5805,8 @@ fn compute_stats(
         window_end: now_ts(),
         window_minutes: 1.0,
         source_window: "当前运行日志窗口".to_string(),
+        // 额度表日期在 compute_stats 里不设（由 handler 统一填），此处给空串。
+        opencode_quota_table_date: String::new(),
         stage_summary,
         gateway_stages,
     }
@@ -6165,6 +6310,9 @@ fn merge_rollup_days(
                     last_error: e.last_error.clone(),
                     last_error_status: e.last_error_status,
                     last_error_ts: e.last_error_ts,
+                    // rollup 不存 allowance（只有 5h/7d/30d 滚动窗口有意义，
+                    // 而 rollup 是日粒度且不含该字段）→ 空列表（未采集）。
+                    opencode_quota: Vec::new(),
                 });
             }
         }
@@ -6969,6 +7117,7 @@ mod tests {
             attempts: Vec::new(),
             client_status: None,
             context: None,
+            allowance_usd: None, billing_source: None,
             prompt_tokens: 100,
             completion_tokens: 50,
             // mk() 是通用夹具: 默认无思考. 需要思考样本用 mk_ttft_rt().
@@ -7991,6 +8140,7 @@ mod tests {
             status: 200, latency_ms: 0, body_len: 0, error: None,
             client_name: None, trace_id: String::new(), upstream_request_id: None,
             attempts: Vec::new(), context: None,
+            allowance_usd: None, billing_source: None,
             client_status: None,
             prompt_tokens: 100, completion_tokens: 10, reasoning_tokens: 0, cached: false,
             prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 0,

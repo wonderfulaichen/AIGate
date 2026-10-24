@@ -112,6 +112,40 @@
         <!-- 行内展开（保留我们已有、WaLiAPI 没有的能力：模型胶囊点一下复制） -->
         <template x-if="isProvExpanded(prov.name)">
           <div class="prov-expand" @click.stop>
+            <!-- opencode 套餐额度（2026-10-24）。
+                 数据来源：我们**自己累加**每条响应的 `usage.opencode.allowance`，
+                 不是查接口 —— opencode 不提供额度查询端点（详见 ds-quota.js 顶部说明）。
+                 所以这里没有"刷新"按钮：刷新也只会得到同样的本地累加值。
+                 `provQuotaRows` 返回 null（非 opencode / 无数据）时整块不渲染 ——
+                 不画 0% 的假进度条。 -->
+            <template x-if="provQuotaRows(prov.name)">
+              <div class="pe-sec">
+                <div class="pe-hd">
+                  <span x-text="t('quota_title')"></span>
+                  <span class="txs tm" x-text="t('quota_source_note',quotaTableDate())" :title="t('quota_source_hint')"></span>
+                </div>
+                <div class="quota-list">
+                  <template x-for="q in provQuotaRows(prov.name)" :key="'q'+q.model">
+                    <div class="quota-row">
+                      <span class="quota-model mono" x-text="q.model" :title="q.model"></span>
+                      <!-- 三档：5 小时 / 周 / 月。每档独立进度条 —— 5h 会滚动过期而月不会，
+                           用一个总数推算 5h 是错的。 -->
+                      <template x-for="w in [{k:'fiveHour',u:q.used_5h_usd,l:'quota_5h'},
+                                             {k:'weekly',u:q.used_weekly_usd,l:'quota_week'},
+                                             {k:'monthly',u:q.used_monthly_usd,l:'quota_month'}]" :key="'qw'+q.model+w.k">
+                        <span class="quota-w">
+                          <span class="quota-w-l" x-text="t(w.l)"></span>
+                          <span class="quota-bar"><i :style="'width:'+Math.min(100,quotaPct(w.u,q.monthly_usd,w.k)||0)+'%;background:'+quotaTone(quotaPct(w.u,q.monthly_usd,w.k))"></i></span>
+                          <b class="quota-w-v" :style="'color:'+quotaTone(quotaPct(w.u,q.monthly_usd,w.k))"
+                             :title="'$'+(w.u||0).toFixed(4)+' / $'+((q.monthly_usd||0)*({fiveHour:0.2,weekly:0.5,monthly:1}[w.k])).toFixed(2)"
+                             x-text="quotaPctText(w.u,q.monthly_usd,w.k)"></b>
+                        </span>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
             <div class="pe-sec">
               <div class="pe-hd"><span x-text="t('available_models_n',(prov.models||[]).length)"></span><span class="txs tm" x-text="t('click_to_copy')"></span></div>
               <div class="pe-chips">

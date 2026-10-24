@@ -52,6 +52,7 @@ mod rollup;
 mod version;
 mod tooltip;
 mod balance;
+mod opencode_quota;
 mod currency;
 mod proxy_cfg;
 mod seen_version;

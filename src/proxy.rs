@@ -3173,6 +3173,8 @@ fn stream_response_with_tokens(
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
             usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names,
@@ -3483,6 +3485,17 @@ struct TokenStream {
     /// 判据取"是否见过 usage 对象"而非"token 是否非零" —— 上报了 usage 但输出确为 0
     /// 是合法情况, 不能因此被误标成估算.
     usage_seen: bool,
+    /// opencode 套餐额度消耗（美元），来自 `usage.opencode.allowance`（2026-10-24）。
+    ///
+    /// 为什么不能复用 `cost`：官方明写 Go 在**限额内 `cost` 报 0**，
+    /// 真正计进套餐的是这个字段。实测 872 条 go 请求的 `cost` 全为 0 印证了这点。
+    ///
+    /// `None` = 上游没给（非 opencode / 该次无 usage）—— 与 `Some(0.0)`（确实消耗 0）
+    /// 语义相反，统计时不得混用。
+    allowance_usd: Option<f64>,
+    /// `usage.opencode.billing_source`（`free`/`balance`/`go`/`go-plus`/`byok`）。
+    /// 用来区分"花钱"与"扣套餐额度" —— 混算会得出"花了 $0 却用掉一半额度"的矛盾结论。
+    billing_source: Option<String>,
     /// 本流是否输出过 tool_calls delta: 半截工具调用 JSON 无法安全续写, 触发即禁用续写.
     emitted_tool_calls: bool,
     /// 本流**实际产出过的工具名**集合 (含客户端未声明的那些)。
@@ -3760,6 +3773,16 @@ impl TokenStream {
                 self.tokens_cache_miss = miss;
                 self.tokens_cache_creation = creation;
             }
+            // opencode 套餐额度消耗（只有 opencode 系给这两项；其它供应商为 None）。
+            // 只在真拿到 allowance 时覆盖 —— 分块 usage 里后到的块可能不带 opencode 段，
+            // 不能因此把先前读到的值清成 None。
+            let (allow, src) = usage_allowance(usage);
+            if allow.is_some() {
+                self.allowance_usd = allow;
+            }
+            if src.is_some() {
+                self.billing_source = src;
+            }
         }
         // 部分供应商把 usage 放在 choices[0] 的内层; 同时取 delta 文本喂死循环检测器.
         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
@@ -3793,6 +3816,14 @@ impl TokenStream {
                         self.tokens_cache_hit = hit;
                         self.tokens_cache_miss = miss;
                         self.tokens_cache_creation = creation;
+                    }
+                    // 同外层 usage：opencode 额度消耗（内层 choices[0].usage 也可能是来源）。
+                    let (allow, src) = usage_allowance(inner_usage);
+                    if allow.is_some() {
+                        self.allowance_usd = allow;
+                    }
+                    if src.is_some() {
+                        self.billing_source = src;
                     }
                 }
                 // 取增量文本: 死循环检测器只喂 content 正文.
@@ -4042,6 +4073,11 @@ impl TokenStream {
         // 会话归属从 ld 里取 (owned) —— 失败的那一跳也要挂在会话链上。
         let sess = ld.session.clone();
         let mut origin = ld.origin.clone();
+        // 把流里解析到的 opencode 额度消耗写回 audit（2026-10-24）。
+        // audit 本身是**请求侧**产物、拿不到响应；这两个字段是**响应侧**的，
+        // 所以在收尾时补进去。三条收尾路径（结束/失败/断连）都走这里。
+        ld.audit.allowance_usd = self.allowance_usd;
+        ld.audit.billing_source = self.billing_source.clone();
         // **客户端实际收到的状态** (2026-10-24): 流式请求的 HTTP 头在收到上游首字节时
         // 就已经发出（200），此后流内报错**无法回退修改 HTTP 状态** —— 网关只能把错误
         // 表现为 SSE error 事件。故此刻 `status`(语义结论, 记 502 便于统计告警) 与
@@ -4514,6 +4550,9 @@ impl Stream for TokenStream {
                             // 会话归属从 ld 取 (owned) —— 正常收尾的那一跳也挂在会话链上。
                             let sess = ld.session.clone();
                             let mut origin = ld.origin.clone();
+                            // opencode 额度消耗写回 audit（同 log_stream_failure 的说明）。
+                            ld.audit.allowance_usd = this.allowance_usd;
+                            ld.audit.billing_source = this.billing_source.clone();
                             // **客户端实际收到的状态** (2026-10-24): 这条收尾路径同样可能出现
                             // "语义状态 ≠ 客户端感知" —— 上游中途断流时, HTTP 200 头早已发出
                             // (网关还会补发 length 终止帧让客户端正常收尾), 而语义结论记 502。
@@ -4689,6 +4728,9 @@ impl Drop for TokenStream {
         // 会话归属 (方案 F): Drop 也要挂在会话链上 —— 客户端取消的那一跳同样是会话的一部分。
         let sess = ld.session.clone();
         let mut origin = ld.origin.clone();
+        // opencode 额度消耗写回 audit（同 log_stream_failure 的说明）。
+        ld.audit.allowance_usd = self.allowance_usd;
+        ld.audit.billing_source = self.billing_source.clone();
         // **客户端实际收到的状态** (2026-10-24): 同前两条收尾路径。
         // 这里 `close_status` 可能是 499（客户端中途取消）—— 但 client_status 仍记 200,
         // 因为 HTTP 头在流开始时就已经发出且是 200；499 只是我们**事后**对"客户端跑了"
@@ -4856,6 +4898,41 @@ pub(crate) fn usage_cache(usage: &serde_json::Value) -> (u32, u32, u32) {
     (0, 0, 0)
 }
 
+/// 从上游 `usage` 提取 **opencode 套餐额度消耗** 与计费来源。
+///
+/// 返回 `(allowance_usd, billing_source)`。
+///
+/// 为什么需要单独提取（2026-10-24，查 opencode 官方文档后确认）：
+/// opencode Go 在**套餐限额内把 `usage.cost` 报成 0** —— 官方
+/// `docs/console/api/inference#cost` 明写：
+///   "`cost` — US dollars charged to your balance. `0` for free models and
+///    for Go usage within its limits."
+/// 真正计进套餐消耗的是 `opencode.allowance`：
+///   "Go only: how much the request counted toward your usage limits,
+///    in dollars of the plan's monthly limit."
+///
+/// 实测印证：日志里 872 条 go 请求的 `cost` **全部为 0**，
+/// 所以「用 cost 算套餐剩余额度」根本不成立，必须抓这个字段。
+///
+/// 该字段只有 opencode 系会给；其它供应商返回 `(None, None)` ——
+/// 用 `None` 而不是 `Some(0.0)`，因为「没给」与「消耗 0」含义相反。
+pub(crate) fn usage_allowance(usage: &serde_json::Value) -> (Option<f64>, Option<String>) {
+    let oc = match usage.get("opencode") {
+        Some(v) => v,
+        None => return (None, None),
+    };
+    // allowance 可能是整数或浮点（官方样例为 0.00412 这种浮点）。
+    let allowance = oc
+        .get("allowance")
+        .and_then(|v| v.as_f64())
+        .or_else(|| oc.get("allowance").and_then(|v| v.as_u64()).map(|n| n as f64));
+    let source = oc
+        .get("billing_source")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    (allowance, source)
+}
+
 /// 从上游 usage 里取**思考 token 数**; 上游没报则返回 None.
 ///
 /// 收两种写法 (实测同一次响应里两者都出现, 值相同, 取其一即可):
@@ -4936,7 +5013,10 @@ fn extract_usage(text: &str) -> (u32, u32, u32, u32, u32, u32) {
 /// ⚠️ 不再 `Copy`（2026-10-24）: 新增的 `context` 里有 `Vec`, 无法 Copy。
 /// 调用点原本靠 Copy 隐式复制, 现已改为显式 `.clone()` —— 编译器会逐个报出来,
 /// 不会漏。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// ⚠️ 也不再 `Eq`（2026-10-24）: 新增的 `allowance_usd: Option<f64>` 是浮点,
+/// 不满足 `Eq`。`PartialEq` 仍保留（比较用途够用）。
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TokenAudit {
     /// 带 `tool_calls` 的 assistant 消息里的推理链: 当前实现豁免剥离,
     /// 在 agent 循环中这类消息占多数, 是最大的潜在省量池.
@@ -4958,6 +5038,18 @@ pub struct TokenAudit {
     /// 总和对得上不代表各部分对。详见 [`crate::context_breakdown`] 模块文档。
     /// `None` = 未采集 (解析失败/原生直通未解析请求体)。
     pub context: Option<crate::context_breakdown::ContextBreakdown>,
+    /// **响应侧**：本条请求消耗的 opencode 套餐额度（美元），
+    /// 来自 `usage.opencode.allowance`。`None` = 上游没给（非 opencode / 旧日志）。
+    ///
+    /// 为什么放在这里：`record_request_with_tokens_status` 已有 24 个参数，
+    /// 再加两个会彻底失控。而 `TokenAudit` 在所有调用点本就随响应解析一路传下来，
+    /// 语义上同属「这一条请求的附加观测」。
+    ///
+    /// `f64` 不能用 `Eq`/`Hash` —— 见本结构 `#[derive]` 已去掉 `Eq`。
+    pub allowance_usd: Option<f64>,
+    /// **响应侧**：`usage.opencode.billing_source`（`free`/`balance`/`go`/`go-plus`/`byok`）。
+    /// 用来区分「花钱」还是「扣套餐额度」—— 两者混算会得出自相矛盾的结论。
+    pub billing_source: Option<String>,
 }
 
 /// 低于此长度的块不参与重复检测 (避免 "ok" / "{}" 之类噪声).
@@ -5929,6 +6021,10 @@ fn inject_model_params(
         // (剥离之后统计会让人以为是"发往上游客的构成", 而用户想看的是"我这一轮到底
         //  把什么塞进了上下文" —— 那才是可优化对象。)
         context: Some(crate::context_breakdown::classify(&v)),
+        // 请求侧审计，此时**还没有响应** → 两个响应侧字段一律 None。
+        // 它们在响应解析后被填入（见 `usage_allowance` 的调用处）。
+        allowance_usd: None,
+        billing_source: None,
     };
 
     // 多轮历史瘦身: 剥离不含 tool_calls 的 assistant 消息里的推理链 (默认开启).
@@ -6542,6 +6638,74 @@ mod tests {
 
     fn hs(xs: &[&str]) -> HashSet<String> {
         xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// **opencode 套餐额度提取**（2026-10-24）。
+    ///
+    /// 背景（查官方文档 + 实测）：opencode Go 在**套餐限额内把 `usage.cost` 报成 0**，
+    /// 官方 `docs/console/api/inference#cost` 原文：
+    ///   "`cost` — US dollars charged to your balance. `0` for free models and
+    ///    for Go usage within its limits."
+    /// 真正计进套餐的是 `opencode.allowance`。实测印证：日志里 872 条 go 请求的
+    /// `cost` **全为 0** —— 所以用 cost 算套餐剩余额度根本不成立。
+    ///
+    /// 盯四件事：
+    /// ① 官方样例（浮点 allowance）能取到；
+    /// ② 非 opencode 供应商 → `(None, None)`，**不是** `Some(0.0)`
+    ///    （"没给"与"消耗 0"语义相反，混用会让面板画出一条 0 消耗的假曲线）；
+    /// ③ 有 opencode 段但没有 allowance（如 byok）→ allowance 为 None，source 仍取到；
+    /// ④ billing_source 能区分 go（扣额度）与 balance（花钱）。
+    #[test]
+    fn usage_allowance_extracts_opencode_fields() {
+        // ① 官方文档里给的完整样例
+        let official: serde_json::Value = serde_json::from_str(r#"{
+            "prompt_tokens": 1200, "completion_tokens": 300, "cost": 0.00412,
+            "opencode": {
+                "billing_source": "balance",
+                "list_cost": 0.00412,
+                "allowance": 0.00412,
+                "tokens": { "input": 1200, "output": 300, "reasoning": 120 }
+            }
+        }"#).unwrap();
+        let (a, s) = usage_allowance(&official);
+        assert_eq!(a, Some(0.00412), "官方样例的 allowance 必须能取到");
+        assert_eq!(s.as_deref(), Some("balance"));
+
+        // ② 非 opencode 供应商（DeepSeek 扁平 schema）→ 两项都 None
+        let plain: serde_json::Value = serde_json::from_str(r#"{
+            "prompt_tokens": 100, "completion_tokens": 50,
+            "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20
+        }"#).unwrap();
+        let (a, s) = usage_allowance(&plain);
+        assert!(a.is_none(), "没有 opencode 段 → None（不是 Some(0.0)）");
+        assert!(s.is_none());
+
+        // ③ 有 opencode 段但无 allowance（byok：用自己 key，不计套餐额度）
+        let byok: serde_json::Value = serde_json::from_str(r#"{
+            "opencode": { "billing_source": "byok" }
+        }"#).unwrap();
+        let (a, s) = usage_allowance(&byok);
+        assert!(a.is_none(), "byok 没有 allowance → None");
+        assert_eq!(s.as_deref(), Some("byok"), "但 billing_source 仍要取到");
+
+        // ④ go 套餐：allowance 有值、source 是 go —— 与 balance 必须能区分
+        let go: serde_json::Value = serde_json::from_str(r#"{
+            "cost": 0,
+            "opencode": { "billing_source": "go", "allowance": 0.0731 }
+        }"#).unwrap();
+        let (a, s) = usage_allowance(&go);
+        assert_eq!(a, Some(0.0731));
+        assert_eq!(s.as_deref(), Some("go"),
+                   "go 与 balance 必须能区分：前者扣额度、后者花钱");
+        // 关键点：这条 cost 是 0 但有 allowance —— 正说明"用 cost 算额度"行不通
+        assert_eq!(go.get("cost").and_then(|v| v.as_f64()), Some(0.0),
+                   "cost 为 0 而 allowance 非 0，正是必须单独抓 allowance 的原因");
+
+        // 整数型 allowance 也要能读（有些实现会发整数）
+        let int_allow: serde_json::Value = serde_json::from_str(r#"{
+            "opencode": { "billing_source": "go", "allowance": 1 }
+        }"#).unwrap();
+        assert_eq!(usage_allowance(&int_allow).0, Some(1.0), "整数也应读成 f64");
     }
 
     #[test]
@@ -7856,7 +8020,10 @@ mod tests {
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
-            usage_seen: false, emitted_tool_calls: false,
+            usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
+            emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names: None, guard_redactions: std::collections::HashMap::new(), cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
@@ -7985,6 +8152,8 @@ mod tests {
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
             usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
@@ -8054,7 +8223,10 @@ mod tests {
             accumulated_content: String::new(),
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
-            usage_seen: false, emitted_tool_calls: false,
+            usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
+            emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names: None, guard_redactions: std::collections::HashMap::new(), cont_pending: None,
             cont_segment: 0, cont_fail_note: None, anthropic_mode: false, responses_mode: false,
@@ -8190,6 +8362,8 @@ mod tests {
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
             usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
@@ -8291,6 +8465,8 @@ mod tests {
             reasoning_chars_seen: 0,
             tokens_reasoning: 0,
             usage_seen: false,
+            allowance_usd: None,
+            billing_source: None,
             emitted_tool_calls: false,
             emitted_tool_names: std::collections::HashSet::new(),
             client_tool_names: None, guard_redactions: std::collections::HashMap::new(),
