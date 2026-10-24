@@ -1,6 +1,6 @@
 ﻿<div x-show="activeTab==='providers'" class="page-enter page-wide">
 <div class="phd">
-  <div><h1 class="pt" x-text="t('provider_config')"></h1><p class="ps" x-text="t('plaza_summary',(providersFormData?providersFormData.length:0),totalModelCount())"></p></div>
+  <div><span class="phd-chip"><span aria-hidden="true">◇</span> <span x-text="t('nav.providers')"></span></span><h1 class="pt" style="margin-top:12px" x-text="t('provider_config')"></h1><p class="ps" x-text="t('plaza_summary',(providersFormData?providersFormData.length:0),totalModelCount())"></p></div>
   <div style="display:flex;gap:8px;align-items:center">
     <template x-if="isDirty"><span class="dirty">● <span x-text="t('unsaved_changes')"></span></span></template>
     <button class="btn btn-g" @click.stop="refreshProviders()" x-text="t('refresh')"></button>

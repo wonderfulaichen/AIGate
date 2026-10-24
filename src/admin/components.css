@@ -334,11 +334,15 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .chart-legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:var(--fs-11);color:var(--muted)}
 .chart-legend-item{display:inline-flex;align-items:center;gap:5px}
 .chart-legend-dot{width:7px;height:7px;border-radius:50%}
-.rec-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.rec-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
 @media(max-width:700px){.rec-stats{grid-template-columns:repeat(2,1fr)}}
-.rec-stat{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);padding:12px 14px}
-.rec-stat-label{font-size:var(--fs-11);color:var(--muted)}
-.rec-stat-value{font:700 var(--fs-18) var(--font-ui);margin-top:5px;color:var(--fg);font-variant-numeric:tabular-nums}
+/* 指标卡 = WaLiAPI 的 data-card 形状（DashboardPage.tsx:175-183）：
+   大数字在上、小标签在下、padding 20px、圆角 18px。
+   改造前 padding 12px、数字 26px/700 —— 读起来像"表格表头加数字"，
+   没有指标卡那种"一眼抓大数"的重心。 */
+.rec-stat{background:var(--card);border:1px solid var(--surface-border);border-radius:18px;padding:20px}
+.rec-stat-label{font-size:var(--fs-11);color:var(--muted);margin-top:6px}
+.rec-stat-value{font:650 30px/1.1 var(--font-ui);color:var(--fg);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .rec-layout{display:flex;flex-direction:column;gap:16px}
 .rec-errors{border-color:var(--err-bd-mid)}
 .rec-error-row{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--fill-4);cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast)}
@@ -392,9 +396,36 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
    上方行为界, 不占独立分区的层级 (响应缓存是性能优化的子项, 不是并列分区). */
 .sub-h{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;margin-top:2px;border-top:1px solid var(--border);font-size:var(--fs-11);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 /* ── new-api page header ── */
-.phd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
-.pt{font-size:var(--fs-18);font-weight:800;letter-spacing:-.025em;color:var(--fg);line-height:1.15}
-.ps{font-size:var(--fs-14);color:var(--muted);margin-top:5px}
+/* ── 页面头部 = **白色大圆角卡片**（2026-10-24 按 WaLiAPI 重做）──
+   WaLiAPI 的每个页面头部都是一张 surface 卡（rounded-[24px] + 柔和投影），
+   里面是：胶囊徽章 + 30px 大标题 + 说明 + 一排快捷操作胶囊；右侧挂状态徽章。
+   改造前 .phd 只是一行 flex，标题裸露在画布上、与下方卡片无容器关系 ——
+   整页读起来是"一串悬浮块"，没有 WaLiAPI 那种"头部成卡、内容各成卡"的节奏。 */
+.phd{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px;
+  margin-bottom:20px;padding:22px 26px;
+  background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);
+  box-shadow:var(--elev-1)}
+/* 标题：WaLiAPI 用 text-3xl(30px) + tracking-[-0.03em]。
+   我们原 --fs-18 是 26px 且 weight 800 —— 字号偏小、字重偏重，读起来"压"。
+   这里改成 30px / 650（近似 semibold），与它一致。 */
+.pt{font-size:30px;font-weight:650;letter-spacing:-.03em;color:var(--fg);line-height:1.15}
+/* 副标题：WaLiAPI 是 text-sm/15px + leading-6 + 限宽 max-w-2xl(672px)。
+   限宽是为了让一行别横跨整个宽屏（那样扫读时容易串行）。 */
+.ps{font-size:var(--fs-14);color:var(--muted);margin-top:9px;line-height:1.6;max-width:672px}
+@media(max-width:900px){.phd{padding:18px 18px}.pt{font-size:24px}}
+/* 头部胶囊徽章：WaLiAPI 用「蓝底 + 蓝字 + 全圆角 + 小图标」标出这是哪个页面。
+   比裸标题多一条"分类线"，扫读时能立刻定位。 */
+.phd-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--pill);
+  background:var(--primary-soft);border:1px solid var(--primary-bd-soft);
+  color:var(--accent);font-size:var(--fs-11);font-weight:600;letter-spacing:.01em}
+/* 快捷操作胶囊行（WaLiAPI: mt-5 flex flex-wrap gap-2，按钮 rounded-full bg-slate-50 小胶囊） */
+.phd-quick{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.phd-chip-btn{appearance:none;-webkit-appearance:none;font-family:inherit;
+  display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:var(--pill);
+  background:var(--fill-3);border:1px solid var(--border);color:var(--fg);
+  font-size:var(--fs-11);font-weight:500;cursor:pointer;
+  transition:background var(--dur-fast),border-color var(--dur-fast),color var(--dur-fast),box-shadow var(--dur-fast)}
+.phd-chip-btn:hover{background:var(--card);border-color:var(--primary-bd);color:var(--accent);box-shadow:var(--elev-1)}
 /* ── new-api form rows ──
    设置行改为**独立卡片**: 原先是一长条"标题 + 控件"紧贴的平铺行, 十几项看下来毫无边界,
    扫读时数不清有几项. 每项自成一块后, 边界与层级一眼可辨 (对照 cc-switch 的 ToggleRow).

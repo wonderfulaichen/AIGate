@@ -1,5 +1,5 @@
 <div x-show="activeTab==='settings'" class="page-enter page-wide">
-<div class="phd"><div><h1 class="pt" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
+<div class="phd"><div><span class="phd-chip"><span aria-hidden="true">◇</span> <span x-text="t('nav.settings')"></span></span><h1 class="pt" style="margin-top:12px" x-text="t('settings_title')"></h1><p class="ps" x-text="t('settings_subtitle')"></p></div></div>
 <!-- 设置页 = 左分区导航 + 右内容（2026-10-24 按 WaLiAPI 重做）。
      改造前是"一页滚到底 + 顶部胶囊跳锚点"：5 个分区 2623px / 2.5 屏，找一项设置要滚很久，
      而且胶囊只负责滚动、看不出当前在哪个分区。

@@ -166,9 +166,44 @@ def b5():
     check(not bad, "所有 var(--fs-*) / var(--line) 都有定义", f"悬空引用: {bad}")
 
 
+# ── B6：模板里的 i18n 键必须真实存在 ──
+def b6():
+    print("\n== B6 模板里的 t('key') 必须在 i18n 表里存在 ==")
+    # 为什么必须静态查: `t()` 找不到键时**原样返回键名** —— 页面上直接显示
+    # "tab_dashboard" 这种裸键名，不报错、不进 console，只有肉眼才看得见。
+    # 本探针第一版写页面头部时就踩到了（写成 t('tab_dashboard')，正确是 t('nav.dashboard')）。
+    i18n = FILES.get("i18n.js") or ""
+    # i18n.js 里键的写法是 `'key': 'value'`，取第一张表（zh-CN）即可 —— 中英对称由 check_i18n 保证
+    defined = set(re.findall(r"'([A-Za-z0-9_.\-]+)'\s*:", i18n))
+    if not defined:
+        check(False, "能解析出 i18n 键表", "i18n.js 解析失败")
+        return
+    # ⚠️ 只查**完整字面量键**，且 `t(` 前不能是标识符字符 —— 否则会把
+    # `numTextFmt('anRequests',…)`、`msText('…')` 这类**函数名以 t 结尾的调用**
+    # 误当成 i18n 键（第一版就是这么报了 29 个假缺失，如 'anRequests'/'heroTokens'
+    # 其实是数字补间的"槽名"，不是文案键）。
+    # 拼接键（t('fmt.'+x)）也已排除：后面紧跟 + 号的不算完整键。
+    bad = []
+    pat_full = re.compile(r"""(?<![A-Za-z0-9_$.])t\(\s*'([A-Za-z0-9_.\-]+)'\s*[,)]""")
+    for fname, src in FILES.items():
+        if not fname.endswith(".html"):
+            continue
+        for m in pat_full.finditer(src):
+            k = m.group(1)
+            if k.endswith(".") or k.endswith("_"):
+                continue
+            if k not in defined:
+                line = src[: m.start()].count("\n") + 1
+                bad.append(f"{fname}:{line} ({k})")
+    if bad:
+        print(f"     未定义的键: {bad[:8]}")
+    check(not bad, "模板里所有完整字面量 t('key') 都在 i18n 表里（否则页面显示裸键名）",
+          f"缺 {len(bad)} 个")
+
+
 def main():
     print("前端不变量回归（静态断言）")
-    b1(); b2(); b3(); b4(); b5()
+    b1(); b2(); b3(); b4(); b5(); b6()
     print()
     if _fails:
         print(f"{BAD}  {len(_fails)} 项未通过: {_fails}")
