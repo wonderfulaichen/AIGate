@@ -301,6 +301,11 @@
       // `clearDirtyFlags()` 已在确认分支把它们清掉，故此处只需按 dirty 判断。
       if (tabId==='settings'||tabId==='providers') {
         if (tabId==='providers' && this.health.length===0) this.fetchHealth();
+        // 2026-10-24：供应商卡要显示「调用数 / 成功率 / 延迟」快速统计，
+        // 数据源是 stats.per_provider。此前进供应商页**不拉 stats**（只有
+        // dashboard/analytics 拉），所以那里永远是空的 —— 这就是"卡上没统计"的真因。
+        // 只在还没有数据时拉一次，避免每次切页都打一发大请求。
+        if (tabId==='providers' && !this.stats) this.fetchStats(null, false, this._firstLoadDone);
         if(!this.providersFormData || !this.isDirty) this.refreshProviders();
         this.fetchKeys(); this.fetchAccounts(); this.fetchPresets();
         if (!this.tooltipDirty) this.fetchTooltipConfig();

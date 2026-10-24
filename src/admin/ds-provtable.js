@@ -54,6 +54,30 @@
       return all.filter(p => String(p.provider || '').toLowerCase().includes(q));
     },
 
+    // ── 供应商卡的快速统计（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:459-478）──
+    // WaLiAPI 在渠道卡右侧并排显示「⚡调用数 / 成功率 87% / 延迟 120ms」，都带图标。
+    // 我们此前卡上没有 —— 真因不是没设计，而是**进供应商页不拉 stats**
+    // （已修：ds-core.js 的 switchTab 里补了 fetchStats）。
+    //
+    // 返回 null 表示"该供应商还没有统计数据" —— 卡片据此**不渲染**统计区，
+    // 而不是显示 0/0%/0ms（未采集 ≠ 零）。这是本项目一贯的口径纪律。
+    provQuickStats(name) {
+      const rows = (this.stats && this.stats.per_provider) || [];
+      const p = rows.find(x => x.provider === name);
+      if (!p || !(Number(p.requests) > 0)) return null;
+      const n = Number(p.requests) || 0;
+      const errs = Number(p.errors) || 0;
+      const okPct = Math.max(0, Math.min(100, (n - errs) / n * 100));
+      return {
+        calls: n,
+        okPct,
+        okText: okPct.toFixed(okPct >= 99.95 ? 0 : 1) + '%',
+        // 成功率着色与供应商明细表同阈值（99/95），保持两处口径一致
+        okTone: okPct >= 99 ? 'var(--ok)' : okPct >= 95 ? 'var(--warn)' : 'var(--err)',
+        latency: Number(p.avg_latency_ms) || 0,
+      };
+    },
+
     // 某供应商下的模型（取自 per_model 的同 provider 行，按请求数降序）。
     // 为什么不另建聚合: per_model 本来就带 provider 字段，重算一遍会得到两份口径。
     provModelsOf(provider) {

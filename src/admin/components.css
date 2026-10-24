@@ -672,9 +672,19 @@ tr:hover td.th-sticky{
 .plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;align-items:stretch}
 /* 状态徽章独立行：不参与标题布局，所以名称能拿满宽度不再折行 */
 .plaza-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
-.plaza-card{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+.plaza-card{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;min-height:188px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
 .plaza-card:hover{border-color:var(--border-s);box-shadow:var(--elev-2);transform:translateY(-1px)}
 .plaza-ch{display:flex;align-items:center;gap:10px}
+/* 卡片右侧快速统计：WaLiAPI 的 `hidden items-center gap-3 lg:flex`
+   （小屏隐藏、大屏显示，避免卡片过窄时挤爆标题）。
+   ⚠️ 「成功率」三个字太长 —— 实测把 openAI-gpt 的名字挤成两行。
+   WaLiAPI 用的是「成功率 87%」两段文字，但它的卡更宽；我们 300px 卡宽下
+   必须压缩：只留数字，用 title 说明语义（图标位置用 ✓ 暗示它是成功率）。 */
+.plaza-stats{display:flex;align-items:center;gap:8px;flex:none}
+@media(max-width:1180px){.plaza-stats{display:none}}
+.plaza-stat{display:inline-flex;align-items:center;gap:3px;font-size:var(--fs-10);color:var(--muted);white-space:nowrap}
+.plaza-stat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+
 /* 序号方块：WaLiAPI 的 h-6 w-6 rounded-lg bg-slate-100 text-xs font-bold。
    卡片视图的排序就是优先级顺序，给数字比让用户数行更直观。 */
 .plaza-idx{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;
@@ -706,7 +716,10 @@ tr:hover td.th-sticky{
    实测：buddy/workbuddy 有 5 个按钮（多一个「重新登录」），在 300px 卡宽下
    被压缩到「测试」竖排成「测\n试」、「编辑」竖排 —— 是因为容器没有 flex-wrap
    且按钮内部允许断行。规则：文字绝不折行，放不下就整组换行。 */
-.plaza-acts{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle)}
+/* ⚠️ 不要在这里用 `margin-top:auto` —— 上面 .plaza-ft 已经是 auto，
+   两个 auto 会平分剩余空间，导致操作条不能真正贴底（实测按钮仍高低不齐）。
+   让 .plaza-ft 唯一承担"把剩下的空间顶开"。 */
+.plaza-acts{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:10px;padding-top:12px;border-top:1px solid var(--border-subtle)}
 .plaza-acts .btn{white-space:nowrap;flex:0 0 auto}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;font-size:var(--fs-12);line-height:1}
 /* ── drawer (centered modal) ── */

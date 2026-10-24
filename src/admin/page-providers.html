@@ -99,6 +99,19 @@
         <div class="plaza-nm bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></div>
         <div class="plaza-ep" :title="prov.endpoint" x-text="prov.endpoint"></div>
       </div>
+      <!-- 快速统计（2026-10-24）：对照 WaLiAPI 的 ChannelsPage.tsx:459-478。
+           数据源 stats.per_provider —— 进供应商页时已补 fetchStats。
+           provQuickStats 返回 null（该供应商还没有请求）时**整块不渲染**，
+           不显示 0/0%/0ms：未采集 ≠ 零。
+           ⚠️ 标签用图标不用"成功率"三个字 —— 实测 300px 卡宽下文字标签
+           把 openAI-gpt 的名字挤成两行；图标 + title 既有语义又不占宽度。 -->
+      <template x-if="provQuickStats(prov.name)">
+        <div class="plaza-stats">
+          <span class="plaza-stat" :title="t('quick_calls_hint')"><span aria-hidden="true">⚡</span><b x-text="fmtT(provQuickStats(prov.name).calls)"></b></span>
+          <span class="plaza-stat" :title="t('success_rate')+' '+provQuickStats(prov.name).okText"><span aria-hidden="true">✓</span><b :style="'color:'+provQuickStats(prov.name).okTone" x-text="provQuickStats(prov.name).okText"></b></span>
+          <span class="plaza-stat" :title="t('avg_latency')"><span aria-hidden="true">◷</span><b x-text="fmtMs(provQuickStats(prov.name).latency)"></b></span>
+        </div>
+      </template>
 
     </div>
     <!-- 状态徽章独立一行（2026-10-24 从标题行下移）。
