@@ -15,26 +15,58 @@
       return { shown: arr.slice(0, k), more: Math.max(0, arr.length - k), title: arr.join(' · ') };
     },
     // 密钥是供应商的子资源: 按 provider 维度保存/清空.
+    //
+    // ⚠️ 2026-10-24 改为**可撤销的草稿态**，不再即时落盘。
+    // 改造前：点「清除」→ 立即 PUT 空值 → 后端当场删掉 Key，无确认、无撤销。
+    // Key 是本项目最不可再生的一项数据（封了/丢了自己去厂商后台重签），
+    // 而误点一次就失效、失败时只有一句 toast —— 这个风险与收益完全不成比例。
+    // 现在：点「清除」只置草稿标记 + 清空输入框，真正删除发生在「保存密钥」时；
+    // 期间显示「将清除，可撤销」，一点即回滚。
+    requestClearKey(pi) {
+      const prov = this.drawerProv || this.providersFormData[pi];
+      if (!prov) return;
+      prov._clearRequested = true;
+      prov._keyDraft = '';
+      prov._keyDraftTouched = false;
+    },
+    undoClearKey(pi) {
+      const prov = this.drawerProv || this.providersFormData[pi];
+      if (!prov) return;
+      prov._clearRequested = false;
+    },
     async clearProviderKey(pi) {
-      const prov = this.providersFormData[pi];
+      // 真正落盘（仅由「保存密钥」或确认后的路径调用）。
+      const prov = this.providersFormData[pi] || this.drawerProv;
       prov._keyDraft='';
       try {
         const r=await fetch('/admin/api/keys',{method:'PUT',headers:authHeaders(),body:JSON.stringify({provider:prov.name,value:''})});
         const d=await r.json();
         // ⚠️ `keyMsg` 曾是死变量（无渲染点）→ 失败完全静默。现由 ds-core.js 的统一出口
         // 弹 toast；这里只需保证**成功与失败都赋值**（失败不再落进 catch 的空档）。
-        if(r.ok) { this.keyMsg=t('key_cleared',prov.name); this.fetchKeys(); setTimeout(()=>this.keyMsg='',3000); }
+        if(r.ok) { this.keyMsg=t('key_cleared',prov.name); this.fetchKeys(); prov._clearRequested=false; setTimeout(()=>this.keyMsg='',3000); }
         else { this.keyMsg=t('key_clear_failed',prov.name)+(d.error?('：'+d.error):''); }
       } catch(e){ this.keyMsg=t('network_error'); }
     },
     async saveDrawerKey() {
       const prov = this.drawerProv;
-      if (!prov || !(prov._keyDraft||'').trim()) return;
+      if (!prov) return;
+      // 草稿处于「待清除」：这里才真正删除（且先给一次确认 —— 不可再生数据）。
+      if (prov._clearRequested) {
+        if (!(await confirmAsk(t('confirm_clear_key', prov.name), { danger: true }))) return;
+        prov._keySaving = true; prov._keyMsg = ''; prov._keyOk = false;
+        await this.clearProviderKey(this.providersFormData.indexOf(prov));
+        prov._keySaving = false;
+        prov._keyMsg = prov._keyMsg || t('key_cleared', prov.name);
+        prov._keyOk = true;
+        setTimeout(()=>{ if(prov) prov._keyMsg=''; }, 3000);
+        return;
+      }
+      if (!(prov._keyDraft||'').trim()) return;
       prov._keySaving = true; prov._keyMsg = ''; prov._keyOk = false;
       try {
         const r = await fetch('/admin/api/keys', { method:'PUT', headers:authHeaders(), body:JSON.stringify({provider:prov.name, value:prov._keyDraft.trim()}) });
         const d = await r.json();
-        if (r.ok) { prov._keyDraft=''; prov._keyMsg=t('saved'); prov._keyOk=true; this.fetchKeys(); }
+        if (r.ok) { prov._keyDraft=''; prov._clearRequested=false; prov._keyMsg=t('saved'); prov._keyOk=true; this.fetchKeys(); }
         else { prov._keyMsg=d.error||t('save_failed'); prov._keyOk=false; }
       } catch(e) { prov._keyMsg=t('network_error'); prov._keyOk=false; }
       prov._keySaving = false;

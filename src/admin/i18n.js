@@ -136,6 +136,10 @@ const I18N = {
     'bulk_set_fmt': '协议…',
     'bulk_mark_free': '标为免费',
     'apply': '应用',
+    // Key 清除的草稿态（2026-10-24）：先置标记、保存时才真删，期间可撤销
+    'undo_clear_key': '撤销清除',
+    'key_clear_pending': '已标记为「待清除」—— 点「保存密钥」才会真正删除，在此之前可随时撤销。',
+    'confirm_clear_key': '确定要清除供应商「{0}」的密钥吗？清除后需要到上游重新签发才能恢复。',
     'balance_state_failed': '查询失败，点刷新重试',
     'balance_state_manual': '手动设置的值（非上游实测）',
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
@@ -580,6 +584,9 @@ const I18N = {
     'bulk_set_fmt': 'Protocol…',
     'bulk_mark_free': 'Mark free',
     'apply': 'Apply',
+    'undo_clear_key': 'Undo clear',
+    'key_clear_pending': 'Marked for clearing — the key is deleted only when you click "Save key now". You can undo until then.',
+    'confirm_clear_key': 'Clear the API key for "{0}"? You will need to reissue it upstream to restore access.',
     'balance_state_failed': 'Query failed — click refresh to retry',
     'balance_state_manual': 'Manually set value (not measured by the provider)',
     // Balance fetch time: a stale value must not look live.

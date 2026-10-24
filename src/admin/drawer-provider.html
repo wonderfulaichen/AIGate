@@ -99,9 +99,21 @@
                    这里是**立即生效**（直接 PUT /admin/api/keys, 不经过表单保存链）;
                    而底部那个「保存配置」走表单链、要等落盘。原实现两个都叫「保存」,
                    用户无法从命名推断哪个立刻生效。现按语义改名。 -->
-              <button class="btn btn-p" style="white-space:nowrap" :disabled="!(drawerProv._keyDraft||'').trim()" @click="saveDrawerKey()" :title="t('key_save_hint')" x-text="drawerProv._keySaving?t('saving'):t('save_key_now')"></button>
-              <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="clearProviderKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
+              <button class="btn btn-p" style="white-space:nowrap" :disabled="!((drawerProv._keyDraft||'').trim() || drawerProv._clearRequested)" @click="saveDrawerKey()" :title="t('key_save_hint')" x-text="drawerProv._keySaving?t('saving'):t('save_key_now')"></button>
+              <!-- 清除 = 可撤销的草稿态（2026-10-24）。改造前点它**立即 PUT 空值**，
+                   后端当场删掉 Key，无确认、无撤销 —— 而 Key 是最不可再生的一项数据。
+                   现在只置草稿标记，真正删除发生在「保存密钥」时；期间给「撤销」。 -->
+              <template x-if="!drawerProv._clearRequested">
+                <button class="btn btn-g" style="color:var(--err);white-space:nowrap" @click="requestClearKey(providersFormData.indexOf(drawerProv))" x-text="t('clear')"></button>
+              </template>
+              <template x-if="drawerProv._clearRequested">
+                <button class="btn btn-g" style="white-space:nowrap" @click="undoClearKey(providersFormData.indexOf(drawerProv))" x-text="t('undo_clear_key')"></button>
+              </template>
             </div>
+            <!-- 草稿态必须显式说出来：否则用户以为已经删了，或反过来以为没生效 -->
+            <template x-if="drawerProv._clearRequested">
+              <div class="txs" style="margin-top:8px;color:var(--warn)" x-text="t('key_clear_pending')"></div>
+            </template>
             <template x-if="drawerProv._keyMsg"><div :style="'margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:var(--rm);'+(drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)')" x-text="drawerProv._keyMsg"></div></template>
           </div>
           </div>
