@@ -101,10 +101,19 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 
 
 .ov-page{width:100%;max-width:none;margin:0}
+/* 概览版式（按 WaLiAPI 的思路重排, 2026-10-24）:
+   左 1fr 放"内容"、右 380px 放"余额"。⚠️ 关键: 右栏必须 `align-self:start`,
+   否则右栏比左栏长时会把整行拉高、左侧大片留白（改造前 1488px 的余额面板正是如此）。 */
 .ov-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);gap:16px;align-items:start;width:100%}
 .ov-main{min-width:0;display:flex;flex-direction:column;gap:16px}
-.ov-side{min-width:0;display:flex;flex-direction:column;gap:16px}
+.ov-side{min-width:0;display:flex;flex-direction:column;gap:16px;align-self:start}
 @media(max-width:980px){.ov-grid{grid-template-columns:minmax(0,1fr)}}
+/* 余额行: 从"每家一大块(6~7 行)"压缩成"两行结构"—— 首行名字+余额, 次行只放**该家独有的**
+   状态（今日费用/来源/过期/额度进度）。未配置余额的供应商不再各占一块, 由汇总行统一交代。 */
+.bal-row{padding:9px 0;border-bottom:1px solid var(--fill-4)}
+.bal-row:last-child{border-bottom:none}
+.bal-row-main{display:flex;align-items:center;gap:8px}
+.bal-row-sub{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-left:32px;margin-top:3px}
 .ov-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:700px){.ov-kpis{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:460px){.ov-kpis{grid-template-columns:1fr}}
@@ -336,10 +345,14 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .sidebar-group + .sidebar-group{margin-top:8px}
 .sb .sidebar-item span{overflow:hidden;transition:opacity var(--dur-fast);white-space:nowrap}
 /* ── new-api panel ── */
-/* 面板 = 玻璃卡片: 半透明底 + 背景模糊 + 静置阴影。原为"不透明纯色 + 无阴影",
-   层级只能靠边框区分, 扁且无纵深; 现用阴影给出"浮在画布上"的层次。 */
-.pnl{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--surface-border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--elev-1)}
-.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:16px 22px;border-bottom:1px solid var(--border)}
+/* 面板 = **实心浮起卡片**（按 WaLiAPI 的语言重做, 2026-10-24）。
+   改造前是"半透明 + backdrop-filter 毛玻璃": 模糊会把背后的图表/文字透上来,
+   在大面积内容页读起来发灰、层次也糊 —— 这是"看着不像成熟产品"的主因之一。
+   WaLiAPI 的做法是**实心白卡 + 柔和投影 + 更大圆角**, 靠"亮面浮起"分层而不是靠模糊。
+   暗色主题下同样成立: 用 --card 的实色面 + 更强的投影表达浮起。
+   性能顺带收益: 去掉全站 backdrop-filter 后, 滚动时不再逐帧重算背景模糊。 */
+.pnl{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);overflow:hidden;box-shadow:var(--elev-1)}
+.pnl-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:18px 22px;border-bottom:1px solid var(--border)}
 /* 图表面板专用: cc 的图表卡标题与图**直接相接**(仅靠留白分隔), 不画横线。
    选题用 pnl-h-plot 而非改 .pnl-h —— 表格类面板仍需分隔线。 */
 .pnl-h-plot{border-bottom:none;padding-bottom:4px}

@@ -96,10 +96,25 @@
     // 返回空串 = 无需额外说明 (正常数值, 数字自己会说话)。
     balanceStateText(row) {
       const st = row && row.state;
-      if (st === 'unsupported') return t('balance_state_unsupported');
+      // 'unsupported' 不在这里逐行说 —— 它由 balanceUnsupportedNote 汇总成一行,
+      // 否则 4 家会各印一遍同一句话（真实数据下把面板撑到 1488px）。
       if (st === 'failed') return t('balance_state_failed');
       if (st === 'manual') return t('balance_state_manual');
       return '';
+    },
+    // 「未配置余额查询」的供应商汇总成一行 (2026-10-24)。
+    // 为什么: 真实数据里 8 家里有 4 家是同一句"该供应商无公开余额接口" ——
+    // 每行重复印一遍, 右侧余额面板被撑到 1488px, 而**没有一条**需要用户处理。
+    // 这不是"信息多", 是"同一句话说了四遍"。合并后回到一行 + 数量。
+    get balanceUnsupported() {
+      const rows = (this.providerRows || []).filter(r => r.state === 'unsupported');
+      return { count: rows.length, names: rows.map(r => r.provider) };
+    },
+    // 只在**未配置**时给一句汇总; 其余状态（失败/手动）是逐家不同的，必须逐行显示。
+    get balanceUnsupportedNote() {
+      const u = this.balanceUnsupported;
+      if (!u.count) return '';
+      return t('balance_unsupported_summary', u.count, u.names.join('、'));
     },
     get balanceTakeaway() {
       // 积分制行不参与: currency='credits' 与今日费用(金额)量纲不同, 混算「还能撑几天」是错的.

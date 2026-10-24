@@ -14,7 +14,10 @@
     // 「账号名 · 剩余 N 积分 · 已用 M」—— 数值是**当前使用账号**自己的 (不是合计),
     // 这样切换账号后数字会跟着变; 多账号时另附合计.
     fmtBalanceRow(row) {
-      if (!row.hasBalance) return t('balance_none');
+      // 未配置余额查询的供应商：这里**留空**而不是印"未配置余额查询"。
+      // 真实数据下 8 家有 7 家是这种，逐行印同一句话既没信息量、
+      // 又把面板撑高；它们已由底部 balanceUnsupportedNote 一行汇总交代。
+      if (!row.hasBalance) return '';
       if (row.currency === 'credits') {
         const fmt = n => Number(n).toLocaleString('en-US');
         let s = '';

@@ -111,6 +111,12 @@ const I18N = {
     'model_diag_hint': '缓存命中率 / 生成速度 / 首字延迟 / 平均延迟。主数字显示缓存命中率（没有则显示生成速度），悬停或点击可看全部四项。',
     // 余额四态 (2026-10-24): 未配置 / 查询失败 / 手动设置 三种处境处置完全不同。
     'balance_state_unsupported': '未配置余额查询（该供应商无公开余额接口）',
+    // 「未配置余额查询」的汇总行：{0} 家数 · {1} 名字列表（顿号分隔）。
+    // 为什么要有它: 真实数据里 4 家供应商各印一遍上面那句话，右侧面板被撑到 1488px，
+    // 而没有一条需要用户处理 —— 同一句话不必说四遍。
+    'balance_unsupported_summary': '另有 {0} 家不支持余额查询：{1}',
+    // 事件台账: 例行记录（服务启动/配置重载）折叠后的计数说明
+    'events_routine_folded': '另有 {0} 条例行记录（服务启动、配置重载）已折叠',
     'balance_state_failed': '查询失败，点刷新重试',
     'balance_state_manual': '手动设置的值（非上游实测）',
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
@@ -538,6 +544,8 @@ const I18N = {
     'model_diag_hint': 'Cache hit rate / generation speed / TTFT / average latency. The main figure shows cache hit rate (or generation speed when absent); hover or click for all four.',
     // Balance four states (2026-10-24): unsupported / failed / manual need different handling.
     'balance_state_unsupported': 'No balance endpoint configured (this provider has no public balance API)',
+    'balance_unsupported_summary': '{0} more provider(s) do not support balance queries: {1}',
+    'events_routine_folded': '{0} routine entries (service starts, config reloads) folded',
     'balance_state_failed': 'Query failed — click refresh to retry',
     'balance_state_manual': 'Manually set value (not measured by the provider)',
     // Balance fetch time: a stale value must not look live.

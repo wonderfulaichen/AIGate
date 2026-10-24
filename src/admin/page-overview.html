@@ -96,7 +96,7 @@
         <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht" x-text="t('events_title')"></h2><div class="txs tm" style="margin-top:3px" x-text="t('events_desc')"></div></div><div class="fb"><span class="bdg" :class="eventsHasProblem?'bdg-e':'bdg-n'" x-show="events.length" x-text="t('events_count',events.length)"></span><button class="btn btn-g" style="font-size:var(--fs-11)" x-show="events.length" @click="clearEvents()" x-text="t('events_clear')"></button></div></div><div class="pnl-b">
           <template x-if="!events.length"><div class="txs tm" style="padding:6px 0" x-text="t('events_empty')"></div></template>
           <div class="evt-list">
-            <template x-for="(e,i) in events.slice(0,8)" :key="String(e.ts)+e.kind+e.subject+i">
+            <template x-for="(e,i) in eventsShown.slice(0,6)" :key="String(e.ts)+e.kind+e.subject+i">
               <div class="evt-row">
                 <span class="evt-dot" :style="'background:'+({ok:'var(--ok)',warn:'var(--warn)',err:'var(--err)'}[e.severity]||'var(--muted)')" aria-hidden="true"></span>
                 <span class="evt-time mono txs" x-text="eventTime(e.ts)"></span>
@@ -109,6 +109,10 @@
             </template>
           </div>
           <div class="panel-takeaway" x-show="eventsTakeaway" x-text="eventsTakeaway"></div>
+          <!-- 例行记录（服务启动/配置重载）不占版面，但也不隐藏事实 —— 给一行计数。
+               真实数据下 8 条里 5 条是启动日志，把"上游断流"挤没了。 -->
+          <div class="txs tm" style="padding:2px 22px 12px" x-show="eventsNotable.length && eventsRoutine.length"
+               x-text="t('events_routine_folded', eventsRoutine.length)"></div>
         </div></div>
         <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht"><span x-text="t('performance_health')"></span></h2><div class="txs tm" style="margin-top:3px" x-text="t('performance_health_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('analytics')" x-text="t('view_analytics')+' →'"></button></div><div class="pnl-b"><div class="ov-health-grid">
           <div class="ov-health-item"><div class="ov-health-label" x-text="t('success_rate')"></div><div class="ov-health-value" :style="'color:'+rateColor(sRate,sRateText)" x-text="sRateText"></div></div>
@@ -125,10 +129,43 @@
         </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'var(--ok)':m.errors<m.requests/5?'var(--warn)':'var(--err)')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div><div class="panel-takeaway" x-show="healthTakeaway" x-text="healthTakeaway"></div></div></div>
       </div>
       <div class="ov-side stagger">
-        <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('balance_cost')"></h2><button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider"><div style="padding:10px 0;border-bottom:1px solid var(--fill-4)"><div style="display:flex;align-items:center;gap:8px"><div style="width:24px;height:24px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(row.provider)"></div><span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span><!-- P3: 余额去掉"无数据/0"混淆 —— 无余额配置时不给 '—' 数字, 而是空位; 有值时按余量着色 --><span class="txsm mono fw6" :style="'color:'+balanceTone(row)" x-text="fmtBalanceRow(row)"></span></div><!-- 余额状态说明 (2026-10-24): 未配置/失败/手动 三种处境处置完全不同,
-     不写这一行用户只能看到同一个数字, 分不清该不该处理 -->
-<div class="txs tm" style="padding-left:32px;margin-top:3px" x-show="balanceStateText(row)" x-text="balanceStateText(row)"></div>
-<div class="txs tm" style="padding-left:32px;margin-top:3px;opacity:.8" x-show="balanceUpdatedText(row)" x-text="balanceUpdatedText(row)"></div><div style="display:flex;justify-content:space-between;padding-left:32px;margin-top:4px"><span class="txs tm" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span><span class="txs tm" x-text="row.source||''"></span></div><template x-if="fmtCreditsExpiry(row)"><div class="txs" style="color:var(--warn);padding-left:32px;margin-top:4px" x-text="fmtCreditsExpiry(row)"></div></template><!-- 本窗口额度进度: 只有积分制且上游给了窗口字段才渲染 (fmtQuotaProgress 返回 '' 即不显示) --><template x-if="fmtQuotaProgress(row)"><div style="padding-left:32px;margin-top:5px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px"><span class="txs tm" x-text="fmtQuotaProgress(row).text"></span><span class="txs mono fw6" :style="'color:'+fmtQuotaProgress(row).color" x-text="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span></div><!-- 复用 prop-bar 既有写法(只画非零段, 不画底槽): 底槽色会是本页新出现的颜色, 主题门禁会拦 --><div class="prop-bar" style="height:4px"><span :style="'flex-grow:'+Math.max(fmtQuotaProgress(row).pct,1)+';background:'+fmtQuotaProgress(row).color" :title="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span><span style="flex-grow:1"></span></div></div></template><template x-if="row.error"><div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div></template></div></template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template></div><div class="panel-takeaway" x-show="balanceTakeaway" x-text="balanceTakeaway"></div></div>
+        <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('balance_cost')"></h2><button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider">
+              <!-- 每家只保留**这一家独有**的信息。未配置余额查询的供应商也会走到这里，
+                   但它的"未配置"说明已由底部汇总行统一交代，故此处不再重复打印。 -->
+              <div class="bal-row">
+                <div class="bal-row-main">
+                  <div style="width:24px;height:24px;border-radius:var(--rm);overflow:hidden;flex:none" x-html="providerLogo(row.provider)"></div>
+                  <span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span>
+                  <!-- 余额数值: 无余额配置时不给 '—' 假数字, 而是空位 (P3 口径) -->
+                  <span class="txsm mono fw6" :style="'color:'+balanceTone(row)" x-text="fmtBalanceRow(row)"></span>
+                </div>
+                <!-- 次行: 只在该家有**实质内容**时出现，避免空行把面板撑高。
+                     今日费用为 0 时不打印 —— 8 家全印"¥0.00"没有任何信息量。 -->
+                <div class="bal-row-sub" x-show="row.today_cost > 0 || fmtCreditsExpiry(row) || fmtQuotaProgress(row)">
+                  <span class="txs tm" x-show="row.today_cost > 0" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span>
+                  <span class="txs tm" x-text="row.source||''"></span>
+                </div>
+                <template x-if="fmtCreditsExpiry(row)">
+                  <div class="txs" style="color:var(--warn);padding-left:32px;margin-top:3px" x-text="fmtCreditsExpiry(row)"></div>
+                </template>
+                <template x-if="fmtQuotaProgress(row)">
+                  <div style="padding-left:32px;margin-top:4px">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                      <span class="txs tm" x-text="fmtQuotaProgress(row).text"></span>
+                      <span class="txs mono fw6" :style="'color:'+fmtQuotaProgress(row).color" x-text="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span>
+                    </div>
+                    <div class="prop-bar" style="height:4px"><span :style="'flex-grow:'+Math.max(fmtQuotaProgress(row).pct,1)+';background:'+fmtQuotaProgress(row).color" :title="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span><span style="flex-grow:1"></span></div>
+                  </div>
+                </template>
+                <!-- `row.error` 只在**真失败**时显示。'unsupported'（该上游没有公开余额接口）
+                     不是错误 —— 后端确实把这句话写进了 error 字段（balance.rs:565/792），
+                     但那是给日志用的；逐家印成红字会让用户以为有 8 家出了问题，
+                     而实际只是"这个功能对它们不适用"。未配置统一走底部汇总行。 -->
+                <template x-if="row.error && row.state !== 'unsupported'">
+                  <div class="txs" style="color:var(--err);padding-left:32px;margin-top:3px" x-text="row.error"></div>
+                </template>
+              </div>
+            </template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template><div class="txs tm" x-show="balanceUnsupportedNote" style="padding:10px 0 2px;border-top:1px solid var(--fill-4);margin-top:6px" x-text="balanceUnsupportedNote"></div></div><div class="panel-takeaway" x-show="balanceTakeaway" x-text="balanceTakeaway"></div></div>
         <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('quick_start')"></h2></div><div class="pnl-b"><div class="txs tm" style="line-height:1.6;margin-bottom:10px" x-text="t('quick_start_desc')"></div><div class="fb" style="padding:8px 10px;background:var(--input);border:1px solid var(--border);border-radius:var(--r)"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 6px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div><div class="ov-actions" style="margin-top:10px"><button class="btn btn-o" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('manage_providers')"></button><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('records')" x-text="t('view_records')"></button></div></div></div>
         <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht"><span x-text="t('api_information')"></span></h2><div class="txs tm" style="margin-top:3px" x-text="t('api_information_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('view_providers')+' →'"></button></div><div class="pnl-b"><template x-for="item in [{method:'BASE',path:baseUrl,descKey:'api_base_url_desc'},{method:'GET',path:'/v1/models',descKey:'available_models'},{method:'POST',path:'/v1/chat/completions',descKey:'chat_completions'},{method:'POST',path:'/v1/messages',descKey:'anthropic_messages'},{method:'POST',path:'/v1/responses',descKey:'responses_api'}]" :key="item.path"><div class="ov-api-row"><span class="ov-api-method" x-text="item.method"></span><span class="ov-api-path" style="flex:1" x-text="item.path"></span><span class="txs tm" x-text="t(item.descKey)"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="copyText(item.path,'api')" x-text="copiedField==='api'?t('copied'):t('copy')"></button></div></template></div></div>
       </div>

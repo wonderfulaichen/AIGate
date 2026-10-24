@@ -158,6 +158,23 @@
     get eventsHasProblem() {
       return (this.events || []).some(e => e.severity === 'err');
     },
+    // 事件按"要不要我处理"分两档 (2026-10-24, 按 WaLiAPI 的指标降级带思路)。
+    //
+    // 为什么: 真实数据里这张卡 8 条有 5 条是「服务已启动」，把真正的
+    // 「上游中途断流」挤到看不见的地方 —— 卡片标题叫"关键事件"，内容却是启动流水账。
+    // 启动/重载属于"系统正常运转的痕迹"，不是"需要关注的事"，应降级到折叠区。
+    get eventsNotable() {
+      return (this.events || []).filter(e => e.kind !== 'started' && e.kind !== 'providers_reloaded');
+    },
+    get eventsRoutine() {
+      return (this.events || []).filter(e => e.kind === 'started' || e.kind === 'providers_reloaded');
+    },
+    // 该显示哪一档: 有值得关注的就只看它们（并提示还有多少例行记录）；
+    // 一条都没有时才回落到例行记录 —— 否则空卡更让人困惑。
+    get eventsShown() {
+      const notable = this.eventsNotable;
+      return notable.length ? notable : this.eventsRoutine;
+    },
     // 静默降级计数: 解析失败导致优化/翻译未生效的次数. 用于区分
     // "这次确实没什么可省" 与 "我们根本没解析成功".
     async fetchDegradations() {

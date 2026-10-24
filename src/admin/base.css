@@ -35,8 +35,10 @@
      改造前全站有 17 种以上圆角字面量, 只有 12 处走 token —— "没有几何语言"正是它读起来
      不成体系的直接原因。现收敛为 4 档 + 胶囊: 小控件偏方、容器偏圆, 比上一轮更柔和。
      50% 仅用于真圆(圆点), 不参与本尺度。
-     **硬性要求**: 新组件一律用这几档, 不得再写圆角字面量。 */
-  --rs:6px;--rm:10px;--r:14px;--rl:18px;--pill:999px;
+     **硬性要求**: 新组件一律用这几档, 不得再写圆角字面量。
+     2026-10-24 按 WaLiAPI 放宽容器档: --rl 18→20px、--r 14→16px —— 它的卡片是 18~22px,
+     更大的圆角是"现代 SaaS 卡片"观感的重要一环（小圆角读起来偏工具化）。 */
+  --rs:6px;--rm:10px;--r:16px;--rl:20px;--pill:999px;
   /* 阴影: 苹果靠"材质 + 亮度"分层, 阴影只做很轻的托底 (不是 Material 式抬升) */
   --sh:0 1px 2px rgba(0,0,0,.32);--shm:0 24px 60px rgba(0,0,0,.55);
   /* ── 字阶 ──
@@ -122,8 +124,14 @@
         radial-gradient(1300px 740px at 94% -4%,rgba(191,90,242,.15),transparent 72%),
         radial-gradient(1400px 860px at 56% 116%,rgba(64,200,224,.13),transparent 74%);
   /* 阴影三级: 静置 / 悬停 / 浮层 (苹果的阴影很轻, 分层主要靠材质亮度) */
-  --elev-1:0 1px 2px rgba(0,0,0,.32);
-  --elev-2:0 6px 20px rgba(0,0,0,.38);
+  /* ── 浮起层级（按 WaLiAPI 重做, 2026-10-24）──
+     改造前的阴影极淡（0 1px 2px / 0 6px 20px），配合毛玻璃几乎读不出"浮起"。
+     WaLiAPI 的卡片之所以立体，是因为**阴影扩散大、透明度低**：
+     12~30px 的大扩散 + 8% 左右的透明度，让卡片看起来离画布有一段距离。
+     这里把它拆成三档：静置 / 悬停 / 弹层。 */
+  --elev-1:0 1px 2px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24);
+  --elev-2:0 4px 10px rgba(0,0,0,.30), 0 16px 40px rgba(0,0,0,.34);
+  --elev-3:0 12px 28px rgba(0,0,0,.36), 0 32px 64px rgba(0,0,0,.44);
   --elev-3:0 18px 48px rgba(0,0,0,.55);
   /* 状态色柔光: 高亮卡片用同色系低透明投影 */
   --glow-primary:0 4px 18px rgba(10,132,255,.22);
@@ -287,8 +295,9 @@ body{
      只有"图表底板/汇总扇区"这类表面色 (--chart-rest) 才随主题走。 */
 html.light{
   color-scheme:light;
-  /* 「分组背景」体系: systemGroupedBackground #F2F2F7 为底, 内容用纯白 —— 苹果本来的做法 */
-  --bg:#f2f2f7;--card:#fff;--elevated:#fff;--input:#f2f2f7;
+  /* 「分组背景」体系: 底与卡片拉开一档, 内容用纯白 —— 与 WaLiAPI 的
+     #eef3f8 底 + #ffffff 卡同一思路（底略偏冷蓝, 白卡才显得"干净地浮着"）。 */
+  --bg:#eef3f8;--card:#fff;--elevated:#fff;--input:#f5f7fa;
   --fg:#000;--muted:rgba(60,60,67,.62);
   /* 描边: Apple separator (rgba(60,60,67,.29)) 分档 */
   --border-subtle:rgba(60,60,67,.16);--border:rgba(60,60,67,.24);--border-s:rgba(60,60,67,.38);
@@ -307,10 +316,11 @@ html.light{
   --info-bg:rgba(48,176,199,.14);--info-fg:#1b7f93;--info-bd:rgba(48,176,199,.32);
   /* 图表底板 */
   --chart-rest:#e5e5ea;
-  /* 画布氛围: 亮色下用更低 alpha 的同族渐变 (亮底上重了会显脏) */
-  --amb:radial-gradient(1500px 800px at 6% -14%,rgba(0,122,255,.17),transparent 70%),
-        radial-gradient(1300px 740px at 94% -4%,rgba(175,82,222,.13),transparent 68%),
-        radial-gradient(1400px 860px at 56% 116%,rgba(48,176,199,.11),transparent 70%);
+  /* 画布氛围: 亮色下按 WaLiAPI 的做法改**由上到下的线性渐变**（2026-10-24）。
+     它原文是 `linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%)` —— 上浅下深，
+     让内容区自然"往下沉"，卡片浮在上面更明显。改造前是三个彩色径向渐变，
+     在亮色下偏"花"，也让白卡与底色的对比不干净。 */
+  --amb:linear-gradient(180deg,#f7f9fc 0%,#eef3f8 100%);
   /* 浅底/强底版状态色 */
   --ok-bg-soft:rgba(52,199,89,.12);--ok-bd-soft:rgba(52,199,89,.28);
   --err-bg-soft:rgba(255,59,48,.10);--err-bd-soft:rgba(255,59,48,.26);
@@ -344,9 +354,11 @@ html.light{
   /* 材质层: 亮色下玻璃用白半透明 + 更淡的阴影 */
   --card-glass:rgba(255,255,255,.72);
   --card-nest:rgba(242,242,247,.9);
-  --elev-1:0 1px 2px rgba(0,0,0,.05);
-  --elev-2:0 6px 18px rgba(0,0,0,.09);
-  --elev-3:0 18px 44px rgba(0,0,0,.16);
+  /* 亮色的浮起阴影刻意用**冷灰**（31,41,55）而非纯黑 —— 纯黑投影在白底上会发脏,
+     冷灰才像 WaLiAPI 那种"纸片浮在桌面上"的观感。扩散大、透明度低是它的关键。 */
+  --elev-1:0 1px 2px rgba(15,23,42,.04), 0 10px 26px rgba(31,41,55,.07);
+  --elev-2:0 3px 8px rgba(15,23,42,.05), 0 14px 34px rgba(31,41,55,.10);
+  --elev-3:0 18px 44px rgba(31,41,55,.16);
   --glow-primary:0 4px 18px rgba(0,122,255,.16);
   --glow-ok:0 4px 18px rgba(52,199,89,.14);
   --glow-warn:0 4px 18px rgba(255,149,0,.14);
