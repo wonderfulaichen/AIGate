@@ -121,7 +121,7 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .ov-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 @media(max-width:700px){.ov-kpis{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:460px){.ov-kpis{grid-template-columns:1fr}}
-.ov-kpi{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--surface-border);border-radius:var(--rl);padding:14px 16px;min-width:0;box-shadow:var(--elev-1);transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
+.ov-kpi{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);padding:14px 16px;min-width:0;box-shadow:var(--elev-1);transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur-fast)}
 .ov-kpi:hover{transform:translateY(-1px);box-shadow:var(--elev-2);border-color:var(--border-s)}
 .ov-kpi-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ov-kpi-label{font-size:var(--fs-11);color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
@@ -226,7 +226,7 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
 .ov-api-path{font:var(--fs-9) var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ov-actions{display:flex;gap:8px;flex-wrap:wrap}
 .an-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
-.an-stat-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:0;overflow:hidden;border:1px solid var(--surface-border);border-radius:var(--rl);background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--elev-1)}
+.an-stat-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:0;overflow:hidden;border:1px solid var(--surface-border);border-radius:var(--rl);background:var(--card);box-shadow:var(--elev-1)}
 @media(max-width:1024px){.an-stat-strip{grid-template-columns:repeat(2,1fr)}.an-stat{border-right:none;border-bottom:1px solid var(--border)}}
 .an-stat{padding:14px 18px;border-right:1px solid var(--border);display:flex;align-items:center;gap:12px}
 .an-stat-body{display:flex;flex-direction:column;min-width:0}
@@ -553,8 +553,12 @@ tr:hover td.th-sticky{
 .plaza-body{display:grid;grid-template-columns:260px 1fr;gap:20px;margin-top:16px}
 @media(max-width:1024px){.plaza-body{grid-template-columns:1fr}}
 .plaza-side{position:sticky;top:0}
-.plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
-.plaza-card{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
+/* 卡片最小宽 280 → 300px（2026-10-24）：实测 280px 时按钮行放不下
+   「⚡测试 / ↓拉取模型 / 编辑 / ✕」四个按钮，`flex-wrap` 触发后「编辑」被逐字竖排
+   （截图可见 deepseek/buddy/workbuddy 三张卡的按钮区被压成三行）。
+   300px 下四按钮能单行排下，且仍支持窄屏自动减列。 */
+.plaza-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.plaza-card{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:var(--elev-1);transition:border-color var(--dur-fast),box-shadow var(--dur) var(--ease-out),transform var(--dur) var(--ease-out)}
 .plaza-card:hover{border-color:var(--border-s);box-shadow:var(--elev-2);transform:translateY(-1px)}
 .plaza-ch{display:flex;align-items:center;gap:10px}
 .plaza-ic{width:38px;height:38px;border-radius:var(--r);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--fill-3);border:1px solid var(--border);transition:transform var(--dur) var(--ease-out)}
@@ -563,9 +567,17 @@ tr:hover td.th-sticky{
 .plaza-nm{font-weight:600;font-size:var(--fs-13);color:var(--fg)}
 .plaza-ep{font-size:var(--fs-11);color:var(--muted);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .plaza-ft{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:8px}
+/* 注: 按钮不折行的规则在 `.plaza-acts`（见下方）—— 这里最初误写成 `.plaza-ft .btn`，
+   而按钮实际在 `.plaza-acts` 里，所以那条规则从未生效（实测 buddy/workbuddy 仍竖排）。
+   留此说明避免再改错位置。 */
 /* 操作条: 与内容区以细分隔线分开, 次级操作(图标)靠左、主操作靠右.
    原实现 5 个按钮平铺挤一行且都带文字, 视觉噪声大; 图标按钮配 title/aria-label 保可读性. */
-.plaza-acts{display:flex;align-items:center;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle)}
+/* 操作条: 按钮必须**不折行**（2026-10-24 修）。
+   实测：buddy/workbuddy 有 5 个按钮（多一个「重新登录」），在 300px 卡宽下
+   被压缩到「测试」竖排成「测\n试」、「编辑」竖排 —— 是因为容器没有 flex-wrap
+   且按钮内部允许断行。规则：文字绝不折行，放不下就整组换行。 */
+.plaza-acts{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-subtle)}
+.plaza-acts .btn{white-space:nowrap;flex:0 0 auto}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;font-size:var(--fs-12);line-height:1}
 /* ── drawer (centered modal) ── */
 .modal-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--shade-3);backdrop-filter:blur(4px)}
@@ -591,7 +603,7 @@ tr:hover td.th-sticky{
 .dr-h{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--hdr-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0}
 .dr-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;padding:0}
 .dr-model-table-scroll{min-width:0;overflow-x:auto}
-.dr-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);flex-shrink:0}
+.dr-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:14px 24px;border-top:1px solid var(--border);background:var(--card);flex-shrink:0}
 /* 全屏后内容不再有"弹窗边距"约束: 用居中容器把表单类内容收在 1400px 内,
    否则超宽屏下说明文字会拉成一整行 (表格类内容不受影响, 它在 .dr-model-table-scroll 里横滚). */
 .dr-inner{width:100%;max-width:1400px;margin:0 auto}
@@ -701,7 +713,7 @@ tr:hover td.th-sticky{
    结构 = 主体大数字(+≈副档) | 竖分隔的指标簇 | 全宽迷你趋势 | 底部统计格.
    为什么值得单独做一个: 原先关键数字散在三张卡 + 三个小格里, 视线要来回跳;
    合成一条"带"之后, 主次一眼分明. */
-.hero{background:var(--card-glass);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border:1px solid var(--surface-border);border-radius:var(--rl);box-shadow:var(--elev-2);padding:22px 24px;position:relative;overflow:hidden}
+.hero{background:var(--card);border:1px solid var(--surface-border);border-radius:var(--rl);box-shadow:var(--elev-2);padding:22px 24px;position:relative;overflow:hidden}
 /* 顶部一层极淡主色扇形, 让 Hero 与普通面板区分开 (cc-switch 的 inset-0 渐变叠层同法) */
 .hero::before{content:"";position:absolute;inset:0;background:var(--tint-primary);opacity:.55;pointer-events:none}
 .hero>*{position:relative}
