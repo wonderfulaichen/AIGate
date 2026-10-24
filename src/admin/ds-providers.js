@@ -240,6 +240,49 @@
     copyModelId(id){
       this.copyText(String(id || ''), 'model:' + id);
     },
+    // ── 拖拽排序（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:293-330）──
+    // 为什么需要：供应商在 providers.json 里是**数组**，数组顺序本来就是"优先级"
+    // （后端注释明确写了"数组顺序即优先级"）。但面板上没有任何排序手段 ——
+    // 这条信息看得见却改不了。WaLiAPI 用 `draggable` + reorder 接口解决。
+    //
+    // 我们不需要新增后端接口：后端保存时**原样写盘**（admin.rs:1569-1575 直接 write 前端传来的
+    // json_str，不重排不排序），所以只要改表单数组顺序再保存即可。
+    provDragName: null,
+    provOverName: null,
+    provDragStart(e, name) {
+      this.provDragName = name;
+      try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', name); } catch (err) {}
+    },
+    provDragOver(e, name) {
+      try { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      if (name !== this.provDragName) this.provOverName = name;
+    },
+    provDragEnd() { this.provDragName = null; this.provOverName = null; },
+    provDrop(e, name) {
+      try { e.preventDefault(); } catch (err) {}
+      const from = this.provDragName;
+      this.provDragEnd();
+      if (!from || from === name) return;
+      const list = this.providersFormData || [];
+      const fi = list.findIndex(p => p.name === from);
+      const ti = list.findIndex(p => p.name === name);
+      if (fi === -1 || ti === -1) return;
+      // 就地移动
+      const [moved] = list.splice(fi, 1);
+      list.splice(ti, 0, moved);
+      this.markDirty();
+      toast(t('provider_reordered', moved.name, ti + 1));
+    },
+    // 键盘可达的替代：上移/下移（拖拽对键盘用户不可达，必须有替代路径）
+    provMove(name, dir) {
+      const list = this.providersFormData || [];
+      const i = list.findIndex(p => p.name === name);
+      const j = i + dir;
+      if (i === -1 || j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      this.markDirty();
+      toast(t('provider_reordered', name, j + 1));
+    },
     openProviderDrawer(pi){
       const prov=this.providersFormData[pi];
       if(!prov) return;

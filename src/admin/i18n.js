@@ -196,6 +196,11 @@ const I18N = {
     'advice_saved_none': '本窗口还没有产生省量 —— 确认剥离开关是否开启。',
     'advice_bal_dead': '余额已耗尽：{0}。',
     'advice_bal_low': '余额偏低（<5）：{0}。',
+    // 排序（2026-10-24）
+    'drag_reorder': '拖拽调整顺序（数组顺序即优先级）',
+    'move_up': '上移',
+    'move_down': '下移',
+    'provider_reordered': '「{0}」已移到第 {1} 位（保存后生效）',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -676,6 +681,10 @@ const I18N = {
     'advice_saved_none': 'No savings in this window — check whether strip is enabled.',
     'advice_bal_dead': 'Balance exhausted: {0}.',
     'advice_bal_low': 'Low balance (<5): {0}.',
+    'drag_reorder': 'Drag to reorder (array order = priority)',
+    'move_up': 'Move up',
+    'move_down': 'Move down',
+    'provider_reordered': '"{0}" moved to position {1} (saved on Save)',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',

@@ -378,6 +378,23 @@ tbody tr.row-flash td{animation:rowFlash 1.1s var(--ease-out)}
   font-size:var(--fs-10);font-weight:600;transition:background var(--dur-fast),border-color var(--dur-fast)}
 .adv-act:hover{background:var(--primary-soft);border-color:var(--primary-bd)}
 
+/* ── 拖拽排序（2026-10-24，对照 WaLiAPI 的 ChannelsPage.tsx:418-427）──
+   供应商在 providers.json 里是数组，顺序即优先级。此前面板没有排序手段。
+   拖拽手柄用极淡的灰：它是"可拖"的暗示，不该抢内容视觉。 */
+.pv-grip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:20px;
+  color:var(--muted);opacity:.35;font-size:var(--fs-11);letter-spacing:-2px;cursor:grab;user-select:none}
+.pv-grip:active{cursor:grabbing}
+.pv-move{display:inline-flex;flex-direction:column;gap:1px;margin-left:2px;vertical-align:middle}
+.pv-mv{appearance:none;-webkit-appearance:none;font-family:inherit;
+  display:flex;align-items:center;justify-content:center;width:15px;height:12px;padding:0;border-radius:3px;
+  background:transparent;border:1px solid transparent;color:var(--muted);opacity:.5;cursor:pointer;font-size:9px;line-height:1;
+  transition:background var(--dur-fast),opacity var(--dur-fast)}
+.pv-mv:hover{background:var(--fill-5);opacity:1;color:var(--fg)}
+/* 拖拽中与落点提示 */
+.plaza-card[draggable="true"]{cursor:grab}
+.plaza-card.drag-over, tr.drag-over{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--r)}
+tr.drag-over > td{background:var(--primary-soft)}
+
 /* ── 接入面板的字段行（2026-10-24，按 WaLiAPI 的 UsagePage 重做）──
    WaLiAPI 把 Base URL / 端点 / Key / Model 各做成一块「标签 + 值 + 复制」，
    因为用户真正要粘到自己项目里的往往是**其中某一项**，不是整段代码。

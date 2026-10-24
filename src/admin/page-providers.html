@@ -32,7 +32,16 @@
 <th x-text="t('unit_models')"></th>
 <th style="text-align:right" x-text="t('actions')"></th>
 </tr></thead>
-<tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr @click="openProviderDrawer(providersFormData.indexOf(prov))" style="cursor:pointer" :aria-label="t('edit')+' '+prov.name">
+<tbody><template x-for="prov in visibleProviders" :key="prov.name"><tr @click="openProviderDrawer(providersFormData.indexOf(prov))" style="cursor:pointer" :aria-label="t('edit')+' '+prov.name"
+    :draggable="true" @dragstart="provDragStart($event,prov.name)" @dragover="provDragOver($event,prov.name)" @dragend="provDragEnd()" @drop="provDrop($event,prov.name)"
+    :class="{'drag-over':provOverName===prov.name}">
+  <!-- 拖拽手柄 + 上下移（键盘可达）。供应商在配置里是数组，顺序 = 优先级，
+       但此前面板上没有任何排序手段 —— 这条信息看得见却改不了。
+       上下移按钮是给键盘/触屏用户的替代：拖拽本身对键盘不可达。 -->
+  <td style="width:1%;white-space:nowrap">
+    <div class="pv-grip" :title="t('drag_reorder')" aria-hidden="true">⋮⋮</div>
+    <div class="pv-move"><button type="button" class="pv-mv" :title="t('move_up')" :aria-label="t('move_up')+' '+prov.name" @click.stop="provMove(prov.name,-1)">↑</button><button type="button" class="pv-mv" :title="t('move_down')" :aria-label="t('move_down')+' '+prov.name" @click.stop="provMove(prov.name,1)">↓</button></div>
+  </td>
   <td><div style="width:28px;height:28px;border-radius:var(--rm);overflow:hidden" x-html="providerLogo(prov.name)"></div></td>
   <td><!-- P2: 供应商名点击即复制 (短值就地面板内复制) --><span class="txsm fw6 bdg-click" :class="copiedField==='prov:'+prov.name?'bdg bdg-copied':''" :title="t('copy')" @click.stop="copyBadge(prov.name,'prov:'+prov.name)" x-text="prov.name"></span><!-- 「内置」此前是这一行里**唯一没有 title 的徽章**, 而它的词义有歧义:
      非开发者容易读成"软件自带的、应该自动就能用", 实际含义是"此条目由内置模板生成
@@ -85,7 +94,10 @@
 </template></tbody></table>
 </div></div></template>
 <template x-if="provViewMode==='card' && visibleProviders.length>0"><div class="plaza-grid">
-  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable" :class="{'is-expanded':isProvExpanded(prov.name)}" @click="toggleProvExpand(prov.name)" style="cursor:pointer">
+  <template x-for="prov in visibleProviders" :key="prov.name"><div class="plaza-card card-hoverable"
+    :class="{'is-expanded':isProvExpanded(prov.name),'drag-over':provOverName===prov.name}"
+    @click="toggleProvExpand(prov.name)" style="cursor:pointer"
+    :draggable="!isProvExpanded(prov.name)" @dragstart="provDragStart($event,prov.name)" @dragover="provDragOver($event,prov.name)" @dragend="provDragEnd()" @drop="provDrop($event,prov.name)">
     <!-- 标题行: 图标方块 + 名称(可点复制) + 徽章组. 对齐 cc-switch ProviderCard 的
          「drag/图标 + 名称 + 状态徽章 + (URL 行独立成第二行)」结构 -->
     <div class="plaza-ch">
