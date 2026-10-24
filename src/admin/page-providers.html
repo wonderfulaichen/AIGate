@@ -111,14 +111,33 @@
     </div>
     <!-- 操作条: 次级按钮靠左, 主操作(编辑)与删除靠右 —— 原为 5 个平铺按钮挤一行 -->
     <div class="plaza-acts">
-      <!-- 卡片视图宽度够, 这两个高频操作直接给文字（表格视图同款改动, 见上方注释） -->
+      <!-- 主操作：测试 / 拉取模型 / 编辑（改完端点要验证的核心闭环）-->
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('test_connection')" :disabled="prov._testing" @click="testProvider(providersFormData.indexOf(prov))"><template x-if="!prov._testing"><span>⚡ <span x-text="t('test_short')"></span></span></template><template x-if="prov._testing"><span class="spin"></span></template></button>
       <button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" :title="t('fetch_models')" :disabled="prov._fetching" @click="fetchProviderModels(providersFormData.indexOf(prov))"><template x-if="!prov._fetching"><span>↓ <span x-text="t('fetch_models')"></span></span></template><template x-if="prov._fetching"><span class="spin"></span></template></button>
-      <button class="btn btn-g icon-btn" style="color:var(--warn)" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'" :title="t('reset_circuit')" :aria-label="t('reset_circuit')" @click="resetCircuit(prov.name)">⟲</button>
-      <template x-if="isAccountProv(prov)"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="openLogin(prov.name)" x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button></template>
-      <template x-if="prov.preset"><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="toggleProvDisabled(prov)" x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button></template>
-      <template x-if="prov.preset && presetDirty(prov)"><button class="btn btn-g icon-btn" :title="t('preset_reset')" :aria-label="t('preset_reset')" @click="presetReset(prov)">⟲</button></template>
       <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;margin-left:auto" @click="openProviderDrawer(providersFormData.indexOf(prov))" x-text="t('edit')"></button>
+      <!-- 低频操作收进「⋯」菜单：重置熔断 / 登录 / 停用 / 预设重置。
+           这些都不是日常操作，平铺在卡面上只会挤压主操作（曾把「测试」压成竖排两字）。 -->
+      <div style="position:relative" @click.outside="prov._menuOpen=false">
+        <button class="btn btn-g icon-btn" :title="t('more_actions')" :aria-label="t('more_actions')"
+                :aria-expanded="prov._menuOpen?'true':'false'" @click.stop="prov._menuOpen=!prov._menuOpen">⋯</button>
+        <div class="cols-pop" x-show="prov._menuOpen" x-cloak style="min-width:170px">
+          <button class="cols-row" x-show="health.find(h=>h.provider===prov.name)&&health.find(h=>h.provider===prov.name).circuit!=='closed'"
+                  @click.stop="resetCircuit(prov.name);prov._menuOpen=false" style="width:100%;border:none;background:transparent;color:var(--warn);text-align:left"
+                  x-text="t('reset_circuit')"></button>
+          <template x-if="isAccountProv(prov)">
+            <button class="cols-row" @click.stop="openLogin(prov.name);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
+                    x-text="accountsStatus&&accountsStatus[prov.name]?t('relogin'):t('login')"></button>
+          </template>
+          <template x-if="prov.preset">
+            <button class="cols-row" @click.stop="toggleProvDisabled(prov);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
+                    x-text="prov.disabled?t('prov_enable'):t('prov_disable')"></button>
+          </template>
+          <template x-if="prov.preset && presetDirty(prov)">
+            <button class="cols-row" @click.stop="presetReset(prov);prov._menuOpen=false" style="width:100%;border:none;background:transparent;text-align:left"
+                    x-text="t('preset_reset')"></button>
+          </template>
+        </div>
+      </div>
       <button class="btn btn-g icon-btn" style="color:var(--err)" :disabled="!!prov.preset" @click="deleteProvider(providersFormData.indexOf(prov))" :title="prov.preset?t('preset_locked'):t('delete')" :aria-label="t('delete')">✕</button>
     </div>
     <template x-if="prov._testResult && !prov._testResult.success">

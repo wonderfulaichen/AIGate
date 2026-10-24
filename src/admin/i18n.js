@@ -128,6 +128,8 @@ const I18N = {
     // 模型明细表：首屏只渲染前 10 行（真实数据 50 条 → 3432px / 3.3 屏）
     'rows_show_more': '显示剩余 {0} 条',
     'rows_show_less': '收起（只显示前 10 条）',
+    // 供应商卡操作条：低频操作收进「⋯」菜单
+    'more_actions': '更多操作',
     'balance_state_failed': '查询失败，点刷新重试',
     'balance_state_manual': '手动设置的值（非上游实测）',
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
@@ -566,6 +568,7 @@ const I18N = {
     'tbl_requests_n': '{0} reqs',
     'rows_show_more': 'Show {0} more',
     'rows_show_less': 'Collapse (first 10 only)',
+    'more_actions': 'More actions',
     'balance_state_failed': 'Query failed — click refresh to retry',
     'balance_state_manual': 'Manually set value (not measured by the provider)',
     // Balance fetch time: a stale value must not look live.
