@@ -103,13 +103,21 @@
         this.providersFormData[pi].models.splice(mi,1);
         this.markDirty();
       },
-      deleteSelectedModels() {
+      // 删除选中的模型（带确认）。
+      //
+      // ⚠️ 2026-10-24 修一个**静默数据销毁路径**：原来模板接的是 `deleteSelectedModels()`，
+      // 那个实现是**裸 splice、无任何确认**；而带 `confirmAsk` 的 `deleteSelected(pi)`
+      // 虽然早就写了，却**没有任何 HTML 引用**（死代码）。
+      // 结果是：勾选 30 个模型后误点一次「删除选中」，当场全没，且未保存前只能靠
+      // "关抽屉不保存"挽回 —— 用户根本不知道有这个保险。两个同名实现必然漂移，
+      // 这里删掉无确认的那个，只留这一份。
+      async deleteSelectedModels() {
         const prov = this.drawerProv;
         if (!prov || !prov._selected) return;
-        const toRemove = [];
-        Object.keys(prov._selected).forEach(k => { if (prov._selected[k]) toRemove.push(parseInt(k)); });
-        if (!toRemove.length) return;
-        toRemove.sort((a,b) => b - a).forEach(i => prov.models.splice(i, 1));
+        const idxs = Object.keys(prov._selected).filter(k => prov._selected[k]).map(Number).sort((a, b) => b - a);
+        if (!idxs.length) return;
+        if (!(await confirmAsk(t('confirm_delete_models', idxs.length), { danger: true }))) return;
+        idxs.forEach(i => prov.models.splice(i, 1));
         prov._selected = {};
         this.markDirty();
       },
@@ -139,7 +147,9 @@
         const prov=this.providersFormData[pi];
         const v=prov._bulkEffort;
         if(v===undefined) return;
-        (prov._selected||{});
+        // 注：原这里有一行 `(prov._selected||{});` —— 是个**空语句**（求值后丢弃），
+        // 不产生任何作用，属残留死代码，已删除。它唯一的效果是让读代码的人
+        // 以为"这里做了防护"，实际防护全在下面的 if 里。
         Object.keys(prov._selected||{}).forEach(k=>{
           if(prov._selected[k]){ prov.models[k].reasoning_effort=v; }
         });
@@ -161,15 +171,10 @@
         });
         this.markDirty();
       },
-      async deleteSelected(pi){
-        const prov=this.providersFormData[pi];
-        const idxs=Object.keys(prov._selected||{}).filter(k=>prov._selected[k]).map(Number).sort((a,b)=>b-a);
-        if(!idxs.length) return;
-        if(!(await confirmAsk(t('confirm_delete_models', idxs.length), { danger: true }))) return;
-        idxs.forEach(i=> prov.models.splice(i,1));
-        prov._selected={};
-        this.markDirty();
-      },
+      // 注：这里原先还有一个 `deleteSelected(pi)`，逻辑与上面的
+      // `deleteSelectedModels()` 重复（且同样带确认），但**没有任何 HTML 引用**。
+      // 两份同名同义实现必然漂移（本次 bug 就是漂移的结果：接线的那份没确认）。
+      // 已删除，只保留 `deleteSelectedModels()` 一份。
       async clearRemoved(pi){
         const prov=this.providersFormData[pi];
         const idxs=prov.models.map((m,i)=> m._removed ? i : -1).filter(i=>i>=0).sort((a,b)=>b-a);

@@ -130,6 +130,12 @@ const I18N = {
     'rows_show_less': '收起（只显示前 10 条）',
     // 供应商卡操作条：低频操作收进「⋯」菜单
     'more_actions': '更多操作',
+    // 抽屉模型表批量操作（2026-10-24）：给选中的模型统一设档位/协议/免费
+    'bulk_selected_n': '已选 {0}',
+    'bulk_set_effort': '思考档…',
+    'bulk_set_fmt': '协议…',
+    'bulk_mark_free': '标为免费',
+    'apply': '应用',
     'balance_state_failed': '查询失败，点刷新重试',
     'balance_state_manual': '手动设置的值（非上游实测）',
     // 余额采集时刻: 说明"这个数是什么时候取的", 陈旧值不该伪装成实时。
@@ -569,6 +575,11 @@ const I18N = {
     'rows_show_more': 'Show {0} more',
     'rows_show_less': 'Collapse (first 10 only)',
     'more_actions': 'More actions',
+    'bulk_selected_n': '{0} selected',
+    'bulk_set_effort': 'Effort…',
+    'bulk_set_fmt': 'Protocol…',
+    'bulk_mark_free': 'Mark free',
+    'apply': 'Apply',
     'balance_state_failed': 'Query failed — click refresh to retry',
     'balance_state_manual': 'Manually set value (not measured by the provider)',
     // Balance fetch time: a stale value must not look live.

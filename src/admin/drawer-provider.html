@@ -124,6 +124,30 @@
                   <button class="btn btn-g" style="font-size:var(--fs-11)" @click="toggleAll(drawerProv,false)" x-text="t('deselect_all')"></button>
                   <button class="btn btn-g" style="font-size:var(--fs-11);color:var(--err)" @click="deleteSelectedModels()" x-text="t('delete_selected')"></button>
                   <button class="btn btn-g" style="font-size:var(--fs-11)" :disabled="!priceClipboardSet||selectedIndexes(drawerProv).length===0" :title="t('price_apply_selected_hint')" @click="applyPriceToSelected(providersFormData.indexOf(drawerProv))" x-text="t('price_apply_selected',selectedIndexes(drawerProv).length)"></button>
+                  <!-- 批量改档位/协议/免费（2026-10-24 接线）。
+                       这三个方法（applyBulkEffort / applyBulkFmt / applyBulkFree）**早就写好了，
+                       但一直没有 HTML 调用点** —— 属死代码。
+                       痛点：拉取 40 个模型后要逐个点思考档，是这段活里最枯燥的一次点击乘 40。
+                       一个人对某个供应商通常只用一个档位，批量几乎是刚需。 -->
+                  <span class="cg" style="gap:4px;padding:4px 8px" x-show="selectedCount(drawerProv)>0">
+                    <span class="txs tm" x-text="t('bulk_selected_n',selectedCount(drawerProv))"></span>
+                    <select class="sel" style="font-size:var(--fs-11);padding:2px 20px 2px 6px" x-model="drawerProv._bulkEffort" :aria-label="t('bulk_set_effort')">
+                      <option value="" x-text="t('bulk_set_effort')"></option>
+                      <option value="low" x-text="t('eff.low')"></option>
+                      <option value="medium" x-text="t('eff.medium')"></option>
+                      <option value="high" x-text="t('eff.high')"></option>
+                      <option value="max" x-text="t('eff.max')"></option>
+                    </select>
+                    <button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 7px" :disabled="!drawerProv._bulkEffort" @click="applyBulkEffort(providersFormData.indexOf(drawerProv));drawerProv._bulkEffort=''" x-text="t('apply')"></button>
+                    <select class="sel" style="font-size:var(--fs-11);padding:2px 20px 2px 6px" x-model="drawerProv._bulkFmt" :aria-label="t('bulk_set_fmt')">
+                      <option value="" x-text="t('bulk_set_fmt')"></option>
+                      <option value="openai" x-text="'OpenAI'"></option>
+                      <option value="anthropic" x-text="'Anthropic'"></option>
+                      <option value="responses" x-text="'Responses'"></option>
+                    </select>
+                    <button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 7px" :disabled="!drawerProv._bulkFmt" @click="applyBulkFmt(providersFormData.indexOf(drawerProv));drawerProv._bulkFmt=''" x-text="t('apply')"></button>
+                    <button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 7px" @click="applyBulkFree(providersFormData.indexOf(drawerProv),true)" x-text="t('bulk_mark_free')"></button>
+                  </span>
                   <button class="btn btn-p" style="font-size:var(--fs-11)" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
                 </div>
               </div>
