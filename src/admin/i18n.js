@@ -173,6 +173,12 @@ const I18N = {
     'test_failed': '连接失败',
     'detail.endpoint_short': '端点',
     'expand_details': '展开详情',
+    // 接入面板（2026-10-24）
+    'endpoint_path': '协议端点',
+    'first_req_pick_model': '选择模型',
+    'first_req_no_model_yet': '还没有可用模型',
+    'go_config': '去配置',
+    'protocol_pick': '接入协议',
     // 客户端实际收到的状态 vs 语义状态 (2026-10-24)
     'detail.status_mismatch': '状态说明：日志记为 {0}（语义结论），客户端实际收到 {1}',
     'detail.status_mismatch_label': '状态说明',
@@ -632,6 +638,11 @@ const I18N = {
     'test_failed': 'Connection failed',
     'detail.endpoint_short': 'Endpoint',
     'expand_details': 'Expand details',
+    'endpoint_path': 'Endpoint',
+    'first_req_pick_model': 'Pick a model',
+    'first_req_no_model_yet': 'No models available yet',
+    'go_config': 'Configure',
+    'protocol_pick': 'Protocol',
     // Client-observed status vs semantic status (2026-10-24)
     'detail.status_mismatch': 'Status note: logged as {0} (semantic), client actually received {1}',
     'detail.status_mismatch_label': 'Status note',

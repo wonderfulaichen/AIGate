@@ -127,15 +127,58 @@
     },
     // 第一次请求示例: 模型取第一个「已填上游 ID」的中转 ID; 无模型时用占位符 (复制时 toast 提醒).
     firstReqModel() {
+      // 用户在下拉里选过的优先（2026-10-24：原来只能自动取第一个模型，
+      // 代码块里的 model 改不了 —— 而用户真正要粘到自己项目里的往往是另一个）
+      if (this.firstReqModelSel) return this.firstReqModelSel;
       const provs = this.providersFormData || [];
       for (const p of provs) for (const m of (p.models || [])) if (!m._removed && m.upstream_model) return m.model_id || '';
       return '';
     },
+    // 可选模型清单（按供应商分组，与 WaLiAPI 的"按来源分组下拉"同一思路）
+    firstReqModelGroups() {
+      const out = [];
+      for (const p of (this.providersFormData || [])) {
+        const ms = (p.models || []).filter(m => !m._removed && (m.model_id || '')).map(m => m.model_id);
+        if (ms.length) out.push({ provider: p.name, models: ms });
+      }
+      return out;
+    },
+    // 协议端点：三种协议各不同（WaLiAPI 的 usage 页正是这么分的）。
+    // ⚠️ base 与 path 的分工要明确，否则拼接会重复或丢段：
+    //   · chat / responses：base 含 /v1，path 只给 "/chat/completions" 这样的尾段
+    //   · anthropic：SDK 的 base_url **不带 /v1**（Anthropic 客户端自己加），
+    //     所以 base 去掉 /v1、path 给 "/v1/messages"
+    // 第一版两者都带 /v1，拼出来是 ".../v1/v1/messages"（实测代码块里不含 /v1/messages
+    // 正是因为拼接后变成了别的字符串）。
+    firstReqEndpoint() {
+      const root = (window.location.origin || 'http://127.0.0.1:8787');
+      const p = this.firstReqProto || 'chat';
+      if (p === 'anthropic') return { base: root, path: '/v1/messages', label: 'Anthropic Messages' };
+      if (p === 'responses') return { base: root + '/v1', path: '/responses', label: 'OpenAI Responses' };
+      return { base: root + '/v1', path: '/chat/completions', label: 'OpenAI Chat' };
+    },
+    setFirstReqProto(p) { this.firstReqProto = p; },
+    setFirstReqModel(v) { this.firstReqModelSel = v; },
     firstRequestCode() {
-      const base = (window.location.origin || 'http://127.0.0.1:8787') + '/v1';
-      const endpoint = base + '/chat/completions';
+      const ep = this.firstReqEndpoint();
+      const base = ep.base;
+      // 现在 base 与 path 的分工已明确（见 firstReqEndpoint 注释），直接拼即可 ——
+      // 不要再对 path 做 replace，否则 anthropic 的 /v1/messages 会被削成 /messages。
+      const endpoint = base + ep.path;
       const model = this.firstReqModel() || t('first_req_model_ph');
+      const proto = this.firstReqProto || 'chat';
       if (this.firstReqTab === 'python') {
+        if (proto === 'anthropic') {
+          return 'import anthropic  # pip install anthropic\n'
+            + '\n'
+            + 'client = anthropic.Anthropic(base_url="' + base + '", api_key="local")\n'
+            + 'msg = client.messages.create(\n'
+            + '    model="' + model + '",\n'
+            + '    max_tokens=256,\n'
+            + '    messages=[{"role": "user", "content": "ping"}],\n'
+            + ')\n'
+            + 'print(msg.content)';
+        }
         return 'from openai import OpenAI  # pip install openai\n'
           + '\n'
           + 'client = OpenAI(base_url="' + base + '", api_key="local")\n'
@@ -158,6 +201,13 @@
           + '  });\n'
           + '  console.log(await res.json());\n'
           + '})();';
+      }
+      if (proto === 'anthropic') {
+        return 'curl ' + endpoint + ' \\\n'
+          + '  -H "Content-Type: application/json" \\\n'
+          + '  -H "x-api-key: local" \\\n'
+          + '  -H "anthropic-version: 2023-06-01" \\\n'
+          + "  -d '{\"model\":\"" + model + "\",\"max_tokens\":256,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}'";
       }
       return 'curl ' + endpoint + ' \\\n'
         + '  -H "Content-Type: application/json" \\\n'

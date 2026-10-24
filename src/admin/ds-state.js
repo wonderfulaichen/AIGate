@@ -100,6 +100,11 @@ function dashboard() {  return {
     // 供应商卡/行的**行内展开**态（2026-10-24，对照 WaLiAPI 的 ChannelsPage）。
     // 与 provTableExpanded（分析页的供应商明细表）是两回事，不要复用。
     provExpanded: {},
+    // 「快速开始」接入面板（2026-10-24）：协议与模型可选，代码块跟着变。
+    // 参照 WaLiAPI 的 UsagePage —— 它的 Base URL / 端点 / Key / Model 是
+    // **字段级独立可复制**的，而我们原来只有一个整段代码块。
+    firstReqProto: 'chat',        // chat | responses | anthropic
+    firstReqModelSel: '',         // 用户在下拉里选的模型（空 = 自动取第一个）
     // 模型明细表：是否展开全部行（默认只看前 10 条）。
     // 真实数据下 per_model 有 50 条，全渲染 = 3432px / 3.3 屏。
     modelRowsAll: false,

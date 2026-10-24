@@ -180,7 +180,39 @@
                 </template>
               </div>
             </template><template x-if="!providerRows.length"><div class="txs tm" style="text-align:center;padding:18px 0" x-text="t('balance_none')"></div></template><div class="txs tm" x-show="balanceUnsupportedNote" style="padding:10px 0 2px;border-top:1px solid var(--fill-4);margin-top:6px" x-text="balanceUnsupportedNote"></div></div><div class="panel-takeaway" x-show="balanceTakeaway" x-text="balanceTakeaway"></div></div>
-        <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('quick_start')"></h2></div><div class="pnl-b"><div class="txs tm" style="line-height:1.6;margin-bottom:10px" x-text="t('quick_start_desc')"></div><div class="fb" style="padding:8px 10px;background:var(--input);border:1px solid var(--border);border-radius:var(--r)"><span class="mono txs" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="baseUrl"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 6px" @click="copyText(baseUrl,'base')" x-text="copiedField==='base'?t('copied'):t('copy')"></button></div><div class="ov-actions" style="margin-top:10px"><button class="btn btn-o" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('manage_providers')"></button><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('records')" x-text="t('view_records')"></button></div></div></div>
+        <!-- 接入面板（2026-10-24 按 WaLiAPI 的 UsagePage 重做）。
+             改造前这里只有一个 Base URL + 复制按钮；WaLiAPI 是**字段级可复制**的接入向导：
+             协议可选（三种端点各异）→ Base URL / 端点 各自带复制 → Key 与 Model 各带复制。
+             用户真正需要粘到自己项目里的往往不是整段代码，而是其中某一项。 -->
+        <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht" x-text="t('quick_start')"></h2><div class="txs tm" style="margin-top:3px" x-text="t('quick_start_desc')"></div></div></div><div class="pnl-b">
+          <!-- 协议三选（WaLiAPI 的 protocolTabs） -->
+          <div class="seg" style="margin-bottom:12px" role="tablist" :aria-label="t('protocol_pick')">
+            <button type="button" class="seg-i" role="tab" :aria-selected="firstReqProto==='chat'" :class="{'a':firstReqProto==='chat'}" @click="setFirstReqProto('chat')" x-text="'OpenAI Chat'"></button>
+            <button type="button" class="seg-i" role="tab" :aria-selected="firstReqProto==='responses'" :class="{'a':firstReqProto==='responses'}" @click="setFirstReqProto('responses')" x-text="'OpenAI Responses'"></button>
+            <button type="button" class="seg-i" role="tab" :aria-selected="firstReqProto==='anthropic'" :class="{'a':firstReqProto==='anthropic'}" @click="setFirstReqProto('anthropic')" x-text="'Anthropic Messages'"></button>
+          </div>
+          <!-- Base URL -->
+          <div class="acc-field"><div class="acc-k"><span aria-hidden="true">◈</span> <span>Base URL</span></div><div class="acc-row"><code class="acc-val mono" x-text="firstReqEndpoint().base"></code><button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 8px" @click="copyText(firstReqEndpoint().base,'reqBase')" x-text="copiedField==='reqBase'?t('copied'):t('copy')"></button></div></div>
+          <!-- 协议端点 -->
+          <div class="acc-field"><div class="acc-k"><span aria-hidden="true">⇢</span> <span x-text="t('endpoint_path')"></span></div><div class="acc-row"><code class="acc-val mono" x-text="firstReqEndpoint().path"></code><button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 8px" @click="copyText(firstReqEndpoint().path,'reqPath')" x-text="copiedField==='reqPath'?t('copied'):t('copy')"></button></div></div>
+          <!-- Model：下拉按供应商分组（WaLiAPI 的 models 分类下拉） -->
+          <div class="acc-field"><div class="acc-k"><span aria-hidden="true">◇</span> <span>Model</span></div>
+            <div class="acc-row">
+              <select class="sel" style="flex:1;font-size:var(--fs-11)" :value="firstReqModelSel" @change="setFirstReqModel($event.target.value)" :aria-label="t('first_req_pick_model')">
+                <option value="" x-text="firstReqModel()||t('first_req_model_ph')"></option>
+                <template x-for="g in firstReqModelGroups()" :key="'g'+g.provider">
+                  <optgroup :label="g.provider"><template x-for="m in g.models" :key="'m'+g.provider+m"><option :value="m" x-text="m"></option></template></optgroup>
+                </template>
+              </select>
+              <button class="btn btn-g" style="font-size:var(--fs-10);padding:3px 8px;flex:none" @click="copyText(firstReqModel(),'reqModel')" x-text="copiedField==='reqModel'?t('copied'):t('copy')"></button>
+            </div>
+          </div>
+          <!-- 未配置模型时的引导（WaLiAPI 的红字 + 跳转） -->
+          <template x-if="!firstReqModel()"><div class="acc-warn"><span aria-hidden="true">!</span><span x-text="t('first_req_no_model_yet')"></span><button class="btn btn-g" style="font-size:var(--fs-10);padding:2px 8px" @click="switchTab('providers')" x-text="t('go_config')+' →'"></button></div></template>
+          <!-- 完整代码块（保留：有人更喜欢整段复制） -->
+          <div class="fr-code" style="margin-top:12px"><pre x-text="firstRequestCode()"></pre></div>
+          <div class="fb" style="margin-top:10px"><div class="fr-hints"><span class="txs tm" x-text="t('first_req_local')"></span></div><div class="fb" style="gap:6px"><div class="seg"><button type="button" class="seg-i" :class="{'a':firstReqTab==='curl'}" @click="firstReqTab='curl'">curl</button><button type="button" class="seg-i" :class="{'a':firstReqTab==='python'}" @click="firstReqTab='python'">Python</button><button type="button" class="seg-i" :class="{'a':firstReqTab==='node'}" @click="firstReqTab='node'">Node.js</button></div><button class="btn btn-p" style="font-size:var(--fs-11);flex:none" @click="copyFirstRequest()" x-text="copiedField==='firstreq'?t('copied'):t('copy')"></button></div></div>
+        </div></div>
         <div class="pnl"><div class="pnl-h"><div><h2 class="pnl-ht"><span x-text="t('api_information')"></span></h2><div class="txs tm" style="margin-top:3px" x-text="t('api_information_desc')"></div></div><button class="btn btn-g" style="font-size:var(--fs-11)" @click="switchTab('providers')" x-text="t('view_providers')+' →'"></button></div><div class="pnl-b"><template x-for="item in [{method:'BASE',path:baseUrl,descKey:'api_base_url_desc'},{method:'GET',path:'/v1/models',descKey:'available_models'},{method:'POST',path:'/v1/chat/completions',descKey:'chat_completions'},{method:'POST',path:'/v1/messages',descKey:'anthropic_messages'},{method:'POST',path:'/v1/responses',descKey:'responses_api'}]" :key="item.path"><div class="ov-api-row"><span class="ov-api-method" x-text="item.method"></span><span class="ov-api-path" style="flex:1" x-text="item.path"></span><span class="txs tm" x-text="t(item.descKey)"></span><button class="btn btn-g" style="font-size:var(--fs-11);padding:4px 8px" @click="copyText(item.path,'api')" x-text="copiedField==='api'?t('copied'):t('copy')"></button></div></template></div></div>
       </div>
     </div>
