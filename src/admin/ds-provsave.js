@@ -177,6 +177,12 @@
               ua_by_model_prefix: (Array.isArray(p.ua_by_model_prefix) && p.ua_by_model_prefix.length) ? p.ua_by_model_prefix : undefined,
               // 上游要求首条为 system (WorkBuddy 国际版实测 400/11128) → 让网关补.
               require_system_first: p.require_system_first||undefined,
+              // opencode Console 凭据（2026-10-24）：只用于查 Go 套餐真实额度，
+              // 不参与代理转发。空字符串要落成 undefined（否则会存一堆空串进配置）。
+              // ⚠️ 必须在这里透传 —— 本函数是保存白名单，不入白名单的字段保存时会被丢掉
+              // （上面 ua_by_model_prefix 的注释记的就是这个坑）。
+              console_session: (p.console_session||'').trim()||undefined,
+              console_org_id: (p.console_org_id||'').trim()||undefined,
               // 实测支持的协议 (供应商级, 由「拉取模型」时的探测写入). 仅在有值时落盘,
               // 免得给未探测过的供应商塞空字段. 用途: 面板展示「实测支持」+ 供用户判断.
               probed_protocols: (Array.isArray(p.probed_protocols) && p.probed_protocols.length) ? p.probed_protocols.slice() : undefined,

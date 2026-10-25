@@ -1,24 +1,28 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉘」**：opencode 额度改用
-> Console API，**推翻 ㉗**）。
-> 用户提供 [QuotaHub](https://github.com/lvmiao233/QuotaHub) 并说「好像可以查 opencode 额度」。
-> 查证后确认 **㉗ 的结论是错的**：inference 端点确实没有额度接口，但
-> **Console 网页 API 有** → `GET https://opencode.ai/console/api/go/status`
-> （Cookie `__Host-console_session` + 头 `x-org-id: wrk_...`）。实测 HTTP 200。
-> **教训：一个产品有数据面(inference)与控制面(console)两个面，试完一个面就下
-> 「没有这个能力」的结论是过度概括。**
-> 换算 `1e8` microCents = 1 USD **已被官方比例独立校验**
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉙」**：Console 凭据录入界面）。
+> ㉘ 把额度改成 Console API 查询但**没有录入界面**（要用得手改 providers.json），
+> 本轮补上：供应商抽屉 → 高级端点区 → Console Cookie（password 框）+ 组织 ID。
+> ⚠️ **新增 ProviderConfig 字段必须同时改三处**：`providers.rs` 结构体 +
+> `ds-provsave.js` 保存白名单 + 抽屉模板。**白名单外的字段会被静默丢弃**
+> （`ua_by_model_prefix` 就漏过，表现为"预设能登录、一保存就 400"）。
+> ⚠️ **探针自身的假失败**：只改前端草稿就查额度 → 后端读的是**已落盘配置**，
+> 永远报「未配置 Cookie」，把「缺组织 ID」判据整个盖住。
+> **规律：测"配置是否生效"必须走完保存链路，只改草稿测的是内存不是配置。**
+> 单测/探针：`probe_console_cred.py`(11)，改坏验证 2/2 转红。
+> **待办**：`request-logs` 端点（官方逐请求 cost）已实测可用但未接入；
+> 「界面粘真 Cookie 再查询」这一人工操作未走过（真实查询链路已在 ㉘ 端到端验过）。
+
+> ⏪ **上一轮（㉘）**：opencode 额度改用 Console API，**推翻 ㉗**。
+> 教训：inference 端点没有额度接口，但 **Console 网页 API 有**
+> （`/console/api/go/status`，Cookie + `x-org-id`）。
+> **一个产品有数据面与控制面两个面，试完一个面就下「没有这个能力」的结论是过度概括。**
+> 换算 `1e8` microCents = 1 USD 已被官方比例独立校验
 > （`1200000000/6000000000=0.20`、`3000000000/6000000000=0.50`）。
-> 已删除 ㉗ 的「累加 allowance + 内置模型额度表」整套；改为 Console 查询
-> + 新端点 `/admin/api/opencode/quota` + `ProviderConfig.console_session/console_org_id`。
-> ⚠️ **两个实测才发现的坑**：`used_pct` 写成**方法**导致 serde 不下发 → 前端全 "—"
-> （**凡前端要读的算出来的值，必须是字段不是方法**）；探针读 textContent 读到隐藏元素
-> 导致误报 UI bug（实际 UI 是对的）。
-> ⚠️ QuotaHub **无 LICENSE**（`license: null`）→ 未复用其任何代码，端点形状由我方实测确认。
-> 单测 7 条 + `probe_quota_panel.py`(11)，改坏验证 3/3 转红（换算/序列化/clamp）。
-> **待办**：前端还没有录入 Console 凭据的界面（目前要手改 providers.json）；
-> `request-logs` 端点已实测可用但未接入（可补 `cost` 全 0 的缺口）。
+> 已删除 ㉗ 的累加+额度表整套。⚠️ **两个实测才发现的坑**：
+> `used_pct` 写成**方法** → serde 不下发 → 前端全 "—"（**前端要读的值必须是字段**）；
+> 探针读 textContent 读到隐藏元素 → 误报 UI bug（实际 UI 是对的）。
+> ⚠️ QuotaHub **无 LICENSE**（`license: null`）→ 未复用其代码。
 
 > ⏪ **上一轮（㉗，结论已被推翻，仅存档）**：opencode 套餐额度从 allowance 累加。
 > ⚠️ 该节断言「opencode 没有额度查询接口」是**错的**，实现已整体删除。
@@ -1743,6 +1747,67 @@ provC                                        请求 6   错误 0
 **探针自身又踩一次可见性坑**（与上一轮同类）：`.prop-bar` 没有固定高度，`offsetHeight` 恒为 0，
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
+
+### 🆕 10-24 轮 ㉙：Console 凭据录入界面（补上 ㉘ 缺的那一环）
+
+㉘ 把额度改成 Console 查询，但**没有录入界面** —— 要用得手改 `providers.json`，
+等于功能对普通使用方式不可用。本轮补上。
+
+#### 改动
+
+- 供应商抽屉 → 高级端点区新增「opencode Console 凭据」：
+  Console Cookie（**password 框**，等同登录态的凭据不明文展示）+ 组织 ID。
+  提示写明「与请求转发无关，不填也能正常使用该供应商」——
+  避免用户误以为必填；并说明从哪复制（F12 → Network / 地址栏）。
+- `ds-provsave.js` 保存白名单收录两个字段，空值落 `undefined`。
+
+#### ⚠️ 白名单这个坑必须再强调一次
+
+`ds-provsave.js` 的 `providers.map(...)` 是**保存白名单** ——
+不在里面的字段会被**静默丢弃**。本项目已经踩过：`ua_by_model_prefix`
+漏收录时表现为「预设加进来能登录、一保存就 400」（UA 没了，排查极久）。
+
+所以新增任何 ProviderConfig 字段时，**必须同时改三处**：
+`providers.rs` 结构体、`ds-provsave.js` 白名单、抽屉模板。
+
+#### 后端错误要能区分三种情形
+
+实测确认报错可分辨：
+- 缺 Cookie → 「未配置 Console Cookie（供应商配置 → opencode 额度）」
+- 缺组织 ID → 「未配置组织 ID（wrk_ 开头）」
+- 组织 ID 格式错 → 「组织 ID 必须以 wrk_ 开头，实际为 "xxx"」（回显实际值）
+
+这样用户一眼知道该补哪一项，而不是笼统的"凭据错误"。
+
+#### 探针自身的一个假失败（已修，值得记）
+
+`probe_console_cred.py` 第一版只改抽屉里的草稿（`drawerProv.console_session`）
+就调查询接口 —— 但**后端读的是已落盘的配置**，所以永远报「未配置 Cookie」，
+把「只填 Cookie 应报缺组织 ID」这条判据整个盖住了。
+
+改成「先 `saveProvidersForm()` 再查」才测到真实链路。
+**规律：测"配置生效"类行为时，必须走完保存链路；只改前端草稿测的是内存不是配置。**
+
+#### 新增判据
+
+`tools/probe_console_cred.py`（11 条，真实实例）：
+抽屉有 password 类型的 Cookie 输入 + 组织 ID 输入、保存后**落盘**可读回、
+空值不残留、缺 Cookie / 缺 org / org 格式错三种报错各自可辨、缺凭据时不返回额度、
+零 pageerror。
+
+**改坏验证 2/2 转红**：
+① 白名单去掉字段 → 落盘判据红，且连带「缺组织 ID」「org 格式错」两条一起红
+   （因为配置里根本没存进去，后端永远报缺 Cookie）—— 正是那个坑的连锁症状；
+② 空值不清理直接落盘空串 → 「不残留」判据红。
+
+#### 未实测 / 已知缺口
+
+- **真实 Cookie 未通过界面录入验证过**：探针用的是伪造值（`st_probe...`）
+  验证「录入→落盘→读回」链路，真实查询链路已在 ㉘ 用真 Cookie 端到端验过，
+  但「在界面上粘真 Cookie 然后点查询」这一具体操作未人工走过。
+- Cookie 过期后需重新复制（报错会提示）。
+- `request-logs` 端点（官方口径逐请求 cost）仍**未接入** —— 可补我们 `cost` 全 0 的缺口。
+- 部署份 exe 未替换（红线）。
 
 ### 🆕 10-24 轮 ㉘：opencode 额度改用 Console API（**推翻 ㉗ 的结论**）
 

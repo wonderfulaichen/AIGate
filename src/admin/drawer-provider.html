@@ -113,6 +113,35 @@
                 <div class="f-row"><label x-text="t('max_body_label')"></label><input type="number" min="0" step="1024" class="inp mono" style="width:100%" x-model.number="drawerProv.max_request_body_bytes" :placeholder="t('max_body_ph')" :aria-label="t('max_body_label')" @input="markDirty()"></div>
                 <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('max_body_hint')"></div>
               </div>
+
+              <!-- ── opencode Console 凭据（2026-10-24）──
+                   用途只有一个：查 Go 套餐的**真实额度**（Console 网页 API）。
+                   与代理转发无关 —— 不填也能正常用这个供应商，只是查不到额度。
+                   为什么必须手填：Console 是网页 API，没有面向程序员的 key，
+                   只有登录后的 session Cookie。 -->
+              <div class="f-row" style="margin-top:10px">
+                <label x-text="t('console_cred_label')"></label>
+                <div class="txs tm" style="margin-bottom:6px" x-text="t('console_cred_hint')"></div>
+                <div class="f-grid">
+                  <div class="f-row">
+                    <label x-text="t('console_cookie_label')"></label>
+                    <!-- 密码框：这是等同登录态的凭据，不明文展示 -->
+                    <input type="password" class="inp mono" style="width:100%"
+                           x-model="drawerProv.console_session"
+                           :placeholder="t('console_cookie_ph')"
+                           :aria-label="t('console_cookie_label')"
+                           @input="markDirty()" autocomplete="off">
+                  </div>
+                  <div class="f-row">
+                    <label x-text="t('console_org_label')"></label>
+                    <input type="text" class="inp mono" style="width:100%"
+                           x-model="drawerProv.console_org_id"
+                           :placeholder="t('console_org_ph')"
+                           :aria-label="t('console_org_label')"
+                           @input="markDirty()" autocomplete="off">
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
