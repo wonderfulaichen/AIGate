@@ -442,6 +442,25 @@ pub struct ProviderConfig {
     /// 余额查询 API 端点 (可选).
     #[serde(default)]
     pub balance_endpoint: Option<String>,
+    /// **opencode Console 登录态 Cookie**（2026-10-24）。
+    ///
+    /// 用途：查询 Go / Go Plus 套餐的真实额度
+    /// （`GET https://opencode.ai/console/api/go/status`，实测可用）。
+    ///
+    /// 为什么需要用户手工填：Console 是网页 API，没有面向程序员的 key，
+    /// 只有登录后的 session Cookie。用户从浏览器 F12 → Network →
+    /// 任意 `console/api` 请求里复制 `__Host-console_session=st_...`。
+    ///
+    /// ⚠️ 这是**等同登录态**的敏感凭据。本项目已有 `keys.json` 存 API key 的先例，
+    /// 这里与其它供应商凭据同等对待（不进日志、不回显全文）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_session: Option<String>,
+    /// opencode **组织 ID**（`wrk_` 开头），额度查询必须随 Cookie 一起发 `x-org-id`。
+    ///
+    /// 从哪里拿：Console 地址栏形如 `https://opencode.ai/console/wrk_xxx/go`，
+    /// 中间那段就是。实测：不给它或给错 → HTTP 400。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_org_id: Option<String>,
     /// 额外注入的 HTTP 请求头.
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
@@ -2122,6 +2141,8 @@ mod tests {
             disabled: None,
             probed_protocols: None,
             balance_endpoint: None,
+            console_session: None,
+            console_org_id: None,
             headers: None,
             ua_by_model_prefix: None,
             require_system_first: None,

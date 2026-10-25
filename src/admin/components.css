@@ -1133,3 +1133,11 @@ tr:hover td.th-sticky{
 .quota-bar > i{display:block;height:100%;border-radius:999px;transition:width .3s}
 .quota-w-v{font-size:var(--fs-10);font-weight:600;font-variant-numeric:tabular-nums;
   min-width:38px;text-align:right}
+/* 金额与重置时间（Console API 版新增）：金额用等宽对齐，重置时间小字弱化。 */
+.quota-amt{font-size:var(--fs-10);color:var(--muted);font-variant-numeric:tabular-nums;
+  min-width:118px}
+.quota-reset{font-size:var(--fs-10);color:var(--muted);white-space:nowrap}
+/* 额度查询失败：用警示色块而不是一行红字 —— 它往往是"Cookie 过期"这类需要动手的事 */
+.quota-err{display:flex;align-items:flex-start;gap:6px;margin-top:8px;padding:8px 10px;
+  border-radius:var(--rm);background:var(--err-bg);border:1px solid var(--err-bd);
+  color:var(--err);font-size:var(--fs-11);line-height:1.5}

@@ -17,7 +17,7 @@
   {
     "file": "components.css",
     "mode": "raw",
-    "bytes": 97048
+    "bytes": 97692
   },
   {
     "file": "pages.css",
@@ -52,7 +52,7 @@
   {
     "file": "page-providers.html",
     "mode": "raw",
-    "bytes": 19265
+    "bytes": 20525
   },
   {
     "file": "page-about.html",
@@ -87,7 +87,7 @@
   {
     "file": "i18n.js",
     "mode": "standalone",
-    "bytes": 126560
+    "bytes": 127328
   },
   {
     "file": "stores.js",
@@ -187,7 +187,7 @@
   {
     "file": "ds-quota.js",
     "mode": "obj-body",
-    "bytes": 4541
+    "bytes": 5511
   },
   {
     "file": "ds-records.js",

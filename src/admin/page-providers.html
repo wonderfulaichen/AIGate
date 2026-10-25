@@ -112,38 +112,58 @@
         <!-- 行内展开（保留我们已有、WaLiAPI 没有的能力：模型胶囊点一下复制） -->
         <template x-if="isProvExpanded(prov.name)">
           <div class="prov-expand" @click.stop>
-            <!-- opencode 套餐额度（2026-10-24）。
-                 数据来源：我们**自己累加**每条响应的 `usage.opencode.allowance`，
-                 不是查接口 —— opencode 不提供额度查询端点（详见 ds-quota.js 顶部说明）。
-                 所以这里没有"刷新"按钮：刷新也只会得到同样的本地累加值。
-                 `provQuotaRows` 返回 null（非 opencode / 无数据）时整块不渲染 ——
-                 不画 0% 的假进度条。 -->
-            <template x-if="provQuotaRows(prov.name)">
+            <!-- opencode 套餐额度（2026-10-24，**Console API 官方真实值**）。
+                 数据来源是 `GET https://opencode.ai/console/api/go/status`，
+                 需要供应商配置里的 Console Cookie + 组织 ID。
+                 （早先的"本地累加 allowance"方案已删除：它看不到别的客户端的用量，
+                   且要维护一张会过期的模型额度表。）
+                 查询是**显式动作**（点按钮），不在打开页面时自动打外部接口。 -->
+            <template x-if="provMayHaveQuota(prov)">
               <div class="pe-sec">
                 <div class="pe-hd">
                   <span x-text="t('quota_title')"></span>
-                  <span class="txs tm" x-text="t('quota_source_note',quotaTableDate())" :title="t('quota_source_hint')"></span>
+                  <span class="cg" style="gap:8px">
+                    <span class="txs tm" x-text="t('quota_source_api')" :title="t('quota_source_api_hint')"></span>
+                    <button type="button" class="btn btn-g" style="font-size:var(--fs-11);padding:3px 9px"
+                            :disabled="ocQuotaLoading(prov.name)"
+                            @click.stop="fetchOpencodeQuota(prov.name)">
+                      <span x-show="!ocQuotaLoading(prov.name)" x-text="t('quota_query')"></span>
+                      <span x-show="ocQuotaLoading(prov.name)" class="spin"></span>
+                    </button>
+                  </span>
                 </div>
-                <div class="quota-list">
-                  <template x-for="q in provQuotaRows(prov.name)" :key="'q'+q.model">
-                    <div class="quota-row">
-                      <span class="quota-model mono" x-text="q.model" :title="q.model"></span>
-                      <!-- 三档：5 小时 / 周 / 月。每档独立进度条 —— 5h 会滚动过期而月不会，
-                           用一个总数推算 5h 是错的。 -->
-                      <template x-for="w in [{k:'fiveHour',u:q.used_5h_usd,l:'quota_5h'},
-                                             {k:'weekly',u:q.used_weekly_usd,l:'quota_week'},
-                                             {k:'monthly',u:q.used_monthly_usd,l:'quota_month'}]" :key="'qw'+q.model+w.k">
-                        <span class="quota-w">
-                          <span class="quota-w-l" x-text="t(w.l)"></span>
-                          <span class="quota-bar"><i :style="'width:'+Math.min(100,quotaPct(w.u,q.monthly_usd,w.k)||0)+'%;background:'+quotaTone(quotaPct(w.u,q.monthly_usd,w.k))"></i></span>
-                          <b class="quota-w-v" :style="'color:'+quotaTone(quotaPct(w.u,q.monthly_usd,w.k))"
-                             :title="'$'+(w.u||0).toFixed(4)+' / $'+((q.monthly_usd||0)*({fiveHour:0.2,weekly:0.5,monthly:1}[w.k])).toFixed(2)"
-                             x-text="quotaPctText(w.u,q.monthly_usd,w.k)"></b>
-                        </span>
-                      </template>
-                    </div>
-                  </template>
-                </div>
+
+                <!-- 查询失败：如实报错（含"Cookie 可能过期"这种可操作提示），不画假进度条 -->
+                <template x-if="ocQuotaErr(prov.name)">
+                  <div class="quota-err"><span aria-hidden="true">!</span><span x-text="ocQuotaErr(prov.name)"></span></div>
+                </template>
+
+                <!-- 查到了：三个窗口各一条，带金额与重置时间 -->
+                <template x-if="ocQuota(prov.name)">
+                  <div class="quota-list">
+                    <template x-for="w in ocQuota(prov.name).windows" :key="'qw'+w.key">
+                      <div class="quota-row">
+                        <span class="quota-model" x-text="ocWindowLabel(w.key)"></span>
+                        <span class="quota-bar"><i :style="'width:'+Math.min(100,w.used_pct||0)+'%;background:'+ocTone(w.used_pct)"></i></span>
+                        <b class="quota-w-v" :style="'color:'+ocTone(w.used_pct)"
+                           :title="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"
+                           x-text="ocPctText(w.used_pct)"></b>
+                        <span class="quota-amt mono" x-text="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"></span>
+                        <span class="quota-reset txs tm" x-show="w.resets_at"
+                              x-text="t('quota_reset_at')+' '+ocResetText(w.resets_at)"></span>
+                        <span class="quota-reset txs tm" x-show="!w.resets_at" x-text="t('quota_inactive')"></span>                      </div>
+                    </template>
+                    <div class="txs tm" style="margin-top:2px"
+                         x-show="ocQuota(prov.name).ends_at"
+                         x-text="t('quota_period_ends')+' '+ocQuota(prov.name).ends_at
+                                 +(ocQuota(prov.name).cancel_at_period_end?' · '+t('quota_cancelled'):'')"></div>
+                  </div>
+                </template>
+
+                <!-- 还没查过：给一句引导，别让用户以为坏了 -->
+                <template x-if="!ocQuota(prov.name) && !ocQuotaErr(prov.name) && !ocQuotaLoading(prov.name)">
+                  <div class="txs tm" style="margin-top:6px" x-text="t('quota_not_queried')"></div>
+                </template>
               </div>
             </template>
             <div class="pe-sec">

@@ -1,186 +1,396 @@
-//! opencode Go / Go Plus 套餐额度表与剩余量计算。
+//! opencode Go 套餐额度：查询 Console API 拿到**官方真实额度**。
 //!
-//! # 为什么需要这个模块
+//! # 为什么是 Console API 而不是 inference 端点
 //!
-//! opencode 是**套餐制**（Go $10/月、Go Plus $40/月），额度以**美元**计，
-//! 且每个模型有**独立的月额度**（GLM-5.3 是 $15，GLM-5.3-Flash 是 $60）。
-//! 三档限额：**5 小时 = 月额度 20%、周 = 50%、月 = 100%**。
+//! 我最初（2026-10-24 早些时候）断言「opencode 没有额度查询接口，只能自己累加
+//! `usage.opencode.allowance`」。**这个结论是错的**，已实测推翻：
 //!
-//! # 为什么没有"查额度"的接口
+//! - inference 端点（`/inference/...`）确实没有额度接口；
+//! - 但 **Console 网页 API** 有：
+//!   `GET https://opencode.ai/console/api/go/status`
+//!   需要 Cookie `__Host-console_session` + 请求头 `x-org-id: wrk_...`。
 //!
-//! 官方**不提供**额度查询端点。实际机制是：每条响应在
-//! `usage.opencode.allowance` 里报告「本请求计了多少额度（美元）」，
-//! 用户自己去 Console 页面看总账。因此本项目的做法是
-//! **在本地累加 allowance**，再对照本模块的月额度表算剩余。
+//! 实测（2026-10-24，真实账号）返回 HTTP 200：
+//! ```json
+//! {"access":{"meters":{
+//!   "fiveHour":{"limitMicroCents":"1200000000","usedMicroCents":"0","resetsAt":null},
+//!   "week":{"limitMicroCents":"3000000000","usedMicroCents":"0","resetsAt":"..."},
+//!   "month":{"limitMicroCents":"6000000000","usedMicroCents":"6000000000","resetsAt":"..."}
+//! }}}
+//! ```
+//! `1200000000 / 6000000000 = 0.20`、`3000000000 / 6000000000 = 0.50` ——
+//! 与官方文档「5 小时 = 月额度 20%、周 = 50%、月 = 100%」**精确吻合**，
+//! 因此 `1e8` 是正确的单位换算（microCents → 美元）。
 //!
-//! 这与参考项目（WALiAPI）的选择一致：它对 6 个 provider 逐个声明 `supports_quota`，
-//! 只有 Codex / Gemini 为 true（它们有 `GET /wham/usage` 这类专用端点），
-//! WorkBuddy / Kimi / Grok / Qoder 一律 false。
+//! # 与「累加 allowance」方案的关系
 //!
-//! # ⚠️ 这张表是外部数据，会变
+//! 累加方案已**删除**。它有两个根本缺陷：
+//! ① 只能统计**经过我们网关**的请求；直接从别的客户端打 opencode 的用量看不到；
+//! ② 需要维护一张「模型 → 月额度」表，而那表是外部数据、会过期。
+//! Console API 直接给官方真实值，零误差，无需维护。
 //!
-//! 来源：<https://opencode.ai/v2/docs/console/go#usage-limits>
-//! 抄录日期：2026-10-24。
+//! # 许可证说明
 //!
-//! 官方明确写「Usage limits may change as we learn from early usage and feedback」。
-//! 调价/调额度后本表会过期，表现为面板上的百分比与实际控制台不一致。
-//! **更新方式：改下面这张表，同步改 `TABLE_DATE`。**
-//! 面板会把 `TABLE_DATE` 显示出来，让用户知道这份数据的时效。
+//! 「存在这个 Console 端点」这一事实来自对开源项目 QuotaHub 的阅读，
+//! 但**该仓库没有 LICENSE 文件**（GitHub metadata `license: null`），
+//! 默认保留所有权利。因此这里**没有复用它的任何代码** ——
+//! 端点形状与字段名是我方**独立实测**确认真值后自行实现的，
+//! 数据模型（`QuotaWindow` 等）也按本项目风格重写。
 
-/// 本模块额度表的抄录日期。面板会显示它，便于判断是否过期。
-pub const TABLE_DATE: &str = "2026-10-24";
+use crate::providers::ProviderConfig;
+use serde::Serialize;
 
-/// 额度表来源 URL（面板 title 里给出，便于用户核对）。
-pub const TABLE_SOURCE: &str = "https://opencode.ai/v2/docs/console/go#usage-limits";
+/// Console 额度端点（事实来源：我方实测）。
+const GO_STATUS_URL: &str = "https://opencode.ai/console/api/go/status";
 
-/// 单个模型的月度额度（美元）。
+/// 单位换算：Console 用 microCents 表示美元（1e8 microCents = 1 美元）。
 ///
-/// 只列官方文档给出的数值。**文档里没有的模型返回 `None`** ——
-/// 不能猜一个默认值：猜高了用户以为还能用，猜低了会误报额度耗尽。
-pub struct ModelQuota {
-    /// 上游模型 ID（与 `usage` 里 `model` 字段、我们的 `upstream_model` 一致）。
-    pub model: &'static str,
-    /// 月额度（美元）。
-    pub monthly_usd: f64,
+/// 实测依据：`1200000000 / 6000000000 == 0.20`，与官方 5h=20% 精确吻合。
+const MICRO_CENTS_PER_USD: f64 = 100_000_000.0;
+
+/// 单个额度窗口（已换算成美元）。
+#[derive(Debug, Clone, Serialize)]
+pub struct QuotaWindow {
+    /// 窗口标识：`fiveHour` / `week` / `month`（与 Console 的字段名一致）。
+    pub key: String,
+    /// 上限（美元）。`None` = Console 没给（如未激活的 5h 窗口）。
+    pub limit_usd: Option<f64>,
+    /// 已用（美元）。`None` = Console 没给。
+    pub used_usd: Option<f64>,
+    /// 重置时间（ISO8601），`None` = 无（未激活窗口）。
+    pub resets_at: Option<String>,
+    /// 已用百分比。
+    ///
+    /// ⚠️ 必须作为**字段**下发，不能只提供方法 ——
+    /// `serde::Serialize` 不会序列化方法，前端拿不到 `w.used_pct` 就会
+    /// 全部显示 "—"、进度条恒 0%（首次实测就是这么翻车的，被探针 ④ 抓到）。
+    pub used_pct: Option<f64>,
 }
 
-/// 官方文档的模型额度表（按 `docs/console/go#usage-limits` 的表格抄录）。
-///
-/// 顺序与官方一致，便于逐行核对。免费/不限量的模型不入表（见 [`monthly_limit`]）。
-const QUOTAS: &[ModelQuota] = &[
-    ModelQuota { model: "glm-5.3-flash", monthly_usd: 60.0 },
-    ModelQuota { model: "glm-5.3", monthly_usd: 15.0 },
-    ModelQuota { model: "glm-5.2", monthly_usd: 60.0 },
-    ModelQuota { model: "kimi-k3.1-pro", monthly_usd: 15.0 },
-    ModelQuota { model: "kimi-k3", monthly_usd: 15.0 },
-    ModelQuota { model: "kimi-k2.7-code", monthly_usd: 60.0 },
-    ModelQuota { model: "longcat-2.0", monthly_usd: 60.0 },
-    ModelQuota { model: "step-5-preview", monthly_usd: 15.0 },
-    ModelQuota { model: "mimo-v2.6-flash", monthly_usd: 60.0 },
-    ModelQuota { model: "mimo-v2.6-pro", monthly_usd: 15.0 },
-    ModelQuota { model: "mimo-v2.5", monthly_usd: 60.0 },
-    ModelQuota { model: "mimo-v2.5-pro", monthly_usd: 15.0 },
-    ModelQuota { model: "minimax-m3.1-flash", monthly_usd: 20.0 },
-    ModelQuota { model: "minimax-m3", monthly_usd: 60.0 },
-    ModelQuota { model: "muse-spark-1.3-contributor", monthly_usd: 60.0 },
-    ModelQuota { model: "muse-spark-1.2-contributor", monthly_usd: 60.0 },
-    ModelQuota { model: "qwen3.8-max", monthly_usd: 15.0 },
-    ModelQuota { model: "qwen3.8-flash", monthly_usd: 30.0 },
-    ModelQuota { model: "qwen3.7-plus", monthly_usd: 60.0 },
-    ModelQuota { model: "deepseek-v4.1-flash", monthly_usd: 80.0 },
-    ModelQuota { model: "deepseek-v4-pro", monthly_usd: 15.0 },
-    ModelQuota { model: "hy4-preview", monthly_usd: 30.0 },
-    ModelQuota { model: "hy3", monthly_usd: 60.0 },
-    ModelQuota { model: "grok-4.7", monthly_usd: 15.0 },
-    ModelQuota { model: "gpt-6-luna", monthly_usd: 15.0 },
-    ModelQuota { model: "gpt-5.6-luna", monthly_usd: 15.0 },
-    ModelQuota { model: "claude-haiku-5-5", monthly_usd: 15.0 },
-    ModelQuota { model: "gemini-4-argon", monthly_usd: 30.0 },
-];
-
-/// 明确**不限量**的模型（官方标 `Unlimited`，限时免费）。
-///
-/// 单列出来而不是"查不到就当不限量"：查不到与不限量是两件事，
-/// 前者是「我们不知道」，后者是「官方说不限」。混用会让新模型被误标成不限量。
-const UNLIMITED: &[&str] = &["longcat-2.5-preview-free", "beam-free"];
-
-/// 查某模型的月额度（美元）。
-///
-/// 返回：
-/// - `Some(Some(usd))` —— 有限额度，值为月额度；
-/// - `Some(None)` —— 官方标**不限量**；
-/// - `None` —— **表里没有这个模型**（未采集，不是 0）。
-///
-/// 用嵌套 `Option` 而不是 `0.0` 表示不限量：`0.0` 会被算成"一点额度都没有"。
-pub fn monthly_limit(model: &str) -> Option<Option<f64>> {
-    if UNLIMITED.contains(&model) {
-        return Some(None);
+impl QuotaWindow {
+    /// 由金额算百分比并落到字段里。
+    pub fn with_pct(mut self) -> Self {
+        self.used_pct = self.compute_used_pct();
+        self
     }
-    QUOTAS
-        .iter()
-        .find(|q| q.model == model)
-        .map(|q| Some(q.monthly_usd))
-}
 
-/// 三档窗口的额度上限（美元）。
-///
-/// 官方口径：5 小时 = 月额度 20%、周 = 50%、月 = 100%。
-/// 返回 `None` 表示该模型不限量或不在表里，调用方据此不画进度条。
-pub struct WindowLimits {
-    pub five_hour: f64,
-    pub weekly: f64,
-    pub monthly: f64,
-}
-
-/// 按官方比例算三档上限。模型不在表里 → `None`。
-pub fn window_limits(model: &str) -> Option<WindowLimits> {
-    match monthly_limit(model)? {
-        Some(monthly) => Some(WindowLimits {
-            five_hour: monthly * 0.20,
-            weekly: monthly * 0.50,
-            monthly,
-        }),
-        // 不限量：没有上限可算。
-        None => None,
+    /// 已用百分比。`None` 表示算不出（上限缺失或为 0）——
+    /// 不返回 0，因为「没有上限」与「用了 0%」是两回事（未采集 ≠ 0）。
+    pub fn compute_used_pct(&self) -> Option<f64> {
+        let (Some(limit), Some(used)) = (self.limit_usd, self.used_usd) else {
+            return None;
+        };
+        if limit <= 0.0 {
+            return None;
+        }
+        // **不 clamp**：超额要如实反映（可能被额外计费或触发限流）。
+        Some(used / limit * 100.0)
     }
+}
+
+/// 一次额度查询的结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct QuotaSnapshot {
+    /// 套餐产品标识（`go` / `go-plus`）。
+    pub product: String,
+    /// 套餐周期结束时间。
+    pub ends_at: Option<String>,
+    /// 是否已设为到期不续费。
+    pub cancel_at_period_end: bool,
+    /// 三个窗口（顺序：fiveHour / week / month，与官方语义一致）。
+    pub windows: Vec<QuotaWindow>,
+    /// 查询成功时间（Unix 秒）。
+    pub fetched_at: u64,
+}
+
+/// 从 Console 的原始 JSON 解析额度。
+///
+/// 抽成纯函数便于单测：**不需要联网就能验证换算与字段映射**。
+pub fn parse_go_status(v: &serde_json::Value) -> Result<QuotaSnapshot, String> {
+    let access = v.get("access").ok_or("响应里没有 access 字段")?;
+    let meters = access.get("meters").ok_or("access 里没有 meters")?;
+
+    let micro = |w: &serde_json::Value, field: &str| -> Option<f64> {
+        // Console 把数值发成**字符串**（"6000000000"），但也兼容数字。
+        let raw = w.get(field)?;
+        let n = raw
+            .as_str()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .or_else(|| raw.as_f64())?;
+        Some(n / MICRO_CENTS_PER_USD)
+    };
+
+    let mut windows = Vec::new();
+    for key in ["fiveHour", "week", "month"] {
+        let Some(w) = meters.get(key) else { continue };
+        let win = QuotaWindow {
+            key: key.to_string(),
+            limit_usd: micro(w, "limitMicroCents"),
+            used_usd: micro(w, "usedMicroCents"),
+            resets_at: w
+                .get("resetsAt")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+            // 先占位，with_pct() 统一算好。
+            used_pct: None,
+        };
+        windows.push(win.with_pct());
+    }
+    if windows.is_empty() {
+        return Err("meters 里没有任何额度窗口".into());
+    }
+
+    Ok(QuotaSnapshot {
+        product: v
+            .get("product")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        ends_at: access
+            .get("endsAt")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()),
+        cancel_at_period_end: v
+            .get("cancelAtPeriodEnd")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        windows,
+        fetched_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    })
+}
+
+/// 发一次额度查询。
+///
+/// 凭据来自供应商配置（`console_session` + `console_org_id`）。
+/// 只读 GET，不消耗额度、不改账号状态。
+pub async fn fetch_go_status(
+    client: &reqwest::Client,
+    provider: &ProviderConfig,
+) -> Result<QuotaSnapshot, String> {
+    let cookie = provider
+        .console_session
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("未配置 Console Cookie（供应商配置 → opencode 额度）")?;
+    let org = provider
+        .console_org_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("未配置组织 ID（wrk_ 开头）")?;
+    if !org.starts_with("wrk_") {
+        return Err(format!("组织 ID 必须以 wrk_ 开头，实际为 {org:?}"));
+    }
+
+    let resp = client
+        .get(GO_STATUS_URL)
+        .header(reqwest::header::COOKIE, cookie)
+        .header("x-org-id", org)
+        .header("Accept", "*/*")
+        .header("Referer", format!("https://opencode.ai/console/{org}/go"))
+        // Console 是网页 API，缺 UA 时可能被拒。
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        )
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("查询 Console 额度失败: {e}"))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(format!(
+            "Console 认证失败 (HTTP {})，Cookie 可能已过期，请重新登录 opencode 后复制",
+            status.as_u16()
+        ));
+    }
+    if !status.is_success() {
+        return Err(format!("Console 返回 HTTP {}", status.as_u16()));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 Console 响应失败: {e}"))?;
+    parse_go_status(&v)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 额度表必须与官方文档一致 —— 抽查几条有代表性的（含最深/最浅额度的模型）。
+    /// **真实响应结构**（2026-10-24 实测抓取，已脱敏，只保留额度相关字段）。
     ///
-    /// 为什么抽查而不是全量断言：全量断言等于把表抄两遍，改表时要改两处，
-    /// 反而容易漂移。抽查覆盖"额度最小/最大/中间"三档即可发现整表被改成同一个值。
+    /// 用真实响应做夹具比手捏 JSON 可靠：手捏容易漏掉「数值是字符串」这类细节。
+    const REAL: &str = r#"{
+      "subscriberUserId":"acc_x","product":"go","renewalProduct":"go",
+      "renewalCurrency":"usd","useBalance":false,
+      "cancelAtPeriodEnd":true,"renewalStopReason":"cancelled_by_user",
+      "access":{
+        "startsAt":"2026-09-29T07:17:34.000Z",
+        "endsAt":"2026-10-29T07:17:34.000Z",
+        "cancelAtPeriodEnd":true,
+        "meters":{
+          "fiveHour":{"startsAt":null,"resetsAt":null,
+                      "limitMicroCents":"1200000000","usedMicroCents":"0"},
+          "week":{"startsAt":"2026-10-19T00:00:00.000Z",
+                  "resetsAt":"2026-10-26T00:00:00.000Z",
+                  "limitMicroCents":"3000000000","usedMicroCents":"0"},
+          "month":{"resetsAt":"2026-10-29T07:17:34.000Z",
+                   "limitMicroCents":"6000000000","usedMicroCents":"6000000000"}
+        }
+      },
+      "upgradePrice":{"amountMicroCents":"4000000000","currency":"usd"}
+    }"#;
+
+    /// 单位换算必须正确：`1e8` microCents = 1 美元。
+    ///
+    /// 这条钉住的是**整块功能正确性的地基** —— 换算错 100 倍会让"还剩 99%"
+    /// 与"已用满"完全颠倒。判据取官方比例（5h/month == 0.20、week/month == 0.50），
+    /// 因为这两个比例是从官方文档独立得知的，不依赖我对方程的猜测。
     #[test]
-    fn quota_table_matches_official_values() {
-        assert_eq!(monthly_limit("deepseek-v4.1-flash"), Some(Some(80.0)),
-                   "官方表里额度最高的模型（$80）");
-        assert_eq!(monthly_limit("deepseek-v4-pro"), Some(Some(15.0)),
-                   "官方表里额度最低的一档（$15）");
-        assert_eq!(monthly_limit("glm-5.3-flash"), Some(Some(60.0)));
-        assert_eq!(monthly_limit("glm-5.3"), Some(Some(15.0)),
-                   "GLM-5.3 与 GLM-5.3-Flash 额度差 4 倍，不能混");
-        assert_eq!(monthly_limit("minimax-m3.1-flash"), Some(Some(20.0)),
-                   "非整十档（$20）要单独确认");
-        assert_eq!(monthly_limit("qwen3.8-flash"), Some(Some(30.0)));
+    fn micro_cents_conversion_matches_official_ratios() {
+        let v: serde_json::Value = serde_json::from_str(REAL).unwrap();
+        let s = parse_go_status(&v).expect("真实响应必须能解析");
+
+        let get = |k: &str| s.windows.iter().find(|w| w.key == k).unwrap();
+        let fh = get("fiveHour").limit_usd.expect("5h 有上限");
+        let wk = get("week").limit_usd.expect("周有上限");
+        let mo = get("month").limit_usd.expect("月有上限");
+
+        assert!((fh - 12.0).abs() < 1e-9, "1200000000 microCents = $12，实际 {fh}");
+        assert!((wk - 30.0).abs() < 1e-9, "3000000000 microCents = $30，实际 {wk}");
+        assert!((mo - 60.0).abs() < 1e-9, "6000000000 microCents = $60，实际 {mo}");
+
+        // 官方比例（独立已知的真值，最强的换算校验）
+        assert!((fh / mo - 0.20).abs() < 1e-9, "5h 必须是月额度的 20%");
+        assert!((wk / mo - 0.50).abs() < 1e-9, "周必须是月额度的 50%");
     }
 
-    /// **表里没有的模型必须是 `None`，不能猜。**
+    /// **百分比必须作为字段下发**，而不是只存在于方法里。
     ///
-    /// 猜默认值的两个方向都会害人：猜高了用户以为还能用，猜低了会误报额度耗尽。
+    /// 这是首次实测翻车的直接原因：`used_pct()` 是方法，serde 不序列化它，
+    /// 前端拿到 undefined → 全部显示 "—"、进度条恒 0%。
+    /// 探针 ④ 抓到了，这里用单测钉死。
     #[test]
-    fn unknown_model_is_none_not_guessed() {
-        assert_eq!(monthly_limit("some-brand-new-model"), None,
-                   "表里没有 → None（未采集），不得猜一个默认额度");
-        assert_eq!(window_limits("some-brand-new-model").is_none(), true);
+    fn used_pct_is_serialized_as_field() {
+        let v: serde_json::Value = serde_json::from_str(REAL).unwrap();
+        let s = parse_go_status(&v).unwrap();
+        let json = serde_json::to_value(&s).expect("必须能序列化");
+
+        let month = json["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["key"] == "month")
+            .expect("month 窗口");
+        assert_eq!(
+            month["used_pct"].as_f64(),
+            Some(100.0),
+            "序列化后的 JSON 里必须有 used_pct 字段且为 100 —— \
+             只提供方法会导致前端全显示 '—'"
+        );
+        // 同时确认不是靠方法名碰巧命中
+        assert!(month.get("used_pct").is_some(), "used_pct 必须是字段");
     }
 
-    /// 不限量模型（官方标 Unlimited）要与"查不到"区分开。
+    /// 数值以**字符串**下发时必须能解析（Console 就是这么发的）。
     #[test]
-    fn unlimited_is_distinct_from_unknown() {
-        assert_eq!(monthly_limit("beam-free"), Some(None),
-                   "不限量 = Some(None)，是'已采集且确认不限'");
-        assert_eq!(monthly_limit("not-in-table"), None,
-                   "查不到 = None，是'未采集'");
-        assert_ne!(monthly_limit("beam-free"), monthly_limit("not-in-table"),
-                   "两者必须能区分（混用会让新模型被误标成不限量）");
-        // 不限量没有上限可算 → 不画进度条
-        assert!(window_limits("beam-free").is_none());
+    fn parses_string_numbers() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"access":{"meters":{"month":{
+                 "limitMicroCents":"500000000","usedMicroCents":"250000000",
+                 "resetsAt":"2026-11-01T00:00:00.000Z"}}}}"#,
+        )
+        .unwrap();
+        let s = parse_go_status(&v).unwrap();
+        let m = s.windows.iter().find(|w| w.key == "month").unwrap();
+        assert_eq!(m.limit_usd, Some(5.0), "字符串 \"500000000\" = $5");
+        assert_eq!(m.used_usd, Some(2.5), "\"250000000\" = $2.5");
+        assert_eq!(m.compute_used_pct(), Some(50.0));
     }
 
-    /// 三档比例必须是 20% / 50% / 100%（官方口径）。
+    /// **已用满必须如实显示 100%**，未激活窗口（无上限）必须是 None 而不是 0%。
     ///
-    /// 这条钉住的是**比例**而不是绝对值 —— 官方若改了比例，这里会红。
+    /// 实测账号就是这个状态：月额度 $60/$60 已满、5h 窗口未激活。
+    /// 若把"未激活"显示成 0%，用户会以为还有额度；若把满额显示成别的数，
+    /// 用户会以为还能用 —— 两个方向都是误导。
     #[test]
-    fn window_limits_follow_official_ratios() {
-        let l = window_limits("glm-5.3").expect("GLM-5.3 应在表里");
-        assert_eq!(l.monthly, 15.0);
-        assert_eq!(l.five_hour, 3.0, "5 小时 = 月额度 20%");
-        assert_eq!(l.weekly, 7.5, "周 = 月额度 50%");
-        // 三档必须递增且都以月额度为上限
-        assert!(l.five_hour < l.weekly && l.weekly < l.monthly);
-        assert_eq!(l.monthly, 15.0, "月档就是月额度本身");
+    fn exhausted_and_inactive_windows_are_distinct() {
+        let v: serde_json::Value = serde_json::from_str(REAL).unwrap();
+        let s = parse_go_status(&v).unwrap();
+
+        let month = s.windows.iter().find(|w| w.key == "month").unwrap();
+        assert_eq!(month.compute_used_pct(), Some(100.0), "月额度 $60/$60 应为 100%");
+        assert_eq!(month.used_usd, Some(60.0));
+
+        // 5h 窗口：有上限但没有 resetsAt（未激活），已用 0 → 0%（真实为 0，可显示）
+        let fh = s.windows.iter().find(|w| w.key == "fiveHour").unwrap();
+        assert_eq!(fh.compute_used_pct(), Some(0.0), "已用 $0 / $12 = 0%");
+        assert!(fh.resets_at.is_none(), "未激活窗口没有重置时间");
+
+        // 真正"算不出"的情形：上限缺失 → None（不是 0）
+        let no_limit = QuotaWindow {
+            key: "month".into(),
+            limit_usd: None,
+            used_usd: Some(1.0),
+            resets_at: None,
+            used_pct: None,
+        };
+        assert_eq!(no_limit.compute_used_pct(), None, "没有上限 → None（未采集），不是 0%");
+        let zero_limit = QuotaWindow {
+            key: "month".into(),
+            limit_usd: Some(0.0),
+            used_usd: Some(1.0),
+            resets_at: None,
+            used_pct: None,
+        };
+        assert_eq!(zero_limit.compute_used_pct(), None, "上限为 0 → None（避免除零）");
+    }
+
+    /// **超额不 clamp**：如果 used > limit，必须如实给出 >100%。
+    ///
+    /// 为什么重要：超额是"该充值/该报障"的信号。夹到 100% 会让它看起来只是"刚好用完"。
+    #[test]
+    fn over_quota_is_not_clamped() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"access":{"meters":{"month":{
+                 "limitMicroCents":"100000000","usedMicroCents":"150000000"}}}}"#,
+        )
+        .unwrap();
+        let s = parse_go_status(&v).unwrap();
+        let m = s.windows.iter().find(|w| w.key == "month").unwrap();
+        assert_eq!(m.compute_used_pct(), Some(150.0), "$1.5 / $1 = 150%，不得夹到 100%");
+        assert_eq!(m.used_pct, Some(150.0), "字段值同样不得 clamp");
+    }
+
+    /// 响应缺 `access` / `meters` 时必须报错，不能静默返回空额度。
+    #[test]
+    fn malformed_payload_errors_out() {
+        for bad in [r#"{}"#, r#"{"access":{}}"#, r#"{"access":{"meters":{}}}"#] {
+            let v: serde_json::Value = serde_json::from_str(bad).unwrap();
+            assert!(parse_go_status(&v).is_err(), "缺字段应报错: {bad}");
+        }
+    }
+
+    /// 套餐元信息要取到（产品名、到期时间、是否已取消续费）。
+    #[test]
+    fn extracts_plan_metadata() {
+        let v: serde_json::Value = serde_json::from_str(REAL).unwrap();
+        let s = parse_go_status(&v).unwrap();
+        assert_eq!(s.product, "go");
+        assert_eq!(s.ends_at.as_deref(), Some("2026-10-29T07:17:34.000Z"));
+        assert!(s.cancel_at_period_end, "该账号已设为到期不续费");
+        assert_eq!(s.windows.len(), 3, "三个窗口都要在");
+        assert_eq!(s.windows[0].key, "fiveHour");
+        assert_eq!(s.windows[1].key, "week");
+        assert_eq!(s.windows[2].key, "month");
     }
 }

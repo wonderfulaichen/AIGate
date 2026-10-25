@@ -911,6 +911,7 @@ fn main() {
         .route("/admin/api/currency", get(admin::api_currency_get).post(admin::api_currency_set))
         .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
+        .route("/admin/api/opencode/quota", get(admin::api_opencode_quota))
         .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));
     // `admin_token` 现在默认一定有值（未配置时自动生成并落盘 data/.admin_token），
     // 所以这个分支几乎总是进；保留条件判断是为了 `AIGATE_OPEN_ADMIN=1`（显式不鉴权）能生效。

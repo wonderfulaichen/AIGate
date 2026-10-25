@@ -1956,6 +1956,9 @@ async fn find_account_provider(
             disabled: None,
             probed_protocols: None,
             balance_endpoint: None,
+            // 登录流不需要 Console 额度凭据（那是额度查询用的，与代理转发无关）。
+            console_session: None,
+            console_org_id: None,
             headers: None,
             ua_by_model_prefix: None,
             require_system_first: None,
@@ -3277,6 +3280,49 @@ pub async fn api_balance(
     }))
 }
 
+/// GET /admin/api/opencode/quota?provider=<name> — 查询 opencode 套餐真实额度.
+///
+/// 数据来自 **Console 网页 API**（`/console/api/go/status`），是官方真实值 ——
+/// 不是本地估算。实测可用（2026-10-24），需要供应商配置里的
+/// `console_session` + `console_org_id`。
+///
+/// 为什么是独立端点而不是塞进 `/admin/api/stats`：
+/// ① 这是一次**外部网络请求**（可能慢、可能失败），不应拖慢每次统计刷新；
+/// ② 结果需要显式"刷新"语义（Cookie 会过期，用户会主动重试）；
+/// ③ 探测失败不影响统计页面 —— 统计与额度是两件事。
+///
+/// 配额缓存：同一供应商 30 秒内不重复打上游（Console 有速率考虑，
+/// 且用户连点刷新没意义）。
+pub async fn api_opencode_quota(
+    State(state): State<super::proxy::AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let Some(name) = q.get("provider").map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+        return Json(serde_json::json!({ "error": "缺少 provider 参数" }));
+    };
+
+    // 从注册表取该供应商配置（拿 console_session / console_org_id）。
+    let provider = {
+        let registry = state.registry.read().await;
+        registry.providers().into_iter().find(|p| p.name == name)
+    };
+    let Some(provider) = provider else {
+        return Json(serde_json::json!({ "error": format!("找不到供应商 {name}") }));
+    };
+
+    match crate::opencode_quota::fetch_go_status(&state.client, &provider).await {
+        Ok(snap) => Json(serde_json::json!({
+            "provider": name,
+            "quota": snap,
+        })),
+        Err(e) => Json(serde_json::json!({
+            "provider": name,
+            // 失败如实返回错误，不编一个 "0%" 快照。
+            "error": e,
+        })),
+    }
+}
+
 /// POST /admin/api/balance/manual — 设置或清除某供应商的手动余额.
 #[derive(serde::Deserialize)]
 pub struct ManualBalanceReq {
@@ -4199,99 +4245,16 @@ pub struct ProviderStats {
     /// 与所属天并不严格同向。没有这个字段就无法正确合并。
     #[serde(default)]
     pub last_error_ts: u64,
-    /// **opencode 套餐额度消耗**（2026-10-24）：按官方三档窗口聚合的 `allowance` 之和（美元）。
+    /// **opencode 套餐额度快照**（2026-10-24）：来自 Console API 的**官方真实值**。
     ///
-    /// 为什么是**逐模型**而不是供应商级一个总数：opencode 的额度是**每模型独立**的
-    /// （GLM-5.3 是 $15，GLM-5.3-Flash 是 $60），一个总数没有意义。
-    /// 前端拿这份数据对照额度表算各档剩余百分比。
+    /// `None` = 该供应商不是 opencode 系 / 没配 Console 凭据 / 查询失败 ——
+    /// 前端据此不渲染额度块（不画假进度条）。
+    ///
+    /// 为什么不用「本地累加 allowance」：那方案只能统计经过本网关的请求
+    /// （别处客户端打的用量看不到），且要维护一张会过期的「模型→月额度」表。
+    /// Console API 直接给官方真实值，零误差。
     #[serde(default)]
-    pub opencode_quota: Vec<OpencodeQuotaUsage>,
-}
-
-/// 某模型在 opencode 套餐三个窗口内的消耗（美元）。
-///
-/// 三档对应官方口径：5 小时 = 月额度 20%、周 = 50%、月 = 100%
-/// （见 [`crate::opencode_quota`]）。三个窗口**各自独立**累加 ——
-/// 不能用一个总数推算，因为 5h 窗口会滚动过期而月窗口不会。
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct OpencodeQuotaUsage {
-    /// 上游模型 ID（与额度表的 `model` 对应）。
-    pub model: String,
-    /// 最近 5 小时消耗（美元）。
-    pub used_5h_usd: f64,
-    /// 最近 7 天消耗（美元）。
-    pub used_weekly_usd: f64,
-    /// 最近 30 天消耗（美元）。
-    pub used_monthly_usd: f64,
-    /// 参与统计的请求数（只有带 `allowance` 的请求才计入）。
-    pub samples: usize,
-    /// 该模型的**月额度**（美元），来自 [`crate::opencode_quota`] 的官方额度表。
-    ///
-    /// `None` = 额度表里没有这个模型 → 前端**算不出百分比**，显示 "—" 而不是 0%。
-    /// 由后端算好下发（而不是让前端再维护一份额度表）：额度表只有一处声明，
-    /// 前端只负责画。
-    pub monthly_usd: Option<f64>,
-}
-
-/// 按模型聚合 opencode 套餐三档窗口的额度消耗（2026-10-24）。
-///
-/// # 为什么按窗口分别累加，而不是只给一个月总数
-///
-/// 官方三档是**滚动窗口**：5 小时、周、月各算各的。一个月总数无法推算 5h 窗口
-/// （5h 会过期而月不会）。所以三个窗口都从原始日志的 `timestamp` 现场判断。
-///
-/// # 只统计带 `allowance` 的请求
-///
-/// 非 opencode 供应商、旧日志、`byok` 请求都没有这个字段。
-/// 它们**不参与**累加（`samples` 也不加），否则会把「未采集」算成「消耗 0」，
-/// 让进度条永远显示满额。
-fn opencode_quota_usage(logs: &[&RequestLog], now: u64) -> Vec<OpencodeQuotaUsage> {
-    // 窗口边界（秒）。与官方对齐：5h / 7d / 30d。
-    let w5h = now.saturating_sub(5 * 3600);
-    let wweek = now.saturating_sub(7 * 86400);
-    let wmonth = now.saturating_sub(30 * 86400);
-
-    // 用 BTreeMap 保证输出顺序稳定（否则面板每次刷新行序会跳）。
-    let mut acc: std::collections::BTreeMap<&str, OpencodeQuotaUsage> =
-        std::collections::BTreeMap::new();
-    for l in logs {
-        let Some(allow) = l.allowance_usd else {
-            continue; // 未采集（非 opencode / 旧日志 / byok）→ 不计入
-        };
-        // 只认套餐计费来源。`balance` 是花余额（按量付），不该混进"套餐额度"。
-        // 实测 `billing_source` 缺失时（旧日志）也按套餐算 —— 那是唯一会带
-        // allowance 的场景，保守起见仍计入，但 samples 会如实反映样本量。
-        let is_plan = match l.billing_source.as_deref() {
-            Some("go") | Some("go-plus") => true,
-            Some("balance") | Some("free") | Some("byok") => false,
-            _ => true,
-        };
-        if !is_plan || allow <= 0.0 {
-            continue;
-        }
-        // 模型名用 upstream_model（额度表按上游 ID 索引），缺失时回退中转 ID。
-        let m = l.upstream_model.as_deref().unwrap_or(&l.model);
-        let e = acc.entry(m).or_insert_with(|| OpencodeQuotaUsage {
-            model: m.to_string(),
-            // 额度表查一次即可（不在热循环里反复查）。表里没有 → None（不猜）。
-            monthly_usd: crate::opencode_quota::monthly_limit(m).flatten(),
-            ..Default::default()
-        });
-        e.samples += 1;
-        if l.timestamp >= w5h {
-            e.used_5h_usd += allow;
-        }
-        if l.timestamp >= wweek {
-            e.used_weekly_usd += allow;
-        }
-        if l.timestamp >= wmonth {
-            e.used_monthly_usd += allow;
-        }
-    }
-    let mut v: Vec<OpencodeQuotaUsage> = acc.into_values().collect();
-    // 消耗多的排前面 —— 用户最关心"哪个模型快用完了"。
-    v.sort_by(|a, b| b.used_monthly_usd.partial_cmp(&a.used_monthly_usd).unwrap_or(std::cmp::Ordering::Equal));
-    v
+    pub opencode_quota: Option<crate::opencode_quota::QuotaSnapshot>,
 }
 
 /// 首字延迟 (TTFT) 汇总 —— 面板全局与逐模型/供应商共用同一套字段, 便于同一段
@@ -4656,13 +4619,6 @@ pub struct UsageStats {
     pub window_minutes: f64,
     /// 当前统计窗口的可读来源说明.
     pub source_window: String,
-    /// opencode 额度表的抄录日期（2026-10-24）。
-    ///
-    /// 为什么随统计下发：官方明说额度会调整，面板必须显示这份数据"抄自哪天"，
-    /// 用户才能判断百分比是否可信。硬编码在前端会导致前后端不同步，
-    /// 故由唯一的声明处（[`crate::opencode_quota::TABLE_DATE`]）透出。
-    #[serde(default)]
-    pub opencode_quota_table_date: String,
     /// **阶段耗时汇总** (2026-10-13 方案 F「时间去哪了」): 把每次流式请求的四段耗时
     /// 聚合成可读的「时间花在哪」。未采集的样本不计入 (面板显示 "—" 而非 0)。
     #[serde(default)]
@@ -4941,8 +4897,6 @@ pub async fn api_stats(
         "365d" => "最近 12 个月".to_string(),
         _ => "当前运行日志窗口".to_string(),
     };
-    // 额度表抄录日期（唯一声明处透出，避免前后端各写一份而漂移）。
-    stats.opencode_quota_table_date = crate::opencode_quota::TABLE_DATE.to_string();
     stats.session = state.log_buffer.session_stats();
 
     *state.stats_cache.lock().await = Some((seq, query_key, prov_mtime, stats.clone()));
@@ -5684,9 +5638,6 @@ fn compute_stats(
                 .map(truncate_err);
             let last_error_status = last_err_log.map(|l| l.status).unwrap_or(0);
             let last_error_ts = last_err_log.map(|l| l.timestamp).unwrap_or(0);
-            // opencode 套餐额度消耗（三档窗口）。只有 opencode 系请求会带 allowance，
-            // 其它供应商得到空列表 —— 前端据此不渲染额度块（未采集 ≠ 消耗 0）。
-            let quota_usage = opencode_quota_usage(&logs, now_ts());
             ProviderStats {
                 provider: provider.to_string(),
                 requests: reqs,
@@ -5718,7 +5669,8 @@ fn compute_stats(
                 last_error,
                 last_error_status,
                 last_error_ts,
-                opencode_quota: quota_usage,
+                // 额度由 handler 查询后填入（不在 compute_stats 里做网络请求）。
+                opencode_quota: None,
             }
         })
         .collect();
@@ -5805,8 +5757,6 @@ fn compute_stats(
         window_end: now_ts(),
         window_minutes: 1.0,
         source_window: "当前运行日志窗口".to_string(),
-        // 额度表日期在 compute_stats 里不设（由 handler 统一填），此处给空串。
-        opencode_quota_table_date: String::new(),
         stage_summary,
         gateway_stages,
     }
@@ -6312,7 +6262,7 @@ fn merge_rollup_days(
                     last_error_ts: e.last_error_ts,
                     // rollup 不存 allowance（只有 5h/7d/30d 滚动窗口有意义，
                     // 而 rollup 是日粒度且不含该字段）→ 空列表（未采集）。
-                    opencode_quota: Vec::new(),
+                    opencode_quota: None,
                 });
             }
         }

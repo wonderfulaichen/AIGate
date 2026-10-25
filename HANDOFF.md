@@ -1,20 +1,30 @@
 # 交接文档 — AIGate
 
-> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉗」**：opencode 套餐额度）。
-> 用户问「opencode 套餐怎么不增加查看额度？参考项目有」。取证后结论：
-> ① 参考项目的 `supports_quota` 是**逐 provider** 的，6 家里只有 Codex/Gemini 为 true，
-> **WorkBuddy 明确 false** —— 「参考项目有」不成立，别凭印象推广。
-> ② opencode **没有额度查询接口**；每条响应给 `usage.opencode.allowance`（美元），
-> 且**限额内 `cost` 报 0**（实测 872 条 go 请求 cost 全 0）→ 只能用 allowance 累加。
-> ③ 三档滚动窗口 5h=20% / 周=50% / 月=100%，每模型独立月额度。
-> 实现：`RequestLog.allowance_usd`/`billing_source` + 新模块 `opencode_quota.rs`
-> （官方额度表带 `TABLE_DATE`）+ `ProviderStats.opencode_quota` + 前端三条进度条。
-> ⚠️ **两个实测才会发现的口径坑**：`fmtPct()` 会把 112.5% 压成 "100%"（给命中率设计的），
-> 额度必须专用格式化、只让**进度条宽度**封顶；`billing_source=balance` 必须过滤，
-> 否则"花了钱又扣额度"双重计数。
-> **明确不做**：workbuddy/buddy/Joule 额度（参考项目也是 false；实测端点全 404 或返 HTML）。
-> 新增单测 5 条 + `probe_quota_panel.py`(10)，改坏验证 3/3 转红。
-> **未实测**：真实 opencode 请求未产生过 allowance，字段形状按文档但未经我方实测。
+> 🔴 **最新状态看文末编号最大的节**（当前 = **§8 的「10-24 轮 ㉘」**：opencode 额度改用
+> Console API，**推翻 ㉗**）。
+> 用户提供 [QuotaHub](https://github.com/lvmiao233/QuotaHub) 并说「好像可以查 opencode 额度」。
+> 查证后确认 **㉗ 的结论是错的**：inference 端点确实没有额度接口，但
+> **Console 网页 API 有** → `GET https://opencode.ai/console/api/go/status`
+> （Cookie `__Host-console_session` + 头 `x-org-id: wrk_...`）。实测 HTTP 200。
+> **教训：一个产品有数据面(inference)与控制面(console)两个面，试完一个面就下
+> 「没有这个能力」的结论是过度概括。**
+> 换算 `1e8` microCents = 1 USD **已被官方比例独立校验**
+> （`1200000000/6000000000=0.20`、`3000000000/6000000000=0.50`）。
+> 已删除 ㉗ 的「累加 allowance + 内置模型额度表」整套；改为 Console 查询
+> + 新端点 `/admin/api/opencode/quota` + `ProviderConfig.console_session/console_org_id`。
+> ⚠️ **两个实测才发现的坑**：`used_pct` 写成**方法**导致 serde 不下发 → 前端全 "—"
+> （**凡前端要读的算出来的值，必须是字段不是方法**）；探针读 textContent 读到隐藏元素
+> 导致误报 UI bug（实际 UI 是对的）。
+> ⚠️ QuotaHub **无 LICENSE**（`license: null`）→ 未复用其任何代码，端点形状由我方实测确认。
+> 单测 7 条 + `probe_quota_panel.py`(11)，改坏验证 3/3 转红（换算/序列化/clamp）。
+> **待办**：前端还没有录入 Console 凭据的界面（目前要手改 providers.json）；
+> `request-logs` 端点已实测可用但未接入（可补 `cost` 全 0 的缺口）。
+
+> ⏪ **上一轮（㉗，结论已被推翻，仅存档）**：opencode 套餐额度从 allowance 累加。
+> ⚠️ 该节断言「opencode 没有额度查询接口」是**错的**，实现已整体删除。
+> 仍然成立的部分：WALiAPI 的 `supports_quota` 是逐 provider 的，
+> 6 家里只有 Codex/Gemini 为 true、WorkBuddy 明确 false ——
+> 但这条**不能**推出「opencode 也查不到」。
 
 > ⏪ **上一轮（㉖）**：修「日志清空后历史不可见」+ 三处非法页签导致整页空白。
 > ① rollup 合并原写 `if let Some(cover_ts) = oldest_ts()`，缓冲区为空时 None →
@@ -1734,7 +1744,101 @@ provC                                        请求 6   错误 0
 按它判可见会数出 0；且探针在 **cost 页签**下量 perf 的卡（`display:none`，宽度 0）也数出 0。
 故：**按 `getBoundingClientRect().width > 0` 判可见**，并**先切到该卡所在页签再量**。
 
+### 🆕 10-24 轮 ㉘：opencode 额度改用 Console API（**推翻 ㉗ 的结论**）
+
+用户提供 [QuotaHub](https://github.com/lvmiao233/QuotaHub) 并说「好像可以查看 opencode 额度」。
+查证后**我上一轮（㉗）的结论是错的**，已按用户拍板改成 Console 查询。
+
+#### 我错在哪（写清楚，避免后人重犯）
+
+㉗ 我断言「opencode 没有额度查询接口，只能自己累加 `usage.opencode.allowance`」，
+还据此做了「本地累加 + 内置模型额度表」一整套。**错在只试了 inference 端点**。
+
+实际情况：
+- inference 端点（`/inference/...`）确实没有额度接口 —— 这部分判断没错；
+- 但 **Console 网页 API 有**：`GET https://opencode.ai/console/api/go/status`
+  需要 Cookie `__Host-console_session` + 头 `x-org-id: wrk_...`。
+
+**教训**：一个产品有多个面（数据面 inference / 控制面 console），
+试完一个面的端点就下"没有这个能力"的结论，是过度概括。
+下这类结论前应至少分别验证数据面与控制面。
+
+#### 实测确认（本次真的验过了）
+
+用本机登录态（Playwright 复用 profile，只读 GET）返回 HTTP 200：
+
+```
+1200000000 / 6000000000 = 0.20   ← 官方 5h = 月 20%
+3000000000 / 6000000000 = 0.50   ← 官方周 = 月 50%
+```
+
+比例精确吻合 → `1e8` microCents = 1 美元（这一步是**换算正确性的独立校验**，
+不依赖我对方程的猜测）。
+
+该账号真实状态：月 `$60/$60` 已满、周 `$0/$30`（10/26 重置）、5h 未激活；
+套餐周期至 2026-10-29，已设为到期不续费。
+
+#### 为什么换方案（不是为了照抄它）
+
+| | 累加 allowance | Console API |
+|---|---|---|
+| 覆盖 | 只有经过本网关的请求 | 全部（含别的客户端） |
+| 维护 | 要维护会过期的模型额度表 | 无需维护 |
+| 精度 | 估算 | 官方真实值 |
+| 重置时间 | 没有 | 有 |
+
+#### 改动
+
+- `src/opencode_quota.rs` **重写**：`fetch_go_status()` + `parse_go_status()` 纯函数。
+  删除 `OpencodeQuotaUsage` / `opencode_quota_usage()` / `TABLE_DATE` / 模型额度表。
+- `ProviderConfig` 新增 `console_session` / `console_org_id`。
+- 新端点 `GET /admin/api/opencode/quota?provider=<name>`（显式查询，不走统计刷新）。
+- 前端 `ds-quota.js` 重写：三档 + 金额 + 百分比 + 重置时间（含"4 天后"）+ 未激活提示。
+
+#### ⚠️ 两个只有实测才会发现的问题
+
+① **`used_pct` 写成方法 → 序列化后前端拿不到**
+   `serde::Serialize` 不序列化方法。前端读到 undefined → 百分比全 "—"、进度条恒 0%。
+   已改为**字段**，并加单测钉住「序列化后的 JSON 里必须有 used_pct」。
+   **这是本轮最容易反复踩的坑：凡是前端要读的算出来的值，必须是字段不是方法。**
+
+② **探针读 textContent 读到了隐藏元素**
+   模板里「重置 …」与「该窗口未激活」是两个 `x-show` 互斥元素。
+   探针取 `textContent` 把隐藏的也读进来，误报「5 小时显示空的重置」。
+   **实际 UI 是对的**，是探针缺陷。已修为只取 `display !== 'none'` 的那个。
+   （又一次验证：`x-show` 只是 display:none，DOM 里仍在。）
+
+#### 许可证
+
+QuotaHub **没有 LICENSE 文件**（GitHub metadata `license: null`）→ 默认保留所有权利。
+**未复用它的任何代码**。「存在这个端点」是事实；端点形状与字段名由我方独立实测确认，
+数据模型按本项目风格重写。
+
+#### 判据
+
+- `opencode_quota` 单测 7 条：换算与官方比例 / 字符串数值 / 已满 vs 未激活 vs 算不出
+  三者区分 / 超额不 clamp / 缺字段报错 / 套餐元信息 / **used_pct 必须序列化**。
+- `tools/probe_quota_panel.py`（11 条，真实 Console 数据）：展开出现额度块、
+  查询前不画假进度条、三档顺序、满额显示 100%、金额与重置时间渲染、
+  未激活有明确文案、进度条不超 100%、零 pageerror。
+- **改坏验证 3/3 转红**：换算改 1e6 / used_pct 不序列化 / 超额 clamp。
+
+#### 未实测 / 已知缺口
+
+- **Cookie 会过期**：Console session 是网页登录态，过期后需用户重新复制。
+  报错文案已提示「Cookie 可能已过期，请重新登录」。
+- **前端还没有录入 Console 凭据的界面**：目前要手改 providers.json
+  （`console_session` / `console_org_id`）。这是下一步该做的（已列入待办）。
+- 只有 go/status 一个端点接入；`request-logs`（官方口径的逐请求 cost）已实测可用
+  但**未接入** —— 它能补上我们 `cost` 全为 0 的缺口，属后续可做项。
+- 部署份 exe 未替换（红线）。
+
 ### 🆕 10-24 轮 ㉗：opencode 套餐额度（从响应 allowance 累加，不是查接口）
+
+> ⚠️ **本节的结论已被 ㉘ 推翻，实现已整体删除。**
+> 我当时只试了 inference 端点就断言「没有额度查询接口」，
+> 而 Console 网页 API 实际可查。**不要照本节实现任何东西** ——
+> 直接读 ㉘。保留本节只为记录当时的错误判断与教训。
 
 用户问「opencode 套餐等这些主流编程套餐为什么不增加查看额度功能？明明参考项目有」。
 **先取证，结论改变了原先判断**。
