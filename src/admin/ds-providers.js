@@ -73,9 +73,24 @@
       setTimeout(()=>{ if(prov) prov._keyMsg=''; }, 3000);
     },
     // 删除供应商 (仅从表单移除, 需点"保存配置"后生效; 后端级联清除其密钥).
+    //
+    // ⚠️ 确认框必须**显示影响范围**（2026-10-24）。原来只说"确定删除 X 吗"，
+    // 用户无法判断代价：这家有 38 个模型、保存后 Key 也会被一起删掉（不可再生）。
+    // 参考项目的删除弹窗专门显示了名称 + Base URL，我们这里补更关键的"连带损失"。
     async deleteProvider(pi) {
       const prov = this.providersFormData[pi];
-      if (!(await confirmAsk(t('confirm_delete_provider', prov.name), { danger: true }))) return;
+      const nModels = (prov.models || []).length;
+      // 该家是否已配置 Key（未保存的草稿 Key 不构成损失，不用提）。
+      // 字段名以 keyStatusText 的用法为准：keysByProvider[name].configured
+      // （账号型供应商另看 accountsStatus —— 那种情况下 Key 不是"一个字符串"，
+      //  再提"Key 会被删"反而误导，所以只对静态 Key 型提示）。
+      const kp = this.keysByProvider && this.keysByProvider[prov.name];
+      const hasKey = !!(kp && kp.configured);
+      const lines = [t('confirm_delete_provider', prov.name)];
+      if (nModels > 0) lines.push(t('confirm_delete_models_n', nModels));
+      if (hasKey) lines.push(t('confirm_delete_key_cascade'));
+      lines.push(t('confirm_delete_need_save'));
+      if (!(await confirmAsk(lines.join('\n'), { danger: true }))) return;
       this.providersFormData.splice(pi,1);
       this.providersFormMsg = t('provider_removed',prov.name);
       this.providersFormOk = true;
@@ -333,6 +348,64 @@
       this.markDirty();
       toast(t('provider_reordered', name, j + 1));
     },
+    // ── 自定义上游请求头（2026-10-24）──
+    //
+    // 后端早已透传保存 `headers`（ds-provsave.js 白名单里有），但**一直没有 UI**：
+    // 用户想加一个 `x-api-key` 只能手写 providers.json。这里补上可视化编辑。
+    //
+    // 数据形状：`drawerProv.headers` 是对象 `{name: value}`；
+    // 编辑态需要**有序、可重复空行**，所以用 `_hdrRows` 数组做草稿，
+    // 每次改动再回写成对象（空 name 的行不写）。
+    //
+    // 为什么不用 `x-for` 直接遍历对象：对象键无序且不能有"空行草稿"，
+    // 用户刚点「+」时 name 还是空串，写进对象会变成 `{"": "..."}`。
+    provHeaderRows() {
+      const p = this.drawerProv;
+      if (!p) return [];
+      if (!p._hdrRows) {
+        p._hdrRows = Object.entries(p.headers || {}).map(([k, v]) => ({ name: k, value: String(v) }));
+      }
+      return p._hdrRows;
+    },
+    _syncProvHeaders() {
+      const p = this.drawerProv;
+      if (!p) return;
+      const out = {};
+      for (const r of (p._hdrRows || [])) {
+        const n = (r.name || '').trim();
+        if (n) out[n] = r.value || '';
+      }
+      // 空对象落成 undefined：不留 `{}` 到配置里（与保存白名单的语义一致）
+      p.headers = Object.keys(out).length ? out : undefined;
+      this.markDirty();
+    },
+    addProvHeader() {
+      const p = this.drawerProv;
+      if (!p) return;
+      if (!p._hdrRows) p._hdrRows = [];
+      p._hdrRows.push({ name: '', value: '' });
+      // 数组 push 不触发 Alpine 重渲染时需要整体替换
+      p._hdrRows = p._hdrRows.slice();
+    },
+    setProvHeader(i, name, value) {
+      const p = this.drawerProv;
+      if (!p || !p._hdrRows || !p._hdrRows[i]) return;
+      if (name !== null) p._hdrRows[i].name = name;
+      if (value !== null) p._hdrRows[i].value = value;
+      this._syncProvHeaders();
+    },
+    removeProvHeader(i) {
+      const p = this.drawerProv;
+      if (!p || !p._hdrRows) return;
+      p._hdrRows.splice(i, 1);
+      p._hdrRows = p._hdrRows.slice();
+      this._syncProvHeaders();
+    },
+    // 抽屉换供应商时要重置草稿，否则会把上一家的头带过来
+    _resetProvHeaderRows() {
+      if (this.drawerProv) this.drawerProv._hdrRows = undefined;
+    },
+
     openProviderDrawer(pi){
       const prov=this.providersFormData[pi];
       if(!prov) return;
@@ -344,6 +417,9 @@
       // 空草稿 = 未声明, 由下面的 setter 决定写什么进 auth。
       if(prov._authHeader===undefined) prov._authHeader=(prov.auth&&prov.auth.header)||'';
       if(prov._authPrefix===undefined) prov._authPrefix=(prov.auth&&prov.auth.prefix)||'';
+      // 请求头草稿也要重置：换一家供应商时必须从它自己的 headers 重新生成，
+      // 否则会把上一家编辑到一半的行留在新抽屉里（且写回时会污染新供应商）。
+      prov._hdrRows = undefined;
       try { this.drawerAdvOpen = localStorage.getItem('aigate_drawer_adv') === '1'; } catch(e) {}
       if (!this.drawerProv) this._lastFocus = document.activeElement; // 记录触发按钮, 关闭时归还
       this.drawerProv=prov;

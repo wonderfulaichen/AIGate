@@ -46,6 +46,19 @@
       // (见 ds-stats.fetchStats 的 firstLoad 判据), 那时才按"骨架最少驻留"规则收尾.
     },
 
+    // ── 中文输入法守卫（2026-10-24，对照参考项目 ChannelForm 的 IME 处理）──
+    //
+    // 问题：用中文输入法在输入框里打 key/名称时，按 Enter 是**选词上屏**，
+    // 不是提交。裸 `@keydown.enter="save()"` 会把选词当成提交 ——
+    // 表现为"刚打第一个字就触发了保存/回车跳转"。
+    //
+    // 判据用 `isComposing`（标准）或 `keyCode === 229`（老浏览器/部分输入法）。
+    // 返回 true 表示"这次 Enter 属于输入法，应忽略"。
+    isImeComposing(ev) {
+      if (!ev) return false;
+      return ev.isComposing === true || ev.keyCode === 229;
+    },
+
     async init() {
       // localStorage 版本键: 版本变化时清理旧 UI 缓存 —— 结构迁移后旧数据会毒害新逻辑.
       // 白名单保留跨版本稳定的个性化偏好; 其余 aigate* 键一律清除. 隐私模式静默降级.

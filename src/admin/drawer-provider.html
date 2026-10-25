@@ -67,6 +67,21 @@
             <div class="f-grid">
               <div class="f-row"><label x-text="t('addprov.endpoint')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv.endpoint" @input="markDirty()" placeholder="https://api.example.com"></div>
             </div>
+            <!-- 实际会打到哪个地址（2026-10-24 新增）。
+                 为什么值得做：90% 的渠道配错是 Base URL 多写/少写 `/v1`，
+                 而填完看不到最终地址、只能靠试。这里把**实际会用的**列出来。
+                 只显示已填的协议 —— 没填的不渲染，避免"未配置"占位噪音。 -->
+            <template x-if="provEndpointPreview(drawerProv).length">
+              <div style="margin-top:8px;padding:8px 10px;border-radius:var(--rm);background:var(--fill-2);border:1px solid var(--border)">
+                <div class="txs tm" style="margin-bottom:4px" x-text="t('endpoint_preview_label')"></div>
+                <template x-for="e in provEndpointPreview(drawerProv)" :key="'ep'+e.k">
+                  <div style="display:flex;gap:8px;align-items:baseline;margin-top:2px">
+                    <span class="txs tm" style="flex:none;min-width:60px" x-text="t(e.k)"></span>
+                    <span class="mono" style="font-size:var(--fs-11);color:var(--fg);word-break:break-all" x-text="e.v"></span>
+                  </div>
+                </template>
+              </div>
+            </template>
             <!-- 高级端点: 多协议覆盖 + 余额查询 (折叠, 偏好存 localStorage) -->
             <button type="button" class="btn btn-g" style="font-size:var(--fs-11);margin-top:10px" @click="toggleDrawerAdv()"><span x-text="t('dr_adv')"></span> <span x-text="drawerAdvOpen?'⌃':'⌄'"></span></button>
             <div x-show="drawerAdvOpen" style="margin-top:10px">
@@ -79,6 +94,39 @@
                 <div class="f-row"><label x-text="t('auth_header_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv._authHeader" :placeholder="t('auth_header_ph')" @input="setAuthHeader(drawerProv._authHeader);markDirty()"></div>
                 <div class="f-row"><label x-text="t('auth_prefix_label')"></label><input type="text" class="inp mono" style="width:100%" x-model="drawerProv._authPrefix" :placeholder="t('auth_prefix_ph')" @input="setAuthPrefix(drawerProv._authPrefix);markDirty()"></div>
                 <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('auth_header_hint')"></div>
+              </div>
+
+              <!-- ── 自定义上游请求头（2026-10-24 新增可视化编辑）──
+                   改造前后端早就存了 `headers`（ds-provsave.js 白名单里有），
+                   但**没有任何 UI** —— 用户要改只能手写 providers.json。
+                   行式列表：name / value（password）/ 删除，与参考项目同构。
+                   value 用 password：这些头里常放第二个 key（如 x-api-key）。 -->
+              <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <label style="font-size:var(--fs-12);color:var(--fg)" x-text="t('custom_headers_label')"></label>
+                  <button type="button" class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px;margin-left:auto"
+                          @click.stop="addProvHeader()" x-text="'+ '+t('add')"></button>
+                </div>
+                <div class="txs tm" style="margin-top:2px" x-text="t('custom_headers_hint')"></div>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+                  <template x-for="(h, hi) in provHeaderRows()" :key="'hdr'+hi">
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <input type="text" class="inp mono" style="flex:0 0 34%;font-size:var(--fs-11)"
+                             :value="h.name" :placeholder="t('header_name_ph')"
+                             :aria-label="t('header_name_ph')"
+                             @input="setProvHeader(hi, $event.target.value, null)">
+                      <input type="password" class="inp mono" style="flex:1;font-size:var(--fs-11)"
+                             :value="h.value" :placeholder="t('header_value_ph')"
+                             :aria-label="t('header_value_ph')"
+                             @input="setProvHeader(hi, null, $event.target.value)">
+                      <button type="button" class="prov-ib" :title="t('delete')" :aria-label="t('delete')"
+                              @click.stop="removeProvHeader(hi)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                      </button>
+                    </div>
+                  </template>
+                  <div class="txs tm" x-show="provHeaderRows().length===0" x-text="t('custom_headers_empty')"></div>
+                </div>
               </div>
 
               <!-- ── 上游协议适配开关（2026-10-24 补界面入口）──
@@ -128,7 +176,7 @@
               <div style="border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;background:var(--fill-1)">
             <div class="key-status-row" x-text="keyStatusText(drawerProv.name)"></div>
             <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="saveDrawerKey()">
+              <input type="password" class="inp" style="flex:1" :placeholder="t('key_placeholder')" x-model="drawerProv._keyDraft" @keydown.enter="!isImeComposing($event)&&saveDrawerKey()">
               <!-- ⚠️ 这两个「保存」语义不同, 必须从**按钮文字**就能分辨 (2026-10-12 审计):
                    这里是**立即生效**（直接 PUT /admin/api/keys, 不经过表单保存链）;
                    而底部那个「保存配置」走表单链、要等落盘。原实现两个都叫「保存」,
@@ -262,6 +310,10 @@
                   </span>
                   <button class="btn btn-p" style="font-size:var(--fs-11)" @click="addModel(providersFormData.indexOf(drawerProv))" x-text="t('add_model')"></button>
                 </div>
+                <!-- 「空模型 = 接受所有模型」这条业务语义不写出来没人猜得到 ——
+                     用户会以为是"全禁"还是"没配好"。参考项目专门写了这一行。 -->
+                <div class="txs tm" style="margin-top:6px" x-show="(drawerProv.models||[]).length===0"
+                     x-text="t('empty_models_wildcard')"></div>
               </div>
               <!-- 实测支持的协议 (由「拉取模型」时探测得到, 供应商级): 后端据此**自动**按客户端
                    入口协议路由 —— 客户端打哪个入口就用哪个, 这里无需任何勾选, 此栏只是把

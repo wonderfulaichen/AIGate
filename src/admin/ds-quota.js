@@ -17,6 +17,29 @@
     // 额度查询结果缓存（按供应商名）。`null` = 还没查过或查询失败。
     // 为什么放前端而不是复用 stats：额度是一次**外部网络请求**，
     // 不该拖慢每次统计刷新，也不该因 Console 挂了就让统计页出错。
+    // ── 实际请求 URL 预览（2026-10-24）──
+    //
+    // 为什么值得做：90% 的渠道配错是 Base URL 多写/少写 `/v1`
+    // （参考项目把这叫"最便宜的防错"，见 HANDOFF ㉚ 对照清单第 5 项）。
+    // 用户填完看不到最终会打哪个地址，只能靠试。
+    //
+    // 口径必须与后端一致：后端是 `endpoint` 原样使用（chat/completions 已含），
+    // 另两个协议端点走 `endpoint_anthropic` / `endpoint_responses`，
+    // 未填时由后端按 `endpoint` 推导。这里**只展示实际会用的值**，
+    // 推导不出来就显示"未配置"，不猜。
+    provEndpointPreview(prov) {
+      if (!prov) return [];
+      const out = [];
+      const ep = (prov.endpoint || '').trim();
+      if (ep) out.push({ k: 'fmt.openai', v: ep });
+      const anth = (prov.endpoint_anthropic || '').trim();
+      const resp = (prov.endpoint_responses || '').trim();
+      if (anth) out.push({ k: 'fmt.anthropic', v: anth });
+      if (resp) out.push({ k: 'fmt.responses', v: resp });
+      // 一个都没填 → 返回空数组，界面据此不渲染（不显示"未配置"占位噪音）
+      return out;
+    },
+
     _ocQuota: {},
     _ocQuotaLoading: {},
     _ocQuotaErr: {},
