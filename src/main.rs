@@ -53,6 +53,9 @@ mod version;
 mod tooltip;
 mod balance;
 mod opencode_quota;
+mod oc_login;
+#[cfg(windows)]
+mod oc_login_win;
 mod currency;
 mod proxy_cfg;
 mod seen_version;
@@ -802,16 +805,28 @@ fn main() {
     let registry = Arc::new(RwLock::new(registry));
     // ── opencode 一键登录（2026-10-24）──
     //
-    // 为什么走内嵌 WebView 而不是服务端轮询（像 buddy 那样）：
-    // opencode 是 Google/GitHub OAuth，回调落在 opencode 域名，本地服务端收不到。
-    // 所以让浏览器自己走完整条 OAuth，再从 WebView2 的 CookieManager
-    // 读 `__Host-console_session`（HttpOnly，JS 读不到，但原生 API 能读）。
+    // ── opencode Console 一键登录（2026-10-24）──
     //
-    // 跨线程通信：HTTP handler 通过 channel 请求"打开窗口"（wry 的 WebView
-    // 只能在主 event loop 里建），主循环收到后建窗并每拍检查 cookie。
+    // 为什么走独立线程的 WebView：opencode 是 Google/GitHub OAuth，回调落在
+    // opencode 域名，本地服务端收不到。所以让浏览器自己走完整条 OAuth，
+    // 再从 WebView2 的 CookieManager 读 `__Host-console_session`
+    // （HttpOnly，JS 的 document.cookie 读不到，但原生 API 能读）。
+    //
+    // ⚠️ 为什么不在主事件循环回调里建窗：实测那样 WebView2 不会被真正初始化
+    // （`build` 返回 Ok、窗口在列表里、尺寸正确，但 URL 停在 about:blank、
+    //   客户区位图纯白）。
+    //   而"独立线程 + wry"也不行：winit 每次进程**只允许一个 EventLoop**，
+    //   主窗口已占用 → 必报 `EventLoop can't be recreated`。
+    //   最终走 Win32 + WebView2 原生（不依赖 winit），见 `src/oc_login_win.rs`。
+    //
+    // HTTP handler 直接调 `oc_login::spawn_login` 起线程（不经过主循环），
+    // 线程轮询 cookie 后写回共享的 LoginState。
+    let oc_login_state: Arc<crate::oc_login::LoginState> =
+        Arc::new(crate::oc_login::LoginState::new());
     let state = AppState {
         client,
         registry: Arc::clone(&registry),
+        oc_login: Arc::clone(&oc_login_state),
         admin_token: config.admin_token.clone(),
         breaker: config.breaker.clone(),
         cache: Arc::new(crate::cache::ResponseCache::new(
@@ -933,6 +948,9 @@ fn main() {
         .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
         .route("/admin/api/opencode/quota", get(admin::api_opencode_quota))
+        .route("/admin/api/opencode/login/start", post(admin::api_oc_login_start))
+        .route("/admin/api/opencode/login/status", post(admin::api_oc_login_status))
+        .route("/admin/api/opencode/login/cancel", post(admin::api_oc_login_cancel))
         .route("/admin/api/opencode/orgs", post(admin::api_oc_orgs))
         .route("/admin/api/opencode/verify", post(admin::api_oc_verify))
         .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));

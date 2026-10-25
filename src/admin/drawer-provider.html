@@ -213,6 +213,26 @@
                 <div class="row-t" style="margin-bottom:2px" x-text="t('console_cred_label')"></div>
                 <div class="txs tm" style="margin-bottom:8px" x-text="t('console_cred_hint')"></div>
 
+                <!-- ── 一键登录（2026-10-24）──
+                     为什么有它：手动粘贴 Cookie 要么得开 DevTools 翻 HttpOnly
+                     Cookie（普通用户不会），要么得手抄地址栏里的 wrk_ 组织 ID。
+                     弹窗登录把这两步都省掉：用户在 WebView 里完成 Google/GitHub
+                     授权，后端从 CookieManager 直接取 __Host-console_session
+                     （HttpOnly，JS 读不到）+ 从跳转 URL 提 wrk_。
+                     失败时分两种：窗口没弹出来（如精简版 Windows 缺 WebView2
+                     运行时）→ 文案提示改用手动粘贴；授权没完成 → 可重试。 -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-p"
+                          :disabled="ocLoginBusy"
+                          @click.stop="ocLoginStart(drawerProv)"
+                          x-text="ocLoginBusy?t('oc_login_in_progress'):t('oc_login_btn')"></button>
+                  <span class="txs" x-show="ocLoginMsg"
+                        :style="'color:'+(ocLoginOk?'var(--ok)':'var(--err)')"
+                        x-text="ocLoginMsg"></span>
+                </div>
+                <div class="txs tm" style="margin:0 0 8px"
+                     x-text="t('oc_login_manual')"></div>
+
                 <!-- Cookie 用 Textarea：粘贴的串很长（st_... 几十字符 + 可能带 auth=），
                      单行输入框会截断视觉，用户容易以为没贴全（QuotaHub 也用 Textarea）。 -->
                 <div class="f-row">

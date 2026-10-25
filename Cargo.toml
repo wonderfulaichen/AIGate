@@ -21,6 +21,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 winit = "0.29"
 wry = "0.38"
 tray-icon = "0.13"
+# WebView2 原生 cookie 读取（opencode 一键登录用）。
+# 版本必须与 wry 0.38 内部一致（0.29），否则 windows crate 的 Interface trait
+# 来自不同版本、`cast()` 会报 "no method named cast"。windows 同理取 0.54。
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.29"
+windows = "0.54"
 [profile.release]
 opt-level = 2
 lto = "thin"

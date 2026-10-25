@@ -1615,6 +1615,19 @@ pub async fn api_providers_save(
     // 口径: **只补空值, 不覆盖用户手改过的声明** (与面板表单语义一致);
     //      只写模型自己的上游 ID 命中的条目, 不按中转 ID 猜。
     let json_str = crate::providers::backfill_fetched_meta(&json_str).await;
+    // 4.2) 回填「一键登录」拿到的 Console 凭据。
+    //
+    // 为什么必须在这里做: 前端保存时把**空值落成 undefined**（ds-provsave.js 的
+    // `(p.console_session||'').trim()||undefined`）→ JSON 里整个键消失。
+    // 而「一键登录」的凭据是**后端**拿到并直接落盘的，前端抽屉里那一栏是空的
+    // （凭据不回传前端）。用户在登录成功后随手点一次「保存配置」（改个模型名之类），
+    // 就会把刚拿到的 Cookie 抹掉 —— 表现为"额度刚查到、下次打开又要登录"。
+    // 口径与 backfill_fetched_meta 一致: **表单没给就保留磁盘上已有的**；
+    // 表单给了空串以外的值则以表单为准（用户显式改过）。
+    let json_str = {
+        let old_provs = state.registry.read().await.providers();
+        preserve_console_creds(&json_str, &old_provs)
+    };
     if let Err(e) = std::fs::write(tmp, &json_str) {
         return Json(serde_json::json!({ "error": crate::i18n::msg_write_file_failed(&e) }));
     }
@@ -1665,6 +1678,54 @@ pub async fn api_providers_save(
         // 重复中转 ID 告警 (非阻断): 前端据此提示哪些条目改了不会生效.
         "duplicate_ids": dup_warnings,
     }))
+}
+
+/// 保存时回填「一键登录」拿到的 Console 凭据（纯函数，便于单测）。
+///
+/// 语义：**表单没给（键缺失或空串）就保留 `old` 里已有的**；表单给了非空值则以表单为准
+/// （用户显式改过）。按 `name` 对齐两侧条目 —— 重命名视为新条目，不继承旧凭据
+/// （改名通常意味着换了账号/组织，继承会把别人的 Cookie 装到新条目上）。
+///
+/// `old` 是**磁盘/注册表当前**的配置；调用方负责传入真实值。
+fn preserve_console_creds(json_str: &str, old: &[crate::providers::ProviderConfig]) -> String {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(json_str) else {
+        return json_str.to_string(); // 解析不了就原样返回（前面已校验过，这里只是保险）
+    };
+    let Some(arr) = v.get_mut("providers").and_then(|p| p.as_array_mut()) else {
+        return json_str.to_string();
+    };
+    for p in arr.iter_mut() {
+        let Some(name) = p.get("name").and_then(|n| n.as_str()).map(String::from) else {
+            continue;
+        };
+        let Some(src) = old.iter().find(|o| o.name == name) else {
+            continue; // 新条目：没有"旧凭据"可继承
+        };
+        let Some(obj) = p.as_object_mut() else { continue };
+        // 表单给了非空值 → 尊重表单（用户显式改过）。
+        // 先算好两个布尔再改 obj：闭包借用 obj 的同时又要 insert 会冲突。
+        let has_session = obj
+            .get("console_session")
+            .and_then(|x| x.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_org = obj
+            .get("console_org_id")
+            .and_then(|x| x.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if !has_session {
+            if let Some(s) = &src.console_session {
+                obj.insert("console_session".into(), serde_json::json!(s));
+            }
+        }
+        if !has_org {
+            if let Some(s) = &src.console_org_id {
+                obj.insert("console_org_id".into(), serde_json::json!(s));
+            }
+        }
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| json_str.to_string())
 }
 
 /// 校验 providers.json 文本: 解析为 {providers:[...]}, 每个供应商 name 非空且唯一, endpoint 非空.
@@ -3278,6 +3339,120 @@ pub async fn api_balance(
     Json(serde_json::json!({
         "balances": balances,
     }))
+}
+
+/// POST /admin/api/opencode/login/start `{provider}` — 弹窗让用户一键登录.
+///
+/// # 为什么是"弹窗登录"而不是像 CodeBuddy 那样服务端轮询
+///
+/// CodeBuddy 有 `auth/token?state=`，服务端拿 state 就能换 token。
+/// opencode 是标准 OAuth：授权码只发给它自己的回调域名，本地服务端收不到。
+/// 所以让**浏览器自己走完整条 OAuth**，再用 WebView2 的 CookieManager
+/// 取回 `__Host-console_session`（HttpOnly，JS 的 document.cookie 读不到）。
+///
+/// 弹窗跑在**独立线程**（`oc_login::spawn_login`）—— 实测放在主事件循环回调里
+/// 建窗的话，WebView2 不会被真正初始化（URL 停在 about:blank、客户区纯白）。
+///
+/// 本端点只负责"起线程弹窗"，前端随后轮询 `/admin/api/opencode/login/status`。
+pub async fn api_oc_login_start(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = match payload.get("provider").and_then(|v| v.as_str()) {
+        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => return Json(serde_json::json!({ "error": "缺少 provider" })),
+    };
+    {
+        let registry = state.registry.read().await;
+        if !registry.providers().iter().any(|p| p.name == name) {
+            return Json(serde_json::json!({ "error": format!("找不到供应商 {name}") }));
+        }
+    }
+    // 已在等待中 → 不重复弹窗（重复点按钮不该弹一堆窗口）
+    if state.oc_login.stage() == crate::oc_login::Stage::Waiting {
+        return Json(serde_json::json!({
+            "stage": "waiting",
+            "note": "登录窗口已经打开，请在那里完成 Google / GitHub 授权"
+        }));
+    }
+    crate::oc_login::spawn_login(Arc::clone(&state.oc_login));
+    Json(serde_json::json!({ "stage": "waiting", "provider": name }))
+}
+
+/// POST /admin/api/opencode/login/status `{provider}` — 轮询登录进度.
+///
+/// 状态：`idle` / `waiting` / `done` / `failed` / `cancelled`。
+/// `done` 时会**顺带把凭据写进该供应商配置并落盘**（只做一次），
+/// 这样前端拿到 `done` 就能直接查额度，不需要额外的"保存"动作。
+///
+/// 不回传 Cookie（凭据不该经过前端；前端只需要知道"成功了"）。
+pub async fn api_oc_login_status(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let name = payload
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let stage = state.oc_login.stage();
+    let mut resp = serde_json::json!({
+        "stage": stage.as_str(),
+        "error": state.oc_login.error(),
+    });
+    if stage != crate::oc_login::Stage::Done {
+        return Json(resp);
+    }
+
+    // 只在 Done 且还能取到凭据时写配置（take 保证只写一次）。
+    let Some(cred) = state.oc_login.take_result() else {
+        resp["note"] = serde_json::json!("凭据已写入（本次会话内只写一次）");
+        return Json(resp);
+    };
+    if name.is_empty() {
+        return Json(serde_json::json!({ "error": "缺少 provider" }));
+    }
+
+    // 写进注册表配置 + 落盘。
+    // 与 api_providers_save 保持一致：覆盖前留 .bak、pretty 序列化（该文件是用户
+    // 会手改的配置，压平成一整行不可读）、临时文件 + rename 原子替换。
+    let saved = {
+        let mut reg = state.registry.write().await;
+        let mut list = reg.providers().to_vec();
+        let Some(p) = list.iter_mut().find(|p| p.name == name) else {
+            return Json(serde_json::json!({ "error": format!("找不到供应商 {name}") }));
+        };
+        p.console_session = Some(cred.cookie.clone());
+        p.console_org_id = Some(cred.org_id.clone());
+        let json_str = match serde_json::to_string_pretty(&serde_json::json!({ "providers": list })) {
+            Ok(s) => s,
+            Err(e) => return Json(serde_json::json!({ "error": format!("序列化失败: {e}") })),
+        };
+        let _ = std::fs::copy("providers.json", "providers.json.bak");
+        let wrote = std::fs::write("providers.json.tmp", &json_str)
+            .and_then(|_| std::fs::rename("providers.json.tmp", "providers.json"));
+        match wrote {
+            Ok(()) => reg.reload("providers.json"),
+            Err(e) => Err(e.to_string()),
+        }
+    };
+    match saved {
+        Ok(()) => {
+            resp["org_id"] = serde_json::json!(cred.org_id);
+            resp["cookie_saved"] = serde_json::json!(true);
+            Json(resp)
+        }
+        Err(e) => Json(serde_json::json!({ "error": format!("凭据写入失败: {e}") })),
+    }
+}
+
+/// POST /admin/api/opencode/login/cancel — 取消登录（关闭窗口）。
+pub async fn api_oc_login_cancel(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    state.oc_login.cancel();
+    Json(serde_json::json!({ "stage": state.oc_login.stage().as_str() }))
 }
 
 /// GET /admin/api/opencode/quota?provider=<name> — 查询 opencode 套餐真实额度.
@@ -8202,6 +8377,92 @@ mod tests {
         let old = serde_json::to_string(&l).unwrap().replace("\"client_status\":200,", "");
         let back: RequestLog = serde_json::from_str(&old).expect("旧记录应能解析");
         assert_eq!(back.client_status, None);
+    }
+
+    /// 「一键登录」凭据不能被一次普通保存抹掉。
+    ///
+    /// 场景（真实会踩）：用户登录成功 → 后端把 Cookie 写进 providers.json →
+    /// 用户改个模型名点「保存配置」→ 前端只提交表单里有的键，而抽屉里
+    /// console_session 是空的（凭据不回传前端）→ 键消失 → 刚登录的凭据没了。
+    #[test]
+    fn preserve_console_creds_keeps_backend_credential_across_saves() {
+        let mkp = |name: &str, cookie: Option<&str>, org: Option<&str>| {
+            let mut v = serde_json::json!({
+                "name": name,
+                "endpoint": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                // api_key_env / models 在 ProviderConfig 里是**必填**（无 serde default）
+                "api_key_env": "OPENCODE_KEY",
+                "models": {},
+            });
+            if let Some(c) = cookie {
+                v["console_session"] = serde_json::json!(c);
+            }
+            if let Some(o) = org {
+                v["console_org_id"] = serde_json::json!(o);
+            }
+            serde_json::from_value::<crate::providers::ProviderConfig>(v).expect("构造 provider")
+        };
+
+        // 磁盘上：go 已有一键登录的凭据；zen 从未登录过
+        let old = vec![
+            mkp("go", Some("__Host-console_session=st_AAA"), Some("wrk_AAA")),
+            mkp("zen", None, None),
+        ];
+
+        // ① 前端提交的表单里完全没有 Console 键（用户只改了别的字段）
+        let submitted = serde_json::json!({
+            "providers": [
+                {"name": "go", "endpoint": "https://x/v1/chat/completions"},
+                {"name": "zen", "endpoint": "https://y/v1/chat/completions"}
+            ]
+        })
+        .to_string();
+        let out: serde_json::Value =
+            serde_json::from_str(&preserve_console_creds(&submitted, &old)).unwrap();
+        let go = &out["providers"][0];
+        assert_eq!(
+            go["console_session"], "__Host-console_session=st_AAA",
+            "未在表单里出现的凭据必须从磁盘回填（否则一次普通保存就抹掉了刚登录的凭据）"
+        );
+        assert_eq!(go["console_org_id"], "wrk_AAA");
+        // zen 本来就没有 → 不得凭空长出一个
+        assert!(out["providers"][1].get("console_session").is_none(), "无凭据的条目不得凭空生成");
+        assert!(out["providers"][1].get("console_org_id").is_none());
+        // 用户改的字段本身不能被影响
+        assert_eq!(go["endpoint"], "https://x/v1/chat/completions");
+
+        // ② 表单里给了非空值 → 以表单为准（用户显式换号/换 Cookie）
+        let submitted2 = serde_json::json!({
+            "providers": [
+                {"name": "go", "endpoint": "https://x", "console_session": "new_st", "console_org_id": "wrk_NEW"}
+            ]
+        })
+        .to_string();
+        let out2: serde_json::Value =
+            serde_json::from_str(&preserve_console_creds(&submitted2, &old)).unwrap();
+        assert_eq!(out2["providers"][0]["console_session"], "new_st", "显式填写的值优先");
+        assert_eq!(out2["providers"][0]["console_org_id"], "wrk_NEW");
+
+        // ③ 表单里给空串 → 视为"没给"，回填磁盘值（前端正是把空值落成 undefined/""）
+        let submitted3 = serde_json::json!({
+            "providers": [{"name": "go", "endpoint": "https://x", "console_session": "   "}]
+        })
+        .to_string();
+        let out3: serde_json::Value =
+            serde_json::from_str(&preserve_console_creds(&submitted3, &old)).unwrap();
+        assert_eq!(out3["providers"][0]["console_session"], "__Host-console_session=st_AAA");
+
+        // ④ 改名后的条目视为新条目，**不继承**旧凭据（改名通常意味着换了账号/组织）
+        let submitted4 = serde_json::json!({
+            "providers": [{"name": "go-renamed", "endpoint": "https://x"}]
+        })
+        .to_string();
+        let out4: serde_json::Value =
+            serde_json::from_str(&preserve_console_creds(&submitted4, &old)).unwrap();
+        assert!(
+            out4["providers"][0].get("console_session").is_none(),
+            "改名条目不得继承别名的凭据（否则会把旧账号 Cookie 装到新条目上）"
+        );
     }
 
 }

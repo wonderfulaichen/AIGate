@@ -1418,6 +1418,40 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-25 轮：opencode 一键登录（WebView2 原生窗口）+ opencode 新端点路径
+
+**用户需求演进**：先是手贴 Cookie 方案（照 QuotaHub），用户问「我的一键登录呢？」→ 明确「我让你弄的就是看额度」→ 最后要求「点按钮弹窗自动获取」（选 B）。
+
+**三条技术路线，前两条都失败，记下来免得再走**：
+
+| 方案 | 结果 | 原因 |
+|---|---|---|
+| 主事件循环内建 wry WebView | ✗ | `build` 返回 Ok、窗口在列表里，但 URL 恒为 `about:blank`、客户区纯白 —— WebView2 未真正初始化 |
+| 独立线程 + wry（`with_any_thread`） | ✗ | `EventLoop can't be recreated` —— **winit 每次进程只允许一个 EventLoop**，主窗口已占用 |
+| 独立线程 + Win32 原生窗口 + WebView2 | ✓ | 不依赖 winit，可在任意线程反复建 |
+
+**为什么不能像 CodeBuddy 那样"服务端换 token"**：opencode 是标准 OAuth（PKCE），授权码只发给它自己的回调域名；session 是 HttpOnly Cookie（JS 读不到）；额度端点不认 API Key（Bearer → 401）。所以绕不开"让浏览器走完 OAuth，再从浏览器里取 Cookie"。
+
+**实现**（`src/oc_login_win.rs` + `src/oc_login.rs`）：
+- `CreateWindowExW` 建原生窗口 → `CreateCoreWebView2EnvironmentWithOptions` + `CreateCoreWebView2Controller` 挂 WebView2 → 自己跑 `GetMessageW` 消息循环。
+- **轮询不能阻塞**：WebView2 的完成回调靠消息泵投递，`recv()` 阻塞会堵泵（回调永远到不了）。用 `SetTimer` + `WM_TIMER` 驱动的非阻塞轮询，1s 一次。
+- 判据是**两件事齐了**才收口：Cookie 里有 `__Host-console_session` **且** 当前 URL 能提出 `wrk_...`（缺一个继续等，不能因"cookie 有了但页面没跳"提前收口）。
+
+**踩到的真坑（都会表现为"端点正常但用户看不到窗口"）**：
+1. **`0x8007139F ERROR_INVALID_STATE`**：WebView2 不允许同一进程内**同一 user data folder** 有两个环境实例。主窗口的 wry 已占用默认目录 → 登录窗口必须给独立目录（`data/oc_login_webview`，见 `config::oc_login_data_dir`）。顺带把登录 Cookie 与主面板会话物理隔离。
+2. **探针假通过**：第一次跑探针时实例还没有主窗口（启动即测），所以"共用目录"也不冲突 → 改坏验证不转红。修正探针：**先等主窗口出现**再测登录窗口，否则测不出这个冲突。
+
+**HTTP 端点**：`POST /admin/api/opencode/login/{start,status,cancel}`。`status` 返 `idle|waiting|done|failed|cancelled`；`done` 时**顺带把凭据写进该供应商配置并落盘**（只写一次），前端拿到 `done` 就能直接查额度、无需额外"保存"。
+
+**顺手修的真 bug（保存会抹掉刚登录的凭据）**：前端保存时把空值落成 `undefined`（`(p.console_session||'').trim()||undefined`），而凭据不回传前端 → 抽屉里那栏是空的 → 用户登录成功后随手点一次「保存配置」（哪怕只改个模型名）就把 Cookie 抹掉，表现为"额度刚查到、下次打开又要登录"。修法：`preserve_console_creds()` 在写盘前按 `name` 回填**表单没给**的 Console 凭据（表单给了非空值则尊重表单；改名视为新条目不继承）。
+
+**探针** `tools/probe_oc_login.py`（12 判据，`--api-only` 可跳过窗口层）：端点契约 4 条 + 主窗口存在 1 条 + 登录窗口真的弹出 2 条 + 状态保持 1 条 + **窗口里真的渲染了页面**（`PrintWindow(PW_RENDERFULLCONTENT)` 抓图判颜色数 > 20，防"白窗"）1 条 + 取消真的关窗 2 条 + start 返回 waiting 1 条。改坏验证：把 user data folder 改回默认 → 「登录窗口真的弹出来了」转红（窗口集合 4 → 5，无新窗口）。
+
+**同轮修掉的 opencode 端点变更**（用户报"改了 go 的链接后模型获取失败"）：
+- opencode 把端点路径挪到 `/inference/...`：go 用 `https://opencode.ai/inference/go/openai/v1/chat/completions`（旧 `/zen/go/v1` 已 404）；zen 用 `/inference/openai/v1/chat/completions`（**不带 /go/**）。
+- **模型列表端点与协议段无关**：go 是 `/inference/go/v1/models`、zen 是 `/inference/v1/models` —— **都没有 `/openai` 这段**。原来的"把 `/chat/completions` 换成 `/models`"推导会得到 `/inference/go/openai/v1/models` → 404。已抽出 `derive_models_url()` 专门处理（见 `tools/probe_opencode_models_url.py`）。
+- zen 的 37 个模型官方**按模型分协议**（claude/qwen→anthropic、gpt/grok/muse→responses、gemini→google、deepseek/glm/kimi/minimax→chat），单一 endpoint 覆盖不了 → 需靠「拉取模型」时的协议探测写入 `api_formats`。
+
 ### 🆕 10-21 轮：修 402 被上游 `server_error` 掩盖成「服务器内部错误」（用户报障）
 
 **用户报障**：`402 Payment Required: ... [server_error]: Upstream request failed: Insufficient account funds`

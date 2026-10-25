@@ -47,6 +47,16 @@ pub struct AppState {
     pub accounts: crate::accounts::AccountStore,
     /// 浏览器登录会话表 (供应商名 → 登录进行状态; 见 accounts.rs 浏览器登录流).
     pub login_sessions: crate::accounts::LoginSessions,
+    /// **opencode Console 一键登录**（2026-10-24）。
+    ///
+    /// 与 `login_sessions`（CodeBuddy 系、服务端轮询 token）是两套机制：
+    /// opencode 是标准 OAuth，回调落在 opencode 域名，服务端收不到 code →
+    /// 只能让**浏览器自己走完整条流程**，再从 WebView2 的 CookieManager
+    /// 读 session（HttpOnly，只有原生 API 读得到）。
+    ///
+    /// 窗口实现见 `crate::oc_login_win`（Win32 + WebView2 原生）。
+    /// ⚠️ 不要改回 wry：winit 每次进程只允许一个 EventLoop，主窗口已占用。
+    pub oc_login: Arc<crate::oc_login::LoginState>,
     /// 余额查询管理器 (常驻实例, 缓存跨请求复用, 避免每次刷新重新打上游导致限流).
     pub balance_manager: BalanceManager,
     /// 管理面板 API 鉴权令牌 (None 表示不鉴权).

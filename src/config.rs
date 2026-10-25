@@ -341,6 +341,30 @@ fn resolve_or_create_admin_token() -> String {
     out
 }
 
+/// opencode 一键登录窗口的 WebView2 user data folder。
+///
+/// # 为什么必须独立
+///
+/// WebView2 不允许同一进程内**同一 user data folder** 建两个环境实例。
+/// 主窗口那份 wry WebView 已占用默认目录，登录窗口再用它会拿到
+/// `ERROR_INVALID_STATE (0x8007139F)`。
+///
+/// 顺带的好处：登录 Cookie（`__Host-console_session`）与主面板会话物理隔离 ——
+/// 本来就是两套无关的会话，混在一起只会让"面板登出顺带把额度凭据也清了"。
+///
+/// 放在 exe 同目录的 `data/` 下（与 `.admin_token` 同级），保持"单 exe + 数据目录"
+/// 的既有交付形态；目录不存在时 WebView2 会自行创建。
+pub fn oc_login_data_dir() -> String {
+    let base = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    base.join("data")
+        .join("oc_login_webview")
+        .to_string_lossy()
+        .to_string()
+}
+
 /// 加载当前目录下的 .env 文件.
 ///
 /// 简单解析: KEY=VALUE, 忽略注释 (#) 和空行, 去除值两端引号.

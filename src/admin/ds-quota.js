@@ -4,15 +4,16 @@
     // 需要 Cookie `__Host-console_session` + 头 `x-org-id: wrk_...`。
     // 实测返回三档 limitMicroCents / usedMicroCents / resetsAt，是**官方真实值**。
     //
-    // ⚠️ 为什么不继续试"一键登录"（本轮实测后放弃）：
+    // ⚠️ 为什么不走"服务端换 token"（像 CodeBuddy 那样）：
     //   · opencode 是标准 OAuth(PKCE)，授权码只发给它自己的回调域名，
-    //     本地服务端拿不到 —— 所以做不到 codebuddy 那种"服务端换 token"；
-    //   · session 是 HttpOnly Cookie，JS 读不到；
-    //   · wry 0.38 在已有事件循环里新建 WebView **无法初始化**
-    //     （实测 URL 停在 about:blank、两种设置都不生效也不报错）；
+    //     本地服务端拿不到 code；
+    //   · session 是 HttpOnly Cookie，JS 的 document.cookie 读不到；
     //   · 额度端点不认 API key（Bearer 返回 401，与无凭据相同）。
-    // 参考项目 QuotaHub 也是**手贴 Cookie**，它只是把入口做成独立一级页面。
-    // 所以我们照它：入口放到与 API Key 同层，表单用大 Textarea，保存后立即验证。
+    //
+    // 所以「一键登录」不是服务端换 token，而是**弹一个 WebView 让用户自己
+    // 走完整条 OAuth**，后端从 WebView2 的 CookieManager 取 HttpOnly Cookie。
+    // 见 `ocLoginStart()` 与后端 `src/oc_login.rs`。
+    // 弹窗不可用（缺 WebView2 运行时等）时，手动粘贴仍然保留作为兜底。
 
     // 额度查询结果缓存（按供应商名）。`null` = 还没查过或查询失败。
     // 为什么放前端而不是复用 stats：额度是一次**外部网络请求**，
@@ -145,6 +146,86 @@
         this.ocVerifyMsg = '测试失败: ' + String(e).slice(0, 100);
       } finally {
         this.ocVerifyBusy = false;
+      }
+    },
+
+    // ── 一键登录（2026-10-24，WebView2 弹窗）──
+    //
+    // 后端另起线程弹一个 Win32 + WebView2 原生窗口（不是 wry，原因见
+    // src/oc_login_win.rs 顶部），里面就是 opencode 登录页，用户完成
+    // Google/GitHub 授权；后端轮询 WebView2 的 CookieManager 取
+    // `__Host-console_session`（HttpOnly，JS 读不到），并从跳转 URL 提取
+    // `wrk_...` 组织 ID。拿到后**直接写进该供应商配置并落盘**，
+    // 所以这里拿到 done 就立刻查额度（凭据不回传前端，故不回填输入框）。
+    //
+    // 轮询而不是长连接：一次登录可能拖几十秒（用户要输密码/2FA），
+    // 长连接在中间任何一次网络抖动上都要重连，轮询更稳。
+    ocLoginBusy: false,
+    ocLoginMsg: '',
+    ocLoginOk: false,
+
+    async ocLoginStart(prov) {
+      if (!prov || this.ocLoginBusy) return;
+      this.ocLoginBusy = true;
+      this.ocLoginOk = false;
+      this.ocLoginMsg = t('oc_login_waiting');
+      const name = prov.name;
+      try {
+        const r = await fetch('/admin/api/opencode/login/start', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+          body: JSON.stringify({ provider: name }),
+        });
+        const j = await r.json();
+        if (j && j.error) {
+          this.ocLoginOk = false;
+          this.ocLoginMsg = String(j.error);
+          return;
+        }
+        // 轮询：最多 5 分钟（用户可能去输密码 / 过 2FA / 切账号）
+        const deadline = Date.now() + 5 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise(res => setTimeout(res, 1000));
+          const sr = await fetch('/admin/api/opencode/login/status', {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+            body: JSON.stringify({ provider: name }),
+          });
+          const sj = await sr.json();
+          const stage = (sj && sj.stage) || '';
+          if (stage === 'done') {
+            this.ocLoginOk = true;
+            this.ocLoginMsg = t('oc_login_ok');
+            // 后端已落盘。这里**不回填 Cookie**（后端不回传凭据，凭据不该经过前端），
+            // 也不整份 reload —— `loadProvidersForm()` 会重建整个数组、让
+            // `drawerProv` 变成悬空引用（抽屉引用的还是旧对象）。
+            // 只做两件事：把组织 ID 显示出来（用户能核对），标记该条已有凭据。
+            if (sj.org_id) prov.console_org_id = sj.org_id;
+            this.ocVerifyOk = true;
+            this.ocVerifyMsg = '';
+            this.fetchOpencodeQuota(name);
+            return;
+          }
+          if (stage === 'failed') {
+            this.ocLoginOk = false;
+            // 弹窗起不来（缺 WebView2 运行时）与"授权失败"是两回事，分开说
+            const err = String((sj && sj.error) || '');
+            this.ocLoginMsg = err || t('oc_login_failed');
+            return;
+          }
+          if (stage === 'cancelled') {
+            this.ocLoginOk = false;
+            this.ocLoginMsg = t('oc_login_cancelled');
+            return;
+          }
+        }
+        this.ocLoginOk = false;
+        this.ocLoginMsg = t('oc_login_timeout');
+      } catch (e) {
+        this.ocLoginOk = false;
+        this.ocLoginMsg = '登录失败: ' + String(e).slice(0, 100);
+      } finally {
+        this.ocLoginBusy = false;
       }
     },
 

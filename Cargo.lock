@@ -21,6 +21,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
+ "webview2-com",
+ "windows",
  "winit",
  "wry",
 ]

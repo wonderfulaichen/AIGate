@@ -36,6 +36,37 @@
 但后端读的是**已落盘的配置** → 永远报「未配置 Cookie」，把「缺组织 ID」
 这条判据整个盖住。改为「先保存再查」后才测到真实链路。
 
+### opencode 一键登录（点按钮弹窗，自动取回凭据）
+
+上一轮只做了「手贴 Cookie」，普通用户要么得开 DevTools 翻 HttpOnly Cookie、要么得手抄地址栏里的 `wrk_` 组织 ID。本轮补上一键登录：点按钮弹出窗口，用户在窗口里完成 Google / GitHub 授权，**凭据自动写进配置**，不用任何手工复制。
+
+- **弹窗是真的浏览器**：Win32 原生窗口 + WebView2，窗口里就是 opencode 的登录页（实测渲染出 GitHub 登录表单）。
+- **登完自动关窗**：轮询两件事 —— Cookie 里有没有 `__Host-console_session`、当前地址里能不能提出 `wrk_...`；两件齐了自动收口，用户不用再点确认。
+- **凭据不回传前端**：`status` 只回 `stage` 与组织 ID；Cookie 由后端直接落盘（前端拿到 `done` 即可查额度）。
+- **弹窗不可用时可退回手贴**：手动粘贴表单保留，并标注为「高级，弹窗不可用时」。
+
+**三条技术路线前两条都失败**（记下来免得再走）：主事件循环内建 wry WebView → 客户区纯白、URL 恒 `about:blank`；独立线程 + wry → `EventLoop can't be recreated`（**winit 每次进程只允许一个 EventLoop**，主窗口已占用）。最终走 Win32 + WebView2 原生，不依赖 winit。
+
+**两个"端点正常但用户看不到窗口"的静默坑**：
+
+- **`0x8007139F ERROR_INVALID_STATE`**：WebView2 不允许同一进程内**同一 user data folder** 有两个环境实例，主窗口已占用默认目录 → 登录窗口必须用独立目录（`data/oc_login_webview`）。顺带把登录 Cookie 与主面板会话物理隔离。
+- **轮询不能阻塞**：WebView2 的完成回调靠**消息泵**投递，`recv()` 阻塞会堵泵 → 回调永远到不了。改为定时器驱动的非阻塞轮询。
+
+**顺带修的真 bug**：登录成功后再点一次「保存配置」（哪怕只改个模型名）会把刚拿到的 Cookie **抹掉** —— 因为前端保存时把空值落成 `undefined`，而凭据不回传前端。修法：写盘前按供应商名回填「表单没给」的 Console 凭据（显式填了非空值则尊重表单；改名视为新条目不继承）。
+
+**新增判据**：`tools/probe_oc_login.py`（12 条，真实实例）。其中「窗口里真的渲染了页面」用 `PrintWindow(PW_RENDERFULLCONTENT)` 抓图判颜色数 —— 防的是"窗口有尺寸但里面纯白"这种最难发现的白窗。
+
+**改坏验证 1/1 转红**：把 user data folder 改回默认 → 登录窗口建不出来，判据转红。
+
+**探针自身的一次假通过**（已修）：第一版在主窗口还没建好时就测，此时"共用默认目录"也不冲突 → 改坏验证不转红。修正为先等主窗口出现，并加一条「主窗口已存在」的前置判据。
+
+### 修「拉取模型」在 opencode 新端点上 404（用户报「改了 go 的链接后模型获取失败」）
+
+opencode 把端点挪到了 `/inference/...`，但**模型列表端点与协议段无关**：go 是 `/inference/go/v1/models`、zen 是 `/inference/v1/models` —— **都没有 `/openai` 这段**。原来的推导把 `/chat/completions` 换成 `/models`，得到 `.../openai/v1/models` → 404。
+
+- 抽出 `derive_models_url()` 作为三处 URL 推导（拉取模型 / 启动探测 / 面板「测试」）的唯一来源；opencode 走特殊规则：剥掉协议段再拼 `/v1/models`，判据按 **host 域名**（供应商可以随便改名，host 骗不了人）。
+- 实测确认：`/inference/go/v1/models`、`/inference/v1/models`、旧的 `/zen[/go]/v1/models` 均 200；带 `/openai` 的一律 404。
+
 ### opencode 套餐额度：改用 Console API 查真实额度（推翻我先前的结论）
 
 用户提供了项目 [QuotaHub](https://github.com/lvmiao233/QuotaHub)，并说「好像可以查看
