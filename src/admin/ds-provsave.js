@@ -280,18 +280,62 @@
     // ── 内置预设 (2026-10-01): 添加 / 受保护语义 / 停用 ──
     // 预设只是模板: 添加 = 组装条目进表单 (带 preset 标记), 走既有保存链落盘;
     // 之后由 presetDirty/presetReset 维护「已修改 / 恢复默认」, 删除被后端兜底拒绝.
+    // ── 预设目录按地区分组（2026-10-24，对照参考项目 ProviderDropdown）──
+    //
+    // 为什么需要：预设从 3 条扩到 13 条后，平铺一列变得难找。
+    // 参考项目按 `国际 / 国内 / 本地 / 自定义` 分组、每组标题带图标 ——
+    // 用户按"我要用哪家的模型"就能定位，不用逐行扫。
+    //
+    // 顺序固定（不是按数量排）：国际在前符合"先用主流"的习惯，本地面板放最后。
+    // 空组不返回 —— 不渲染空标题（`prepends` 里可能暂时没有该地区的条目）。
+    presetGroups() {
+      const ORDER = ["international", "domestic", "local", "custom"];
+      const LABEL = {
+        international: "preset_region_intl",
+        domestic: "preset_region_domestic",
+        local: "preset_region_local",
+        custom: "preset_region_custom",
+      };
+      const all = this.presets || [];
+      const out = [];
+      for (const r of ORDER) {
+        const items = all.filter(x => (x.region || "custom") === r);
+        if (items.length) out.push({ region: r, labelKey: LABEL[r], items });
+      }
+      return out;
+    },
+
+    // 预设图标：只给确认过的品牌画，其余回落到"名字首字母"。
+    // 不做"猜一个差不多的图标"—— 品牌标画错比没有更糟。
+    presetIcon(iconKey, displayName) {
+      const T = {
+        openai: "◎",
+        google: "G",
+        deepseek: "◈",
+        qwen: "Q",
+        zhipu: "Z",
+      };
+      if (iconKey && T[iconKey]) return T[iconKey];
+      const n = String(displayName || "").trim();
+      return n ? n[0].toUpperCase() : "·";
+    },
+
     presetOf(p){ return (this.presets||[]).find(x=>x.id===p.preset) || null; },
     presetDirty(p){
-      const t=this.presetOf(p); if(!t) return false;
-      if((p.endpoint||'')!==t.endpoint) return true;
-      if((p.api_key_env||'')!==t.api_key_env) return true;
-      if(JSON.stringify(p.auth||null)!==JSON.stringify(t.auth||null)) return true;
+      // ⚠️ 局部变量**不能叫 `t`**：全局翻译函数就叫 `t()`，形参/局部 `t` 会遮蔽它。
+      // 这里原来写的是 `const t=this.presetOf(p)`，而 presetReset 里又调
+      // `t('preset_reset_done')` → 把那句变成了"调用预设对象"，必然 TypeError
+      // （该函数此前无 UI 调用点，所以一直没暴露）。统一改名为 `tpl`。
+      const tpl=this.presetOf(p); if(!tpl) return false;
+      if((p.endpoint||'')!==tpl.endpoint) return true;
+      if((p.api_key_env||'')!==tpl.api_key_env) return true;
+      if(JSON.stringify(p.auth||null)!==JSON.stringify(tpl.auth||null)) return true;
       return false;
     },
     presetReset(p){
-      const t=this.presetOf(p); if(!t) return;
+      const tpl=this.presetOf(p); if(!tpl) return;
       // name 不回改 (账号按 name 索引, 改名会错位); models 保留 (拉取结果非手改).
-      p.endpoint=t.endpoint; p.api_key_env=t.api_key_env; p.auth=t.auth||null;
+      p.endpoint=tpl.endpoint; p.api_key_env=tpl.api_key_env; p.auth=tpl.auth||null;
       this.markDirty();
       this.providersFormOk=true; this.providersFormMsg=t('preset_reset_done');
       setTimeout(()=>this.providersFormMsg='',3000);

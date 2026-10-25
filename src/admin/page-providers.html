@@ -179,6 +179,24 @@
                 </template>
               </div>
             </template>
+                <!-- 账号型供应商的登录/账号管理入口（2026-10-24 接上）。
+                     ⚠️ 同样是死代码修复：openLogin + 完整登录弹窗早就存在，
+                     但没有任何调用点，账号过期后用户无法重新登录。 -->
+                <template x-if="isAccountProv(prov)">
+                  <div class="pe-sec">
+                    <div class="pe-hd">
+                      <span x-text="t('acc_accounts')"></span>
+                      <span class="txs tm" x-text="keyStatusText(prov.name)"></span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+                      <button type="button" class="btn btn-p" style="font-size:var(--fs-11);padding:3px 9px"
+                              @click.stop="openLogin(prov.name)"
+                              x-text="acctCount(prov.name)>0?t('acc_manage'):t('login')"></button>
+                      <span class="txs tm" x-show="acctCount(prov.name)>0"
+                            x-text="t('acc_n_of',acctCount(prov.name),'')"></span>
+                    </div>
+                  </div>
+                </template>
             <div class="pe-sec">
               <div class="pe-hd"><span x-text="t('available_models_n',(prov.models||[]).length)"></span><span class="txs tm" x-text="t('click_to_copy')"></span></div>
               <div class="pe-chips">

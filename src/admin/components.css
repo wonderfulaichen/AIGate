@@ -827,7 +827,10 @@ tr:hover td.th-sticky{
 .modal-overlay-lg{z-index:80}
 .modal-card{width:100%;max-width:480px;max-height:calc(100dvh - 32px);min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--elevated);border:1px solid var(--surface-border);border-radius:var(--rl);box-shadow:var(--elev-3);overflow:hidden;animation:popIn var(--dur-slow) var(--ease-out)}
 .modal-card-sm{max-width:480px}
-.modal-card-add{max-width:420px}
+/* 420px 只够放"几个预设 + 自定义"的旧形态。预设从 3 条扩到 13 条、按地区分组后
+   需要两列网格才不至于滚很久（2026-10-24）。上限放宽到 760px，
+   仍用 max-width 保证小屏不会顶满（视口窄时自动降为单列，因为网格是 auto-fit）。 */
+.modal-card-add{max-width:760px}
 .modal-head{flex:0 0 auto;padding:16px 24px;border-bottom:1px solid var(--border)}
 .modal-title{font-size:var(--fs-14);font-weight:600;color:var(--fg)}
 .modal-body{flex:1 1 auto;min-width:0;min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px}

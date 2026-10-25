@@ -17,7 +17,7 @@
   {
     "file": "components.css",
     "mode": "raw",
-    "bytes": 97692
+    "bytes": 98001
   },
   {
     "file": "pages.css",
@@ -52,7 +52,7 @@
   {
     "file": "page-providers.html",
     "mode": "raw",
-    "bytes": 21425
+    "bytes": 22638
   },
   {
     "file": "page-about.html",
@@ -72,12 +72,12 @@
   {
     "file": "modal-add-fetchdiff.html",
     "mode": "raw",
-    "bytes": 15076
+    "bytes": 16631
   },
   {
     "file": "drawer-provider.html",
     "mode": "raw",
-    "bytes": 42734
+    "bytes": 44870
   },
   {
     "file": "panel-price.html",
@@ -87,7 +87,7 @@
   {
     "file": "i18n.js",
     "mode": "standalone",
-    "bytes": 132124
+    "bytes": 133205
   },
   {
     "file": "stores.js",
@@ -167,7 +167,7 @@
   {
     "file": "ds-provsave.js",
     "mode": "obj-body",
-    "bytes": 31915
+    "bytes": 33992
   },
   {
     "file": "ds-computed.js",

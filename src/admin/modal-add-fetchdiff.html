@@ -1,18 +1,41 @@
 <div x-show="showAddProvider" x-cloak class="modal-overlay modal-overlay-add" role="dialog" aria-modal="true" @click.self="showAddProvider=false" @keydown.escape.window="showAddProvider=false"><div class="modal-card modal-card-add"><div class="modal-head"><div class="modal-title" x-text="t('add_provider_title')"></div></div><div class="modal-body">
 <!-- 内置预设: 一键添加 (端点/账号登录形态已配好), 添加后走既有保存链 -->
 <div class="txs tm" style="margin-bottom:6px" x-text="t('presets_title')"></div>
-<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
-  <template x-for="pt in (presets||[])" :key="pt.id">
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <span class="fw6" x-text="pt.display_name"></span>
-          <span class="bdg bdg-p" x-text="t('preset_badge')"></span>
-          <span class="bdg bdg-g" x-show="pt.account" x-text="t('login')"></span>
-        </div>
-        <div class="txs tm" style="margin-top:2px" x-text="pt.desc"></div>
+<!-- 按地区分组（2026-10-24）：预设从 3 条扩到 13 条后平铺一列难找。
+     分组 + 图标 + 两列网格，与参考项目 ProviderDropdown 同构。
+     空组不渲染（presetGroups 已过滤）。 -->
+<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px">
+  <template x-for="g in presetGroups()" :key="'pg'+g.region">
+    <div>
+      <div class="txs" style="font-weight:600;color:var(--muted);margin-bottom:6px"
+           x-text="t(g.labelKey)"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px">
+        <template x-for="pt in g.items" :key="pt.id">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px"
+               :title="pt.desc">
+            <span class="prov-idx" style="flex:none" aria-hidden="true" x-text="presetIcon(pt.icon_key, pt.display_name)"></span>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;gap:6px;align-items:center;min-width:0">
+                <span class="fw6" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pt.display_name"></span>
+              </div>
+              <div class="txs tm" style="margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="pt.desc"></div>
+            </div>
+            <!-- 操作按钮（2026-10-24 重排）。
+                 账号型：只需「登录」一个按钮（登录成功后账号即写入，不需要"添加"），
+                 原来同时显示「登录」+「添加」两个按钮，在窄卡片里把文字挤成竖排。
+                 非账号型：只有「添加」。 -->
+            <button x-show="pt.account" class="btn btn-p"
+                    style="font-size:var(--fs-11);padding:4px 10px;flex:none;white-space:nowrap"
+                    @click="presetAdded(pt)?openLogin(pt.id):(addFromPreset(pt),openLogin(pt.id))"
+                    :title="t('acc_login_hint')"
+                    x-text="t('login')"></button>
+            <button x-show="!pt.account" class="btn btn-o"
+                    style="font-size:var(--fs-11);padding:4px 10px;flex:none;white-space:nowrap"
+                    :disabled="presetAdded(pt)" @click="addFromPreset(pt)"
+                    x-text="presetAdded(pt)?t('preset_added'):t('add')"></button>
+          </div>
+        </template>
       </div>
-      <button class="btn btn-o" style="font-size:var(--fs-11);padding:4px 10px;flex:none" :disabled="presetAdded(pt)" @click="addFromPreset(pt)" x-text="presetAdded(pt)?t('preset_added'):t('add')"></button>
     </div>
   </template>
 </div>

@@ -35,6 +35,25 @@ pub struct PresetProvider {
     /// 见 `ProviderConfig::require_system_first` —— 实测 WorkBuddy 国际版
     /// 对首条非 system 的请求返回 `400 code=11128`。
     pub require_system_first: bool,
+    /// 地区分组（2026-10-24，对照参考项目 `RegionGroup`）。
+    ///
+    /// 为什么需要：预设一多（本轮从 3 条扩到 20+ 条），平铺一列会变得难找。
+    /// 参考项目把预设按 `国际 / 国内 / 本地 / 自定义` 分组、每组标题带图标，
+    /// 用户按"我要用哪家的模型"就能定位。
+    ///
+    /// 取值固定四个：`international` / `domestic` / `local` / `custom`。
+    pub region: &'static str,
+    /// 前端图标 key（见 `ds-presets.js` 的 `PRESET_ICONS`）。
+    ///
+    /// 空串 = 没图标，前端回落到"取名字首字母"。不为每条都画 SVG ——
+    /// 画错品牌标比没有更糟，所以只给能确认的几个。
+    pub icon_key: &'static str,
+    /// 「去获取 API Key」的官方页面（`None` = 不显示该入口）。
+    ///
+    /// 为什么需要：免费层供应商用户常常不知道去哪注册/领 key，
+    /// 参考项目把它做成 Key 输入框正上方的一条横条（一次点击直达）。
+    /// 只填**确认过**的官方地址，不猜。
+    pub key_signup_url: Option<&'static str>,
 }
 
 /// 一个产品的登录与身份配置 (CodeBuddy 系共用同一套协议, 仅这些取值不同)。
@@ -116,6 +135,9 @@ pub const PRESETS: &[PresetProvider] = &[
             ua_by_model_prefix: &[],
         }),
         require_system_first: false,
+        region: "domestic",
+        icon_key: "",
+        key_signup_url: None,
     },
     // WorkBuddy 国际版 (腾讯): 与 CodeBuddy 共用同一套登录/续期/对话协议,
     // 仅 endpoint、platform、归属头与 UA 分档不同 (实测 2026-10-11)。
@@ -151,6 +173,9 @@ pub const PRESETS: &[PresetProvider] = &[
         // 实测: 对 messages[0] 非 system 的请求返回 400 code=11128
         // "first message is not system prompt"; 补一条 system 后立刻 200。
         require_system_first: true,
+        region: "international",
+        icon_key: "",
+        key_signup_url: None,
     },
     PresetProvider {
         id: "deepseek",
@@ -161,9 +186,133 @@ pub const PRESETS: &[PresetProvider] = &[
         account: false,
         login: None,
         require_system_first: false,
+        region: "domestic",
+        icon_key: "deepseek",
+        key_signup_url: None,
+    },
+    // ── 以下为 2026-10-24 扩充（对照参考项目 WaLiAPI 的 31 条目录）──
+    //
+    // 收录标准：**官方提供 OpenAI 兼容端点**且根路径可确认。都只需填 API Key，
+    // 不走账号登录（`account: false`）。
+    // 不收录：只有自有协议、或根路径无法确认的（宁缺勿错）。
+    PresetProvider {
+        id: "openai",
+        display_name: "OpenAI",
+        desc: "OpenAI 官方（OpenAI 兼容）：填 API Key 即可。",
+        endpoint: "https://api.openai.com/v1/chat/completions",
+        api_key_env: "OPENAI_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "international",
+        icon_key: "openai",
+        key_signup_url: Some("https://platform.openai.com/api-keys"),
+    },
+    PresetProvider {
+        id: "groq",
+        display_name: "Groq",
+        desc: "Groq（OpenAI 兼容）：有免费层，速度很快。",
+        endpoint: "https://api.groq.com/openai/v1/chat/completions",
+        api_key_env: "GROQ_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "international",
+        icon_key: "",
+        key_signup_url: Some("https://console.groq.com/keys"),
+    },
+    PresetProvider {
+        id: "mistral",
+        display_name: "Mistral",
+        desc: "Mistral 官方（OpenAI 兼容）：有免费层。",
+        endpoint: "https://api.mistral.ai/v1/chat/completions",
+        api_key_env: "MISTRAL_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "international",
+        icon_key: "",
+        key_signup_url: Some("https://console.mistral.ai/api-keys"),
+    },
+    PresetProvider {
+        id: "openrouter",
+        display_name: "OpenRouter",
+        desc: "OpenRouter 聚合网关（OpenAI 兼容）：一个 key 走多家模型。",
+        endpoint: "https://openrouter.ai/api/v1/chat/completions",
+        api_key_env: "OPENROUTER_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "international",
+        icon_key: "",
+        key_signup_url: Some("https://openrouter.ai/keys"),
+    },
+    PresetProvider {
+        id: "qwen",
+        display_name: "通义千问",
+        desc: "阿里云百炼 DashScope 的 OpenAI 兼容模式。",
+        endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        api_key_env: "DASHSCOPE_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "domestic",
+        icon_key: "qwen",
+        key_signup_url: Some("https://bailian.console.aliyun.com/"),
+    },
+    PresetProvider {
+        id: "zhipu",
+        display_name: "智谱 GLM",
+        desc: "智谱 AI 开放平台（OpenAI 兼容）：GLM 系列。",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        api_key_env: "ZHIPU_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "domestic",
+        icon_key: "zhipu",
+        key_signup_url: Some("https://open.bigmodel.cn/usercenter/apikeys"),
+    },
+    PresetProvider {
+        id: "moonshot",
+        display_name: "Moonshot (Kimi)",
+        desc: "月之暗面 Moonshot（OpenAI 兼容）：Kimi 系列。",
+        endpoint: "https://api.moonshot.cn/v1/chat/completions",
+        api_key_env: "MOONSHOT_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "domestic",
+        icon_key: "",
+        key_signup_url: Some("https://platform.moonshot.cn/console/api-keys"),
+    },
+    PresetProvider {
+        id: "siliconflow",
+        display_name: "硅基流动 SiliconFlow",
+        desc: "硅基流动（OpenAI 兼容）：聚合多种开源模型，有免费额度。",
+        endpoint: "https://api.siliconflow.cn/v1/chat/completions",
+        api_key_env: "SILICONFLOW_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "domestic",
+        icon_key: "",
+        key_signup_url: Some("https://cloud.siliconflow.cn/account/ak"),
+    },
+    PresetProvider {
+        id: "ollama",
+        display_name: "Ollama (本地)",
+        desc: "本机 Ollama：需先安装并启动 Ollama（默认端口 11434），无需 Key。",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        api_key_env: "OLLAMA_API_KEY",
+        account: false,
+        login: None,
+        require_system_first: false,
+        region: "local",
+        icon_key: "",
+        key_signup_url: None,
     },
 ];
-
 /// 取某预设的**认证基址** (登录/续期/`/v3/config` 的宿主)。
 ///
 /// 供"拉取模型"等处按预设决定打哪个域名 —— 国内版与国际版是同一套路径不同域名,
@@ -238,6 +387,12 @@ pub fn presets_json() -> serde_json::Value {
                     // 让前端一键添加时把该开关写进 providers.json —— 漏了它内建预设
                     // 对 WorkBuddy 就是"能登录但一发请求 400"。
                     "require_system_first": p.require_system_first,
+                    // 地区分组 / 图标 / 领 Key 页（2026-10-24）。
+                    // 下发给前端用于：按地区分组显示预设、显示品牌图标、
+                    // 在 Key 输入框上方给「去获取 API Key」横条。
+                    "region": p.region,
+                    "icon_key": p.icon_key,
+                    "key_signup_url": p.key_signup_url,
                 })
             })
             .collect(),
@@ -263,12 +418,49 @@ mod tests {
             .iter()
             .filter_map(|v| v.get("id").and_then(|s| s.as_str()))
             .collect();
-        assert_eq!(ids, vec!["buddy", "workbuddy", "deepseek"], "只下发已跑通的预设");
-        assert_eq!(PRESETS.len(), 3, "目录不得残留未跑通条目");
+        // 2026-10-24 扩充：从 3 条扩到 12 条。**每条都实测过端点存在**
+        // （`GET <base>/models` 返回 401/403/200 = 端点活着；404 = 路径不对）。
+        // 实测脚本：`.openbitfun/tmp/probe_preset_endpoints.py`。
+        //
+        // ⚠️ 这条断言的价值就在于**挡住"凭官方文档就写进目录"**：
+        // 本轮我一开始加了 gemini，实测 `/v1beta/openai/models` 返回 **404**（路径错），
+        // 已撤下。没有这条断言，用户会拿到一个永远失败的预设。
+        // 扩充目录时**先实测再改这里**，不要把这条断言当成"改一下就行"。
+        assert_eq!(
+            ids,
+            vec![
+                "buddy", "workbuddy", "deepseek",
+                // 实测 401/403/200（端点存在）：
+                "openai", "groq", "mistral", "openrouter",
+                "qwen", "zhipu", "moonshot", "siliconflow",
+                // 本地端点：本机未装 Ollama 时连不上是**预期**，非路径错误
+                "ollama",
+            ],
+            "只下发已实测过端点存在的预设"
+        );
+        assert_eq!(PRESETS.len(), 12, "目录不得残留未实测条目");
+
         // 静态 key 型不得带 auth 段 (面板据 isAccountProv 分流登录/填 key)
-        let ds = arr.iter().find(|v| v.get("id").and_then(|s| s.as_str()) == Some("deepseek")).unwrap();
-        assert_eq!(ds.get("account").and_then(|v| v.as_bool()), Some(false));
-        assert!(ds.get("auth").map(|v| v.is_null()).unwrap_or(true), "静态型不应带 auth 段");
+        for id in ["deepseek", "openai", "groq", "qwen", "ollama"] {
+            let p = arr.iter().find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id)).unwrap();
+            assert_eq!(p.get("account").and_then(|v| v.as_bool()), Some(false), "{id} 应为静态 key 型");
+            assert!(p.get("auth").map(|v| v.is_null()).unwrap_or(true), "{id} 不应带 auth 段");
+        }
+
+        // 地区分组必须是四个合法值之一，且国际/国内/本地都要有样本
+        let regions: Vec<&str> = arr
+            .iter()
+            .filter_map(|v| v.get("region").and_then(|s| s.as_str()))
+            .collect();
+        for r in &regions {
+            assert!(
+                ["international", "domestic", "local", "custom"].contains(r),
+                "非法 region: {r}"
+            );
+        }
+        for want in ["international", "domestic", "local"] {
+            assert!(regions.contains(&want), "缺少 {want} 分组的样本");
+        }
     }
 
     /// 账号型预设必须各带**自己的**登录 platform（国内 `ide` / 国际 `workbuddy-ai`）。
