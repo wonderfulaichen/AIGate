@@ -3323,6 +3323,49 @@ pub async fn api_opencode_quota(
     }
 }
 
+/// POST /admin/api/opencode/orgs `{cookie}` — 用 Cookie 查出工作区 ID.
+///
+/// 为什么需要：实测该账号下有**两个**组织（`wrk_...` 与 `org_...`），
+/// 只有 `wrk_` 那个能查 Go 额度。让用户从地址栏手抄 `wrk_` 很容易抄错
+/// （或抄成 `org_`），错的表现是 HTTP 400 而不是明确提示。
+/// 这里直接问上游，用户只需粘一次 Cookie。
+pub async fn api_oc_orgs(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let cookie = payload
+        .get("cookie")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    match crate::opencode_quota::fetch_workspace_ids(&state.client, cookie).await {
+        Ok(ids) => Json(serde_json::json!({ "orgs": ids })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// POST /admin/api/opencode/verify `{cookie, org_id}` — 用草稿凭据试查一次额度.
+///
+/// "粘完立即验证"：用户还没保存就能知道这对凭据能不能用 ——
+/// 否则要先保存、再点查询、再回来看错误，走三步才知道填错了。
+/// 成功时顺带返回窗口数据，界面可直接显示"已连通，本月 62%…"。
+pub async fn api_oc_verify(
+    State(state): State<super::proxy::AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let cookie = payload
+        .get("cookie")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let org = payload
+        .get("org_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    match crate::opencode_quota::fetch_go_status_with(&state.client, cookie, org).await {
+        Ok(snap) => Json(serde_json::json!({ "ok": true, "quota": snap })),
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
+    }
+}
+
 /// POST /admin/api/balance/manual — 设置或清除某供应商的手动余额.
 #[derive(serde::Deserialize)]
 pub struct ManualBalanceReq {

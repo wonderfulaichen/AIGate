@@ -89,13 +89,17 @@ const { chromium } = require('playwright');
     d.drawerAdvOpen = true;   // 高级区默认折叠，展开才能看到
     await new Promise(r => setTimeout(r, 900));
     const q = (sel) => Array.from(document.querySelectorAll(sel));
-    const cookieInput = q('input[type=password]').find(i =>
+    // Cookie 输入已从 password input 改成 **textarea**（2026-10-24）。
+    // 为什么改：Cookie 是一长串（st_... 几十字符，可能还带 auth=），
+    // 单行 password 框会把它截断，用户容易以为没贴全。
+    // 参考项目 QuotaHub 也用 Textarea。判据相应改为找 textarea。
+    const cookieInput = q('textarea[aria-label]').find(i =>
       (i.getAttribute('aria-label') || '').includes('Console Cookie'));
     const orgInput = q('input[aria-label]').find(i =>
       (i.getAttribute('aria-label') || '').includes('组织 ID'));
     return {
       cookieFound: !!cookieInput,
-      cookieType: cookieInput ? cookieInput.type : null,
+      cookieType: cookieInput ? cookieInput.tagName.toLowerCase() : null,
       orgFound: !!orgInput,
     };
   });
@@ -229,8 +233,9 @@ def main():
 
     check(ff.get("cookieFound") is True, "① 抽屉有 Console Cookie 输入",
           str(ff))
-    check(ff.get("cookieType") == "password",
-          "① Cookie 用密码框（不明文展示）", f"type={ff.get('cookieType')}")
+    check(ff.get("cookieType") == "textarea",
+          "① Cookie 用 textarea（长串不被视觉截断；QuotaHub 同款）",
+          f"实际={ff.get('cookieType')}")
     check(ff.get("orgFound") is True, "① 抽屉有组织 ID 输入")
 
     check(bool(oc.get("err")), "③ 只填 Cookie 不填 org → 如实报错",

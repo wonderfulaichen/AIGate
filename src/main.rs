@@ -505,8 +505,20 @@ struct TrayHandles {
 }
 
 /// 创建系统托盘及右键菜单.
-fn setup_tray() -> TrayHandles {
-    let icon_normal =
+/// 从 WebView2 读 cookie（**能读 HttpOnly**，这是 JS `document.cookie` 做不到的）。
+///
+/// 为什么必须走原生 API：opencode 的 `__Host-console_session` 实测 `httpOnly: true`
+/// （也符合 `__Host-` 前缀规范），`document.cookie` 读不到它。
+/// wry 0.38 的 `WebView` 没有 cookie API（`cookies_for_url` / `cookies` 都不存在），
+/// 但它暴露了 `WebViewExtWindows::controller()`，由此 QI 到 `ICoreWebView2_2`
+/// 即可拿 `CookieManager`。
+///
+/// 返回 `(name, value)` 列表；读不到时返回空列表（调用方按"还没登录完"处理，
+/// 不当成错误 —— 轮询期间未登录是正常状态）。
+///
+/// 失败全部静默降级为空列表：这是登录流的辅助路径，不该因为读 cookie 失败
+/// 就把用户的登录尝试判死；上层会继续轮询。
+fn setup_tray() -> TrayHandles {    let icon_normal =
         tray_icon::Icon::from_rgba(make_icon_rgba(), 32, 32).expect("创建托盘图标失败");
     let icon_alert =
         tray_icon::Icon::from_rgba(make_icon_rgba_alert(), 32, 32).expect("创建托盘告警图标失败");
@@ -788,6 +800,15 @@ fn main() {
     let _ = events::install(Arc::new(events::EventLog::new(&resolved_data_dir)));
     // 路由表句柄提前取出: AppState 与日志缓冲区 (价格快照) 都要引用它.
     let registry = Arc::new(RwLock::new(registry));
+    // ── opencode 一键登录（2026-10-24）──
+    //
+    // 为什么走内嵌 WebView 而不是服务端轮询（像 buddy 那样）：
+    // opencode 是 Google/GitHub OAuth，回调落在 opencode 域名，本地服务端收不到。
+    // 所以让浏览器自己走完整条 OAuth，再从 WebView2 的 CookieManager
+    // 读 `__Host-console_session`（HttpOnly，JS 读不到，但原生 API 能读）。
+    //
+    // 跨线程通信：HTTP handler 通过 channel 请求"打开窗口"（wry 的 WebView
+    // 只能在主 event loop 里建），主循环收到后建窗并每拍检查 cookie。
     let state = AppState {
         client,
         registry: Arc::clone(&registry),
@@ -912,6 +933,8 @@ fn main() {
         .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
         .route("/admin/api/opencode/quota", get(admin::api_opencode_quota))
+        .route("/admin/api/opencode/orgs", post(admin::api_oc_orgs))
+        .route("/admin/api/opencode/verify", post(admin::api_oc_verify))
         .route("/admin/api/balance/manual", post(admin::api_balance_manual_set));
     // `admin_token` 现在默认一定有值（未配置时自动生成并落盘 data/.admin_token），
     // 所以这个分支几乎总是进；保留条件判断是为了 `AIGATE_OPEN_ADMIN=1`（显式不鉴权）能生效。
@@ -1152,7 +1175,6 @@ fn main() {
             }
         }
 
-        // 处理托盘点击事件 — 只响应左键/双击, 忽略右键(用于弹出菜单)
         while let Ok(tray_event) = handles._event_rx.try_recv() {
             use tray_icon::ClickType;
             match tray_event.click_type {

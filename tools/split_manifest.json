@@ -52,7 +52,7 @@
   {
     "file": "page-providers.html",
     "mode": "raw",
-    "bytes": 20525
+    "bytes": 21425
   },
   {
     "file": "page-about.html",
@@ -77,7 +77,7 @@
   {
     "file": "drawer-provider.html",
     "mode": "raw",
-    "bytes": 33683
+    "bytes": 38426
   },
   {
     "file": "panel-price.html",
@@ -87,7 +87,7 @@
   {
     "file": "i18n.js",
     "mode": "standalone",
-    "bytes": 127328
+    "bytes": 130376
   },
   {
     "file": "stores.js",
@@ -167,7 +167,7 @@
   {
     "file": "ds-provsave.js",
     "mode": "obj-body",
-    "bytes": 31886
+    "bytes": 31915
   },
   {
     "file": "ds-computed.js",
@@ -187,7 +187,7 @@
   {
     "file": "ds-quota.js",
     "mode": "obj-body",
-    "bytes": 5511
+    "bytes": 9850
   },
   {
     "file": "ds-records.js",

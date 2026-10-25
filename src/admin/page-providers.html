@@ -133,9 +133,21 @@
                   </span>
                 </div>
 
-                <!-- 查询失败：如实报错（含"Cookie 可能过期"这种可操作提示），不画假进度条 -->
+                <!-- 查询失败：如实报错（含"Cookie 可能过期"这种可操作提示），不画假进度条。
+                     旁边直接给「去填写凭据」—— 动作与后果同屏：
+                     用户在这里看到"额度查不到"，就该能**从这里**一步到填写处，
+                     而不是被要求记住路径再去「编辑 → 高级设置」里找（原来就是这么藏的）。
+                     这里不假装有"一键登录"：opencode 是标准 OAuth，服务端拿不到凭据，
+                     参考项目 QuotaHub 同样是手贴 Cookie。 -->
                 <template x-if="ocQuotaErr(prov.name)">
-                  <div class="quota-err"><span aria-hidden="true">!</span><span x-text="ocQuotaErr(prov.name)"></span></div>
+                  <div class="quota-err" style="align-items:center;flex-wrap:wrap">
+                    <span aria-hidden="true">!</span>
+                    <span x-text="ocQuotaErr(prov.name)"></span>
+                    <button type="button" class="btn btn-g"
+                            style="font-size:var(--fs-11);padding:2px 8px;margin-left:auto"
+                            @click.stop="openProviderCredDrawer(prov.name)"
+                            x-text="t('oc_goto_cred')"></button>
+                  </div>
                 </template>
 
                 <!-- 查到了：三个窗口各一条，带金额与重置时间 -->
@@ -151,7 +163,8 @@
                         <span class="quota-amt mono" x-text="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"></span>
                         <span class="quota-reset txs tm" x-show="w.resets_at"
                               x-text="t('quota_reset_at')+' '+ocResetText(w.resets_at)"></span>
-                        <span class="quota-reset txs tm" x-show="!w.resets_at" x-text="t('quota_inactive')"></span>                      </div>
+                        <span class="quota-reset txs tm" x-show="!w.resets_at" x-text="t('quota_inactive')"></span>
+                      </div>
                     </template>
                     <div class="txs tm" style="margin-top:2px"
                          x-show="ocQuota(prov.name).ends_at"

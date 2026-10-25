@@ -114,34 +114,6 @@
                 <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('max_body_hint')"></div>
               </div>
 
-              <!-- ── opencode Console 凭据（2026-10-24）──
-                   用途只有一个：查 Go 套餐的**真实额度**（Console 网页 API）。
-                   与代理转发无关 —— 不填也能正常用这个供应商，只是查不到额度。
-                   为什么必须手填：Console 是网页 API，没有面向程序员的 key，
-                   只有登录后的 session Cookie。 -->
-              <div class="f-row" style="margin-top:10px">
-                <label x-text="t('console_cred_label')"></label>
-                <div class="txs tm" style="margin-bottom:6px" x-text="t('console_cred_hint')"></div>
-                <div class="f-grid">
-                  <div class="f-row">
-                    <label x-text="t('console_cookie_label')"></label>
-                    <!-- 密码框：这是等同登录态的凭据，不明文展示 -->
-                    <input type="password" class="inp mono" style="width:100%"
-                           x-model="drawerProv.console_session"
-                           :placeholder="t('console_cookie_ph')"
-                           :aria-label="t('console_cookie_label')"
-                           @input="markDirty()" autocomplete="off">
-                  </div>
-                  <div class="f-row">
-                    <label x-text="t('console_org_label')"></label>
-                    <input type="text" class="inp mono" style="width:100%"
-                           x-model="drawerProv.console_org_id"
-                           :placeholder="t('console_org_ph')"
-                           :aria-label="t('console_org_label')"
-                           @input="markDirty()" autocomplete="off">
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -178,6 +150,72 @@
             </template>
             <template x-if="drawerProv._keyMsg"><div :style="'margin-top:8px;font-size:var(--fs-12);padding:6px 10px;border-radius:var(--rm);'+(drawerProv._keyOk?'background:var(--ok-bg-soft);color:var(--ok)':'background:var(--err-bg-soft);color:var(--err)')" x-text="drawerProv._keyMsg"></div></template>
           </div>
+
+            <!-- ── opencode Console 凭据（2026-10-24 从「高级设置」搬到这里）──
+                 为什么搬出来：它产出的是**凭据**，与 API Key 同层才符合心智；
+                 而原来藏在「编辑 → 高级设置 → 折叠」四层深处，且折叠状态被
+                 localStorage 记住 → **新用户必然看不到**。
+                 参考项目（WALiAPI）把「拿凭据」做成一级动作：登录是页面级 Tab +
+                 一级按钮，渠道编辑表单里**根本没有登录**。
+                 详见 HANDOFF ㉚ 的对照结论。 -->
+            <!-- ── opencode Console 凭据（2026-10-24 从「高级设置」搬到这里）──
+                 为什么搬出来：它产出的是**凭据**，与 API Key 同层才符合心智；
+                 而原来藏在「编辑 → 高级设置 → 折叠」四层深处，且折叠状态被
+                 localStorage 记住 → **新用户必然看不到**。
+                 参考项目 QuotaHub 也是手贴 Cookie，但它把入口做成独立一级页面、
+                 用大 Textarea、并且**保存后立刻验证**。这里照它的做法。 -->
+            <template x-if="provMayHaveQuota(drawerProv)">
+              <div style="margin-top:10px;border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;background:var(--fill-1)">
+                <div class="row-t" style="margin-bottom:2px" x-text="t('console_cred_label')"></div>
+                <div class="txs tm" style="margin-bottom:8px" x-text="t('console_cred_hint')"></div>
+
+                <!-- Cookie 用 Textarea：粘贴的串很长（st_... 几十字符 + 可能带 auth=），
+                     单行输入框会截断视觉，用户容易以为没贴全（QuotaHub 也用 Textarea）。 -->
+                <div class="f-row">
+                  <label x-text="t('console_cookie_label')"></label>
+                  <textarea class="inp mono" rows="2" style="width:100%;resize:vertical"
+                            x-model="drawerProv.console_session"
+                            :placeholder="t('console_cookie_ph')"
+                            :aria-label="t('console_cookie_label')"
+                            @input="markDirty()" autocomplete="off"></textarea>
+                </div>
+                <div class="f-row" style="margin-top:6px">
+                  <label x-text="t('console_org_label')"></label>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <input type="text" class="inp mono" style="flex:1"
+                           x-model="drawerProv.console_org_id"
+                           :placeholder="t('console_org_ph')"
+                           :aria-label="t('console_org_label')"
+                           @input="markDirty()" autocomplete="off">
+                    <!-- 组织 ID 能从 Cookie 自动查到（/console/api/orgs），
+                         省掉用户去地址栏抠 wrk_ 的一步 -->
+                    <button type="button" class="btn btn-g" style="white-space:nowrap;font-size:var(--fs-11)"
+                            :disabled="ocFetchOrgBusy"
+                            @click.stop="ocFetchOrgId(drawerProv)"
+                            x-text="ocFetchOrgBusy?t('saving'):t('oc_fetch_org')"></button>
+                  </div>
+                </div>
+
+                <!-- 保存后立即验证：粘完就能知道成不成，不用自己猜 -->
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-p"
+                          :disabled="ocVerifyBusy"
+                          @click.stop="ocVerifyCred(drawerProv)"
+                          x-text="ocVerifyBusy?t('saving'):t('oc_verify_btn')"></button>
+                  <span class="txs" x-show="ocVerifyMsg"
+                        :style="'color:'+(ocVerifyOk?'var(--ok)':'var(--err)')"
+                        x-text="ocVerifyMsg"></span>
+                </div>
+                <div class="txs tm" style="margin-top:6px"
+                     x-show="drawerProv.console_session || drawerProv.console_org_id">
+                  <span x-text="t('oc_login_configured')"></span>
+                  <span class="mono" x-text="drawerProv.console_org_id || '—'"></span>
+                  <button type="button" class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px;margin-left:6px"
+                          @click.stop="drawerProv.console_session=''; drawerProv.console_org_id=''; markDirty()"
+                          x-text="t('oc_login_clear')"></button>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
 

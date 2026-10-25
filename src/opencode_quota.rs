@@ -164,6 +164,110 @@ pub fn parse_go_status(v: &serde_json::Value) -> Result<QuotaSnapshot, String> {
     })
 }
 
+/// Console 组织列表端点（实测：返回 `[{id:"wrk_...",name:"Default"}]`）。
+///
+/// 用途：用户粘了 Cookie 后，**不用再去地址栏抠 `wrk_`** —— 直接问它。
+/// 这一步是"少犯错"的关键：实测该账号有**两个**组织
+/// （`wrk_...` 与 `org_...`），只有 `wrk_` 那个能查 Go 额度，手抄很容易抄错。
+const ORGS_URL: &str = "https://opencode.ai/console/api/orgs";
+
+/// 用 Cookie 查该账号可用的**工作区** ID 列表。
+///
+/// 只返回 `wrk_` 开头的（`org_` 那种是普通组织，不能查 Go 额度）。
+pub async fn fetch_workspace_ids(
+    client: &reqwest::Client,
+    cookie: &str,
+) -> Result<Vec<String>, String> {
+    let cookie = cookie.trim();
+    if cookie.is_empty() {
+        return Err("请先填 Cookie".into());
+    }
+    let resp = client
+        .get(ORGS_URL)
+        .header(reqwest::header::COOKIE, cookie)
+        .header("Accept", "*/*")
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        )
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("查询组织失败: {e}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(format!("Cookie 无效或已过期 (HTTP {})", status.as_u16()));
+    }
+    if !status.is_success() {
+        return Err(format!("Console 返回 HTTP {}", status.as_u16()));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析组织列表失败: {e}"))?;
+    let ids: Vec<String> = v
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|o| o.get("id").and_then(|x| x.as_str()))
+                .filter(|s| s.starts_with("wrk_"))
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err("该 Cookie 下没有可用的工作区（wrk_ 开头）".into());
+    }
+    Ok(ids)
+}
+
+/// 用**传入的**凭据查额度（不看供应商配置）。
+///
+/// 用于"粘完立即验证"：用户还没保存时就能知道这对凭据能不能用 ——
+/// 否则要先保存、再点查询、再回来看错误，走三步才知道填错了。
+pub async fn fetch_go_status_with(
+    client: &reqwest::Client,
+    cookie: &str,
+    org: &str,
+) -> Result<QuotaSnapshot, String> {
+    let cookie = cookie.trim();
+    let org = org.trim();
+    if cookie.is_empty() {
+        return Err("请先填 Console Cookie".into());
+    }
+    if org.is_empty() {
+        return Err("请先填组织 ID（可点「自动获取」）".into());
+    }
+    if !org.starts_with("wrk_") {
+        return Err(format!("组织 ID 必须以 wrk_ 开头，实际为 {org:?}"));
+    }
+    let probe = ProviderConfig {
+        name: "probe".into(),
+        endpoint: String::new(),
+        api_key_env: String::new(),
+        api_key_default: None,
+        auth: None,
+        preset: None,
+        disabled: None,
+        probed_protocols: None,
+        balance_endpoint: None,
+        headers: None,
+        ua_by_model_prefix: None,
+        require_system_first: None,
+        api_format: None,
+        endpoint_anthropic: None,
+        endpoint_responses: None,
+        prompt_cache: None,
+        openai_cache_control: None,
+        max_request_body_bytes: None,
+        console_session: Some(cookie.to_string()),
+        console_org_id: Some(org.to_string()),
+        models: std::collections::HashMap::new(),
+    };
+    fetch_go_status(client, &probe).await
+}
+
 /// 发一次额度查询。
 ///
 /// 凭据来自供应商配置（`console_session` + `console_org_id`）。
