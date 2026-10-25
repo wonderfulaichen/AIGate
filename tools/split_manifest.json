@@ -77,7 +77,7 @@
   {
     "file": "drawer-provider.html",
     "mode": "raw",
-    "bytes": 44870
+    "bytes": 45183
   },
   {
     "file": "panel-price.html",
@@ -147,7 +147,7 @@
   {
     "file": "ds-providers.js",
     "mode": "obj-body",
-    "bytes": 25579
+    "bytes": 26037
   },
   {
     "file": "ds-price.js",

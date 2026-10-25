@@ -34,7 +34,7 @@
       <div class="dr-body">
         <!-- 分节导航: 每节状态 (绿=就绪/黄=待完善), 点击滚动到对应分区 -->
         <div class="dr-secnav">
-          <template x-for="s in [{k:'basic',label:t('dr_sec_basic')},{k:'key',label:t('dr_sec_key')},{k:'models',label:t('unit_models')}]" :key="s.k">
+          <template x-for="s in [{k:'basic',label:t('dr_sec_basic')},{k:'key',label:t('dr_sec_key')},{k:'headers',label:t('custom_headers_label')},{k:'models',label:t('unit_models')}]" :key="s.k">
             <button type="button" class="dr-secchip" :class="{'done':drawerSecDone(s.k,drawerProv)}" :title="drawerSecDone(s.k,drawerProv)?t('onboard_step_done'):t('dr_sec_todo')" @click="scrollDrawerSec(s.k)"><span class="dr-secdot"></span><span x-text="s.label"></span></button>
           </template>
         </div>
@@ -110,38 +110,7 @@
                 <div class="txs tm" style="grid-column:1/-1;margin-top:-2px" x-text="t('auth_header_hint')"></div>
               </div>
 
-              <!-- ── 自定义上游请求头（2026-10-24 新增可视化编辑）──
-                   改造前后端早就存了 `headers`（ds-provsave.js 白名单里有），
-                   但**没有任何 UI** —— 用户要改只能手写 providers.json。
-                   行式列表：name / value（password）/ 删除，与参考项目同构。
-                   value 用 password：这些头里常放第二个 key（如 x-api-key）。 -->
-              <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-                <div style="display:flex;align-items:center;gap:8px">
-                  <label style="font-size:var(--fs-12);color:var(--fg)" x-text="t('custom_headers_label')"></label>
-                  <button type="button" class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px;margin-left:auto"
-                          @click.stop="addProvHeader()" x-text="'+ '+t('add')"></button>
-                </div>
-                <div class="txs tm" style="margin-top:2px" x-text="t('custom_headers_hint')"></div>
-                <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
-                  <template x-for="(h, hi) in provHeaderRows()" :key="'hdr'+hi">
-                    <div style="display:flex;gap:6px;align-items:center">
-                      <input type="text" class="inp mono" style="flex:0 0 34%;font-size:var(--fs-11)"
-                             :value="h.name" :placeholder="t('header_name_ph')"
-                             :aria-label="t('header_name_ph')"
-                             @input="setProvHeader(hi, $event.target.value, null)">
-                      <input type="password" class="inp mono" style="flex:1;font-size:var(--fs-11)"
-                             :value="h.value" :placeholder="t('header_value_ph')"
-                             :aria-label="t('header_value_ph')"
-                             @input="setProvHeader(hi, null, $event.target.value)">
-                      <button type="button" class="prov-ib" :title="t('delete')" :aria-label="t('delete')"
-                              @click.stop="removeProvHeader(hi)">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                      </button>
-                    </div>
-                  </template>
-                  <div class="txs tm" x-show="provHeaderRows().length===0" x-text="t('custom_headers_empty')"></div>
-                </div>
-              </div>
+              <!-- 自定义上游请求头已搬出折叠区，见 #drsec-headers 分区。 -->
 
               <!-- ── 上游协议适配开关（2026-10-24 补界面入口）──
                    这 3 个字段后端早已实现（providers.rs:481 / 510 / 519），但抽屉里
@@ -291,6 +260,45 @@
                 </div>
               </div>
             </template>
+          </div>
+        </div>
+
+        <!-- Section: Headers -->
+        <div class="sec" id="drsec-headers">
+          <div class="sec-hdr">
+            <div class="sec-ic violet">🧩</div>
+            <div style="flex:1"><div class="sec-title" x-text="t('custom_headers_label')"></div><div class="sec-sub" x-text="t('custom_headers_hint')"></div></div>
+            <button type="button" class="btn btn-g" style="font-size:var(--fs-11)" @click.stop="addProvHeader()" x-text="'+ '+t('add')"></button>
+          </div>
+          <div class="sec-body">
+            <!-- ── 自定义上游请求头（2026-10-24 从「高级设置」折叠区搬到这里）──
+                 为什么搬出来：
+                 ① 改造前后端早就存了 `headers`（ds-provsave.js 白名单里有），
+                    但**没有任何 UI** —— 用户要改只能手写 providers.json；
+                 ② 它产出的是**凭据/协议适配信息**，与 API Key 同层才符合心智；
+                    原来藏在「端点 → 高级设置 → 折叠」三层深处，且折叠状态被
+                    localStorage 记住 → **新用户必然看不到**。
+                 行式列表：name / value（password）/ 删除，与参考项目同构。
+                 value 用 password：这些头里常放第二个 key（如 x-api-key）。 -->
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <template x-for="(h, hi) in provHeaderRows()" :key="'hdr'+hi">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" class="inp mono" style="flex:0 0 34%;font-size:var(--fs-11)"
+                         :value="h.name" :placeholder="t('header_name_ph')"
+                         :aria-label="t('header_name_ph')"
+                         @input="setProvHeader(hi, $event.target.value, null)">
+                  <input type="password" class="inp mono" style="flex:1;font-size:var(--fs-11)"
+                         :value="h.value" :placeholder="t('header_value_ph')"
+                         :aria-label="t('header_value_ph')"
+                         @input="setProvHeader(hi, null, $event.target.value)">
+                  <button type="button" class="prov-ib" :title="t('delete')" :aria-label="t('delete')"
+                          @click.stop="removeProvHeader(hi)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  </button>
+                </div>
+              </template>
+              <div class="txs tm" x-show="provHeaderRows().length===0" x-text="t('custom_headers_empty')"></div>
+            </div>
           </div>
         </div>
 

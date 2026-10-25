@@ -457,9 +457,14 @@
       if(k==='basic') return !!(String(p.name||'').trim() && String(p.endpoint||'').trim());
       if(k==='key'){ return this.hasCred(p.name); }
       if(k==='models') return (p.models||[]).some(m=>!m._removed && m.upstream_model);
+      // headers：自定义请求头是可选项，所以"没填"**不算未完成** ——
+      // 但填了才算就绪。若把它当成"必须填"，3/4 的完成度会误导用户
+      // （大多数供应商根本不需要自定义头）。故这里只在有头时返回 true，
+      // 且完成度计数反映"这一节已配置"而非"这一节该配"。
+      if(k==='headers') return !!(p.headers && Object.keys(p.headers).length);
       return false;
     },
-    drawerSecCount(p){ return ['basic','key','models'].filter(k=>this.drawerSecDone(k,p)).length; },
+    drawerSecCount(p){ return ['basic','key','headers','models'].filter(k=>this.drawerSecDone(k,p)).length; },
     scrollDrawerSec(k){
       const el=document.getElementById('drsec-'+k);
       if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
