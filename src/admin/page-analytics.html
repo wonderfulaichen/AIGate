@@ -61,6 +61,28 @@
          ② 那 2 个失去配对的闭合标签正是 balance.py 报的 page-analytics div:-2。
          现按 75290c5 原样还原开启行, 末尾既有的闭合标签正好配对 pnl-b 与 pnl。
          ⚠️ 本注释刻意不写任何字面量 div 标签 —— balance.py 用正则计数, 会被注释里的标签骗到。 -->
+    <!-- 上下文构成 (2026-10-26 提为一级面板)。
+         为什么提出来：它回答的是"**输入大在哪里**"——这是用户调 prompt、
+         查 token 花在哪儿的**第一个**问题。此前它埋在「省量审计」折叠卡里的
+         第三段（要展开 → 再往下滚），而「省量审计」默认是折叠的：
+         打开分析页根本看不到它。
+         参考项目把它做成独立、默认可见的一级卡（DashboardPage 的上下文构成区），
+         这里照做 —— 诊断卡默认折叠没问题，但"输入构成"不是诊断，是用量概览。
+         ⚠️ 不从「省量审计」里删掉它：那里是它的**详细版**（含估算口径说明），
+         这里给的是速览。 -->
+    <div class="pnl mb4" x-show="analyticsTab==='cost'">
+      <div class="pnl-h">
+        <div><h2 class="pnl-ht" x-text="t('audit_ctx_title')"></h2>
+          <div class="txs tm" style="margin-top:3px" x-text="t('audit_ctx_hint')"></div></div>
+        <span class="txs tm" x-text="auditContextNote()"></span>
+      </div>
+      <div class="pnl-b">
+        <!-- 比例条: 六类按占比铺开 (相对形状可信, 绝对量是估算) -->
+        <div class="prop-bar"><template x-for="sg in auditContextSegs" :key="sg.k"><span :style="'flex-grow:'+Math.max(sg.v,1)+';background:'+sg.color" :title="sg.label+' ≈'+fmtT(sg.v)"></span></template></div>
+        <div class="prop-legend"><template x-for="sg in auditContextSegs" :key="sg.k"><span><i :style="'background:'+sg.color"></i><span x-text="sg.label"></span><span class="mono" x-text="'≈'+fmtT(sg.v)"></span><span class="tm" x-text="auditCtxPct(sg.v)"></span></span></template></div>
+        <div class="txs tm" style="margin-top:4px;color:var(--warn)" x-show="auditCtxImages()>0" x-text="t('audit_ctx_images', auditCtxImages())"></div>
+      </div>
+    </div>
     <div class="pnl mb4" x-show="analyticsTab==='cost'"><div class="pnl-h" style="cursor:pointer;user-select:none" @click="auditExpanded=!auditExpanded" role="button" :aria-expanded="auditExpanded"><div><h2 class="pnl-ht" style="display:inline-flex;align-items:center;gap:6px"><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;transform:rotate('+(auditExpanded?90:0)+'deg);color:var(--muted);font-size:var(--fs-11)'">▸</span><span x-text="t('audit_title')"></span></h2><div class="txs tm" style="margin-top:3px" x-text="t('audit_desc')"></div></div><span class="txs tm" x-text="auditWindowLabel()"></span></div><div class="pnl-b" x-show="auditExpanded" style="display:flex;flex-direction:column;gap:12px">
       <div style="display:flex;gap:16px;flex-wrap:wrap">
         <div class="cg" style="flex-direction:column;align-items:flex-start;gap:2px;flex:1;min-width:220px"><span class="txs tm" x-text="t('audit_applied')"></span><span class="txsm mono fw6" style="color:var(--ok)" x-text="fmtT((stats.audit||{}).applied_saved_tokens||0)"></span><span class="txs tm" x-text="auditAppliedPct()"></span>
@@ -161,6 +183,30 @@
               <div class="topo-node-name" x-text="t('gw_topo_gateway')"></div>
               <div class="topo-node-kv"><span x-text="t('gw_topo_own')"></span><b class="mono" x-text="gwOverheadP95==null?'—':('p95 '+msText(gwOverheadP95))"></b></div>
               <div class="topo-node-kv"><span x-text="t('gw_topo_upstream')"></span><b class="mono" x-text="gwTtfbP95==null?'—':('p95 '+msText(gwTtfbP95))"></b></div>
+              <!-- 网关去程五段的**逐段数值**（2026-10-26 恢复）。
+                   为什么必须在这里而不能只留两个 p95：
+                   用户报"慢"时第一件要分清的是"慢在网关还是慢在上游"——两个 p95
+                   只给出结论, 不给出**是哪一段**。而"路由/护栏/转换/上游首字节/
+                   其他开销"这五段才是可动手的定位信息（护栏命中多就要查规则、
+                   转换重就要看协议）。
+                   ⚠️ 口径与单条记录详情的「时间去哪了」同源（ds-computed.js
+                   的 gwStageWinRows，样本数/均值/p50/p95 都取后端算好的值，
+                   前端不重算分位）。无样本 → avg 为 null → 显示 "—"
+                   （未采集 ≠ 0）。 -->
+              <template x-if="gwStageHasData">
+                <div class="topo-gw-stages">
+                  <div class="topo-gw-stages-hd" x-text="t('gw_win_title')"></div>
+                  <template x-for="r in gwStageWinRows" :key="'gws'+r.k">
+                    <div class="topo-gw-stage">
+                      <span class="topo-gw-stage-l" x-text="r.label"></span>
+                      <span class="topo-bar"><i :style="'width:'+Math.min(100, gwStageBarPct(r))+'%;background:'+r.color"></i></span>
+                      <b class="topo-gw-stage-v mono" x-text="r.avg==null?'—':msText(r.avg)"></b>
+                      <span class="topo-gw-stage-n txs tm" x-text="r.n?('n='+r.n):''"></span>
+                    </div>
+                  </template>
+                  <div class="txs tm" style="margin-top:3px" x-text="t('gw_win_desc')"></div>
+                </div>
+              </template>
             </div>
           </div>
           <div class="topo-edge">
@@ -182,6 +228,10 @@
       <!-- 首字延迟分布: 与上面同源 (ttft), 放收尾而不是单独一张卡 -->
       <div x-show="ttftHasData" style="border-top:1px solid var(--border);padding-top:12px">
         <div class="fb" style="margin-bottom:7px"><span class="txs fw7" style="color:var(--fg)" x-text="t('ttft_dist_title')"></span><span class="txs tm" style="margin-left:auto" x-text="t('ttft_avg')+' '+ttftAvgText+' · p50 '+ttftP50Text+' · p90 '+ttftP90Text"></span></div>
+        <!-- 分位数口径披露 (2026-10-26): p50/p90 是**按直方图桶上界反推**的近似值,
+             不是精确分位。之前界面只给数字不给口径, 用户会当成实测值,
+             拿去和上游对账时对不上。本项目纪律: 口径必须写在界面上。 -->
+        <div class="txs tm" style="color:var(--muted);margin-bottom:6px" x-text="t('ttft_approx_hint')"></div>
         <div class="prop-bar"><template x-for="r in ttftSummary.rows" :key="r.k"><span :style="'flex-grow:'+Math.max(r.v,1)+';background:'+r.color" :title="r.label+' · '+r.v+' · '+fmtPct(r.pct)"></span></template></div>
         <div class="prop-legend"><template x-for="r in ttftSummary.rows" :key="r.k"><span><i :style="'background:'+r.color"></i><span x-text="r.label"></span><span class="mono" x-text="r.v"></span></span></template></div>
         <div class="panel-takeaway" x-show="ttftTakeaway" x-text="ttftTakeaway"></div>
@@ -213,18 +263,50 @@
             <th x-text="t('detail.provider')"></th>
             <th class="num" x-text="t('tbl.requests')"></th>
             <th class="num" x-text="t('success_rate')"></th>
+            <!-- 429 限流 (2026-10-26): 之前分析页**完全不显示限流** ——
+                 而"这家在限流"与"这家在报 500"要采取的动作完全不同
+                 (前者是上游配额/并发问题，后者是服务异常)。
+                 rate_limited 后端早就有 (admin.rs 的 ProviderStats)，只是没画。 -->
+            <th class="num" x-text="t('tbl.rate_limited')"></th>
+            <!-- 首字延迟 (TTFT): 与平均延迟并列，因为两者含义不同 ——
+                 平均延迟含整段生成，首字延迟是"用户等多久看到第一个字"。
+                 没采到 (null) → "—"，不拿平均延迟冒充。 -->
+            <th class="num" x-text="t('tbl.ttft')"></th>
             <th class="num" x-text="t('tbl.avg_latency')"></th>
             <th class="num" x-text="t('unit_tokens')"></th>
             <th class="num" x-text="t('total_cost')"></th>
           </tr></thead>
           <tbody>
-            <!-- 主行: 每家一行（单根 <tr>，Alpine 3 的 x-for 要求单根） -->
+            <!-- 主行: 每家一行（单根行元素，Alpine 3 的 x-for 要求单根） -->
             <template x-for="p in filteredProviderStats" :key="'pp'+p.provider">
               <tr @click="toggleProvTable(p.provider)" style="cursor:pointer">
                 <td><span aria-hidden="true" :style="'display:inline-block;transition:transform .15s;color:var(--muted);font-size:var(--fs-10);transform:rotate('+(provTableOpen(p.provider)?90:0)+'deg)'">▸</span></td>
-                <td><span class="fw6" x-text="p.provider"></span><span class="txs tm" style="margin-left:6px" x-text="t('prov_model_n',provModelsOf(p.provider).length)"></span></td>
+                <td>
+                  <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                    <div style="display:flex;align-items:baseline;gap:6px;min-width:0">
+                      <span class="fw6" x-text="p.provider"></span>
+                      <span class="txs tm" x-text="t('prov_model_n',provModelsOf(p.provider).length)"></span>
+                    </div>
+                    <!-- 最近一次失败原因（2026-10-26）：直接挂在供应商名下面，
+                         **不需要点开**。
+                         为什么这样放：用户看到成功率 60% 时，下一个问题必然是
+                         "为什么" —— 若要展开才看得到答案，等于把答案藏起来。
+                         为什么只显示"最近一次"：失败原因可能各不相同，全列出来
+                         表格会被撑爆；最近一次是最可能相关的那条。
+                         全成功时这一行不出现（不制造噪音）。 -->
+                    <span class="txs" style="color:var(--err);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:320px"
+                          x-show="provLastError(p.provider)"
+                          :title="provErrTitle(p.provider)"
+                          x-text="provLastError(p.provider)"></span>
+                  </div>
+                </td>
                 <td class="num mono" x-text="p.requests"></td>
                 <td class="num mono" :style="'color:'+provSuccessTone(p)" x-text="provSuccessText(p)"></td>
+                <!-- 429: 为 0 时不印 0（不制造噪音），有值才红字显示 -->
+                <td class="num mono" :style="p.rate_limited?'color:var(--warn)':''"
+                    x-text="p.rate_limited||''"></td>
+                <!-- 首字延迟: 未采集 → "—"（不拿平均延迟冒充） -->
+                <td class="num mono" x-text="p.ttft_avg_ms==null?'—':fmtMs(p.ttft_avg_ms)"></td>
                 <td class="num mono" x-text="fmtMs(p.avg_latency_ms)"></td>
                 <td class="num mono" x-text="fmtT((p.total_prompt_tokens||0)+(p.total_completion_tokens||0))"></td>
                 <td class="num mono" x-text="p.billing?fmtMoney(p.total_cost||0):'—'"></td>
@@ -233,7 +315,7 @@
             <!-- 展开区: 独立 x-for + x-show。为什么不用 x-if: x-if 的模板只能有一个
                  根元素，而展开区的多行要靠内层 x-for 生成，嵌套后不渲染。 -->
             <template x-for="p in filteredProviderStats" :key="'px'+p.provider">
-              <tr x-show="provTableOpen(p.provider)"><td colspan="7" style="padding:0;background:var(--fill-1)">
+              <tr x-show="provTableOpen(p.provider)"><td colspan="9" style="padding:0;background:var(--fill-1)">
                 <div style="padding:8px 12px 10px 34px">
                   <template x-for="m in provModelsOf(p.provider)" :key="'pm'+m.model">
                     <div class="prov-model-row">
@@ -248,7 +330,7 @@
               </td></tr>
             </template>
             <template x-if="!filteredProviderStats.length">
-              <tr><td colspan="7" style="text-align:center;padding:28px" class="tm" x-text="t('no_data')"></td></tr>
+              <tr><td colspan="9" style="text-align:center;padding:28px" class="tm" x-text="t('no_data')"></td></tr>
             </template>
           </tbody>
         </table>

@@ -1418,6 +1418,76 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-26 轮（续 3）：分析页对照参考项目补齐（用户：「差得很远」）
+
+**用户判断**：「我总感觉分析页你没做完，对比我给的参考项目，差得很远。」
+
+**先纠正一个前提**（否则会对错位置）：**WaLiAPI 没有「分析页」**。它的
+`src/pages/UsagePage.tsx` 是「接入示例」页（协议卡片 + Base URL + 代码示例，
+**不含任何图表**）。它的分析能力分散在四处，这才是对照对象：
+`DashboardPage.tsx`（KPI + 趋势 + 模型分布 + 上下文构成 + 运维建议）、
+`components/TokenHeatmap.tsx`（年度热力图）、`components/RouteMapCard.tsx`
+（实时路由拓扑）、`LogsPage.tsx` + `observability/ObservabilityCards.tsx`（单条可观测性）。
+
+**本轮做掉的（用户选「先补回丢掉的 + 把已有数据画出来」）**：
+
+① **「网关自身开销」面板恢复** —— 最严重的一条。子代理发现
+`gwStageWinRows` / `gwStageHasData` 计算端**完好无损**、HTML 端**零引用**：
+面板被删了，数据还算着。后果：用户报"慢"时无法判断慢在网关哪一段还是上游 ——
+而这正是该面板存在的唯一理由。**修法**：作为**网关节点的下钻明细**画进去
+（不新增卡片，符合用户"节点即时间轴"的偏好）；条长按组内最慢段归一
+（`gwStageBarPct`），否则每段满格看不出谁慢。
+
+② **供应商表补 429 限流 + 首字延迟** —— 后端 `rate_limited` / `ttft_avg_ms`
+早就有，分析页一个都没画。「这家在限流」与「这家在报 500」要采取的动作完全不同。
+429 为 0 时不印 0（不制造噪音）；TTFT 未采集显示 `—`（不拿平均延迟冒充）。
+
+③ **失败原因行内可见** —— 原来只在供应商页。用户看到成功率 60% 时下一个问题
+必然是"为什么"，若要展开才看得到答案等于把答案藏起来。
+
+④ **上下文构成提为一级面板** —— 原来埋在「省量审计」折叠卡（默认收起）的第三段，
+打开分析页根本看不到。"输入大在哪里"是用户查 token 的第一个问题。
+
+⑤ **TTFT 近似值口径披露** —— `ttft_approx_hint` 是死键。实测确认
+`p50/p90` 是**按直方图桶上界反推**的近似值（`ds-computed.js` 里 `return buckets[i].max`），
+界面此前只给数字不给口径，用户会当成实测值。本项目纪律是"口径必须写在界面上"。
+
+**顺手清掉的死代码**（都已 grep 全仓确认零引用）：`heroWindowNote`、`heroRequestsHint`
+（两者互相引用构不成调用链）、`distTopTakeaway`、`rankTopTakeaway`、
+`donutSvg`（环图卡已删但函数/`donutColors`/CSS 全留着）、`topoProvOpen`/`topoProvToggle`、
+`modelSentPct`，以及两处重复的孤立注释。
+
+**探针** `tools/probe_analytics_gaps.py`（**17 判据**，真实实例 + mock 日志）：
+网关五段 DOM 存在/可见/5 个段/5 条进度条/最慢段 100% 归一、供应商表 429 与 TTFT 列、
+**每行单元格数 == 表头列数**（列错位）、失败原因行内可见、上下文构成是一级面板且
+不在审计卡内、TTFT 口径披露文本。
+**改坏验证**：把网关五段的 `x-if="gwStageHasData"` 改成 `x-if="false"` → **5 项转红**。
+
+> 探针三个坑（都修了）：
+> ① `os.dirname` 拼错（这台机器的 os 模块确实没有该便捷名）→ `os.path.dirname`。
+> ② 用全局 `tbody tr` 会把**两张表**的行混在一起（供应商表 9 列 vs 模型明细表 13 列）
+>   → 假失败。改成"先按表头含 429 找到供应商表，再只取其中的主行"。
+> ③ mock 日志**不含** stage 计时与 TTFT（那是真实请求才有）→ 直接读会 hasData=false、
+>   模板不渲染、测不到接线。改为**注入合成样本**再验 DOM（判据是"数据在 → 界面在"）。
+>   注入的 `ttft.hist` 必须是 **10 个元素**（`ttftBuckets` 有 10 桶，含 `max:null` 溢出桶），
+>   长度不符时 `ttftSummary` 直接按"无数据"返回 —— 第一次就踩了这个。
+
+**同时修了既有探针的一个假失败**：`probe_analytics_tabs.py` 用全局 `[role="tab"]`
+选页签，把概览页「接入向导」的协议切换器（`page-overview.html:264-266`，
+OpenAI Chat / Responses / Anthropic）也算进去了 → 拿到 5 个而非 2 个，
+「两个页签按钮都在」「有且仅有一个高亮」必然失败。改为限定在
+`.an-filter [role="tablist"]` 内。修完 30/30 全过。**这条与本轮改动无关，是既有缺陷。**
+
+**本轮未做（用户明确选择）**：
+- **实时粒子拓扑**（参考项目最强的一块）：需要后端事件流（EventSink），
+  我们只有 3s 轮询 `/admin/api/logs`。用户选「以后单独立项」。
+- **趋势图分输入/输出/缓存三维度**：需给 `ModelTrend` 加 `cached_tokens`
+  （`admin.rs` 的 `compute_model_trends_window`），属后端改动。
+- **热力图扩到 54 周 + hover 明细 + 请求数**：`/admin/api/heatmap` 只返回
+  `{day_start, tokens}`，要加 `request_count`；前端 `weeks=17` 写死（后端上限 53）。
+- **分析页 → 记录页的下钻出口**：参考项目有「查看日志 →」。我们的记录页目前
+  只有 provider/model 筛选，缺 model/provider 预置跳转。
+
 ### 🆕 10-26 轮（续 2）：余额面板把套餐额度当成"不支持"
 
 **用户报障**：截图指出概览页「余额与费用」里，go 被归进「另有 7 家不支持余额查询」——「我们的 go 套餐额度不是能看了吗？怎么不显示？」

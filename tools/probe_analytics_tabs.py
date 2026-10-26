@@ -70,8 +70,19 @@ const { chromium } = require('playwright');
   await p.waitForTimeout(400);
 
   // 页签按钮
-  out.tabs = await p.evaluate(() => Array.from(document.querySelectorAll('[role="tab"]'))
-    .map(e => ({ txt: (e.innerText || '').trim(), sel: e.getAttribute('aria-selected'), a: e.className.indexOf(' a') >= 0 || e.className.endsWith('a') })));
+  //
+  // ⚠️ 必须**限定在分析页的 tablist 内**（2026-10-26 修）：页面上还有别处用
+  // role="tab" —— 概览页「接入向导」的协议切换器（page-overview.html:264-266，
+  // OpenAI Chat / OpenAI Responses / Anthropic Messages）。用全局
+  // `[role="tab"]` 会把这 3 个也算进来 → 得到 5 个而不是 2 个，
+  // 「两个页签按钮都在」与「有且仅有一个高亮」必然假失败。
+  out.tabs = await p.evaluate(() => {
+    const list = document.querySelector('.an-filter [role="tablist"]') ||
+                 document.querySelector('[role="tablist"][aria-label]');
+    const scope = list || document;
+    return Array.from(scope.querySelectorAll('[role="tab"]'))
+      .map(e => ({ txt: (e.innerText || '').trim(), sel: e.getAttribute('aria-selected'), a: e.className.indexOf(' a') >= 0 || e.className.endsWith('a') }));
+  });
 
   // 逐页签: 切过去, 记录可见面板 + 高度
   out.perTab = {};

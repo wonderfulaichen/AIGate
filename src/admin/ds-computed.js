@@ -1,6 +1,6 @@
 // ── 计算属性 ──
-// 成功率 / hero 指标 / 结论行 / 余额健康度 / 环图 SVG
-// 主要成员: rateColor / sRate / balanceTakeaway / donutSvg
+// 成功率 / hero 指标 / 结论行 / 余额健康度 / 运维建议 / 阶段耗时 / 拓扑行
+// 主要成员: rateColor / sRate / balanceTakeaway / opAdvice / gwStageWinRows / topoFlowRows
 // (本文件是 dashboard() 对象体的一段, 由 admin.rs 的 concat! 按序拼接; 详见 docs/frontend.md)
 
 
@@ -30,24 +30,6 @@
       if (!Number(this.heroTodayStats.requests || 0)) { this._numSettle('sRate', 0); return '—'; }
       // 小数补间: 切页签/刷新时从 0 滚起 (语义值与计数类同一套重播代数).
       return this.fmtPct(this._numTweenRaw('sRate', this.sRate));
-    },
-    // ── 面板底部一句话结论 (只陈述已有数字, 百分比走 fmtPct) ──
-    get distTopTakeaway() {
-      const rows = (this.stats && this.stats.per_model) || [];
-      const total = Number((this.stats && this.stats.total_requests) || 0);
-      if (!rows.length || !total) return '';
-      let top = rows[0];
-      for (const r of rows) if ((r.requests || 0) > (top.requests || 0)) top = r;
-      const name = top.upstream_model || top.model || '—';
-      return t('takeaway_dist_top', name, this.fmtPct((top.requests || 0) / total * 100));
-    },
-    get rankTopTakeaway() {
-      const rows = (this.stats && this.stats.top_models) || [];
-      const total = Number((this.stats && this.stats.total_requests) || 0);
-      if (!rows.length || !total) return '';
-      const top = rows[0];
-      const name = top.model || '—';
-      return t('takeaway_rank_top', name, top.requests || 0, this.fmtPct((top.requests || 0) / total * 100));
     },
     // ── 运维建议（2026-10-24，对照 WaLiAPI 的 DashboardPage.tsx:229-286）──
     // 把散落的指标转成**条件化判断 + 可点动作**。与 healthTakeaway 的分工：
@@ -296,19 +278,6 @@
       const d = this.heroTodayStats;
       return Math.max(0, Number(d.requests || 0) - Number(d.success || 0));
     },
-    // 窗口口径的**可见**标注: 折线画的是窗口, 故把窗口合计写在主数字提示行里.
-    // 原先这个信息藏在「窗口累计」标签里、而数字又被 5000 截断, 等于把口径说了却没说清.
-    get heroWindowNote() {
-      const s = this.stats || {};
-      const n = Number(s.total_requests || 0);
-      const days = Number(s.window_minutes || 0) / 1440;
-      // 跨度不足 1 天时不带上「最近 N 天」—— 一天内没有跨度的概念, 写了反而是噪声.
-      const span = days >= 1 ? ' · ' + t('window_span_days', days.toFixed(1)) : '';
-      return t('window_label') + ' ' + this.fmtInt(n) + span;
-    },
-    get heroRequestsHint() {
-      return t('errors_only', this.heroErrors) + ' · ' + this.heroWindowNote;
-    },
     get heroCost() { const s=this.stats||{}; return Number(s.total_cost||0); },
     // ── 优化省量卡的口径披露 (修 3 个易误读点) ──
     // ① 今日与本月并排却差 6 个数量级: 数字本身没错 (今日只有少量请求带推理链),
@@ -483,6 +452,22 @@
       };
     },
     get ttftHasData() { return this.ttftSummary.samples > 0; },
+
+    // ─── 网关去程五段: 条长归一 (2026-10-26) ───
+    // 条长按**本组最慢的一段**归一（而不是各自除以自己的上限）——
+    // 否则每段都是满格，看不出谁慢。各段的绝对值在右侧数字里。
+    gwStageBarPct(row) {
+      const rows = this.gwStageWinRows || [];
+      let max = 0;
+      for (const r of rows) {
+        const v = Number(r && r.avg);
+        if (isFinite(v) && v > max) max = v;
+      }
+      if (!max) return 0;
+      const v = Number(row && row.avg);
+      if (!isFinite(v) || v <= 0) return 0;
+      return (v / max) * 100;
+    },
 
     // ─── 时间去哪了 (窗口级, 方案 F 2026-10-13) ───
     // 与单条记录详情的「时间去哪了」同口径、同配色 (waiting=灰 / reasoning=紫 / output=蓝 / tool=绿)。
@@ -714,17 +699,6 @@
           + '" title="' + s.label + ' ' + this.msText(s.avg) + '"></span>';
       }).join('');
     },
-    /// 某供应商是否展开 (默认展开 —— 两级结构要一眼看全)
-    topoProvOpen(prov) {
-      const v = this.topoOpenProviders && this.topoOpenProviders[prov];
-      return v === undefined ? true : !!v;
-    },
-    topoProvToggle(prov) {
-      if (!this.topoOpenProviders) this.topoOpenProviders = {};
-      this.topoOpenProviders[prov] = !this.topoProvOpen(prov);
-    },
-    /// 当前选中节点的可读名 (未选中 = "全部")
-    /// 当前选中节点的可读名 (未选中 = "全部")
     /// 按 (provider, upstream_model) 取一个节点的模型侧四段行
     stageRowsFor(prov, model) {
       const s = this._nodeSummary(prov, model, 'stage_summary');
@@ -935,25 +909,4 @@
       const s = this.ttftSummary;
       if (!s.samples || !s.rows.length) return 0;
       return s.rows[s.rows.length - 1].v;
-    },
-    get donutSvg() {
-      if(!this.stats||!this.stats.per_model.length) return '';
-      const total=this.stats.total_requests||1;
-      const r=55, w=20, cx=70, cy=70, C=2*Math.PI*r;
-      const top=this.stats.per_model.slice(0,8);
-      const shown=top.reduce((sum,m)=>sum+(m.requests||0),0);
-      const parts=top.map((m,i)=>({value:m.requests||0,color:this.donutColors[i%this.donutColors.length]}));
-      // 注: 这里必须用真实色值 —— 结果会作为 SVG 呈现属性 stroke="..." 输出, CSS 变量在该位置不解析。
-      if(this.stats.per_model.length>8 && total>shown) parts.push({value:total-shown,color:'#3b3d48',rest:true});
-      let offset=0, segs='';
-      parts.forEach(p=>{
-        const len=p.value/total*C;
-        const gap=parts.length>1?2.5:0;
-        const vis=Math.max(0.5,len-gap);
-        // 汇总扇区带 class, 让底色随主题走 (--chart-rest); 数据系列色仍为内联
-        const cls=p.rest?' class="chart-rest-fill"':'';
-        segs+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${p.color}" stroke-width="${w}" stroke-dasharray="${vis} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"${cls}/>`;
-        offset+=len;
-      });
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke-width="${w}" class="chart-track"/>${segs}<text x="${cx}" y="${cy-7}" text-anchor="middle" font-size="17" class="donut-total">${total}</text><text x="${cx}" y="${cy+11}" text-anchor="middle" class="donut-sub">${t('unit_requests')}</text>`;
     },

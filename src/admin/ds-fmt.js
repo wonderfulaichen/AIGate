@@ -241,13 +241,6 @@
       if (!before || !saved) return '';
       return (saved / before * 100).toFixed(1) + '%';
     },
-    // 实发占原始的比例 —— 与"省量占比"互补, 给不惯看百分号的人一个直接读数。
-    modelSentPct(m) {
-      const before = Number((m || {}).total_prompt_tokens_before || 0);
-      const after = Number((m || {}).total_prompt_tokens || 0);
-      if (!before) return '';
-      return (after / before * 100).toFixed(1) + '%';
-    },
     // 供应商 logo: 复用全局 providerLogo() (内联官方 SVG, 缺失回退首字母徽标).
     providerLogo(p) {
       return window.providerLogo(p);
