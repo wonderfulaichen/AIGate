@@ -4706,6 +4706,14 @@ pub struct ModelTrend {
     pub upstream_model: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
+    /// 该桶内**上游 KV Cache 命中**的 token（2026-10-26）。
+    ///
+    /// 用途：趋势图要能单独画出「缓存省下来的量随时间怎么变」——
+    /// 此前趋势图只有"总量"一个维度，看不出省量趋势。
+    /// 老快照（历史日志）该字段缺失 → `#[serde(default)]` 兜底为 0，
+    /// 与「未采集 ≠ 0」的区分见前端 `trendDim` 的注释。
+    #[serde(default)]
+    pub cached_tokens: u64,
     pub requests: usize,
     pub errors: usize,
 }
@@ -6710,11 +6718,15 @@ fn merge_rollup_model_trends(
                     upstream_model: e.upstream.clone(),
                     prompt_tokens: 0,
                     completion_tokens: 0,
+                    cached_tokens: 0,
                     requests: 0,
                     errors: 0,
                 });
             t.prompt_tokens += e.prompt_tokens;
             t.completion_tokens += e.completion_tokens;
+            // rollup 条目上的字段名是 `cache_hit_tokens`（与 RequestLog 的
+            // `prompt_cache_hit_tokens` 不同名 —— 两处别抄串）。
+            t.cached_tokens += e.cache_hit_tokens;
             t.requests += e.requests as usize;
             t.errors += e.errors as usize;
         }
@@ -7069,7 +7081,8 @@ fn compute_model_trends_window(
     explicit_end: Option<u64>,
 ) -> Vec<ModelTrend> {
     let key_fn = trend_key_fn(granularity);
-    let mut map: BTreeMap<(u64, String, String), (u64, u64, usize, usize)> = BTreeMap::new();
+    // 第 5 项是 cached_tokens（2026-10-26 新增，用于趋势图的"缓存"维度）
+    let mut map: BTreeMap<(u64, String, String), (u64, u64, u64, usize, usize)> = BTreeMap::new();
     for log in logs {
         if log.provider.is_empty() || log.provider == "-" {
             continue;
@@ -7083,15 +7096,19 @@ fn compute_model_trends_window(
         let entry = map.entry((bucket, log.provider.clone(), upstream)).or_default();
         entry.0 += log.prompt_tokens as u64;
         entry.1 += log.completion_tokens as u64;
-        entry.2 += 1;
+        // ⚠️ 日志上的字段名是 `prompt_cache_hit_tokens`（不是 `cache_hit_tokens` ——
+        //    后者是 Stats / ProviderStats 上的聚合字段名，两者别混）。
+        entry.2 += log.prompt_cache_hit_tokens as u64;
+        entry.3 += 1;
         if is_log_error(log) {
-            entry.3 += 1;
+            entry.4 += 1;
         }
     }
     let mut out: Vec<ModelTrend> = map
         .into_iter()
-        .map(|((ts, provider, upstream_model), (prompt_tokens, completion_tokens, requests, errors))| ModelTrend {
-            date: key_fn(ts), ts, provider, upstream_model, prompt_tokens, completion_tokens, requests, errors,
+        .map(|((ts, provider, upstream_model), (prompt_tokens, completion_tokens, cached_tokens, requests, errors))| ModelTrend {
+            date: key_fn(ts), ts, provider, upstream_model,
+            prompt_tokens, completion_tokens, cached_tokens, requests, errors,
         })
         .collect();
     if let (Some(start), Some(end)) = (explicit_start, explicit_end) {

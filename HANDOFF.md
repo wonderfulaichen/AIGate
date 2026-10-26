@@ -1418,6 +1418,51 @@ git push origin main     # 全局已配好 proxy, 直接推即可
 
 ## 8. 各轮做了什么，便于判断现状
 
+### 🆕 10-26 轮（续 4）：趋势图加「看什么」维度（输入/输出/缓存）
+
+**为什么做这一条**：差距清单里唯一影响**日常判断**的一项。此前趋势图只有
+"输入+输出总量"一个维度，于是两个问题看不出来：
+  ① 缓存省下来的量随时间怎么变（本项目最核心的卖点，却只有静态命中率数字）
+  ② 涨的是输入还是输出（对应的优化手段完全不同：输入大要瘦身上下文，
+     输出大要约束生成长度）
+
+**后端**：`ModelTrend` 新增 `cached_tokens`（`#[serde(default)]` 兼容旧快照），
+聚合时累加 `log.prompt_cache_hit_tokens`；rollup 合并路径用
+`RollupEntry.cache_hit_tokens`。
+
+> ⚠️ **两个字段名不同名，别抄串**：`RequestLog` 上是 `prompt_cache_hit_tokens`，
+> 而 `Stats` / `ProviderStats` / `RollupEntry` 上是 `cache_hit_tokens`。
+> 我第一次就写错了 `log.cache_hit_tokens` → 编译报错。
+
+**前端**：新增 `trendDim`（total / split / cache）+ `setTrendDim()` 单一入口
+（归一非法值，与 setAnalyticsTab / setSettingsSection 同一条纪律：面板可见性由
+枚举值驱动时，非法值不是"无操作"而是**图表空白**）。
+
+**split 为什么不按模型拆**：6 个模型 × 3 个指标 = 18 条序列，堆叠图会糊成一片；
+而用户此刻想回答的是"涨的是输入还是输出"—— 那是**全站层面**的问题。
+所以 split 画**全站三条**（输入 / 输出 / 缓存，固定语义配色）。
+
+**新增判据** `tools/probe_trend_dims.py`（16 条）：三个维度都生效 / split 有三条
+且含输入·输出·缓存 / 三张 SVG **互不相同**（按完整字符串比较）/ y 轴刻度不同
+（量纲真换了）/ **split 三项之和 == total + cache**（口径可对）/ 非法值归一 /
+缓存口径说明只在非 total 维度出现。
+**改坏验证**：split 去掉缓存序列 → **3 项转红**。
+
+> 探针三个坑（都踩了）：
+> ① 必须先 `clearInterval(pollTimer)` 再注入假数据 —— 否则 3s 的 fetchStats
+>    会把注入数据覆盖，最后一个维度读到真实数据 → "口径可对"假失败。
+> ② 切完维度要等 ≥160ms 再读 `modelTrendSvgHtml`（`_setTrendHtml` 有淡入延迟），
+>    否则读到**上一维度**的图。
+> ③ 不能用 `h*31|0` 这种简易 hash 判"图是否不同" —— 实测三个维度差异小时
+>    会碰撞出同一个值。改存完整 SVG 字符串比较。
+
+**过程中修掉一个我自己引入的严重 bug**：在 `computeModelTrend()` 里重复声明了
+`const colorOf`（函数里本来就有同名 const）→ **整个 ds-*.js 片段语法错误**
+→ 页面上所有方法一起消失（`t is not defined`、`pricePanel is not defined` 等
+几十个 ReferenceError）。这个 bug 靠"浏览器里方法不存在"才暴露出来，
+**构建和单测都不会报错** —— 值得记：ds-*.js 是对象体片段，重复声明会静默
+炸掉整个前端。
+
 ### 🆕 10-26 轮（续 3）：分析页对照参考项目补齐（用户：「差得很远」）
 
 **用户判断**：「我总感觉分析页你没做完，对比我给的参考项目，差得很远。」

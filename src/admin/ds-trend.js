@@ -26,9 +26,51 @@
         this.trendFading = false;
       }, 160);
     },
+    // ── 趋势图的「看什么」维度（2026-10-26）──
+    //
+    // # 为什么需要
+    //
+    // 此前趋势图只有**一个**维度：输入+输出的总量。于是有两个问题看不出来：
+    //   ① 缓存省下来的量随时间怎么变（这是本项目最核心的卖点，却只有静态命中率数字）
+    //   ② 涨的是输入还是输出（两者对应的优化手段完全不同：输入大要瘦身上下文，
+    //      输出大要约束生成长度）
+    // 参考项目的趋势图有「输入 / 输出 / 缓存」三个独立开关，可任意组合堆叠。
+    //
+    // # 三种取值
+    //   total = 输入 + 输出（默认，与旧行为一致）
+    //   split = 输入、输出、缓存各自一个序列（可堆叠对比）
+    //   cache = 只看缓存命中量
+    //
+    // ⚠️ 关于「未采集 ≠ 0」：后端 ModelTrend.cached_tokens 是**本轮新增**字段，
+    //    历史日志/旧快照里没有它 → serde(default) 兜底为 0。所以"缓存为 0"
+    //    可能是真的没命中，也可能是那批数据没记录。这个区分写在界面提示里
+    //    （trend_cache_note），不假装 0 一定是实测值。
+    get trendDimField() { return this.trendDim || 'total'; },
+
+    /// 取某条趋势记录在该维度下的**一组**值（数组，供 split 拆成多序列）。
+    /// 返回 [{key,label,color,v}]
+    trendRowValues(r) {
+      const p = Number(r && r.prompt_tokens || 0);
+      const c = Number(r && r.completion_tokens || 0);
+      const h = Number(r && r.cached_tokens || 0);
+      return { in: p, out: c, cache: h };
+    },
+
+    /// 该维度下用于**排序/筛选 Top N** 的标量（split 用三项之和）。
+    trendRowScalar(v, dim) {
+      if (dim === 'cache') return v.cache;
+      if (dim === 'split') return v.in + v.out + v.cache;
+      return v.in + v.out;
+    },
+
     computeModelTrend() {
+      const dim = this.trendDimField;
       const rows=this.stats?.model_trends||[]; const sums={};
-      rows.forEach(r=>{const k=(r.provider||'')+'/'+(r.upstream_model||'');sums[k]=(sums[k]||0)+Number(r.prompt_tokens||0)+Number(r.completion_tokens||0);});
+      rows.forEach(r=>{
+        const k=(r.provider||'')+'/'+(r.upstream_model||'');
+        const v=this.trendRowValues(r);
+        sums[k]=(sums[k]||0)+this.trendRowScalar(v, dim);
+      });
       const allKeys=Object.keys(sums).sort((a,b)=>sums[b]-sums[a]).slice(0,6);
       const keys=allKeys.filter(k=>!this.hiddenModels[k]);
       this.modelTrendData={keys:allKeys,sums,dates:[],series:[],xPct:[],trendByTs:new Map()};
@@ -39,9 +81,58 @@
       // 画布与内边距 (viewBox 坐标); 比例由 CSS 等比缩放维持, 不再用 preserveAspectRatio 拉伸.
       const W=900,H=260,left=56,right=20,top=22,bottom=40,pw=W-left-right,ph=H-top-bottom;
       const palette=CHART_PALETTE;
-      const colorOf=k=>palette[allKeys.indexOf(k)%palette.length];
+      // ⚠️ colorOf 统一在下方定义（要同时处理"模型序列"与 split 的"三条固定指标"），
+      //    这里不再另起一份 —— 同名 const 在同一作用域重复声明会让**整个片段**
+      //    语法错误，结果是页面上所有 ds-*.js 方法一起消失（已实测踩过）。
       const map=new Map(rows.map(r=>[r.ts+'/'+r.provider+'/'+r.upstream_model,r]));
-      const values=keys.map(k=>dates.map(([ts])=>{const [p,...u]=k.split('/');const r=map.get(ts+'/'+p+'/'+u.join('/'));return r?Number(r.prompt_tokens||0)+Number(r.completion_tokens||0):0;}));
+      // ── 序列构造：两种形态 ──
+      //  · 非 split：按**模型**分序列（每条一个模型，值与旧行为口径一致）
+      //  · split  ：按**指标**分序列（输入 / 输出 / 缓存三条，汇总所有显示的模型）
+      //
+      // 为什么 split 不按模型拆：6 个模型 × 3 个指标 = 18 条序列，堆叠图会糊成一片，
+      // 而用户此刻想回答的是"涨的是输入还是输出"—— 那是**全站层面**的问题，
+      // 不是"哪个模型"。参考项目在拆指标时也是全站三条。
+      const isSplit = (dim === 'split');
+      const values = isSplit
+        ? (() => {
+            // 三条：输入 / 输出 / 缓存（各自汇总 keys 里的模型）
+            const acc = [ [], [], [] ];
+            dates.forEach(([ts]) => {
+              let si = 0, so = 0, sc = 0;
+              for (const k of keys) {
+                const [p, ...u] = k.split('/');
+                const r = map.get(ts + '/' + p + '/' + u.join('/'));
+                if (!r) continue;
+                const v = this.trendRowValues(r);
+                si += v.in; so += v.out; sc += v.cache;
+              }
+              acc[0].push(si); acc[1].push(so); acc[2].push(sc);
+            });
+            return acc;
+          })()
+        : keys.map(k=>dates.map(([ts])=>{
+            const [p,...u]=k.split('/');
+            const r=map.get(ts+'/'+p+'/'+u.join('/'));
+            if(!r) return 0;
+            const v=this.trendRowValues(r);
+            return this.trendRowScalar(v, dim);
+          }));
+      // 序列的键与标签：split 时用指标名，否则用模型名
+      const seriesKeys = isSplit ? ['__in', '__out', '__cache'] : keys;
+      const labelOf = (k) => {
+        if (k === '__in') return t('trend_dim_in');
+        if (k === '__out') return t('trend_dim_out');
+        if (k === '__cache') return t('trend_dim_cache');
+        return k.split('/').slice(1).join('/') || k;
+      };
+      // split 的颜色：三条固定色（输入=accent、输出=secondary、缓存=ok），
+      // 不跟随模型调色板 —— 三条指标是固定语义，配色固定才好认。
+      const colorOf = (k) => {
+        if (k === '__in') return 'var(--accent)';
+        if (k === '__out') return 'var(--secondary)';
+        if (k === '__cache') return 'var(--ok)';
+        return palette[allKeys.indexOf(k) % palette.length];
+      };
       // 自适应裁剪: 去掉首尾**没有任何数据**的桶, 否则稀疏数据下大半画布是贴着 0 的直线,
       // 真正的信息被挤到一角 (实测 29 天窗口里只有最近 3 天有数据 → 3/4 画布无信息).
       // 两端各多留一个空桶: 让人看得出数据"从哪开始、到哪结束", 而不是被硬切在边缘.
@@ -66,13 +157,13 @@
       // 暴露给悬停浮层 (按桶取各序列用量, 无需重算).
       this.modelTrendData.dates=dates;
       this.modelTrendData.xPct=dates.map((_,i)=>x(i)/W*100);
-      this.modelTrendData.series=keys.map((k,si)=>({key:k,label:k.split('/').slice(1).join('/')||k,color:colorOf(k),values:values[si]}));
+      this.modelTrendData.series=seriesKeys.map((k,si)=>({key:k,label:labelOf(k),color:colorOf(k),values:values[si]}));
       this.modelTrendData.trendByTs=new Map(trends.map(r=>[r.ts,r]));
       // viewBox + width:100% + height:auto: 等比缩放, 圆点与文字不被拉扁.
       let out='<svg viewBox="0 0 '+W+' '+H+'" style="display:block;width:100%;height:auto" class="model-trend-svg" role="img" aria-label="'+this.escapeHtml(t('token_trend_title'))+'">';
       for(let i=0;i<=4;i++){const yy=top+ph*i/4;out+='<line x1="'+left+'" x2="'+(W-right)+'" y1="'+yy+'" y2="'+yy+'" class="chart-grid"/><text x="'+(left-8)+'" y="'+(yy+3)+'" text-anchor="end" class="chart-axis">'+this.escapeHtml(this.fmtT(max*(1-i/4)))+'</text>';}
-      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" rx="3" fill="'+color+'"/>';});});}else{
-        values.forEach((vals,si)=>{const k=keys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
+      if(this.chartMode==='bar'){const bw=Math.min(28,pw/n*.7);const cumul=new Array(n).fill(0);values.forEach((vals,si)=>{const k=seriesKeys[si],color=colorOf(k);vals.forEach((v,i)=>{if(!v)return;const y0=y(cumul[i]);cumul[i]+=v;const y1=y(cumul[i]);const barH=y0-y1;out+='<rect x="'+(x(i)-bw/2)+'" y="'+y1+'" width="'+bw+'" height="'+barH+'" rx="3" fill="'+color+'"/>';});});}else{
+        values.forEach((vals,si)=>{const k=seriesKeys[si],color=colorOf(k);const pts=vals.map((v,i)=>[x(i),y(v)]);
           // 平滑曲线 (smooth() 此前只定义未使用 -> 图上一直是折角)
           const lineD=smooth(pts);
           const gid='tg'+si;
@@ -84,8 +175,8 @@
           // 面积不透明度随系列数收敛: 少系列给足"面"的存在感, 多系列压淡让"线"承担可读性。
           // 且**只有主序列给到可感知的面**, 其余压到很淡 —— 多层渐变叠加会把整图糊成色块.
           const areaOp = lead
-            ? (keys.length<=2?.22:(keys.length<=3?.14:.10))
-            : (keys.length<=2?.13:.045);
+            ? (seriesKeys.length<=2?.22:(seriesKeys.length<=3?.14:.10))
+            : (seriesKeys.length<=2?.13:.045);
           out+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'
             +'<stop offset="0" stop-color="'+color+'" stop-opacity="'+areaOp+'"/>'
             +'<stop offset="1" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs>';
@@ -156,7 +247,10 @@
     // 图表偏好持久化 (P3): 记住"上次看的图型 (折线/柱状)", 重开面板不必再点一次.
     // 仅存展示偏好 —— 不涉及范围/粒度 (那两个由时间筛选统一管, 已在 restoreAnalyticsSpan).
     saveChartPrefs() {
-      try { localStorage.setItem('aigate.chartMode', this.chartMode || 'line'); } catch (e) {}
+      try {
+        localStorage.setItem('aigate.chartMode', this.chartMode || 'line');
+        localStorage.setItem('aigate.trendDim', this.trendDimField);
+      } catch (e) {}
     },
     // 切换图型: 单一入口 (写偏好 + 重算), 避免模板里两处手写 chartMode=...;computeModelTrend().
     setChartMode(m) {
@@ -166,10 +260,22 @@
       this._trendForceFade = true;   // 切图型必须给反馈 (见 _setTrendHtml 的 force 说明)
       this.computeModelTrend();
     },
+    /// 切换「看什么」维度（单一入口：改状态 + 重算 + 强制淡入给反馈）。
+    /// 非法值一律归一到 total —— 与 setAnalyticsTab / setSettingsSection 同一条纪律：
+    /// 面板可见性由枚举值驱动时，非法值不是"无操作"而是**图表空白**。
+    setTrendDim(d) {
+      const valid = ['total', 'split', 'cache'];
+      this.trendDim = valid.includes(d) ? d : 'total';
+      this.saveChartPrefs();
+      this._trendForceFade = true;
+      this.computeModelTrend();
+    },
     restoreChartPrefs() {
       try {
         const m = localStorage.getItem('aigate.chartMode');
         if (m === 'line' || m === 'bar') this.chartMode = m;
+        const d = localStorage.getItem('aigate.trendDim');
+        if (d === 'total' || d === 'split' || d === 'cache') this.trendDim = d;
       } catch (e) {}
     },
     toggleModel(k){ this.hiddenModels[k]=!this.hiddenModels[k]; this.computeModelTrend(); },
