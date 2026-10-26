@@ -53,9 +53,12 @@ function dashboard() {  return {
     balanceData: null, balanceLoading: false,
     // Analytics
     chartMode: 'line', // 'line' | 'bar'
-    // 趋势图「看什么」维度 (2026-10-26): 'total'(输入+输出) | 'split'(输入/输出/缓存三条)
-    // | 'cache'(只看缓存命中量)。切换入口 setTrendDim() 会归一非法值。
-    trendDim: 'total',
+    // 趋势图的三个指标开关（2026-10-27 重做，参考 WaLiAPI DashboardPage.tsx:39-41）。
+    // ⚠️ 上一版是「总量/分项/缓存」三选一 —— 那是**臆造**，参考项目没有这回事。
+    // 正确形态是**三个独立开关**（可任意组合），且与模型图例正交：
+    // 开关决定"堆什么指标"，模型图例决定"堆哪些模型"。
+    // 缓存默认关（它与输入有语义重叠），输入+输出默认开。
+    trendMetricState: { input: true, output: true, cache: false },
     // 分析页页签 (2026-10-16 重构): 此前 15 张卡平铺, 内容高 4342px = 要滚 4.2 屏,
     // 且省量/延迟/分布三类信息各散在 4-5 张卡里重复出现。按"回答什么问题"分三组,
     // 每组 1-2 屏; 诊断类卡片（省量审计/网关开销/拓扑）再各自默认折叠。

@@ -555,9 +555,10 @@ const I18N = {
     'granularity_hour': '小时', 'granularity_day': '天', 'granularity_month': '月', 'stats_range': '统计范围：{0}',
     
     'line_chart': '线', 'bar_chart': '柱',
-    'trend_dim_total': '总量', 'trend_dim_split': '分项', 'trend_dim_cache': '缓存',
-    'trend_dim_in': '输入', 'trend_dim_out': '输出',
-    'trend_cache_note': '「缓存」是上游 KV Cache 命中量（本轮新增统计）；历史数据没有该字段时记为 0，可能是真没命中，也可能是当时未记录。',
+    // ⚠️ 2026-10-27 删掉 trend_dim_total / trend_dim_split：那是上一版臆造的
+    // 「总量/分项/缓存」三选一，参考项目没有这回事。现改为三个独立开关
+    // （输入/输出/缓存），与模型图例正交。
+    'trend_dim_cache': '缓存', 'trend_dim_in': '输入', 'trend_dim_out': '输出',    'trend_cache_note': '「缓存」是上游 KV Cache 命中量（本轮新增统计）；历史数据没有该字段时记为 0，可能是真没命中，也可能是当时未记录。',
     'call_distribution': '调用分布', 'aggregate_provider_model': '按供应商 / 上游模型聚合', 'call_ranking': '调用排名',
     'takeaway_dist_top': '请求最多的是 {0}，占 {1}', 'takeaway_rank_top': '排名第一 {0} · {1} 次请求 · 占 {2}', 'takeaway_health': '成功率 {0} · 错误 {1} · 平均延迟 {2}',
     'balance_takeaway_days': '余额最低的是 {0}：{1}，按今日消耗约可支撑 {2} 天', 'balance_takeaway_plain': '余额最低的是 {0}：{1}',
@@ -1112,8 +1113,8 @@ const I18N = {
     'granularity_hour': 'Hour', 'granularity_day': 'Day', 'granularity_month': 'Month', 'stats_range': 'Range: {0}',
     
     'line_chart': 'Line', 'bar_chart': 'Bar',
-    'trend_dim_total': 'Total', 'trend_dim_split': 'Split', 'trend_dim_cache': 'Cached',
-    'trend_dim_in': 'Input', 'trend_dim_out': 'Output',
+    // ⚠️ 2026-10-27 删掉 trend_dim_total / trend_dim_split（同上，中文表已删）
+    'trend_dim_cache': 'Cached', 'trend_dim_in': 'Input', 'trend_dim_out': 'Output',
     'trend_cache_note': '"Cached" is upstream KV-cache hit volume (added this release). Older data without that field records 0 — it may mean no cache hits, or simply not recorded at the time.',
     'call_distribution': 'Call distribution', 'aggregate_provider_model': 'Aggregated by provider / upstream model', 'call_ranking': 'Call ranking',
     'takeaway_dist_top': 'Top model: {0} ({1} of requests)', 'takeaway_rank_top': '#1 {0} · {1} requests · {2}', 'takeaway_health': 'Success {0} · Errors {1} · Avg latency {2}',

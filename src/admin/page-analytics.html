@@ -19,7 +19,15 @@
   <!-- 空态: 已加载且确实无数据 (原实现把「加载中」与「无数据」混在同一模板, 加载中会误显 no_data) -->
   <template x-if="!stats && !statsError && !loading"><div class="pnl"><div class="pnl-b" style="text-align:center;padding:48px"><span class="tm" x-text="t('no_data')"></span></div></div></template>
   <template x-if="!loading && !_refreshing && stats"><div style="display:flex;flex-direction:column;gap:16px">
+    <!-- 空态（无任何请求）：**整页只显示这一张**。
+         ⚠️ 2026-10-27 修：原来空态只是自己出现，下面的 KPI 条 / 控件条 /
+         趋势图 / 热力图**照常渲染**（它们只看 `stats` 是否存在，不看有没有数据）。
+         于是当 stats.total_requests=0 而 model_trends 有内容时（注入数据、
+         或统计与趋势来源不一致），页面会同时显示"暂无分析数据"和一张有数据的图 ——
+         自相矛盾。现在空态时整块内容让位，只留空态卡。 -->
     <template x-if="!stats.total_requests"><div class="pnl"><div class="pnl-b empty-state"><div class="empty-ic" x-html="EMPTY_ICO"></div><h2 class="empty-t" x-text="t('empty_analytics_title')"></h2><p class="empty-d" x-text="t('empty_analytics_desc')"></p><button class="btn btn-p" @click="switchTab('dashboard')" x-text="t('empty_analytics_cta')"></button></div></div></template>
+    <template x-if="stats.total_requests">
+    <div style="display:flex;flex-direction:column;gap:16px">
     <div class="an-stat-strip">
       <div class="an-stat"><span class="ibox" style="background:var(--primary-soft);color:var(--accent)" aria-hidden="true">↗</span><div class="an-stat-body"><div class="an-stat-label" x-text="t('total_requests')"></div><div class="an-stat-value" x-text="numTextFmt('anRequests',stats.total_requests,'num')"></div><div class="an-stat-hint"></div></div></div>
       <div class="an-stat"><span class="ibox" style="background:var(--warn-bg);color:var(--warn)" aria-hidden="true">¥</span><div class="an-stat-body"><div class="an-stat-label" x-text="t('total_cost')"></div><div class="an-stat-value" x-text="numTextFmt('anCost',stats.total_cost,'money')"></div><div class="an-stat-hint"></div></div></div>
@@ -57,15 +65,70 @@
       <span class="txs tm" style="color:var(--muted)" x-text="granularityLabel"></span>
       <span class="txs tm" style="margin-left:auto" x-text="anTabHint"></span>
     </div></div>
-    <div class="pnl mb4" x-show="analyticsTab==='overview'"><div class="pnl-h pnl-h-plot"><div><h2 class="pnl-ht" x-text="t('token_trend_title')"></h2><!-- P3: 图头合计 (与图例逐项可对) --><span class="txs tm" style="margin-left:8px" x-show="trendHeadTotal" x-text="trendHeadTotal"></span><div class="txs tm" style="margin-top:3px" x-text="t('token_trend_desc')"></div><div class="chart-context" x-show="trendContextLabel" x-text="trendContextLabel"></div></div><div class="seg an-chart-tabs"><button type="button" class="seg-i" :class="{'a':chartMode==='line'}" @click="setChartMode('line')" x-text="t('line_chart')"></button><button type="button" class="seg-i" :class="{'a':chartMode==='bar'}" @click="setChartMode('bar')" x-text="t('bar_chart')"></button></div><!-- 「看什么」维度切换 (2026-10-26): 此前只有"总量"一个维度 ——
-     看不出**缓存省下来的量随时间怎么变**, 也看不出涨的是输入还是输出
-     (两者对应的优化手段完全不同: 输入大要瘦身上下文, 输出大要约束生成长度)。
-     split 拆成输入/输出/缓存三条全站序列; cache 只看缓存命中量。 -->
-<div class="seg an-chart-tabs" style="margin-left:8px" role="tablist" aria-label="趋势指标"><button type="button" class="seg-i" :class="{'a':trendDimField==='total'}" :aria-selected="trendDimField==='total'" @click="setTrendDim('total')" x-text="t('trend_dim_total')"></button><button type="button" class="seg-i" :class="{'a':trendDimField==='split'}" :aria-selected="trendDimField==='split'" @click="setTrendDim('split')" x-text="t('trend_dim_split')"></button><button type="button" class="seg-i" :class="{'a':trendDimField==='cache'}" :aria-selected="trendDimField==='cache'" @click="setTrendDim('cache')" x-text="t('trend_dim_cache')"></button></div></div><div class="pnl-b token-trend-body"><div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div class="trend-fade" :class="{fading:trendFading}" x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div><div x-show="!modelTrendSvgHtml" class="trend-empty"><div class="empty-ic" x-html="EMPTY_ICO"></div><div class="empty-t" x-text="t('no_trend')"></div><div class="empty-d" x-text="t('token_trend_note')"></div></div></div><div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div><!-- 缓存口径说明 (2026-10-26): cached_tokens 是**本轮新增**字段, 历史日志与
-     旧快照里没有它 → 兜底为 0。所以"缓存为 0"可能是真的没命中,
-     也可能是那批数据没记录 —— 必须说出来, 不假装 0 一定是实测值。 -->
-<div class="chart-summary" x-show="trendDimField!=='total'" x-text="t('trend_cache_note')"></div><div class="chart-summary" x-text="t('token_trend_note')"></div></div>
-    <!-- ── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ──
+    <!-- 趋势图面板（2026-10-27 重做布局与指标开关）。
+         ① 控件挪到**图表底部工具栏**（参考 WaLiAPI DashboardPage.tsx:1073-1100）：
+            原来「线/柱」与「指标」两个 seg 都塞在标题行里，而 .pnl-h 是
+            justify-content:space-between —— 三个子元素被**均分**空间，
+            于是「线/柱」居中、「指标」靠右，两组按钮隔着一整个屏幕（用户截图吐槽）。
+            现在标题行只放标题与合计，控件统一在图下方一行：
+            [图型] [输入][输出][缓存] ............ [各指标区间合计]
+         ② 三个**独立开关**取代我上一版臆造的「总量/分项/缓存」三选一：
+            参考项目是 showInput/showOutput/showCached 三个独立布尔（可任意组合），
+            且与模型图例正交 —— 开关决定"堆什么指标"，图例决定"堆哪些模型"。
+         ③ 开关带颜色圆点（与图内分段同色）：输入=蓝、输出=紫、缓存=绿。
+         ④ 缓存默认关：cached_tokens 与输入有语义重叠（命中部分是输入的子集），
+            全开会让"总量"读起来虚高。要研究缓存时再打开。 -->
+    <div class="pnl mb4" x-show="analyticsTab==='overview'">
+      <div class="pnl-h pnl-h-plot">
+        <div style="display:flex;align-items:baseline;flex-wrap:wrap;min-width:0">
+          <h2 class="pnl-ht" x-text="t('token_trend_title')"></h2>
+          <span class="txs tm" style="margin-left:8px" x-show="trendHeadTotal" x-text="trendHeadTotal"></span>
+          <span class="txs tm" style="margin-left:8px" x-text="t('token_trend_desc')"></span>
+        </div>
+        <div class="chart-context" x-show="trendContextLabel" x-text="trendContextLabel"></div>
+      </div>
+      <div class="pnl-b token-trend-body">
+        <div class="trend-hover" x-show="modelTrendSvgHtml" @mousemove="onTrendHover($event)" @mouseleave="onTrendHoverEnd()"><div class="trend-fade" :class="{fading:trendFading}" x-html="modelTrendSvgHtml"></div><div class="trend-crosshair" x-show="trendHover" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'"></div><div class="trend-tip" x-show="trendHover" :class="'tip-'+(trendHover?trendHover.align:'center')" :style="'left:'+(trendHover?trendHover.leftPct:0)+'%'" x-html="trendTooltipHtml"></div></div>
+        <div x-show="!modelTrendSvgHtml" class="trend-empty"><div class="empty-ic" x-html="EMPTY_ICO"></div><div class="empty-t" x-text="t('no_trend')"></div><div class="empty-d" x-text="t('token_trend_note')"></div></div>
+        <!-- 模型图例（点模型 = 显隐该模型） -->
+        <div class="model-trend-legend"><template x-for="it in trendLegendItems" :key="it.k"><span class="model-trend-chip" :class="{dim:it.hidden}" @click="toggleModel(it.k)"><i :style="'background:'+it.color"></i><span x-text="it.label"></span><b x-text="fmtT(it.tokens)"></b><span class="tm" x-text="fmtPct(it.pct)"></span></span></template></div>
+        <!-- 底部工具栏：图型 + 三个指标开关（左） | 各指标区间合计（右）
+             ⚠️ 「线/柱」原来用 .seg（带灰底块的独立分段控件），与后面的
+             指标开关视觉上就是**两拨东西**，即使挨着也看着远（实测间距 51px，
+             用户嫌"离得这么远"）。
+             现在把图型也做成与指标开关**同款胶囊**（.trend-metric-toggle），
+             一排下来是同一组控件 —— 参考项目的工具条里就是这种"一排小胶囊"。 -->
+        <div class="trend-toolbar">
+          <div class="trend-metric-toggles">
+            <button type="button" class="trend-metric-toggle" :class="{on:chartMode==='line'}"
+                    :aria-pressed="chartMode==='line'" @click="setChartMode('line')"
+                    x-text="t('line_chart')"></button>
+            <button type="button" class="trend-metric-toggle" :class="{on:chartMode==='bar'}"
+                    :aria-pressed="chartMode==='bar'" @click="setChartMode('bar')"
+                    x-text="t('bar_chart')"></button>
+            <!-- 改坏验证：把指标开关挪回标题行 -->
+            <span class="trend-tb-div" aria-hidden="true"></span>
+            <template x-for="mt in trendMetricToggles" :key="'mt'+mt.k">
+              <button type="button" class="trend-metric-toggle" :class="{on:mt.on}"
+                      :aria-pressed="mt.on" @click="toggleTrendMetric(mt.k)">
+                <i :style="'background:'+(mt.on?mt.color:'var(--border)')"></i>
+                <span x-text="mt.label"></span>
+              </button>
+            </template>
+          </div>
+          <!-- 各指标的区间合计（只显示已打开的） -->
+          <div class="trend-metric-summary">
+            <template x-for="ms in trendMetricSummary" :key="'ms'+ms.k">
+              <span><i :style="'background:'+ms.color"></i><span x-text="ms.label"></span><b x-text="ms.v"></b></span>
+            </template>
+          </div>
+        </div>
+        <!-- 缓存口径说明：cached_tokens 是新增字段，历史日志里没有它 → 兜底为 0。
+             "缓存为 0"可能是真没命中，也可能是当时没记录 —— 必须说出来。 -->
+        <div class="chart-summary" x-show="trendMetrics.cache" x-text="t('trend_cache_note')"></div>
+      </div>
+    </div>
+<!-- ── 用量热力图 (2026-10-11, 对标 dsh-our-free-model) ──
          补的缺口: 原先只有折线趋势, 看不出"哪几天烧得多 / 有没有断档"。
          日历式视图必须**按周分列 + 逐日连续**（缺的那天画空格, 不能省略）——
          省略会让相邻两天看起来连在一起, 读成日期错位。
@@ -413,5 +476,7 @@
         </table>
       </div>
     </div>
+    </div>
+    </template>
   </div></template>
 </div>
