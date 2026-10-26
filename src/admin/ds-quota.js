@@ -49,6 +49,84 @@
     _ocQuotaWs: {},
     _ocQuotaLoading: {},
     _ocQuotaErr: {},
+    /// 概览页用：全部供应商 × 全部工作区的额度快照（`{prov: {workspaces}|{error}}`）。
+    /// 与 `_ocQuotaWs`（供应商页单家查询）分开存 —— 两者触发时机不同
+    /// （概览页自动、供应商页点按钮），混用会互相覆盖。
+    _ocQuotaAll: null,
+    _ocQuotaAllAt: 0,
+    _ocQuotaAllLoading: false,
+
+    // ── 概览页的额度告警（2026-10-26）──
+    //
+    // # 为什么由概览页主动查
+    //
+    // 额度用满是"请求即将开始失败"的前兆，用户在概览页就该看到，
+    // 而不是等打不通了再回供应商页翻。
+    //
+    // # 为什么不阻塞
+    //
+    // 这是**外部网络请求**（每家 1-2 秒）。所以：进页面先渲染，额度在后台查，
+    // 回来后再刷新建议面板。查不到就不提示（宁可不提示，也不误报）。
+    //
+    // # 为什么有缓存
+    //
+    // 30 秒内不重复打上游：用户来回切页签不该反复请求 Console
+    // （Console 有限流，且额度不会 30 秒内突变）。
+
+    /// 后台拉一次全部供应商的额度（带 30 秒缓存）。
+    async fetchOpencodeQuotaAll(force) {
+      const CACHE_MS = 30 * 1000;
+      if (this._ocQuotaAllLoading) return;
+      if (!force && this._ocQuotaAll && (Date.now() - this._ocQuotaAllAt) < CACHE_MS) return;
+      this._ocQuotaAllLoading = true;
+      try {
+        const r = await fetch('/admin/api/opencode/quota-all', { headers: authHeaders() });
+        const j = await r.json();
+        // 后端整体失败（如无供应商）也照实存 —— 前端据此不提示，而不是报错
+        this._ocQuotaAll = (j && j.providers) || {};
+        this._ocQuotaAllAt = Date.now();
+      } catch (e) {
+        // 网络失败不覆盖已有缓存（下次还能显示上次的真实数据）
+        if (!this._ocQuotaAll) this._ocQuotaAll = {};
+      } finally {
+        this._ocQuotaAllLoading = false;
+      }
+    },
+
+    /// 把额度快照转成「告警条目」：只挑**接近用满或已满**的工作区。
+    ///
+    /// 阈值 90%：与 `ocTone` 的 80% 提醒分开 —— 80% 是"注意"，90% 才值得在
+    /// 概览页打断用户。而**已满**（>=100%）优先级最高。
+    ///
+    /// 返回 `[{provider, workspace, name, pct, monthPct}]`，按百分比降序。
+    ocQuotaAlerts() {
+      const all = this._ocQuotaAll;
+      if (!all) return [];
+      const out = [];
+      for (const [prov, v] of Object.entries(all)) {
+        for (const ws of ((v && v.workspaces) || [])) {
+          const q = ws.quota;
+          if (!q) continue;  // 该区查失败 → 不当成告警（原因是凭据/网络，不是额度）
+          // 取**最紧**的那一档：任一窗口用满都值得说（5h 用满会直接限流）
+          let worst = null;
+          for (const w of (q.windows || [])) {
+            if (w.used_pct == null) continue;
+            if (!worst || w.used_pct > worst.used_pct) worst = w;
+          }
+          if (!worst || worst.used_pct < 90) continue;
+          out.push({
+            provider: prov,
+            workspace: ws.workspace,
+            name: ws.name || '',
+            pct: worst.used_pct,
+            windowKey: worst.key,
+          });
+        }
+      }
+      out.sort((a, b) => b.pct - a.pct);
+      return out;
+    },
+
 
     // 从额度错误提示「去填写凭据」→ 打开该供应商抽屉并滚到凭据区。
     //
@@ -72,11 +150,11 @@
 
     // ── 凭据录入的两个辅助动作（2026-10-24，照 QuotaHub 的"少犯错"思路）──
     //
-    // 为什么要它们：实测该账号下有**两个**组织（`wrk_...` 与 `org_...`），
-    // 只有 `wrk_` 能查 Go 额度；而 Cookie 是一长串 HttpOnly 值。
-    // 让用户手抄两个东西必然出错，于是：
-    //   ① 「自动获取」组织 ID —— 用 Cookie 问上游（/console/api/orgs）
-    //   ② 「测试连接」—— 用草稿凭据直接试查一次，粘完立刻知道成不成
+    // 为什么要它们：Console 的工作区 ID 与 Cookie 都是长串，
+    // 让用户手抄必然出错，于是：
+    //   ① 「自动获取」工作区 —— 用 Cookie 问上游（/console/api/orgs），一次拿全
+    //      （一个账号可以有多个工作区，每个是独立的 Go 订阅）
+    //   ② 「测试连接」—— 用草稿凭据**逐个工作区**试查，粘完立刻知道成不成
     //      （否则要先保存、再点查询、再回来看错误，走三步才知道填错）
     ocFetchOrgBusy: false,
     ocVerifyBusy: false,
@@ -346,10 +424,22 @@
             // 后端已落盘。这里**不回填 Cookie**（后端不回传凭据，凭据不该经过前端），
             // 也不整份 reload —— `loadProvidersForm()` 会重建整个数组、让
             // `drawerProv` 变成悬空引用（抽屉引用的还是旧对象）。
-            // 只做两件事：把组织 ID 显示出来（用户能核对），标记该条已有凭据。
-            if (sj.org_id) prov.console_org_id = sj.org_id;
+            //
+            // 工作区要回填**全部**（后端登录时会问 /orgs 拉全再落盘）：
+            // 只回填 org_id 会让抽屉里看不到别的区，用户以为登录只拿了一个区。
+            if (Array.isArray(sj.workspaces) && sj.workspaces.length) {
+              prov.console_org_ids = sj.workspaces.slice();
+              prov.console_org_id = sj.workspaces[0];
+            } else if (sj.org_id) {
+              prov.console_org_id = sj.org_id;
+            }
             this.ocVerifyOk = true;
             this.ocVerifyMsg = '';
+            if (sj.workspaces_warning) {
+              // 登录成功但工作区没拉全 —— 如实说出来，别让用户以为只有这一个区
+              this.ocVerifyOk = false;
+              this.ocVerifyMsg = String(sj.workspaces_warning);
+            }
             this.fetchOpencodeQuota(name);
             return;
           }
@@ -432,12 +522,16 @@
     },
 
     // 该供应商**是否可能支持**额度查询。
-    // 判据：配了 Console 凭据，或名字里有 opencode（zen/go）。
+    // 判据：配了 Console 凭据 + 至少一个工作区，或名字里有 opencode（zen/go）。
     // 为什么不用"是不是 opencode"写死：用户可能给任意供应商配 Console 凭据
     // （比如把 zen 也接进去），硬编码会把这种用法挡掉。
+    //
+    // ⚠️ 工作区判断必须走 provWorkspaces() 而不能只看 console_org_id：
+    // 多工作区配置**可能只有列表**（console_org_ids），只看单值会让整个额度区
+    // 整块消失（用户看不到任何额度，也没有任何提示）。
     provMayHaveQuota(prov) {
       if (!prov) return false;
-      if (prov.console_session && prov.console_org_id) return true;
+      if (prov.console_session && this.provWorkspaces(prov).length) return true;
       const n = String(prov.name || '').toLowerCase();
       return n === 'go' || n === 'zen' || n.includes('opencode');
     },

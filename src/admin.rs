@@ -1723,7 +1723,26 @@ fn preserve_console_creds(json_str: &str, old: &[crate::providers::ProviderConfi
                 obj.insert("console_session".into(), serde_json::json!(s));
             }
         }
-        if !has_org {
+        // ⚠️ 单值字段的回填要**避开"表单只给了列表"的情形**（2026-10-26）：
+        // 多工作区前端保存时 `console_org_id` 会被设成列表的第一个；若用户把
+        // 第一个工作区删了（列表变成 [B, C]），单值就成了空 → 这里若照旧回填
+        // 旧值 A，磁盘上会变成 `console_org_id: "A"` + `console_org_ids: [B, C]`。
+        // 而 `console_workspaces()` 是**合并**两个字段的 → A 会凭空复活。
+        // 列表存在即以列表为准，单值跟随列表首项。
+        if has_org_ids {
+            let first = obj
+                .get("console_org_ids")
+                .and_then(|x| x.as_array())
+                .and_then(|a| a.first())
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if first.is_empty() {
+                obj.remove("console_org_id");
+            } else {
+                obj.insert("console_org_id".into(), serde_json::json!(first));
+            }
+        } else if !has_org {
             if let Some(s) = &src.console_org_id {
                 obj.insert("console_org_id".into(), serde_json::json!(s));
             }
@@ -3556,6 +3575,80 @@ pub async fn api_opencode_quota(
             "error": e,
         })),
     }
+}
+
+/// GET /admin/api/opencode/quota-all — **所有**配了 Console 凭据的供应商的额度.
+///
+/// # 为什么需要批量端点
+///
+/// 概览页要在「建议」面板里提示「某个工作区快用满了」。若前端逐个供应商请求，
+/// 有 3 家就要发 3 个请求、各自 1-2 秒；批量端点让后端并发查，一次往返拿全。
+///
+/// # 只查配了凭据的
+///
+/// `console_session` 为空的供应商直接跳过 —— 它们本来就不支持额度查询，
+/// 让它们出现在结果里只会制造"查不到"的噪音。
+///
+/// # 为什么单个失败不影响整体
+///
+/// 一家 Cookie 过期不应让别家的额度看不见。失败原因放在该家的 `error` 里，
+/// 由前端决定要不要显示。
+pub async fn api_opencode_quota_all(
+    State(state): State<super::proxy::AppState>,
+) -> Json<serde_json::Value> {
+    let candidates: Vec<_> = {
+        let registry = state.registry.read().await;
+        registry
+            .providers()
+            .into_iter()
+            // 有 Cookie + 至少一个工作区才算"能查"
+            .filter(|p| {
+                p.console_session
+                    .as_deref()
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false)
+                    && !p.console_workspaces().is_empty()
+            })
+            .collect()
+    };
+
+    // 并发查（每家内部再逐工作区串行 —— 同一个 Console 上并发打多个区没有意义，
+    // 反而更容易触发限流）。
+    let mut tasks = Vec::new();
+    for p in candidates {
+        let client = state.client.clone();
+        tasks.push(tokio::spawn(async move {
+            let name = p.name.clone();
+            let mut r = crate::opencode_quota::fetch_all_go_status(&client, &p).await;
+            // 补显示名（配置里只存 ID）。拉不到不影响额度本身 ——
+            // 前端会退化成显示 ID；但**能拉到就必须拉**，否则概览页只能显示
+            // "go 100%" 而说不出是哪个工作区（多区时根本无法区分）。
+            if let (Ok(list), Some(cookie)) = (r.as_mut(), p.console_session.as_deref()) {
+                if let Ok(ws) = crate::opencode_quota::fetch_workspaces(&client, cookie).await {
+                    for w in list.iter_mut() {
+                        if let Some(m) = ws.iter().find(|x| x.id == w.workspace) {
+                            w.name = m.name.clone();
+                        }
+                    }
+                }
+            }
+            (name, r)
+        }));
+    }
+
+    let mut out = serde_json::json!({});
+    for t in tasks {
+        let Ok((name, r)) = t.await else { continue };
+        match r {
+            Ok(list) => {
+                out[&name] = serde_json::json!({ "workspaces": list });
+            }
+            Err(e) => {
+                out[&name] = serde_json::json!({ "error": e });
+            }
+        }
+    }
+    Json(serde_json::json!({ "providers": out }))
 }
 
 /// POST /admin/api/opencode/orgs `{cookie}` — 用 Cookie 查出全部工作区.
@@ -8531,6 +8624,68 @@ mod tests {
         assert!(
             out4["providers"][0].get("console_session").is_none(),
             "改名条目不得继承别名的凭据（否则会把旧账号 Cookie 装到新条目上）"
+        );
+    }
+
+    /// **多工作区**保存时，列表说了算 —— 单值必须跟随列表首项，不能回填成旧值。
+    ///
+    /// 这钉的是一个会"凭空复活已删除工作区"的缺陷：
+    /// `console_workspaces()` 是**合并**单值 + 列表的。若用户把第一个工作区
+    /// 从列表里删掉（`console_org_ids` 变成 `[B, C]`，单值落成空），
+    /// 旧逻辑会把磁盘上的旧单值 `A` 回填回去 → 磁盘成了
+    /// `console_org_id: "A"` + `console_org_ids: [B, C]` → 合并后 A 复活，
+    /// 用户发现"删掉的工作区又回来了"。
+    #[test]
+    fn preserve_console_creds_lets_workspace_list_win_over_stale_single() {
+        let mkp = |ids: Option<Vec<&str>>, single: Option<&str>| {
+            let mut v = serde_json::json!({
+                "name": "go",
+                "endpoint": "https://x/v1/chat/completions",
+                "api_key_env": "K",
+                "models": {},
+                "console_session": "__Host-console_session=st_AAA",
+            });
+            if let Some(l) = ids {
+                v["console_org_ids"] = serde_json::json!(l);
+            }
+            if let Some(s) = single {
+                v["console_org_id"] = serde_json::json!(s);
+            }
+            serde_json::from_value::<crate::providers::ProviderConfig>(v).unwrap()
+        };
+
+        // 磁盘上：两个区 A、B（单值是 A）
+        let old = vec![mkp(Some(vec!["wrk_A", "wrk_B"]), Some("wrk_A"))];
+
+        // 用户在表单里删掉了 A（列表只剩 B，单值被前端同步成 B 或清空）
+        let submitted = serde_json::json!({
+            "providers": [{
+                "name": "go",
+                "endpoint": "https://x/v1/chat/completions",
+                "console_org_ids": ["wrk_B"],
+                "console_org_id": ""
+            }]
+        })
+        .to_string();
+        let out: serde_json::Value =
+            serde_json::from_str(&preserve_console_creds(&submitted, &old)).unwrap();
+        let go = &out["providers"][0];
+
+        assert_eq!(
+            go["console_org_id"], "wrk_B",
+            "列表给了就以列表为准：单值必须跟随首项，不能回填成旧的 wrk_A"
+        );
+        // 最关键的一条：把结果反序列化成配置后，A **不得**复活
+        let mut go_full = go.clone();
+        // 补上 ProviderConfig 的必填字段（表单提交的 JSON 里省略了它们，
+        // 真实保存链路上由前端补齐；这里只为能反序列化验证语义）
+        go_full["api_key_env"] = serde_json::json!("K");
+        go_full["models"] = serde_json::json!({});
+        let cfg: crate::providers::ProviderConfig = serde_json::from_value(go_full).unwrap();
+        assert_eq!(
+            cfg.console_workspaces(),
+            vec!["wrk_B".to_string()],
+            "被删掉的 wrk_A 不得通过单值回填而复活"
         );
     }
 

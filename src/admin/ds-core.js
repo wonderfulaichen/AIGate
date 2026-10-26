@@ -311,7 +311,11 @@
       // 切回概览重播 KPI 数字补间: 补间槽是持久对象, 目标值没变时 numTween 会直接返回旧值,
       // 故必须显式打 replay 标 (否则只有"手动刷新"能重播, 切页签毫无数字反馈).
       // 首次加载传 false (守 numTween 的"初值即真值"约束, 避免首屏像加载动画).
-      if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); this.fetchEvents(); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
+      // 概览页额外后台查一次「全部供应商的套餐额度」（2026-10-26）：
+      // 额度用满是"请求即将失败"的前兆，用户应在概览页就看到。
+      // **不 await** —— 它是外部网络请求（每家 1-2 秒），不能拖慢首屏渲染；
+      // 回来后会自动刷新「建议」面板。内部有 30 秒缓存，来回切页签不重复打上游。
+      if (tabId==='dashboard') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchCache(); this.fetchStripReasoning(); this.fetchMaxHistoryTurns(); this.fetchConnParams(); this.fetchEvents(); this.fetchOpencodeQuotaAll(false); if(!this.providersFormData || !this.isDirty) this.loadProvidersForm(); }
       if (tabId==='analytics') { this.fetchStats(null, false, this._firstLoadDone); this.fetchBalance(); this.fetchDegradations(); this.fetchHeatmap(); }
       // 记录页的统计来自 logs (不走 stats): 已加载过才重播 —— 首访让骨架→内容自然出现, 不从 0 滚.
       if (tabId==='records') { if (this.logsFetched) this.replayNumTweens(); this.fetchLogs(); }

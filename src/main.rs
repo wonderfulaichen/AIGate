@@ -948,6 +948,7 @@ fn main() {
         .route("/admin/api/peak-schedule", get(admin::api_peak_schedule_get).post(admin::api_peak_schedule_set))
         .route("/admin/api/balance", get(admin::api_balance))
         .route("/admin/api/opencode/quota", get(admin::api_opencode_quota))
+        .route("/admin/api/opencode/quota-all", get(admin::api_opencode_quota_all))
         .route("/admin/api/opencode/login/start", post(admin::api_oc_login_start))
         .route("/admin/api/opencode/login/status", post(admin::api_oc_login_status))
         .route("/admin/api/opencode/login/cancel", post(admin::api_oc_login_cancel))

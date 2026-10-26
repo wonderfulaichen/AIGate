@@ -55,11 +55,60 @@
     //   opAdvice       = 分条建议（"部分上游不可用，建议……"）—— 该怎么办
     // 每条都带 `action`（'providers' / 'analytics' / 'records' / ''），
     // 模板据此渲染「去处理 →」按钮。action 为空表示"无需处置"。
+    /// 建议卡片的**标题**键解析（2026-10-26）。
+    ///
+    /// 优先 `ad_<k>`，回退 `advice_<k>`。
+    ///
+    /// 为什么需要这一层：额度告警有两个变体（`quota_full` / `quota_near`），
+    /// 它们的**正文**键必须叫 `advice_quota_full` / `advice_quota_near`（语义化），
+    /// 而模板原来用 `t('advice_' + k)` 取标题 —— 同一个键不可能既是标题又是正文。
+    /// 所以标题走独立前缀，正文键保持不变。
+    ///
+    /// 回退是为了不让这个改动波及既有的 5 类建议（它们本来就用 `advice_<k>`）。
+    adTitle(k) {
+      const special = t('ad_' + k);
+      // t() 在键缺失时原样返回键名 —— 用这一点判断"有没有专门标题"
+      if (special && special !== 'ad_' + k) return special;
+      return t('advice_' + k);
+    },
+
     opAdvice() {
       const out = [];
       const st = this.stats || {};
       const reqs = Number(st.total_requests) || 0;
-      if (!reqs) return out;   // 没有请求时不给建议（没数据就没有判断依据）
+
+      // ⑤ 套餐额度（2026-10-26）：某个工作区快用满/已满时提醒。
+      //
+      // ⚠️ 这一项**必须在"没有请求也返回"的那个提前 return 之前算**：
+      // 额度告警是"上游侧的状态"，与本地有没有跑过请求无关。
+      // 放在 return 之后就等于「刚装好、还没发请求 → 额度已经满了也不告诉你」，
+      // 而那正是用户最该知道的时刻（第一次请求就会失败）。
+      //
+      // 为什么放在建议里而不是新增一张卡：额度告警与「余额不足」是同一类事
+      // （都表示"这家快不能用了"），用户已有一个集中的判断位；再开一张卡
+      // 就是重复显示，而用户明确批评过卡片太多。
+      //
+      // 为什么可能为空：额度是**外部请求**，后台异步查；没查到就一条都不给
+      // （宁可不提示，也不误报 —— 与「未采集 ≠ 0」同一口径）。
+      const qAlerts = this.ocQuotaAlerts ? this.ocQuotaAlerts() : [];
+      if (qAlerts.length) {
+        // 已满（>=100%）用 err，其余（90~100%）用 warn
+        const full = qAlerts.filter(a => a.pct >= 100);
+        const near = qAlerts.filter(a => a.pct < 100);
+        const fmt = (a) => {
+          // 有工作区名就用名字（Default / aichen），没有才退回供应商名
+          const who = a.name ? (a.provider + '/' + a.name) : a.provider;
+          return who + ' ' + this.ocPctText(a.pct);
+        };
+        if (full.length) {
+          out.push({ k: 'quota_full', tone: 'err', text: t('advice_quota_full', full.map(fmt).join('、')), action: 'providers' });
+        }
+        if (near.length) {
+          out.push({ k: 'quota_near', tone: 'warn', text: t('advice_quota_near', near.map(fmt).join('、')), action: 'providers' });
+        }
+      }
+
+      if (!reqs) return out;   // 其余建议没数据就没有判断依据
 
       // ① 渠道健康：按 per_provider 里成功率低于 95% 的家数判断
       const provs = st.per_provider || [];
@@ -99,6 +148,7 @@
       } else if (lowRows.length) {
         out.push({ k: 'bal', tone: 'warn', text: t('advice_bal_low', lowRows.map(x => x.provider).join('、')), action: 'providers' });
       }
+
       return out;
     },
     get healthTakeaway() {

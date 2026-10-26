@@ -63,6 +63,24 @@
         </div>
       </div>
     </div>
+    <!-- 套餐额度告警（2026-10-26）：在「还没有请求」的空态里也要提示。
+         额度是**上游状态**，与本地有没有跑过请求无关；而"刚装好、还没发第一条
+         请求"恰恰最该知道"额度已经满了" —— 否则第一条就会失败，还得自己去
+         供应商页翻原因。空态与有数据是两个互斥的 x-if，所以两处各写一次不会重复。 -->
+    <template x-if="ocQuotaAlerts && ocQuotaAlerts().length">
+      <div class="pnl" style="margin-top:12px">
+        <div class="pnl-h"><div><h2 class="pnl-ht" x-text="t('advice_title')"></h2><div class="txs tm" style="margin-top:3px" x-text="t('advice_desc')"></div></div></div>
+        <div class="pnl-b" style="padding:14px 18px"><div class="adv-grid">
+          <template x-for="a in opAdvice().filter(x => String(x.k||'').startsWith('quota'))" :key="a.k">
+            <div class="adv-card" :class="'adv-'+a.tone">
+              <div class="adv-hd"><span class="adv-dot" aria-hidden="true"></span><span x-text="adTitle(a.k)"></span></div>
+              <div class="adv-tx" x-text="a.text"></div>
+              <template x-if="a.action"><button class="adv-act" @click="switchTab(a.action)" x-text="t('advice_act')+' →'"></button></template>
+            </div>
+          </template>
+        </div></div>
+      </div>
+    </template>
     </div>
   </template>
   <template x-if="!loading && !_refreshing && stats && stats.total_requests>0">
@@ -116,7 +134,11 @@
           <div class="pnl-b" style="padding:14px 18px"><div class="adv-grid">
             <template x-for="a in opAdvice()" :key="a.k">
               <div class="adv-card" :class="'adv-'+a.tone">
-                <div class="adv-hd"><span class="adv-dot" aria-hidden="true"></span><span x-text="t('advice_' + a.k)"></span></div>
+                <!-- 标题键：ad_<k> 优先，回退到 advice_<k>。
+                     为什么要有第一档：额度告警有两个变体（quota_full / quota_near），
+                     它们的**正文**键与标题键不能用同名（同一 i18n 表只能有一个），
+                     所以标题单独走 ad_ 前缀，正文仍是 advice_quota_full/near。 -->
+                <div class="adv-hd"><span class="adv-dot" aria-hidden="true"></span><span x-text="adTitle(a.k)"></span></div>
                 <div class="adv-tx" x-text="a.text"></div>
                 <template x-if="a.action"><button class="adv-act" @click="switchTab(a.action)" x-text="t('advice_act')+' →'"></button></template>
               </div>

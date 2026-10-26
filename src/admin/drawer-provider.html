@@ -52,6 +52,17 @@
             <button x-show="healthOf(drawerProv.name)==='err'" class="btn btn-p" style="font-size:var(--fs-11);white-space:nowrap" :disabled="drawerProv._testing" :title="t('test_recover_hint')" @click="testProvider(providersFormData.indexOf(drawerProv), true)">
               <span x-text="t('test_recover')"></span>
             </button>
+            <!-- 「重置熔断」（2026-10-26 接线）：**不经测试**直接关掉熔断。
+                 为什么必须有：上面那个「测试并恢复」要求测试**通过**才关熔断 ——
+                 如果上游此刻确实不通（或熔断是被误触发的），用户就卡住了：
+                 红点一直在、请求一直被本地拦掉、**没有任何其他出口**。
+                 这个按钮就是那个出口（后端 /admin/api/circuit/reset 早就存在，
+                 ds-brands.js 的 resetCircuit() 也早就写好，只是从来没有按钮调用）。 -->
+            <button x-show="healthOf(drawerProv.name)==='err'" class="btn btn-g" style="font-size:var(--fs-11);white-space:nowrap"
+                    :title="t('reset_circuit_hint')"
+                    @click.stop="resetCircuit(drawerProv.name)">
+              <span x-text="t('reset_circuit')"></span>
+            </button>
           </div>
           <div class="sec-body">
             <!-- Test result -->
