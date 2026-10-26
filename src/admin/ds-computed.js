@@ -208,8 +208,44 @@
     // 为什么: 真实数据里 8 家里有 4 家是同一句"该供应商无公开余额接口" ——
     // 每行重复印一遍, 右侧余额面板被撑到 1488px, 而**没有一条**需要用户处理。
     // 这不是"信息多", 是"同一句话说了四遍"。合并后回到一行 + 数量。
+    /// 余额行右侧的**主数值**文案（2026-10-26 起也负责套餐额度）。
+    ///
+    /// 三种情形，语义必须分开：
+    ///   · 有余额数值 → 钱（原行为）
+    ///   · 只有套餐额度 → 最紧那一档的百分比（"本月 64.3%"），**不冒充余额**
+    ///     因为套餐额度不是"还剩多少钱"，混成余额会让"还能撑几天"算错
+    ///   · 都没有 → 空串（原行为：不给 '—' 假数字）
+    ocPlanCellText(row) {
+      const ws = (this.ocPlanRows() || []).filter(x => x.provider === row.provider);
+      if (!ws.length) return '';
+      // 多区时取最紧的一个作为代表值（最该关心的），文案里说明是哪个区
+      let worst = ws[0];
+      for (const w of ws) {
+        if ((w.pct || 0) > (worst.pct || 0)) worst = w;
+      }
+      if (worst.pct == null) return '';
+      return this.ocPctText(worst.pct);
+    },
+
+    /// 套餐额度这一行的色调（与余额色阶语义一致：>100 红、>80 黄、否则绿）。
+    ocPlanTone(row) {
+      const ws = (this.ocPlanRows() || []).filter(x => x.provider === row.provider);
+      if (!ws.length) return 'var(--muted)';
+      let worst = ws[0];
+      for (const w of ws) {
+        if ((w.pct || 0) > (worst.pct || 0)) worst = w;
+      }
+      return this.ocTone(worst.pct);
+    },
+
+
     get balanceUnsupported() {
-      const rows = (this.providerRows || []).filter(r => r.state === 'unsupported');
+      // 排除**有套餐额度**的家（2026-10-26）：它们没有余额接口，但有 Console
+      // 套餐额度可看（go / zen）。把它们算进"不支持余额查询"是自相矛盾的 ——
+      // 用户刚在供应商页看到额度，这里却说"不支持"。
+      const rows = (this.providerRows || [])
+        .filter(r => r.state === 'unsupported')
+        .filter(r => !this.provHasPlanOnly(r.provider));
       return { count: rows.length, names: rows.map(r => r.provider) };
     },
     // 只在**未配置**时给一句汇总; 其余状态（失败/手动）是逐家不同的，必须逐行显示。

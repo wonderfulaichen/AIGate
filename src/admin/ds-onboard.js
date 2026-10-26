@@ -58,6 +58,71 @@
       return rows;
     },
 
+    // ── 套餐额度行（2026-10-26）──
+    //
+    // # 为什么需要它
+    //
+    // 「余额与费用」面板原来只认**余额 API**（`balance_endpoint`）。
+    // opencode 的 go/zen 是**套餐**制：没有余额接口，但 Console 有真实额度。
+    // 于是它们被归进「不支持余额查询」，而用户明明刚在供应商页看到了额度 ——
+    // 面板却在说"这家不支持"，这是自相矛盾。
+    //
+    // # 做法
+    //
+    // 把 `providerRows` 里 state==='unsupported' **但有套餐额度**的行挑出来，
+    // 用额度渲染（每个工作区一行：进度条 + 已用/上限 + 重置时间）。
+    // 没有套餐额度的仍走原来的"未配置"汇总，不伪造。
+    //
+    // # 为什么不在 providerRows 里就地改
+    //
+    // providerRows 还供 `balanceTakeaway`（"还能撑几天"）与
+    // `balanceUnsupported`（汇总行）使用，那两处必须继续只看**余额**语义。
+    // 混进去会让"还能撑几天"把套餐额度当成余额算天数 —— 量纲完全不同。
+    ocPlanRows() {
+      const all = this._ocQuotaAll || {};
+      const out = [];
+      for (const row of (this.providerRows || [])) {
+        const v = all[row.provider];
+        if (!v) continue;
+        const wsList = (v.workspaces || []).filter(w => w.quota);
+        if (!wsList.length) continue;
+        for (const w of wsList) {
+          // 取"最紧"的一档作为该工作区的代表百分比（与 ocQuotaAlerts 同口径）
+          let worst = null;
+          for (const win of (w.quota.windows || [])) {
+            if (win.used_pct == null) continue;
+            if (!worst || win.used_pct > worst.used_pct) worst = win;
+          }
+          out.push({
+            provider: row.provider,
+            workspace: w.workspace,
+            name: w.name || '',
+            pct: worst ? worst.used_pct : null,
+            worstKey: worst ? worst.key : '',
+            windows: w.quota.windows || [],
+            ends_at: w.quota.ends_at,
+            cancel_at_period_end: !!w.quota.cancel_at_period_end,
+          });
+        }
+      }
+      // 同一供应商的多个工作区排在一起；组内按已用百分比降序（最紧的在前）
+      out.sort((a, b) => {
+        if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+        return (b.pct || 0) - (a.pct || 0);
+      });
+      return out;
+    },
+
+    /// 该供应商是否**只有套餐额度**（没有余额接口）。
+    /// 这类家不该出现在「不支持余额查询」汇总里 —— 它们有额度可看。
+    provHasPlanOnly(prov) {
+      const row = (this.providerRows || []).find(r => r.provider === prov);
+      if (!row) return false;
+      if (row.state !== 'unsupported') return false;
+      const v = (this._ocQuotaAll || {})[prov];
+      return !!(v && (v.workspaces || []).some(w => w.quota));
+    },
+
     // ── 设置页分区导航 (P3) ──
     // 分区表即目录: 一处声明, 导航与锚点共用 (新增分区只加一行). 与抽屉的 dr-secnav 同手法.
     get settingsSections() {

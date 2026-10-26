@@ -452,6 +452,7 @@ const I18N = {
     'quota_left_hours': '{0} 小时后', 'quota_left_days': '{0} 天后',
     'quota_inactive': '该窗口未激活',
     'quota_period_ends': '套餐周期至', 'quota_cancelled': '已设为到期不续费',
+    'plan_quota': '套餐额度',
     'quota_5h': '5 小时', 'quota_week': '本周', 'quota_month': '本月',
     // Console 凭据录入（供应商抽屉，2026-10-24）：只用于查 opencode 套餐额度
     'console_cred_label': 'opencode Console 凭据（查套餐额度用）',
@@ -1015,6 +1016,7 @@ const I18N = {
     'quota_left_hours': 'in {0}h', 'quota_left_days': 'in {0}d',
     'quota_inactive': 'This window is not active',
     'quota_period_ends': 'Plan period ends', 'quota_cancelled': 'cancels at period end',
+    'plan_quota': 'Plan quota',
     'quota_5h': '5 hours', 'quota_week': 'This week', 'quota_month': 'This month',
     'console_cred_label': 'opencode Console credentials (for plan quota)',
     'console_cred_hint': 'Click the button below and authorize with Google / GitHub in the window that opens — nothing to copy manually. Quota display only; unrelated to request forwarding.',

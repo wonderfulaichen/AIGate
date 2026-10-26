@@ -181,7 +181,7 @@
         </div><div style="margin-top:14px"><div class="txs tm" style="margin-bottom:4px"><span x-text="t('top_models_traffic')"></span></div><template x-for="(m,i) in (stats.top_models||[]).slice(0,6)" :key="m.model"><div class="ov-model-row"><span class="ov-dot" :style="'background:'+(m.errors===0?'var(--ok)':m.errors<m.requests/5?'var(--warn)':'var(--err)')"></span><span class="mono txs" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)" x-text="m.model"></span><span class="txs tm" x-text="m.requests+' '+t('unit_times')"></span><span class="txs mono" style="color:var(--muted)" x-text="m.requests?fmtPct((m.requests-m.errors)/m.requests*100):'—'"></span></div></template><template x-if="!(stats.top_models||[]).length"><div class="txs tm" style="padding:10px 0" x-text="t('no_data')"></div></template></div><div class="panel-takeaway" x-show="healthTakeaway" x-text="healthTakeaway"></div></div></div>
       </div>
       <div class="ov-side stagger">
-        <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('balance_cost')"></h2><button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchBalance()" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider">
+        <div class="pnl"><div class="pnl-h"><h2 class="pnl-ht" x-text="t('balance_cost')"></h2><button class="btn btn-g" style="font-size:var(--fs-11)" @click="fetchBalance(); fetchOpencodeQuotaAll(true)" x-text="t('balance_refresh')"></button></div><div class="pnl-b" style="padding:8px 16px"><template x-for="row in providerRows" :key="row.provider">
               <!-- 每家只保留**这一家独有**的信息。未配置余额查询的供应商也会走到这里，
                    但它的"未配置"说明已由底部汇总行统一交代，故此处不再重复打印。 -->
               <div class="bal-row">
@@ -189,13 +189,25 @@
                   <div style="width:24px;height:24px;border-radius:var(--rm);overflow:hidden;flex:none" x-html="providerLogo(row.provider)"></div>
                   <span class="txsm fw6" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="row.provider"></span>
                   <!-- 余额数值: 无余额配置时不给 '—' 假数字, 而是空位 (P3 口径) -->
-                  <span class="txsm mono fw6" :style="'color:'+balanceTone(row)" x-text="fmtBalanceRow(row)"></span>
+                  <!-- 套餐额度（2026-10-26）：go/zen 这类**没有余额接口但有套餐额度**的家，
+                       这里显示最紧那一档的百分比，而不是空白 —— 用户明明在供应商页
+                       看得到额度，概览页却什么都不显示是自相矛盾的。
+                       注意：**不冒充余额**（不写成钱），否则「还能撑几天」会把
+                       额度当余额算，量纲完全不同。 -->
+                  <span class="txsm mono fw6"
+                        :style="'color:'+(ocPlanRows().some(x=>x.provider===row.provider)?ocPlanTone(row):balanceTone(row))"
+                        x-text="ocPlanRows().some(x=>x.provider===row.provider)?ocPlanCellText(row):fmtBalanceRow(row)"></span>
                 </div>
                 <!-- 次行: 只在该家有**实质内容**时出现，避免空行把面板撑高。
-                     今日费用为 0 时不打印 —— 8 家全印"¥0.00"没有任何信息量。 -->
-                <div class="bal-row-sub" x-show="row.today_cost > 0 || fmtCreditsExpiry(row) || fmtQuotaProgress(row)">
-                  <span class="txs tm" x-show="row.today_cost > 0" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span>
-                  <span class="txs tm" x-text="row.source||''"></span>
+                     今日费用为 0 时不打印 —— 8 家全印"¥0.00"没有任何信息量。
+                     套餐额度行（provHasPlanOnly）也不打印 today_cost：
+                     套餐是按额度而非按量计费，旁边印个 ¥0.00 会被误读成"今天没花钱"。 -->
+                <div class="bal-row-sub" x-show="(row.today_cost > 0 && !provHasPlanOnly(row.provider)) || fmtCreditsExpiry(row) || fmtQuotaProgress(row)">
+                  <span class="txs tm" x-show="row.today_cost > 0 && !provHasPlanOnly(row.provider)" x-text="t('stat.today_cost')+' '+fmtMoney(row.today_cost)"></span>
+                  <!-- 数据来源（"api"/"手动"）：套餐额度行不显示 ——
+                       那个值描述的是**余额**怎么来的，而套餐额度来自 Console，
+                       两者不同源，并排印会让人以为额度也是那个来源查到的。 -->
+                  <span class="txs tm" x-show="!provHasPlanOnly(row.provider)" x-text="row.source||''"></span>
                 </div>
                 <template x-if="fmtCreditsExpiry(row)">
                   <div class="txs" style="color:var(--warn);padding-left:32px;margin-top:3px" x-text="fmtCreditsExpiry(row)"></div>
@@ -207,6 +219,30 @@
                       <span class="txs mono fw6" :style="'color:'+fmtQuotaProgress(row).color" x-text="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span>
                     </div>
                     <div class="prop-bar" style="height:4px"><span :style="'flex-grow:'+Math.max(fmtQuotaProgress(row).pct,1)+';background:'+fmtQuotaProgress(row).color" :title="fmtQuotaProgress(row).label+' '+fmtPct(fmtQuotaProgress(row).pct)"></span><span style="flex-grow:1"></span></div>
+                  </div>
+                </template>
+                <!-- 套餐额度明细（2026-10-26）：每个工作区一行，带进度条。
+                     多个工作区时逐个列出 —— 同账号下每个工作区是**独立的套餐**，
+                     只显示"最紧那个"会让用户以为只有一个区（这正是当初
+                     「其他区无法获得」投诉的那种症状）。 -->
+                <template x-for="pr in ocPlanRows().filter(x=>x.provider===row.provider)" :key="'pr'+row.provider+pr.workspace">
+                  <div style="padding-left:32px;margin-top:5px">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                      <span class="txs tm">
+                        <span x-text="t('plan_quota')"></span>
+                        <span x-show="ocPlanRows().filter(x=>x.provider===row.provider).length > 1"
+                              class="mono" x-text="'· '+(pr.name || ('…'+String(pr.workspace).slice(-6)))"></span>
+                      </span>
+                      <span class="txs mono fw6" :style="'color:'+ocTone(pr.pct)"
+                            :title="ocWindowLabel(pr.worstKey)"
+                            x-text="ocPctText(pr.pct)"></span>
+                    </div>
+                    <div class="prop-bar" style="height:4px">
+                      <span :style="'flex-grow:'+Math.max(pr.pct||0,1)+';background:'+ocTone(pr.pct)"></span>
+                      <span style="flex-grow:1"></span>
+                    </div>
+                    <div class="txs tm" style="margin-top:2px" x-show="pr.ends_at"
+                         x-text="t('quota_period_ends')+' '+pr.ends_at+(pr.cancel_at_period_end?' · '+t('quota_cancelled'):'')"></div>
                   </div>
                 </template>
                 <!-- `row.error` 只在**真失败**时显示。'unsupported'（该上游没有公开余额接口）
