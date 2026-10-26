@@ -97,6 +97,15 @@ const { chromium } = require('playwright');
     return true;
   }`;
 
+  // ⚠️ 必须先停 3s 轮询：本探针对 stats 注入合成样本（gateway_stages / ttft /
+  //    audit.context）—— 不停轮询的话，下一次 fetchStats 会把注入数据整体覆盖，
+  //    表现为**偶发**失败（时好时坏，取决于两次断言之间有没有跨过 tick）。
+  out.pollStopped = await p.evaluate(() => {
+    const d = document.querySelector('[x-data]')._x_dataStack[0];
+    if (d.pollTimer) { clearInterval(d.pollTimer); d.pollTimer = 0; return true; }
+    return false;
+  });
+
   // ── ① 网关去程五段 ──
   //
   // ⚠️ mock 生成的假日志**不含** stage 计时（那是真实请求才有的），
@@ -187,16 +196,37 @@ const { chromium } = require('playwright');
   }, isVis);
 
   // ── ④ 上下文构成是否一级可见 ──
-  out.ctxPanel = await p.evaluate((isVisSrc) => {
+  //
+  // ⚠️ 面板现在是 `x-show="... && auditContextSegs.length"` —— **没有审计数据就不渲染**
+  //    （2026-10-27 修：无数据时它只剩一条空灰条，白占 100px）。
+  //    所以必须先注入一份审计数据，才能验证"有数据时它是一级面板"。
+  out.ctxPanel = await p.evaluate(async (isVisSrc) => {
     const isVis = eval(isVisSrc);
-    const panels = Array.from(document.querySelectorAll('.pnl')).filter(isVis);
-    // 找标题是"上下文构成"的面板，且**不在**省量审计折叠区里
+    const d = document.querySelector('[x-data]')._x_dataStack[0];
+    // ⚠️ `context_kinds` 的真实形状是 `[["system", 6519], ["tools", 800], ...]`
+    //    —— 每项是 **[类别名, token 数]** 两元组，第二项是**数字**不是对象。
+    //    （ds-fmt.js:491 的 auditContextSegs 里 `Number(p[1] || 0)` 就证明它是数字。）
+    d.stats = Object.assign({}, d.stats, {
+      audit: Object.assign({}, d.stats && d.stats.audit, {
+        context_kinds: [
+          ['system', 1200], ['tools', 800], ['injected', 300],
+          ['assistant', 2000], ['tool_result', 4000], ['chat', 6000],
+        ],
+        context_requests: 10,
+        output: { output_tokens: 5000, requests: 10, max_tokens: 900, long_requests: 1 },
+        applied_saved_tokens: 1000,
+      }),
+    });
+    await new Promise(r => setTimeout(r, 800));
+    // ⚠️ 必须限定在分析页根容器内：`.pnl` 全页都有（概览页/设置页也是），
+    //    全局查询会先命中其它页的隐藏面板 → 找不到"上下文构成"。
+    const root = document.querySelector('.an-page') || document.body;
+    const panels = Array.from(root.querySelectorAll('.pnl')).filter(isVis);
     let topLevel = null, insideAudit = null;
     for (const pn of panels) {
       const ht = pn.querySelector('.pnl-ht');
-      const t = ht ? (ht.textContent || '').replace(/\s+/g, ' ').trim() : '';
+      const t = ht ? (ht.textContent || '').replace(/\s+/g, ' ').replace(/^\s*[▸▾]\s*/, '').trim() : '';
       if (!/上下文|Context/.test(t)) continue;
-      // 祖先里有没有「省量审计」面板
       let n = pn.parentElement, inAudit = false;
       while (n && n !== document.body) {
         if (n.classList && n.classList.contains('pnl')) {
@@ -208,7 +238,15 @@ const { chromium } = require('playwright');
       }
       if (inAudit) insideAudit = t; else if (!topLevel) topLevel = t;
     }
-    return { topLevel, insideAudit };
+    return {
+      topLevel, insideAudit,
+      segs: (d.auditContextSegs || []).length,
+      // 诊断：面板总数与标题，便于定位"面板根本没渲染"还是"选择器没找到"
+      panelTitles: panels.map(pn => {
+        const h = pn.querySelector('.pnl-ht');
+        return h ? (h.textContent || '').replace(/\s+/g, ' ').replace(/^\s*[▸▾]\s*/, '').trim().slice(0, 20) : '';
+      }).filter(Boolean),
+    };
   }, isVis);
 
   // ── ⑤ TTFT 近似值口径 ──
@@ -326,7 +364,9 @@ def main():
     print(f"\n[③ 失败原因] 有错误的供应商数={ei.get('providersWithErr')} 行内可见={ei.get('found')}")
     if ei.get("sample"):
         print(f"   样例: {ei.get('sample')}")
-    print(f"\n[④ 上下文构成] 一级面板={cp.get('topLevel')!r} 仍埋在审计里={cp.get('insideAudit')!r}")
+    print(f"\n[④ 上下文构成] 一级面板={cp.get('topLevel')!r} 仍埋在审计里={cp.get('insideAudit')!r} "
+          f"segs={cp.get('segs')}")
+    print(f"   分析页面板标题: {cp.get('panelTitles')}")
     print(f"\n[⑤ TTFT 口径] hasData={th.get('hasData')} 提示={th.get('hint')!r}")
     if d.get("errs"):
         print(f"\n[页面异常] {d['errs']}")

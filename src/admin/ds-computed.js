@@ -476,19 +476,9 @@
     // ⚠️ 未采集的样本不计入样本数: 于是"有首字样本 100、有正文样本 60"是可能且如实的。
     get stageSummary() { return (this.stats && this.stats.stage_summary) || {}; },
     get stageHasData() { return (this.stageSummary.waiting_samples || 0) > 0; },
-    get stageWinRows() {
-      const s = this.stageSummary;
-      const mk = (k, key, sumKey, nKey, color) => {
-        const n = s[nKey] || 0;
-        return { k, label: t(key), n, avg: n > 0 ? Math.round((s[sumKey] || 0) / n) : null, color };
-      };
-      return [
-        mk('waiting', 'stage_waiting', 'waiting_sum_ms', 'waiting_samples', 'var(--muted)'),
-        mk('reasoning', 'stage_reasoning', 'reasoning_sum_ms', 'reasoning_samples', 'var(--secondary)'),
-        mk('output', 'stage_output', 'output_sum_ms', 'output_samples', 'var(--accent)'),
-        mk('tool', 'stage_tool_call', 'tool_call_sum_ms', 'tool_call_samples', 'var(--ok)'),
-      ];
-    },
+    // ⚠️ 2026-10-27 删除 stageWinRows（全局四段行）：
+    //    它此前唯一消费方是「段色图例」，而图例随「模型明细」表合并而消失。
+    //    逐模型的四段仍在 stageRowsFor(prov, model) 里（供应商展开行的耗时构成）。
 
     // ─── 网关自身开销 (窗口级, 2026-10-15) ───
     // 与上者的区别: 上者回答"模型侧哪段最久", 这里回答"**网关照成的部分有多大**" ——

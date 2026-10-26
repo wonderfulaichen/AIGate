@@ -195,27 +195,50 @@
         .sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0));
     },
 
-    // ── 模型明细表"首屏 10 行 + 展开更多" (2026-10-24) ──
-    // 实测: per_model 有 **50 条**(含历史 rollup 聚合项), 全渲染 = 3432px / 3.3 屏,
-    // 占掉 cost 页签(5286px)的三分之二。用户扫这张表是看"谁慢/谁贵",
-    // 前 10 条已覆盖绝大部分请求量, 其余按需展开。
+    // ── 模型行"首屏 10 行 + 展开更多" ──
+    // 实测: per_model 有 **50 条**(含历史 rollup 聚合项), 全渲染 = 3432px / 3.3 屏。
+    // 用户扫这张表是看"谁慢/谁贵", 前 10 条已覆盖绝大部分请求量, 其余按需展开。
     //
-    // ⚠️ 实现要点(踩过坑): 不要写成 `get modelRowsShown() { return this.filteredModelStats.slice(...) }`
-    // 这种**嵌套 getter** —— filteredModelStats 本身要遍历整个 per_model 做匹配,
-    // 而 Alpine 每次重渲染都会重新求值, 50 行 × 每行多次引用 = 卡死页面(实测浏览器直接挂住)。
-    // 这里改成**普通方法 + 由模板显式调用一次**。
-    // ⚠️ 也不能在文件顶部写 `const MODEL_ROWS_INITIAL` —— 本文件是 dashboard() 的
+    // ⚠️ 实现要点(踩过坑): 不要写成 getter（`get xxx() { return this.filteredModelStats.slice(...) }`）
+    // —— filteredModelStats 本身要遍历整个 per_model 做匹配, 而 Alpine 每次重渲染
+    // 都会重新求值, 50 行 × 每行多次引用 = 卡死页面(实测浏览器直接挂住)。
+    // 必须写成**普通方法 + 由模板显式调用一次**。
+    // ⚠️ 也不能在文件顶部写 `const XXX = 10` —— 本文件是 dashboard() 的
     // **对象体片段**（被 concat! 拼进对象内部），在对象里写 const 会直接抛 ReferenceError。
-    // 首屏行数就是下面这个方法里的字面量 10，改它只改一处。
-    modelRowsShown() {
-      const all = this.filteredModelStats || [];
-      const limit = this.modelRowsAll ? all.length : 10;
+    //
+    // 2026-10-27 合并进供应商表后：全局的 modelRowsShown / modelRowsHiddenCount /
+    // modelRowsAll 已无消费方（模型表现为供应商的展开区，逐家分页），故删除。
+    // 逐家版本见下方 provModelsShown / provModelsHiddenCount。
+
+    // ── 供应商展开区里的模型行（2026-10-27 合并模型明细后新增）──
+    //
+    // 合并后这里就是原来的「模型明细表」，但**每一家单独限制首屏 10 行** ——
+    // 一家可能有 40+ 个模型（实测 per_model 50 条里同一家最多 40 余条），
+    // 展开一次就把 3 屏全撑出来，比原来两张表还糟。
+    //
+    // 与 modelRowsShown 的区别：那个是全局一张表的分页；这里是**逐供应商**的，
+    // 所以用 `perProvModelAll[provider]` 记各自的"看全部"状态，
+    // 不能用同一个布尔（那会让点开 A 家的"更多"，B 家也跟着全展开）。
+    //
+    // ⚠️ 同样必须是**普通方法**而不是 getter（见 modelRowsShown 上方的踩坑说明：
+    //    嵌套 getter 会让 Alpine 每次重渲染重算整张表，实测卡死浏览器）。
+    provModelsShown(provider) {
+      const all = this.provModelsOf(provider) || [];
+      const open = (this.perProvModelAll || {})[provider];
+      const limit = open ? all.length : 10;
       return all.length > limit ? all.slice(0, limit) : all;
     },
-    // 还有多少行没显示（0 = 不用给展开按钮）
-    modelRowsHiddenCount() {
-      const n = (this.filteredModelStats || []).length;
-      return this.modelRowsAll ? 0 : Math.max(0, n - 10);
+    provModelsHiddenCount(provider) {
+      const n = (this.provModelsOf(provider) || []).length;
+      if ((this.perProvModelAll || {})[provider]) return 0;
+      return Math.max(0, n - 10);
+    },
+    toggleProvModels(provider) {
+      if (!this.perProvModelAll) this.perProvModelAll = {};
+      // Alpine 3 不追踪既有对象的深层属性新增 → 整体替换一次触发重渲染
+      this.perProvModelAll = Object.assign({}, this.perProvModelAll, {
+        [provider]: !this.perProvModelAll[provider],
+      });
     },
 
     // 这张表的展开态**不复用** topoOpenProviders —— 那个默认值是 true（拓扑要一眼看全），

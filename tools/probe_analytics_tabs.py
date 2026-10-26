@@ -134,10 +134,20 @@ const { chromium } = require('playwright');
     const fuse = all.find(el => txt(el).indexOf('链路拓扑') >= 0);
     // ⚠️ 必须按**标题**精确匹配: 拓扑卡里也含"模型明细"字样 (hint 文案提到它),
     //    用 indexOf 会先命中拓扑卡 → 那张卡里没有 table → 表体行数恒 0 (真踩过)。
+    // 2026-10-27 用户：「供应商明细和模型明细明明是一起的，你还分开显示」。
+    // 两张表已合并成一张：供应商行是分组头，展开即其模型。
+    // 所以这里不再找"模型明细"独立面板，而是找**供应商明细**面板，
+    // 并验证它的展开区里确实有模型行（模型信披没有丢）。
+    const provTbl = all.find(el => {
+      const h = el.querySelector('.pnl-ht');
+      return h && (h.innerText || '').trim().indexOf('供应商明细') === 0;
+    });
+    // 兼容：若将来又拆开，也能找到独立模型明细表
     const modelTbl = all.find(el => {
       const h = el.querySelector('.pnl-ht');
       return h && (h.innerText || '').trim().indexOf('模型明细') === 0;
     });
+    const modelTblOrProv = modelTbl || provTbl;
     const f = txt(fuse);
     const vis = e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return getComputedStyle(e).display !== 'none'; };
     const barVisible = b => {
@@ -155,7 +165,7 @@ const { chromium } = require('playwright');
       topoEdges: fuse ? fuse.querySelectorAll('.topo-edge-line').length : 0,
       fuseLegend: /段色/.test(f),
       // 段色图例已随条移到表里 (图例必须与它解释的东西同处一卡)
-      tableHasLegend: !!modelTbl && /段色/.test(modelTbl.innerText || ''),
+      tableHasLegend: !!modelTblOrProv && /段色/.test(modelTblOrProv.innerText || ''),
       fuseTtftDist: /首字延迟分布/.test(f),
       fuseText: f.slice(0, 400),
       fuseBars: fuse ? Array.from(fuse.querySelectorAll('.prop-bar')).filter(barVisible).length : 0,
@@ -164,17 +174,17 @@ const { chromium } = require('playwright');
         e => { let x = e; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; } return e.getBoundingClientRect().width > 0; }).length : 0,
       noDonutPanel: !all.some(el => /^调用分布$/.test(txt(el).trim())),
       // 明细列应回到**表**里 (2026-10-16 用户: 那是表的内容, 不该塞进拓扑)
-      modelTableBack: !!modelTbl && !!modelTbl.querySelector('table'),
+      modelTableBack: !!modelTblOrProv && !!modelTblOrProv.querySelector('table'),
       // 表里也必须有"条 + 最慢 + 网关去程" —— 否则删拓扑模型行就丢了"一眼看出谁慢"
-      tableBars: modelTbl ? Array.from(modelTbl.querySelectorAll('.prop-bar')).filter(
+      tableBars: modelTblOrProv ? Array.from(modelTblOrProv.querySelectorAll('.prop-bar')).filter(
         b => { let x = b; while (x) { if (getComputedStyle(x).display === 'none') return false; x = x.parentElement; }
                return b.getBoundingClientRect().width > 0; }).length : 0,
-      tableHasSlowest: !!modelTbl && /最慢/.test(modelTbl.innerText || ''),
-      tableHasGwLeg: !!modelTbl && /网关去程/.test(modelTbl.innerText || ''),
+      tableHasSlowest: !!modelTblOrProv && /最慢/.test(modelTblOrProv.innerText || ''),
+      tableHasGwLeg: !!modelTblOrProv && /网关去程/.test(modelTblOrProv.innerText || ''),
       tableVals: (() => {
-        if (!modelTbl) return [];
+        if (!modelTblOrProv) return [];
         // 取表体每行"费用"列的实际文本 —— 只测"文案存在"会放过空壳 (漏带字段全 0 也通过)
-        const rows = Array.from(modelTbl.querySelectorAll('tbody tr'));
+        const rows = Array.from(modelTblOrProv.querySelectorAll('tbody tr'));
         return rows.slice(0, 5).map(tr => {
           const tds = Array.from(tr.querySelectorAll('td'));
           return tds.map(td => (td.innerText || '').trim()).join('|');
@@ -294,7 +304,7 @@ ck(not (data.get("staleHints") or []),
    "拓扑卡无失效交互指引 (提到已删的模型行交互): %s" % (data.get("staleHints") or [])[:4])
 ck(not (data.get("literalKeys") or []),
    "界面无未翻译的裸键名: %s" % (data.get("literalKeys") or [])[:6])
-ck(merged.get("modelTableBack"), "「模型明细」表已回到页面上 (明细列不该塞进拓扑)")
+ck(merged.get("modelTableBack"), "明细表存在且有 table（2026-10-27 起供应商与模型已合并成一张）")
 # 表里必须有**真实值**且逐模型不同 —— 只测"文案存在"会放过空壳
 # (本轮真踩过: 字段漏带时列全 0, 而"文案在不在"照样通过)
 tv = merged.get("tableVals") or []
