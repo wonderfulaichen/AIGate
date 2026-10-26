@@ -136,9 +136,7 @@
                 <!-- 查询失败：如实报错（含"Cookie 可能过期"这种可操作提示），不画假进度条。
                      旁边直接给「去填写凭据」—— 动作与后果同屏：
                      用户在这里看到"额度查不到"，就该能**从这里**一步到填写处，
-                     而不是被要求记住路径再去「编辑 → 高级设置」里找（原来就是这么藏的）。
-                     这里不假装有"一键登录"：opencode 是标准 OAuth，服务端拿不到凭据，
-                     参考项目 QuotaHub 同样是手贴 Cookie。 -->
+                     而不是被要求记住路径再去「编辑 → 高级设置」里找（原来就是这么藏的）。 -->
                 <template x-if="ocQuotaErr(prov.name)">
                   <div class="quota-err" style="align-items:center;flex-wrap:wrap">
                     <span aria-hidden="true">!</span>
@@ -150,26 +148,49 @@
                   </div>
                 </template>
 
-                <!-- 查到了：三个窗口各一条，带金额与重置时间 -->
-                <template x-if="ocQuota(prov.name)">
+                <!-- 查到了：**按工作区分组**（2026-10-26）。
+                     为什么必须分组：同一个 opencode 账号可以有多个工作区，
+                     每个是**独立的 Go 订阅**（实测同账号两区：一个已用满 100%、
+                     另一个 64.1%，到期时间也不同）。原来只显示第一个区，
+                     用户看到"用满了"却不知道另一个区还有余量。 -->
+                <template x-if="ocQuota(prov.name) || ocQuotaWorkspaces(prov.name).length">
                   <div class="quota-list">
-                    <template x-for="w in ocQuota(prov.name).windows" :key="'qw'+w.key">
-                      <div class="quota-row">
-                        <span class="quota-model" x-text="ocWindowLabel(w.key)"></span>
-                        <span class="quota-bar"><i :style="'width:'+Math.min(100,w.used_pct||0)+'%;background:'+ocTone(w.used_pct)"></i></span>
-                        <b class="quota-w-v" :style="'color:'+ocTone(w.used_pct)"
-                           :title="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"
-                           x-text="ocPctText(w.used_pct)"></b>
-                        <span class="quota-amt mono" x-text="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"></span>
-                        <span class="quota-reset txs tm" x-show="w.resets_at"
-                              x-text="t('quota_reset_at')+' '+ocResetText(w.resets_at)"></span>
-                        <span class="quota-reset txs tm" x-show="!w.resets_at" x-text="t('quota_inactive')"></span>
+                    <template x-for="ws in ocQuotaWorkspaces(prov.name)" :key="'ws'+ws.workspace">
+                      <div class="quota-ws">
+                        <!-- 工作区头：多个时才显示名字（只有一个区时这句是噪音） -->
+                        <div class="quota-ws-hd" x-show="ocQuotaWorkspaces(prov.name).length > 1">
+                          <span class="mono" x-text="ocWsLabel(ws)"></span>
+                        </div>
+                        <!-- 该区查询失败：只坏这一个区，不影响其他区显示 -->
+                        <template x-if="ws.error">
+                          <div class="quota-err" style="margin:2px 0">
+                            <span aria-hidden="true">!</span>
+                            <span x-text="ws.error"></span>
+                          </div>
+                        </template>
+                        <template x-if="ws.quota">
+                          <div>
+                            <template x-for="w in ws.quota.windows" :key="'qw'+ws.workspace+w.key">
+                              <div class="quota-row">
+                                <span class="quota-model" x-text="ocWindowLabel(w.key)"></span>
+                                <span class="quota-bar"><i :style="'width:'+Math.min(100,w.used_pct||0)+'%;background:'+ocTone(w.used_pct)"></i></span>
+                                <b class="quota-w-v" :style="'color:'+ocTone(w.used_pct)"
+                                   :title="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"
+                                   x-text="ocPctText(w.used_pct)"></b>
+                                <span class="quota-amt mono" x-text="ocUsd(w.used_usd)+' / '+ocUsd(w.limit_usd)"></span>
+                                <span class="quota-reset txs tm" x-show="w.resets_at"
+                                      x-text="t('quota_reset_at')+' '+ocResetText(w.resets_at)"></span>
+                                <span class="quota-reset txs tm" x-show="!w.resets_at" x-text="t('quota_inactive')"></span>
+                              </div>
+                            </template>
+                            <div class="txs tm" style="margin-top:2px"
+                                 x-show="ws.quota.ends_at"
+                                 x-text="t('quota_period_ends')+' '+ws.quota.ends_at
+                                         +(ws.quota.cancel_at_period_end?' · '+t('quota_cancelled'):'')"></div>
+                          </div>
+                        </template>
                       </div>
                     </template>
-                    <div class="txs tm" style="margin-top:2px"
-                         x-show="ocQuota(prov.name).ends_at"
-                         x-text="t('quota_period_ends')+' '+ocQuota(prov.name).ends_at
-                                 +(ocQuota(prov.name).cancel_at_period_end?' · '+t('quota_cancelled'):'')"></div>
                   </div>
                 </template>
 

@@ -455,12 +455,32 @@ pub struct ProviderConfig {
     /// 这里与其它供应商凭据同等对待（不进日志、不回显全文）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_session: Option<String>,
-    /// opencode **组织 ID**（`wrk_` 开头），额度查询必须随 Cookie 一起发 `x-org-id`。
+    /// opencode **组织/工作区 ID**（额度查询随 Cookie 一起发 `x-org-id`）。
     ///
     /// 从哪里拿：Console 地址栏形如 `https://opencode.ai/console/wrk_xxx/go`，
     /// 中间那段就是。实测：不给它或给错 → HTTP 400。
+    ///
+    /// ⚠️ 前缀不止 `wrk_` —— 同一个账号下可以有 **`org_` 前缀的工作区**，
+    /// 它同样能查 Go 额度，且**额度是独立的一套**（实测同账号两个工作区：
+    /// 一个 `wrk_` 月额度已用满 100%、一个 `org_` 才用 64.1%，
+    /// 到期时间也各不相同）。早期代码用 `starts_with("wrk_")` 过滤，
+    /// 把 `org_` 工作区整块丢掉了（用户报「其他区无法获得」的直接原因）。
+    ///
+    /// 本字段是**单工作区**的历史形态，保留用于兼容旧配置与「只关心一个区」的场景；
+    /// 多工作区请用 [`Self::console_org_ids`]，两者同时存在时以列表为准
+    /// （见 [`Self::console_workspaces`]）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_org_id: Option<String>,
+    /// opencode **全部工作区 ID**（2026-10-26，支持同账号多工作区额度）。
+    ///
+    /// 一个 opencode 账号可以有多个工作区，每个工作区是**独立的 Go 订阅**
+    /// （各自的额度窗口、各自的到期时间）。面板要看到全部，就必须存全。
+    ///
+    /// 与 `console_org_id` 的关系：这是**权威字段**；`console_org_id` 是其
+    /// 单值历史形态。读取时统一走 [`Self::console_workspaces`]，
+    /// 不要直接读这两个字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_org_ids: Option<Vec<String>>,
     /// 额外注入的 HTTP 请求头.
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
@@ -574,6 +594,51 @@ struct ProvidersFile {
 pub struct RouteEntry {
     pub provider: ProviderConfig,
     pub model: ModelConfig,
+}
+
+impl ProviderConfig {
+    /// 该供应商要查额度的**全部工作区 ID**（去重、去空、保序）。
+    ///
+    /// 这是读工作区的**唯一入口** —— 不要直接读 `console_org_id` / `console_org_ids`。
+    ///
+    /// 优先级：`console_org_ids`（列表，权威）> `console_org_id`（单值，历史形态）。
+    /// 两者都在时**合并**而不是二选一：用户可能先用单值配了一个区，
+    /// 后来又用列表补了别的区，此时丢掉任何一个都会让某个区"凭空消失"。
+    ///
+    /// 不过滤前缀 —— 实测 `org_` 前缀的工作区同样能查 Go 额度（且额度独立），
+    /// 早期用 `starts_with("wrk_")` 过滤是 bug。
+    pub fn console_workspaces(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut push = |s: &str| {
+            let t = s.trim();
+            if !t.is_empty() && !out.iter().any(|x| x == t) {
+                out.push(t.to_string());
+            }
+        };
+        if let Some(list) = &self.console_org_ids {
+            for id in list {
+                push(id);
+            }
+        }
+        if let Some(single) = &self.console_org_id {
+            push(single);
+        }
+        out
+    }
+
+    /// 把「全部工作区」写回配置：列表字段存权威值，单值字段同步成第一个
+    /// （让还不知道列表字段的旧代码/旧面板仍能看到一个正确的区）。
+    pub fn set_console_workspaces(&mut self, ids: &[String]) {
+        let mut clean: Vec<String> = Vec::new();
+        for id in ids {
+            let t = id.trim();
+            if !t.is_empty() && !clean.iter().any(|x| x == t) {
+                clean.push(t.to_string());
+            }
+        }
+        self.console_org_id = clean.first().cloned();
+        self.console_org_ids = if clean.is_empty() { None } else { Some(clean) };
+    }
 }
 
 /// 全局路由表.
@@ -1421,6 +1486,91 @@ fn extract_model_ids(body: &serde_json::Value) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
 
+    /// 工作区读取必须**同时认列表与单值**，且**不过滤前缀**。
+    ///
+    /// 这两条各自对应一个真实故障：
+    /// ① 只读单值 → 同账号的第二个工作区永远看不到（用户报「其他区无法获得」）；
+    /// ② 过滤掉 `org_` 前缀 → 实测 `org_` 工作区同样能查 Go 额度（且额度独立），
+    ///    过滤掉等于凭空少一个区且无任何提示。
+    #[test]
+    fn console_workspaces_merges_both_fields_and_keeps_org_prefix() {
+        let mk = |ids: Option<Vec<&str>>, single: Option<&str>| {
+            let mut p: ProviderConfig = serde_json::from_value(serde_json::json!({
+                "name": "go",
+                "endpoint": "https://opencode.ai/inference/go/openai/v1/chat/completions",
+                "api_key_env": "K",
+                "models": {},
+            }))
+            .unwrap();
+            p.console_org_ids = ids.map(|v| v.into_iter().map(String::from).collect());
+            p.console_org_id = single.map(String::from);
+            p
+        };
+
+        // 只有单值（旧配置）→ 也要读出来
+        assert_eq!(
+            mk(None, Some("wrk_AAA")).console_workspaces(),
+            vec!["wrk_AAA".to_string()],
+            "旧配置（只有 console_org_id）必须仍能用"
+        );
+
+        // 列表 + 单值并存 → 合并去重，列表在前
+        assert_eq!(
+            mk(
+                Some(vec!["wrk_AAA", "org_BBB"]),
+                Some("wrk_AAA")
+            )
+            .console_workspaces(),
+            vec!["wrk_AAA".to_string(), "org_BBB".to_string()],
+            "两者并存要合并去重（丢掉任何一个都会让某个区凭空消失）"
+        );
+
+        // **org_ 前缀必须保留**（实测它能查 Go 额度）
+        assert_eq!(
+            mk(Some(vec!["org_BBB"]), None).console_workspaces(),
+            vec!["org_BBB".to_string()],
+            "org_ 前缀的工作区不得被过滤 —— 实测它与 wrk_ 一样能查额度"
+        );
+
+        // 空串/空白项被剔除（避免给上游发空的 x-org-id）
+        assert_eq!(
+            mk(Some(vec!["", "  ", "wrk_AAA"]), Some("   ")).console_workspaces(),
+            vec!["wrk_AAA".to_string()]
+        );
+
+        // 都没有 → 空
+        assert!(mk(None, None).console_workspaces().is_empty());
+    }
+
+    /// 写回工作区时：列表存权威值，单值同步成第一个（兼容只读单值的旧代码）。
+    #[test]
+    fn set_console_workspaces_keeps_single_field_in_sync() {
+        let mut p: ProviderConfig = serde_json::from_value(serde_json::json!({
+            "name": "go",
+            "endpoint": "https://x/v1/chat/completions",
+            "api_key_env": "K",
+            "models": {},
+        }))
+        .unwrap();
+
+        p.set_console_workspaces(&["wrk_A".into(), "org_B".into(), " ".into()]);
+        assert_eq!(
+            p.console_org_ids.as_deref(),
+            Some(&["wrk_A".to_string(), "org_B".to_string()][..]),
+            "空白项不入列表"
+        );
+        assert_eq!(
+            p.console_org_id.as_deref(),
+            Some("wrk_A"),
+            "单值必须同步成第一个 —— 只读单值的旧面板/旧代码才不会看到空"
+        );
+
+        // 清空：两个字段都要清，不能留 "最后一个是 xx" 的残影
+        p.set_console_workspaces(&[]);
+        assert!(p.console_org_id.is_none());
+        assert!(p.console_org_ids.is_none());
+    }
+
     const SAMPLE_JSON: &str = r#"
     {
       "providers": [
@@ -2143,6 +2293,7 @@ mod tests {
             balance_endpoint: None,
             console_session: None,
             console_org_id: None,
+            console_org_ids: None,
             headers: None,
             ua_by_model_prefix: None,
             require_system_first: None,

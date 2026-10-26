@@ -1124,6 +1124,14 @@ tr:hover td.th-sticky{
    为什么用三条而不是一条总进度：官方三档是**滚动窗口**，5h 会过期而月不会，
    所以"5h 用了 90% 但月才用 30%"是正常状态，合成一条就看不出来了。 */
 .quota-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+/* 按工作区分组（2026-10-26）：一个 opencode 账号可以有多个工作区，
+   每个是独立的 Go 订阅（实测同账号两区：一个已用满、一个还有余量）。
+   分组容器只负责「把同一个区的三档窗口圈在一起 + 区与区之间留白」，
+   区内仍复用 .quota-row —— 不为分组再造一套行样式（重复的样式必然漂移）。 */
+.quota-ws{display:flex;flex-direction:column;gap:6px}
+.quota-ws + .quota-ws{padding-top:8px;border-top:1px dashed var(--border)}
+.quota-ws-hd{display:flex;align-items:center;gap:8px;font-size:var(--fs-11);
+  color:var(--muted);font-weight:600}
 .quota-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
   padding:8px 10px;border-radius:var(--rm);background:var(--fill-3)}
 .quota-model{font-size:var(--fs-11);color:var(--fg);flex:none;

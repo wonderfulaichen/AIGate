@@ -243,20 +243,42 @@
                             :aria-label="t('console_cookie_label')"
                             @input="markDirty()" autocomplete="off"></textarea>
                 </div>
+                <!-- ── 工作区（2026-10-26 支持多工作区）──
+                     一个 opencode 账号可以有**多个工作区，每个是独立的 Go 订阅**
+                     （实测同账号两区：一个 100% 用满、另一个 64.1%，到期时间也不同）。
+                     所以这里必须能存多个，不能只留一个输入框。
+                     显示成可逐条删除的列表；「自动获取」把该 Cookie 下**全部**
+                     工作区一次填进来（含 wrk_ 与 org_ 两种前缀 —— 两种都能查额度）。 -->
                 <div class="f-row" style="margin-top:6px">
-                  <label x-text="t('console_org_label')"></label>
-                  <div style="display:flex;gap:6px;align-items:center">
-                    <input type="text" class="inp mono" style="flex:1"
-                           x-model="drawerProv.console_org_id"
-                           :placeholder="t('console_org_ph')"
-                           :aria-label="t('console_org_label')"
-                           @input="markDirty()" autocomplete="off">
-                    <!-- 组织 ID 能从 Cookie 自动查到（/console/api/orgs），
-                         省掉用户去地址栏抠 wrk_ 的一步 -->
-                    <button type="button" class="btn btn-g" style="white-space:nowrap;font-size:var(--fs-11)"
-                            :disabled="ocFetchOrgBusy"
-                            @click.stop="ocFetchOrgId(drawerProv)"
-                            x-text="ocFetchOrgBusy?t('saving'):t('oc_fetch_org')"></button>
+                  <label x-text="t('console_workspaces_label')"></label>
+                  <div style="display:flex;gap:6px;align-items:flex-start">
+                    <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                      <template x-for="(ws, wi) in provWorkspaces(drawerProv)" :key="'ws'+wi">
+                        <div style="display:flex;gap:6px;align-items:center">
+                          <input type="text" class="inp mono" style="flex:1;font-size:var(--fs-11)"
+                                 :value="ws" :placeholder="t('console_org_ph')"
+                                 :aria-label="t('console_workspaces_label')"
+                                 @input="setProvWorkspace(wi, $event.target.value)">
+                          <button type="button" class="btn btn-g"
+                                  style="font-size:var(--fs-11);padding:2px 7px"
+                                  :aria-label="t('del')"
+                                  @click.stop="removeProvWorkspace(wi)"
+                                  x-text="'×'"></button>
+                        </div>
+                      </template>
+                      <span class="txs tm" x-show="!provWorkspaces(drawerProv).length"
+                            x-text="t('console_workspaces_empty')"></span>
+                    </div>
+                    <!-- 自动获取：问上游要全部工作区，省掉去地址栏抠 ID -->
+                    <div style="display:flex;flex-direction:column;gap:4px">
+                      <button type="button" class="btn btn-g" style="white-space:nowrap;font-size:var(--fs-11)"
+                              :disabled="ocFetchOrgBusy"
+                              @click.stop="ocFetchOrgId(drawerProv)"
+                              x-text="ocFetchOrgBusy?t('saving'):t('oc_fetch_org')"></button>
+                      <button type="button" class="btn btn-g" style="white-space:nowrap;font-size:var(--fs-11)"
+                              @click.stop="addProvWorkspace()"
+                              x-text="'+ '+t('add')"></button>
+                    </div>
                   </div>
                 </div>
 
@@ -271,11 +293,11 @@
                         x-text="ocVerifyMsg"></span>
                 </div>
                 <div class="txs tm" style="margin-top:6px"
-                     x-show="drawerProv.console_session || drawerProv.console_org_id">
+                     x-show="drawerProv.console_session || provWorkspaces(drawerProv).length">
                   <span x-text="t('oc_login_configured')"></span>
-                  <span class="mono" x-text="drawerProv.console_org_id || '—'"></span>
+                  <span class="mono" x-text="provWorkspaces(drawerProv).length + ' ' + t('oc_workspace_unit')"></span>
                   <button type="button" class="btn btn-g" style="font-size:var(--fs-11);padding:2px 8px;margin-left:6px"
-                          @click.stop="drawerProv.console_session=''; drawerProv.console_org_id=''; markDirty()"
+                          @click.stop="clearProvWorkspaces()"
                           x-text="t('oc_login_clear')"></button>
                 </div>
               </div>

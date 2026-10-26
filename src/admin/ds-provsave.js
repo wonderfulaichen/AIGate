@@ -183,6 +183,13 @@
               // （上面 ua_by_model_prefix 的注释记的就是这个坑）。
               console_session: (p.console_session||'').trim()||undefined,
               console_org_id: (p.console_org_id||'').trim()||undefined,
+              // 全部工作区（2026-10-26）：一个 opencode 账号可以有多个工作区，
+              // 每个是独立的 Go 订阅。空数组也落成 undefined，
+              // 让后端 preserve_console_creds() 回填已有值（否则一次普通保存
+              // 会把「一键登录」拉到的全部工作区清空，退回只看得到默认区）。
+              console_org_ids: (Array.isArray(p.console_org_ids) && p.console_org_ids.length)
+                ? p.console_org_ids.filter(x => (x||'').trim()).map(x => x.trim())
+                : undefined,
               // 实测支持的协议 (供应商级, 由「拉取模型」时的探测写入). 仅在有值时落盘,
               // 免得给未探测过的供应商塞空字段. 用途: 面板展示「实测支持」+ 供用户判断.
               probed_protocols: (Array.isArray(p.probed_protocols) && p.probed_protocols.length) ? p.probed_protocols.slice() : undefined,

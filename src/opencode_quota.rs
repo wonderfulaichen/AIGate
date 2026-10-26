@@ -164,20 +164,34 @@ pub fn parse_go_status(v: &serde_json::Value) -> Result<QuotaSnapshot, String> {
     })
 }
 
-/// Console 组织列表端点（实测：返回 `[{id:"wrk_...",name:"Default"}]`）。
+/// Console 组织/工作区列表端点（实测：返回 `[{id:"wrk_...",name:"Default",...}]`）。
 ///
-/// 用途：用户粘了 Cookie 后，**不用再去地址栏抠 `wrk_`** —— 直接问它。
-/// 这一步是"少犯错"的关键：实测该账号有**两个**组织
-/// （`wrk_...` 与 `org_...`），只有 `wrk_` 那个能查 Go 额度，手抄很容易抄错。
+/// 用途：用户粘了 Cookie 后，**不用再去地址栏抠 ID** —— 直接问它。
+///
+/// ⚠️ 同一账号下可以有**多个工作区，且前缀不止 `wrk_`** —— 实测该账号有两个：
+/// `wrk_...`（name="Default"）与 `org_...`（name="aichen"），
+/// **两者都能查 Go 额度且额度完全独立**（到期时间、已用量各不相同）。
+/// 早期这里用 `starts_with("wrk_")` 过滤，把 `org_` 工作区整块丢掉，
+/// 用户报「同账号多个工作区，其他区无法获得」就是这个 bug。
 const ORGS_URL: &str = "https://opencode.ai/console/api/orgs";
 
-/// 用 Cookie 查该账号可用的**工作区** ID 列表。
+/// 一个工作区（Console `/orgs` 返回项的可见字段，用于面板展示）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkspaceRef {
+    /// 工作区 ID（`wrk_` / `org_` 前缀都有，都可用）。
+    pub id: String,
+    /// 显示名（如 "Default" / "aichen"）。可能为空。
+    pub name: String,
+}
+
+/// 用 Cookie 查该账号可用的**工作区**列表（含名字，供面板显示）。
 ///
-/// 只返回 `wrk_` 开头的（`org_` 那种是普通组织，不能查 Go 额度）。
-pub async fn fetch_workspace_ids(
+/// **不过滤前缀**：`org_` 与 `wrk_` 都能查额度，过滤掉就会让用户看到
+/// "少了一个区"且毫无提示。
+pub async fn fetch_workspaces(
     client: &reqwest::Client,
     cookie: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<WorkspaceRef>, String> {
     let cookie = cookie.trim();
     if cookie.is_empty() {
         return Err("请先填 Cookie".into());
@@ -194,7 +208,7 @@ pub async fn fetch_workspace_ids(
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("查询组织失败: {e}"))?;
+        .map_err(|e| format!("查询工作区失败: {e}"))?;
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(format!("Cookie 无效或已过期 (HTTP {})", status.as_u16()));
@@ -205,21 +219,46 @@ pub async fn fetch_workspace_ids(
     let v: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("解析组织列表失败: {e}"))?;
-    let ids: Vec<String> = v
+        .map_err(|e| format!("解析工作区列表失败: {e}"))?;
+    let list: Vec<WorkspaceRef> = v
         .as_array()
         .map(|arr| {
             arr.iter()
-                .filter_map(|o| o.get("id").and_then(|x| x.as_str()))
-                .filter(|s| s.starts_with("wrk_"))
-                .map(|s| s.to_string())
+                .filter_map(|o| {
+                    // id 与 name 必须从**同一个元素**取，不能分两趟按位置对齐
+                    // （缺 id 的元素会让两趟错位，名字配到别的工作区上）。
+                    let id = o.get("id").and_then(|x| x.as_str())?.trim();
+                    if id.is_empty() {
+                        return None;
+                    }
+                    Some(WorkspaceRef {
+                        id: id.to_string(),
+                        name: o
+                            .get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
                 .collect()
         })
         .unwrap_or_default();
-    if ids.is_empty() {
-        return Err("该 Cookie 下没有可用的工作区（wrk_ 开头）".into());
+    if list.is_empty() {
+        return Err("该 Cookie 下没有可用工作区".into());
     }
-    Ok(ids)
+    Ok(list)
+}
+
+/// 用 Cookie 查该账号可用的**工作区 ID**（简版，只给 ID）。
+pub async fn fetch_workspace_ids(
+    client: &reqwest::Client,
+    cookie: &str,
+) -> Result<Vec<String>, String> {
+    Ok(fetch_workspaces(client, cookie)
+        .await?
+        .into_iter()
+        .map(|w| w.id)
+        .collect())
 }
 
 /// 用**传入的**凭据查额度（不看供应商配置）。
@@ -237,10 +276,7 @@ pub async fn fetch_go_status_with(
         return Err("请先填 Console Cookie".into());
     }
     if org.is_empty() {
-        return Err("请先填组织 ID（可点「自动获取」）".into());
-    }
-    if !org.starts_with("wrk_") {
-        return Err(format!("组织 ID 必须以 wrk_ 开头，实际为 {org:?}"));
+        return Err("请先选工作区（可点「自动获取」）".into());
     }
     let probe = ProviderConfig {
         name: "probe".into(),
@@ -263,6 +299,7 @@ pub async fn fetch_go_status_with(
         max_request_body_bytes: None,
         console_session: Some(cookie.to_string()),
         console_org_id: Some(org.to_string()),
+        console_org_ids: None,
         models: std::collections::HashMap::new(),
     };
     fetch_go_status(client, &probe).await
@@ -270,7 +307,7 @@ pub async fn fetch_go_status_with(
 
 /// 发一次额度查询。
 ///
-/// 凭据来自供应商配置（`console_session` + `console_org_id`）。
+/// 凭据来自供应商配置（`console_session` + 工作区 ID）。
 /// 只读 GET，不消耗额度、不改账号状态。
 pub async fn fetch_go_status(
     client: &reqwest::Client,
@@ -282,14 +319,23 @@ pub async fn fetch_go_status(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or("未配置 Console Cookie（供应商配置 → opencode 额度）")?;
-    let org = provider
-        .console_org_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or("未配置组织 ID（wrk_ 开头）")?;
-    if !org.starts_with("wrk_") {
-        return Err(format!("组织 ID 必须以 wrk_ 开头，实际为 {org:?}"));
+    let workspaces = provider.console_workspaces();
+    let org = workspaces
+        .first()
+        .ok_or("未配置工作区（可点「自动获取」拿到全部工作区）")?;
+    fetch_go_status_for(client, cookie, org).await
+}
+
+/// 查**一个指定工作区**的额度（内部实现，不做前缀校验）。
+async fn fetch_go_status_for(
+    client: &reqwest::Client,
+    cookie: &str,
+    org: &str,
+) -> Result<QuotaSnapshot, String> {
+    let cookie = cookie.trim();
+    let org = org.trim();
+    if org.is_empty() {
+        return Err("工作区 ID 为空".into());
     }
 
     let resp = client
@@ -324,6 +370,69 @@ pub async fn fetch_go_status(
         .await
         .map_err(|e| format!("解析 Console 响应失败: {e}"))?;
     parse_go_status(&v)
+}
+
+/// 一个工作区的额度（或它的查询错误）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkspaceQuota {
+    /// 工作区 ID。
+    pub workspace: String,
+    /// 显示名（可能为空 —— 配置里只有 ID 时就没有名字）。
+    pub name: String,
+    /// 该工作区的额度；`None` 表示查询失败，原因在 `error`。
+    pub quota: Option<QuotaSnapshot>,
+    /// 查询失败原因（成功时为 `None`）。
+    pub error: Option<String>,
+}
+
+/// 查**全部工作区**的额度（2026-10-26）。
+///
+/// # 为什么必须逐个查、不能只查一个
+///
+/// 一个 opencode 账号可以有多个工作区，每个工作区是**独立的 Go 订阅**
+/// —— 实测同账号两个区：`wrk_` 的月额度已用满 100%、`org_` 的才 64.1%，
+/// 到期时间也不同。只查第一个会让面板显示"用满了"，
+/// 而实际上另一个区还有余量（用户报「其他区无法获得」）。
+///
+/// # 为什么单个失败不整体失败
+///
+/// 某个工作区可能被 `blocked`、或已退订（`/go/status` 返回 4xx）。
+/// 那种情况下**其余工作区仍然要看得到** —— 整体报错会让用户
+/// 因为一个区的问题看不到所有区。失败的区在 `error` 里说明原因。
+pub async fn fetch_all_go_status(
+    client: &reqwest::Client,
+    provider: &ProviderConfig,
+) -> Result<Vec<WorkspaceQuota>, String> {
+    let cookie = provider
+        .console_session
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("未配置 Console Cookie（供应商配置 → opencode 额度）")?;
+    let workspaces = provider.console_workspaces();
+    if workspaces.is_empty() {
+        return Err("未配置工作区（可点「自动获取」拿到全部工作区）".into());
+    }
+
+    let mut out = Vec::with_capacity(workspaces.len());
+    for org in workspaces {
+        let r = fetch_go_status_for(client, cookie, &org).await;
+        out.push(match r {
+            Ok(q) => WorkspaceQuota {
+                workspace: org,
+                name: String::new(),
+                quota: Some(q),
+                error: None,
+            },
+            Err(e) => WorkspaceQuota {
+                workspace: org,
+                name: String::new(),
+                quota: None,
+                error: Some(e),
+            },
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

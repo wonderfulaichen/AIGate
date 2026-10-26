@@ -42,6 +42,11 @@
     },
 
     _ocQuota: {},
+    /// 逐工作区的额度（按供应商名）。每项形如
+    /// `{workspace, name, quota|null, error|null}`。
+    /// 与 `_ocQuota`（兼容用的"第一个成功的区"）分开存：
+    /// 一个区失败不能影响别的区显示。
+    _ocQuotaWs: {},
     _ocQuotaLoading: {},
     _ocQuotaErr: {},
 
@@ -100,12 +105,22 @@
         } else {
           const ids = (j && j.orgs) || [];
           if (ids.length) {
+            // 2026-10-26：**全部**工作区都填进去（一个账号可有多套独立订阅）。
+            // 原来只取 ids[0]，其他区的额度就永远看不到。
+            prov.console_org_ids = ids.slice();
             prov.console_org_id = ids[0];
             this.markDirty();
             this.ocVerifyOk = true;
             this.ocVerifyMsg = ids.length > 1
               ? t('oc_org_fetched_multi', ids.length, ids[0])
               : t('oc_org_fetched', ids[0]);
+            // 立刻落盘：额度查询读的是**已保存配置**（不是抽屉草稿）。
+            // 不保存就会出现"面板上明明有两个区、查额度只回来一个"的错位 ——
+            // 用户看到的是草稿，查到的是旧配置，非常难理解。
+            this._ocAutosave(prov);
+          } else {
+            this.ocVerifyOk = false;
+            this.ocVerifyMsg = t('oc_no_workspace');
           }
         }
       } catch (e) {
@@ -116,38 +131,170 @@
       }
     },
 
+    /// 自动获取后立刻落盘（静默，不打断用户）。
+    ///
+    /// # 为什么必须落盘
+    ///
+    /// 额度查询（`/admin/api/opencode/quota`）读的是**后端注册表里已保存的配置**，
+    /// 不是抽屉草稿。不保存就会出现：面板上明明列着两个工作区、查额度却只回来一个
+    /// —— 用户看到的是草稿、查到的是旧配置，这个错位没法解释也没法自查。
+    ///
+    /// # 为什么静默而不是弹确认
+    ///
+    /// 「自动获取」本身就是用户主动发起的动作，紧接着落盘是它的自然结果
+    /// （与「测试连接」不同：那个只验证、不该改盘）。失败时把原因写进
+    /// 同一个提示位，用户能立刻看到。
+    async _ocAutosave(prov) {
+      if (typeof this.saveProvidersForm !== 'function') return;
+      try {
+        await this.saveProvidersForm();
+        // 保存成功：把原来的"已获取 N 个工作区"补一句"已保存"
+        this.ocVerifyMsg = this.ocVerifyMsg + ' · ' + t('oc_workspaces_saved');
+      } catch (e) {
+        // 保存失败不能吞掉 —— 否则用户以为已经生效了
+        this.ocVerifyOk = false;
+        this.ocVerifyMsg = t('oc_workspaces_save_failed', String(e).slice(0, 100));
+      }
+    },
+
+    /// 「测试连接」：逐个工作区试查一次，把每个区的结果都说出来。
+    ///
+    /// 为什么要逐个：一个账号可能有多个工作区（各自独立的 Go 订阅），
+    /// 只验第一个会让"另一个区其实是坏的"完全看不出来 —— 而用户
+    /// 恰恰是因为某个区有问题才来点这个按钮的。
     async ocVerifyCred(prov) {
       if (!prov || this.ocVerifyBusy) return;
+      const cookie = (prov.console_session || '').trim();
+      const list = this.provWorkspaces(prov).filter(x => (x || '').trim());
+      if (!list.length) {
+        this.ocVerifyOk = false;
+        this.ocVerifyMsg = t('oc_no_workspace');
+        return;
+      }
       this.ocVerifyBusy = true;
       this.ocVerifyMsg = '';
       try {
-        const r = await fetch('/admin/api/opencode/verify', {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
-          body: JSON.stringify({
-            cookie: (prov.console_session || '').trim(),
-            org_id: (prov.console_org_id || '').trim(),
-          }),
-        });
-        const j = await r.json();
-        if (j && j.ok) {
-          this.ocVerifyOk = true;
-          const q = j.quota || {};
-          const win = (q.windows || []).find(w => w.key === 'month') || {};
-          // 成功时把关键数字说出来：用户一眼知道"通了、本月用了多少"
-          const pct = (win.used_pct == null) ? '—' : win.used_pct.toFixed(1) + '%';
-          this.ocVerifyMsg = t('oc_verify_ok', pct);
-        } else {
-          this.ocVerifyOk = false;
-          this.ocVerifyMsg = (j && j.error) || t('oc_verify_fail');
+        const results = [];
+        for (const org of list) {
+          let one;
+          try {
+            const r = await fetch('/admin/api/opencode/verify', {
+              method: 'POST',
+              headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+              body: JSON.stringify({ cookie, org_id: org }),
+            });
+            one = await r.json();
+          } catch (e) {
+            one = { ok: false, error: '请求失败: ' + String(e).slice(0, 80) };
+          }
+          const q = one && one.quota;
+          const win = q && (q.windows || []).find(w => w.key === 'month');
+          const pct = (win && win.used_pct != null)
+            ? win.used_pct.toFixed(1) + '%'
+            : '—';
+          results.push({ org, ok: !!(one && one.ok), pct, err: (one && one.error) || '' });
         }
-      } catch (e) {
-        this.ocVerifyOk = false;
-        this.ocVerifyMsg = '测试失败: ' + String(e).slice(0, 100);
+        const okCount = results.filter(x => x.ok).length;
+        this.ocVerifyOk = okCount === results.length;
+        if (results.length === 1) {
+          // 单区：沿用原来的简洁文案
+          this.ocVerifyMsg = results[0].ok
+            ? t('oc_verify_ok', results[0].pct)
+            : (results[0].err || t('oc_verify_fail'));
+        } else {
+          // 多区：逐区列出，让"哪个区有问题"一眼可见
+          const parts = results.map(x => x.ok ? (x.pct) : t('oc_verify_fail'));
+          this.ocVerifyMsg = this.ocVerifyOk
+            ? t('oc_verify_ok_multi', results.length, parts.join(' / '))
+            : t('oc_verify_partial', okCount, results.length,
+                results.filter(x => !x.ok).map(x => x.err).join('; '));
+        }
       } finally {
         this.ocVerifyBusy = false;
       }
     },
+
+    // ── 工作区列表编辑（2026-10-26）──
+    //
+    // 抽屉草稿里维护 `console_org_ids`（数组）。为了让**旧配置**（只有单值
+    // `console_org_id`）也能正常显示与编辑，读取时统一走 provWorkspaces() ——
+    // 它把两者合并（列表优先、单值兜底），与后端 ProviderConfig::console_workspaces
+    // 的口径一致。写入时只写 console_org_ids，并同步单值 = 第一个
+    // （让还不知道列表字段的地方仍看到一个正确的区）。
+
+    /// 抽屉里当前的工作区列表（合并列表 + 单值，去重去空）。
+    ///
+    /// ⚠️ 保留**末尾的空串**：那是用户点了「+ 新增」还没填的空槽。
+    /// 去掉它会让新增按钮"点了没反应"（空行立刻被过滤掉）。
+    provWorkspaces(prov) {
+      if (!prov) return [];
+      const out = [];
+      const push = (v) => {
+        const t = String(v || '').trim();
+        if (t && !out.includes(t)) out.push(t);
+      };
+      if (Array.isArray(prov.console_org_ids)) prov.console_org_ids.forEach(push);
+      push(prov.console_org_id);
+      // 空槽数：由 _wsBlank 记录（新增按钮 +1、保存时归零）
+      const blanks = (prov.__wsBlank | 0);
+      for (let i = 0; i < blanks; i++) out.push('');
+      return out;
+    },
+
+    /// 把编辑结果写回（丢掉空串，只保留真实工作区）。
+    ///
+    /// 空槽数按"**末尾连续的空串**"重算 —— 用户新增的空行总在最后，
+    /// 一旦填上就不再算空槽。注意不能把"中间的空串"算作空槽：
+    /// 那多半是用户清空某一行的中间状态，重算会把它挪到末尾、光标乱跳。
+    _commitWorkspaces(prov, list) {
+      if (!prov) return;
+      const clean = [];
+      let blanks = 0;
+      for (const v of list) {
+        const t = String(v || '').trim();
+        if (!t) continue;
+        if (!clean.includes(t)) clean.push(t);
+      }
+      // 末尾连续空串数
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (String(list[i] || '').trim()) break;
+        blanks++;
+      }
+      prov.console_org_ids = clean;
+      prov.console_org_id = clean[0] || '';
+      prov.__wsBlank = Math.min(blanks, 1); // 最多保留 1 个空槽，避免点了多下累积一堆空行
+      this.markDirty();
+    },
+
+    setProvWorkspace(idx, val) {
+      const list = this.provWorkspaces(this.drawerProv);
+      if (idx < 0 || idx >= list.length) return;
+      list[idx] = val;
+      this._commitWorkspaces(this.drawerProv, list);
+    },
+
+    addProvWorkspace() {
+      if (!this.drawerProv) return;
+      this.drawerProv.__wsBlank = (this.drawerProv.__wsBlank | 0) + 1;
+      this.markDirty();
+    },
+
+    removeProvWorkspace(idx) {
+      const list = this.provWorkspaces(this.drawerProv);
+      if (idx < 0 || idx >= list.length) return;
+      list.splice(idx, 1);
+      this._commitWorkspaces(this.drawerProv, list);
+    },
+
+    clearProvWorkspaces() {
+      if (!this.drawerProv) return;
+      this.drawerProv.console_session = '';
+      this.drawerProv.console_org_id = '';
+      this.drawerProv.console_org_ids = [];
+      this.drawerProv.__wsBlank = 0;
+      this.markDirty();
+    },
+
 
     // ── 一键登录（2026-10-24，WebView2 弹窗）──
     //
@@ -230,6 +377,9 @@
     },
 
     // 查一次额度（用户点「查询额度」或展开时触发）。
+    //
+    // 2026-10-26：返回的是**全部工作区**（一个账号可以有多个独立的 Go 订阅）。
+    // 逐个区的结果分开存，一个区失败不影响别的区显示。
     async fetchOpencodeQuota(name) {
       if (this._ocQuotaLoading[name]) return;
       this._ocQuotaLoading[name] = true;
@@ -241,24 +391,45 @@
         if (j && j.error) {
           this._ocQuotaErr[name] = String(j.error);
           this._ocQuota[name] = null;
+          this._ocQuotaWs[name] = [];
         } else {
+          this._ocQuotaWs[name] = (j && j.workspaces) || [];
+          // 兼容字段：后端仍给 quota（= 第一个成功的区）
           this._ocQuota[name] = (j && j.quota) || null;
         }
       } catch (e) {
         this._ocQuotaErr[name] = '查询失败: ' + String(e).slice(0, 120);
         this._ocQuota[name] = null;
+        this._ocQuotaWs[name] = [];
       } finally {
         this._ocQuotaLoading[name] = false;
         // Alpine 3 不追踪既有对象的深层属性新增 → 整体替换一次触发重渲染。
         this._ocQuota = Object.assign({}, this._ocQuota);
+        this._ocQuotaWs = Object.assign({}, this._ocQuotaWs);
         this._ocQuotaErr = Object.assign({}, this._ocQuotaErr);
         this._ocQuotaLoading = Object.assign({}, this._ocQuotaLoading);
       }
     },
 
     ocQuota(name) { return this._ocQuota[name] || null; },
+    /// 全部工作区的额度（含各自的 error）。空数组 = 没查过或整体失败。
+    ocQuotaWorkspaces(name) { return this._ocQuotaWs[name] || []; },
     ocQuotaErr(name) { return this._ocQuotaErr[name] || ''; },
     ocQuotaLoading(name) { return !!this._ocQuotaLoading[name]; },
+
+    /// 工作区显示名：优先上游给的 name，否则退化成 "默认工作区" / ID 尾段。
+    ///
+    /// 为什么不直接显示完整 ID：`wrk_01KS5PNNQH9TAEBFMNJ5C8AF07` 有 30 字符，
+    /// 占满一行还看不出是哪个区。上游给了 `name`（Default / aichen）就用它，
+    /// 没有才退回 ID —— 但**保留可辨识的尾段**而不是整串。
+    ocWsLabel(ws) {
+      if (!ws) return '';
+      if (ws.name) return ws.name;
+      const id = String(ws.workspace || '');
+      // wrk_01KS... / org_01M4... → 去掉前 4 字符前缀，取尾 6 位
+      const tail = id.length > 10 ? id.slice(-6) : id;
+      return id ? ('…' + tail) : '';
+    },
 
     // 该供应商**是否可能支持**额度查询。
     // 判据：配了 Console 凭据，或名字里有 opencode（zen/go）。

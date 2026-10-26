@@ -161,7 +161,16 @@ pub fn extract_org_id(text: &str) -> Option<String> {
     None
 }
 
-/// 由 cookie 列表 + 组织 ID 组装凭据；任一缺失返回 `None`（继续等）。
+/// 由 cookie 列表 + URL 里的工作区 ID 组装凭据；任一缺失返回 `None`（继续等）。
+///
+/// ⚠️ 这里**不过滤前缀**（2026-10-26 修）：早期要求 `starts_with("wrk_")`，
+/// 但实测同一账号下 `org_` 前缀的工作区同样能查 Go 额度（且额度独立）。
+/// 用户登录后如果落到 `org_` 工作区，旧逻辑会**永远等不到凭据**、
+/// 表现为"窗口开着但一直不结束"。
+///
+/// 注意这只是**登录收口的判据**：认到工作区就说明登录完成了。
+/// 真正要查额度时会用 Cookie 重新拉取**全部**工作区（见 `fetch_workspaces`），
+/// 不依赖这里抓到的这一个。
 pub fn credential_from_cookies(
     cookies: &[(String, String)],
     org_hint: Option<&str>,
@@ -171,7 +180,9 @@ pub fn credential_from_cookies(
         .find(|(n, _)| n == "__Host-console_session")
         .map(|(_, v)| v.trim())
         .filter(|v| !v.is_empty())?;
-    let org = org_hint.filter(|s| s.starts_with("wrk_"))?;
+    // URL 里的工作区段：形如 /console/<id>[/go]。只要求非空，
+    // 不限定前缀（wrk_ / org_ 都能查额度）。
+    let org = org_hint.map(str::trim).filter(|s| !s.is_empty())?;
     Some(Credential {
         cookie: format!("__Host-console_session={session}"),
         org_id: org.to_string(),
@@ -227,8 +238,12 @@ mod tests {
         assert!(credential_from_cookies(&cookies, None).is_none());
         // 只有 org → None
         assert!(credential_from_cookies(&[], Some("wrk_X")).is_none());
-        // org 不是 wrk_ 开头（比如 org_ 那种普通组织）→ None
-        assert!(credential_from_cookies(&cookies, Some("org_123")).is_none());
+        // ⚠️ org_ 前缀**必须也认**（2026-10-26 修）：实测同账号下
+        // org_ 工作区同样能查 Go 额度。旧逻辑要求 starts_with("wrk_")，
+        // 用户落到 org_ 工作区时会**永远等不到凭据**（窗口开着不结束）。
+        let c = credential_from_cookies(&cookies, Some("org_123"))
+            .expect("org_ 前缀的工作区也要能收口");
+        assert_eq!(c.org_id, "org_123");
         // 齐了 → Some
         let c = credential_from_cookies(&cookies, Some("wrk_X")).unwrap();
         assert_eq!(c.cookie, "__Host-console_session=st_abc");
@@ -236,6 +251,8 @@ mod tests {
         // cookie 值为空 → None
         let blank = vec![("__Host-console_session".to_string(), "  ".to_string())];
         assert!(credential_from_cookies(&blank, Some("wrk_X")).is_none());
+        // 空白 org 也不能当凭据（避免 "  " 被当成工作区）
+        assert!(credential_from_cookies(&cookies, Some("   ")).is_none());
         // 别的 cookie 混在一起时只认 session
         let mixed = vec![
             ("__stripe_mid".to_string(), "zzz".to_string()),

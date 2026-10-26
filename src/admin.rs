@@ -1703,16 +1703,20 @@ fn preserve_console_creds(json_str: &str, old: &[crate::providers::ProviderConfi
         };
         let Some(obj) = p.as_object_mut() else { continue };
         // 表单给了非空值 → 尊重表单（用户显式改过）。
-        // 先算好两个布尔再改 obj：闭包借用 obj 的同时又要 insert 会冲突。
-        let has_session = obj
-            .get("console_session")
-            .and_then(|x| x.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false);
-        let has_org = obj
-            .get("console_org_id")
-            .and_then(|x| x.as_str())
-            .map(|s| !s.trim().is_empty())
+        // 先算好布尔再改 obj：闭包借用 obj 的同时又要 insert 会冲突。
+        let non_empty_str = |k: &str| {
+            obj.get(k)
+                .and_then(|x| x.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        };
+        let has_session = non_empty_str("console_session");
+        let has_org = non_empty_str("console_org_id");
+        // 工作区列表：非空数组才算"表单给了"（前端清空时通常传 [] 或整键省略）。
+        let has_org_ids = obj
+            .get("console_org_ids")
+            .and_then(|x| x.as_array())
+            .map(|a| !a.is_empty())
             .unwrap_or(false);
         if !has_session {
             if let Some(s) = &src.console_session {
@@ -1722,6 +1726,13 @@ fn preserve_console_creds(json_str: &str, old: &[crate::providers::ProviderConfi
         if !has_org {
             if let Some(s) = &src.console_org_id {
                 obj.insert("console_org_id".into(), serde_json::json!(s));
+            }
+        }
+        if !has_org_ids {
+            if let Some(ids) = &src.console_org_ids {
+                if !ids.is_empty() {
+                    obj.insert("console_org_ids".into(), serde_json::json!(ids));
+                }
             }
         }
     }
@@ -2020,6 +2031,7 @@ async fn find_account_provider(
             // 登录流不需要 Console 额度凭据（那是额度查询用的，与代理转发无关）。
             console_session: None,
             console_org_id: None,
+            console_org_ids: None,
             headers: None,
             ua_by_model_prefix: None,
             require_system_first: None,
@@ -3414,6 +3426,22 @@ pub async fn api_oc_login_status(
         return Json(serde_json::json!({ "error": "缺少 provider" }));
     }
 
+    // 登录只拿到 Cookie + **当前所在的那个**工作区。要看到全部工作区，
+    // 必须再用 Cookie 问一次 /orgs（2026-10-26）。
+    //
+    // 拉取失败不阻断登录：凭据本身有效，只是暂时少知道几个区 ——
+    // 至少把登录时落在的那个区写上，用户能立刻查到一个区的额度，
+    // 之后可以在面板上点「自动获取」补齐。
+    let mut workspaces: Vec<String> = Vec::new();
+    let mut ws_error: Option<String> = None;
+    match crate::opencode_quota::fetch_workspace_ids(&state.client, &cred.cookie).await {
+        Ok(ids) => workspaces = ids,
+        Err(e) => ws_error = Some(e),
+    }
+    if workspaces.is_empty() {
+        workspaces.push(cred.org_id.clone());
+    }
+
     // 写进注册表配置 + 落盘。
     // 与 api_providers_save 保持一致：覆盖前留 .bak、pretty 序列化（该文件是用户
     // 会手改的配置，压平成一整行不可读）、临时文件 + rename 原子替换。
@@ -3424,7 +3452,7 @@ pub async fn api_oc_login_status(
             return Json(serde_json::json!({ "error": format!("找不到供应商 {name}") }));
         };
         p.console_session = Some(cred.cookie.clone());
-        p.console_org_id = Some(cred.org_id.clone());
+        p.set_console_workspaces(&workspaces);
         let json_str = match serde_json::to_string_pretty(&serde_json::json!({ "providers": list })) {
             Ok(s) => s,
             Err(e) => return Json(serde_json::json!({ "error": format!("序列化失败: {e}") })),
@@ -3440,7 +3468,13 @@ pub async fn api_oc_login_status(
     match saved {
         Ok(()) => {
             resp["org_id"] = serde_json::json!(cred.org_id);
+            resp["workspaces"] = serde_json::json!(workspaces);
             resp["cookie_saved"] = serde_json::json!(true);
+            if let Some(e) = ws_error {
+                // 登录成功但工作区没拉全 —— 明确说出来，不要让用户以为只有这一个区
+                resp["workspaces_warning"] =
+                    serde_json::json!(format!("已登录，但未能列出全部工作区（{e}）；可在供应商设置里点「自动获取」重试"));
+            }
             Json(resp)
         }
         Err(e) => Json(serde_json::json!({ "error": format!("凭据写入失败: {e}") })),
@@ -3458,16 +3492,26 @@ pub async fn api_oc_login_cancel(
 /// GET /admin/api/opencode/quota?provider=<name> — 查询 opencode 套餐真实额度.
 ///
 /// 数据来自 **Console 网页 API**（`/console/api/go/status`），是官方真实值 ——
-/// 不是本地估算。实测可用（2026-10-24），需要供应商配置里的
-/// `console_session` + `console_org_id`。
+/// 不是本地估算。需要供应商配置里的 `console_session` + 工作区 ID。
+///
+/// **返回全部工作区**（2026-10-26）：一个 opencode 账号可以有多个工作区，
+/// 每个都是独立的 Go 订阅（实测同账号两区：一个已用满 100%、另一个 64.1%，
+/// 到期时间也不同）。只回第一个会让用户以为"用满了"，
+/// 而实际上另一个区还有余量 —— 这正是用户报的「其他区无法获得」。
+///
+/// 响应形状：
+/// ```json
+/// { "provider":"go", "workspaces":[
+///     {"workspace":"wrk_...","name":"Default","quota":{...},"error":null},
+///     {"workspace":"org_...","name":"","quota":null,"error":"...因某个区失败不影响别的区"}
+/// ] }
+/// ```
+/// 兼容：仍返回 `quota`（= 第一个成功的区），旧前端只读它也不会崩。
 ///
 /// 为什么是独立端点而不是塞进 `/admin/api/stats`：
 /// ① 这是一次**外部网络请求**（可能慢、可能失败），不应拖慢每次统计刷新；
 /// ② 结果需要显式"刷新"语义（Cookie 会过期，用户会主动重试）；
 /// ③ 探测失败不影响统计页面 —— 统计与额度是两件事。
-///
-/// 配额缓存：同一供应商 30 秒内不重复打上游（Console 有速率考虑，
-/// 且用户连点刷新没意义）。
 pub async fn api_opencode_quota(
     State(state): State<super::proxy::AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -3476,7 +3520,7 @@ pub async fn api_opencode_quota(
         return Json(serde_json::json!({ "error": "缺少 provider 参数" }));
     };
 
-    // 从注册表取该供应商配置（拿 console_session / console_org_id）。
+    // 从注册表取该供应商配置（拿 console_session / 工作区列表）。
     let provider = {
         let registry = state.registry.read().await;
         registry.providers().into_iter().find(|p| p.name == name)
@@ -3485,11 +3529,27 @@ pub async fn api_opencode_quota(
         return Json(serde_json::json!({ "error": format!("找不到供应商 {name}") }));
     };
 
-    match crate::opencode_quota::fetch_go_status(&state.client, &provider).await {
-        Ok(snap) => Json(serde_json::json!({
-            "provider": name,
-            "quota": snap,
-        })),
+    match crate::opencode_quota::fetch_all_go_status(&state.client, &provider).await {
+        Ok(mut list) => {
+            // 补显示名：配置里只存 ID，名字得问上游（/orgs）。
+            // 拉不到名字不影响额度本身 —— 面板会退化成显示 ID 尾段。
+            if let Some(cookie) = provider.console_session.as_deref() {
+                if let Ok(ws) = crate::opencode_quota::fetch_workspaces(&state.client, cookie).await {
+                    for w in list.iter_mut() {
+                        if let Some(m) = ws.iter().find(|x| x.id == w.workspace) {
+                            w.name = m.name.clone();
+                        }
+                    }
+                }
+            }
+            // 兼容字段：取第一个**成功**的区（不是第一个区 —— 第一个可能失败了）。
+            let first_ok = list.iter().find_map(|w| w.quota.clone());
+            Json(serde_json::json!({
+                "provider": name,
+                "workspaces": list,
+                "quota": first_ok,
+            }))
+        }
         Err(e) => Json(serde_json::json!({
             "provider": name,
             // 失败如实返回错误，不编一个 "0%" 快照。
@@ -3498,12 +3558,18 @@ pub async fn api_opencode_quota(
     }
 }
 
-/// POST /admin/api/opencode/orgs `{cookie}` — 用 Cookie 查出工作区 ID.
+/// POST /admin/api/opencode/orgs `{cookie}` — 用 Cookie 查出全部工作区.
 ///
-/// 为什么需要：实测该账号下有**两个**组织（`wrk_...` 与 `org_...`），
-/// 只有 `wrk_` 那个能查 Go 额度。让用户从地址栏手抄 `wrk_` 很容易抄错
-/// （或抄成 `org_`），错的表现是 HTTP 400 而不是明确提示。
-/// 这里直接问上游，用户只需粘一次 Cookie。
+/// 为什么需要：让用户从地址栏手抄工作区 ID 很容易抄错，
+/// 错的表现是 HTTP 400 而不是明确提示。这里直接问上游，用户只需粘一次 Cookie。
+///
+/// ⚠️ **不过滤前缀**（2026-10-26 修）：实测该账号有两个工作区
+/// `wrk_...`（Default）与 `org_...`（aichen），**两者都能查 Go 额度且额度独立**。
+/// 早期这里只返回 `wrk_` 前缀，导致面板上少了整个工作区、且无任何提示 ——
+/// 用户报「其他区无法获得」就是这个。
+///
+/// 响应：`{"orgs":["wrk_..","org_.."], "workspaces":[{"id":..,"name":..}]}`
+/// （`orgs` 是兼容字段，旧前端读它仍可用）
 pub async fn api_oc_orgs(
     State(state): State<super::proxy::AppState>,
     Json(payload): Json<serde_json::Value>,
@@ -3512,8 +3578,11 @@ pub async fn api_oc_orgs(
         .get("cookie")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    match crate::opencode_quota::fetch_workspace_ids(&state.client, cookie).await {
-        Ok(ids) => Json(serde_json::json!({ "orgs": ids })),
+    match crate::opencode_quota::fetch_workspaces(&state.client, cookie).await {
+        Ok(list) => {
+            let ids: Vec<String> = list.iter().map(|w| w.id.clone()).collect();
+            Json(serde_json::json!({ "orgs": ids, "workspaces": list }))
+        }
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }
